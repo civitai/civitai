@@ -76,7 +76,7 @@ export default function UserArticlesPage() {
                 />
               )}
               {viewingPublished && (
-                <Group spacing={8} noWrap>
+                <Group spacing={8} ml="auto" noWrap>
                   <SortFilter
                     type="articles"
                     variant="button"

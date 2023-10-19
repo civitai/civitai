@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:18-alpine3.16 AS deps
+FROM node:20-alpine3.16 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -21,7 +21,7 @@ RUN \
 
 ##### BUILDER
 
-FROM node:18-alpine3.16 AS builder
+FROM node:20-alpine3.16 AS builder
 ARG NEXT_PUBLIC_IMAGE_LOCATION
 ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
 ARG NEXT_PUBLIC_MAINTENANCE_MODE
@@ -40,7 +40,7 @@ RUN \
 
 ##### RUNNER
 
-FROM node:18-alpine3.16 AS runner
+FROM node:20-alpine3.16 AS runner
 WORKDIR /app
 
 # Install PM2 to manage node processes

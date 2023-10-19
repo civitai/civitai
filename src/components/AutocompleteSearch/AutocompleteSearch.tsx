@@ -419,6 +419,7 @@ const AutocompleteSearchContent = forwardRef<
           />
           <ClearableAutoComplete
             ref={inputRef}
+            key={indexName}
             className={className}
             classNames={classes}
             placeholder="Search Civitai"

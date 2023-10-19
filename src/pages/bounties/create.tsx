@@ -5,6 +5,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { BountyCreateForm } from '~/components/Bounty/BountyCreateForm';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -41,7 +42,7 @@ export default function BountyCreate() {
           </Text>
         }
       />
-      <BountyCreateForm />
+      <BountyUpsertForm />
     </Container>
   );
 }

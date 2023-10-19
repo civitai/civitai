@@ -25,8 +25,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {children}
-      {opened && (
+      {opened ? (
         <Modal
           opened
           onClose={() => undefined}
@@ -37,6 +36,8 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
         >
           <DynamicOnboardingModal />
         </Modal>
+      ) : (
+        children
       )}
     </>
   );

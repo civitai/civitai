@@ -10,6 +10,7 @@ import {
   Form,
   InputCheckbox,
   InputDatePicker,
+  InputNumber,
   InputSelect,
   InputSimpleImageUpload,
   InputText,
@@ -20,15 +21,11 @@ import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/co
 import { trpc } from '~/utils/trpc';
 import { createRoutedContext } from '../create-routed-context';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import {
-  BountyType,
-  CollectionMode,
-  CollectionType,
-  CollectionWriteConfiguration,
-} from '@prisma/client';
+import { CollectionMode, CollectionType } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';
+import { showErrorNotification } from '~/utils/notifications';
 
 export default createRoutedContext({
   authGuard: true,
@@ -52,6 +49,7 @@ export default createRoutedContext({
 
     const upsertCollectionMutation = trpc.collection.upsert.useMutation();
     const handleSubmit = (data: UpsertCollectionInput) => {
+      console.log(data);
       upsertCollectionMutation.mutate(
         { ...data, mode: data.mode || null },
         {
@@ -116,17 +114,19 @@ export default createRoutedContext({
                     label="Add permissions"
                     data={Object.values(collectionWritePrivacyData)}
                   />
-                  <InputSelect
-                    name="mode"
-                    label="Mode"
-                    data={[
-                      ...Object.values(CollectionMode).map((value) => ({
-                        value,
-                        label: getDisplayName(value),
-                      })),
-                    ]}
-                    clearable
-                  />
+                  {data.collection?.type === CollectionType.Image && (
+                    <InputSelect
+                      name="mode"
+                      label="Mode"
+                      data={[
+                        ...Object.values(CollectionMode).map((value) => ({
+                          value,
+                          label: getDisplayName(value),
+                        })),
+                      ]}
+                      clearable
+                    />
+                  )}
                   {mode === CollectionMode.Contest && (
                     <>
                       <InputDatePicker
@@ -141,6 +141,26 @@ export default createRoutedContext({
                         suggest you add this in to save some resources, but this value will not be
                         shown to end-users.
                       </Text>
+                      <InputDatePicker
+                        name="metadata.submissionStartDate"
+                        label="Submission Start Date"
+                        placeholder="Select an start date"
+                        icon={<IconCalendar size={16} />}
+                        clearable
+                      />
+                      <InputDatePicker
+                        name="metadata.submissionEndDate"
+                        label="Submission End Date"
+                        placeholder="Select an start date"
+                        icon={<IconCalendar size={16} />}
+                        clearable
+                      />
+                      <InputNumber
+                        name="metadata.maxItemsPerUser"
+                        label="Max items per user"
+                        placeholder="Leave blank for unlimited"
+                        clearable
+                      />
                     </>
                   )}
                 </>

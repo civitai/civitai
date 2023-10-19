@@ -41,6 +41,7 @@ import { BountyEntryGetById, BountyGetById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -165,6 +166,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title inline>Submit new entry</Title>
         </Group>
+        {bounty.poi && <PoiAlert size="sm" />}
         <InputRTE
           name="description"
           label="Notes"
@@ -291,7 +293,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart">
+                    <Group position="apart" noWrap>
                       <Stack spacing={0}>
                         {bountyEntry && file.id ? (
                           <Anchor
@@ -384,7 +386,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart">
+                    <Group position="apart" noWrap>
                       <Stack spacing={0}>
                         {bountyEntry && file.id ? (
                           <Anchor

@@ -26,6 +26,8 @@ import {
 import { UpdateBountyInput, updateBountyInputSchema } from '~/server/schema/bounty.schema';
 import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { stripTime } from '~/utils/date-helpers';
 
 const useStyles = createStyles((theme) => ({
   title: {
@@ -38,6 +40,16 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+const schema = updateBountyInputSchema
+  .refine((data) => data.startsAt < data.expiresAt, {
+    message: 'Start date must be before expiration date',
+    path: ['startsAt'],
+  })
+  .refine((data) => data.expiresAt > data.startsAt, {
+    message: 'Expiration date must be after start date',
+    path: ['expiresAt'],
+  });
+
 export function BountyEditForm({ bounty }: Props) {
   const router = useRouter();
   const { classes } = useStyles();
@@ -46,14 +58,14 @@ export function BountyEditForm({ bounty }: Props) {
     ...bounty,
     id: bounty.id,
     description: bounty.description,
-    // TODO.bounty: fix date issue
+    // TODO.bounty: fix date issue not using utc properly
     startsAt: bounty.startsAt,
     expiresAt: bounty.expiresAt,
     files: bounty.files?.map((file) => ({ ...file, metadata: file.metadata as MixedObject })) ?? [],
     ownRights:
       bounty.files?.length > 0 && bounty.files.every((f) => f.metadata?.ownRights === true),
   };
-  const form = useForm({ schema: updateBountyInputSchema, defaultValues, shouldUnregister: false });
+  const form = useForm({ schema, defaultValues, shouldUnregister: false });
 
   const files = form.watch('files');
 
@@ -66,6 +78,7 @@ export function BountyEditForm({ bounty }: Props) {
 
   const alreadyStarted = bounty.startsAt < new Date();
   const { minStartDate, maxStartDate, minExpiresDate, maxExpiresDate } = getMinMaxDates();
+  const expiresAt = form.watch('expiresAt');
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -83,28 +96,41 @@ export function BountyEditForm({ bounty }: Props) {
           stickyToolbar
         />
         {!alreadyStarted && (
-          <Group spacing="xl" grow>
-            <InputDatePicker
-              className={classes.fluid}
-              name="startsAt"
-              label="Start Date"
-              placeholder="Select a starts date"
-              icon={<IconCalendar size={16} />}
-              withAsterisk
-              minDate={minStartDate}
-              maxDate={maxStartDate}
-            />
-            <InputDatePicker
-              className={classes.fluid}
-              name="expiresAt"
-              label="Deadline"
-              placeholder="Select an end date"
-              icon={<IconCalendarDue size={16} />}
-              withAsterisk
-              minDate={minExpiresDate}
-              maxDate={maxExpiresDate}
-            />
-          </Group>
+          <Stack>
+            <Group spacing="xl" grow>
+              <InputDatePicker
+                className={classes.fluid}
+                name="startsAt"
+                label="Start Date"
+                placeholder="Select a starts date"
+                icon={<IconCalendar size={16} />}
+                withAsterisk
+                minDate={minStartDate}
+                maxDate={maxStartDate}
+              />
+              <InputDatePicker
+                className={classes.fluid}
+                name="expiresAt"
+                label="Deadline"
+                placeholder="Select an end date"
+                icon={<IconCalendarDue size={16} />}
+                withAsterisk
+                minDate={minExpiresDate}
+                maxDate={maxExpiresDate}
+              />
+            </Group>
+            <Text weight={590}>
+              With the selected dates, your bounty will expire{' '}
+              <Text weight="bold" color="red.5" span>
+                <DaysFromNow date={stripTime(expiresAt)} inUtc />
+              </Text>
+              . All times are in{' '}
+              <Text weight="bold" color="red.5" span>
+                UTC
+              </Text>
+              .
+            </Text>
+          </Stack>
         )}
         <InputTags name="tags" label="Tags" target={[TagTarget.Bounty]} />
         <InputMultiFileUpload

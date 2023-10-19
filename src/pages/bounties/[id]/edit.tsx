@@ -3,6 +3,7 @@ import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BountyEditForm } from '~/components/Bounty/BountyEditForm';
+import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { useQueryBounty } from '~/components/Bounty/bounty.utils';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -59,13 +60,13 @@ export default function EditBountyPage({
   if (!loading && !bounty) return <NotFound />;
 
   return (
-    <Container size="sm">
+    <Container size="md">
       {loading ? (
         <Center h="100vh">
           <Loader size="xl" />
         </Center>
       ) : (
-        <BountyEditForm bounty={bounty as BountyGetById} />
+        <BountyUpsertForm bounty={bounty as BountyGetById} />
       )}
     </Container>
   );

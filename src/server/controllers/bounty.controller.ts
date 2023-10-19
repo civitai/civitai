@@ -12,6 +12,7 @@ import {
   getImagesForBounties,
   refundBounty,
   updateBountyById,
+  upsertBounty,
 } from '../services/bounty.service';
 import {
   throwAuthorizationError,
@@ -27,6 +28,7 @@ import {
   GetBountyEntriesInputSchema,
   GetInfiniteBountySchema,
   UpdateBountyInput,
+  UpsertBountyInput,
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId, getBountyEntryEarnedBuzz } from '../services/bountyEntry.service';
@@ -89,7 +91,11 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const images = await getImagesForBounties({ bountyIds: bountIds });
+    const images = await getImagesForBounties({
+      bountyIds: bountIds,
+      userId: user?.id,
+      isModerator: user?.isModerator,
+    });
 
     return {
       nextCursor,
@@ -115,6 +121,7 @@ export const getInfiniteBountiesHandler = async ({
 
 export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
+    const { user } = ctx;
     const bounty = await getBountyById({
       ...input,
       select: {
@@ -133,7 +140,11 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
-    const images = await getBountyImages({ id: bounty.id });
+    const images = await getBountyImages({
+      id: bounty.id,
+      userId: user?.id,
+      isModerator: user?.isModerator,
+    });
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
@@ -297,6 +308,27 @@ export const updateBountyHandler = async ({
     ctx.track.bounty({ type: 'Update', bountyId: updated.id }).catch(handleLogError);
 
     return updated;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const upsertBountyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpsertBountyInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const bounty = await upsertBounty({ ...input, userId: ctx.user.id });
+    if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
+
+    if (input.id) ctx.track.bounty({ type: 'Update', bountyId: input.id }).catch(handleLogError);
+    else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
+
+    return bounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

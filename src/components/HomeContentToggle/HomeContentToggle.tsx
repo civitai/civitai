@@ -8,6 +8,7 @@ const homeOptions = {
   images: '/images',
   posts: '/posts',
   articles: '/articles',
+  bounties: '/bounties',
 } as const;
 type HomeOptions = keyof typeof homeOptions;
 
@@ -40,6 +41,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
     { label: 'Posts', value: 'posts' },
   ];
   if (features.articles) data.push({ label: 'Articles', value: 'articles' });
+  if (features.bounties) data.push({ label: 'Bounties', value: 'bounties' });
 
   return (
     <SegmentedControl

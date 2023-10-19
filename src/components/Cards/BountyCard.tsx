@@ -1,4 +1,13 @@
-import { Badge, BadgeProps, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import {
+  Badge,
+  BadgeProps,
+  Group,
+  HoverCard,
+  Stack,
+  Text,
+  ThemeIcon,
+  UnstyledButton,
+} from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -11,7 +20,14 @@ import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { BountyGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { IconClockHour4, IconHeart, IconMessageCircle2, IconViewfinder } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconClockHour4,
+  IconHeart,
+  IconMessageCircle2,
+  IconSwords,
+  IconViewfinder,
+} from '@tabler/icons-react';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
@@ -35,7 +51,7 @@ export function BountyCard({ data }: Props) {
   const cover = images?.[0];
   const expired = expiresAt < new Date();
 
-  const { engagements } = useBountyEngagement({ bountyId: id });
+  const { engagements } = useBountyEngagement();
 
   const isFavorite = !!engagements?.Favorite?.find((value) => value === id);
   const isTracked = !!engagements?.Track?.find((value) => value === id);
@@ -158,11 +174,31 @@ export function BountyCard({ data }: Props) {
           ) : (
             <UserAvatar user={user} />
           )}
-          <Stack spacing={0}>
+          <Group position="apart" align="start" spacing={8}>
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
-          </Stack>
+            {!cover.scannedAt && (
+              <HoverCard width={300} position="top-end" withinPortal withArrow>
+                <HoverCard.Target>
+                  <ThemeIcon radius="xl" size="md" color="yellow">
+                    <IconAlertCircle size={16} />
+                  </ThemeIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Stack spacing={0}>
+                    <Text color="yellow" weight={590}>
+                      Pending scan
+                    </Text>
+                    <Text size="sm">
+                      This bounty won&apos;t be visible publicly until it has completed the image
+                      scan process
+                    </Text>
+                  </Stack>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            )}
+          </Group>
           <Group spacing={8} position="apart">
             <CurrencyBadge
               currency={Currency.BUZZ}
@@ -224,6 +260,16 @@ export function BountyCard({ data }: Props) {
                   variant="transparent"
                 >
                   <Text size="xs">{abbreviateNumber(stats?.commentCountAllTime ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconSwords size={14} />}
+                  color="dark"
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(stats?.entryCountAllTime ?? 0)}</Text>
                 </IconBadge>
               </Group>
             </Badge>

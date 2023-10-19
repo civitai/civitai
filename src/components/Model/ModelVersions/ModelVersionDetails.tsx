@@ -31,7 +31,6 @@ import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 
@@ -72,9 +71,10 @@ import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
+import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 
 export function ModelVersionDetails({
   model,
@@ -810,20 +810,7 @@ export function ModelVersionDetails({
               {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
             </AlertWithIcon>
           )}
-          {model.poi && (
-            <AlertWithIcon icon={<IconExclamationMark />}>
-              This resource is intended to reproduce the likeness of a real person. Out of respect
-              for this individual and in accordance with our{' '}
-              <Text component={NextLink} variant="link" href="/content/rules/real-people">
-                Content Rules
-              </Text>
-              , only{' '}
-              <Text component={NextLink} variant="link" href="/content/rules/real-people">
-                work-safe images
-              </Text>{' '}
-              and non-commercial use is permitted.
-            </AlertWithIcon>
-          )}
+          {model.poi && <PoiAlert />}
         </Stack>
       </Grid.Col>
 

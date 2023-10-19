@@ -121,6 +121,8 @@ export function InteractiveTipBuzzButton({
   const { createBuzzTransactionMutation } = useBuzzTransaction();
   const { trackAction } = useTrackEvent();
 
+  const selfView = toUserId === currentUser?.id;
+
   const onSendTip = async (tipAmount: number) => {
     createBuzzTransactionMutation.mutate(
       {
@@ -242,18 +244,27 @@ export function InteractiveTipBuzzButton({
   }, []);
 
   if (!features.buzz) return null;
-  if (toUserId === currentUser?.id) return null;
+
+  const mouseHandlerProps = !selfView
+    ? {
+        onMouseDown: startCounter,
+        onMouseUp: stopCounter,
+        onMouseLeave: stopCounter,
+        onTouchStart: startCounter,
+        onTouchEnd: stopCounter,
+      }
+    : {};
 
   return (
     <LoginPopover>
       <UnstyledButton
-        onMouseDown={startCounter}
-        onMouseUp={stopCounter}
-        onMouseLeave={stopCounter}
-        onTouchStart={startCounter}
-        onTouchEnd={stopCounter}
-        style={{ position: 'relative', touchAction: 'none' }}
         {...buttonProps}
+        {...mouseHandlerProps}
+        style={{
+          position: 'relative',
+          touchAction: 'none',
+          cursor: !selfView ? 'pointer' : 'default',
+        }}
         onClick={undefined}
       >
         <Popover

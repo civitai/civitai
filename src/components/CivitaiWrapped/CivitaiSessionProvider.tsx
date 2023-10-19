@@ -1,3 +1,4 @@
+import { Session } from 'next-auth';
 import { SessionUser } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useCallback, useContext, useMemo } from 'react';
@@ -9,7 +10,7 @@ import { trpc } from '~/utils/trpc';
 
 export type CivitaiSessionState = SessionUser & {
   isMember: boolean;
-  refresh: () => void;
+  refresh: () => Promise<Session | null>;
   balance: number | null;
 };
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);

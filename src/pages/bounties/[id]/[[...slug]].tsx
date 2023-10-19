@@ -51,6 +51,7 @@ import {
   IconMessageCircle2,
   IconShare3,
   IconStar,
+  IconSwords,
   IconTournament,
   IconTrophy,
   IconViewfinder,
@@ -124,7 +125,7 @@ export default function BountyDetailsPage({
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
-  const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty?.id });
+  const { toggle, engagements, toggling } = useBountyEngagement();
 
   const discussionSectionRef = useRef<HTMLDivElement>(null);
 
@@ -151,7 +152,7 @@ export default function BountyDetailsPage({
     <Meta
       title={`Civitai | ${bounty?.name}`}
       image={
-        !mainImage || isNsfwImage(mainImage) || bounty?.nsfw
+        !mainImage || isNsfwImage(mainImage) || bounty?.nsfw || !mainImage.scannedAt
           ? undefined
           : getEdgeUrl(mainImage.url, { width: 1200 })
       }
@@ -277,6 +278,9 @@ export default function BountyDetailsPage({
                 >
                   {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
                 </IconBadge>
+                <IconBadge {...defaultBadgeProps} icon={<IconSwords size={18} />} sx={undefined}>
+                  {abbreviateNumber(bounty.stats?.entryCountAllTime ?? 0)}
+                </IconBadge>
               </Group>
             </Group>
             <BountyContextMenu bounty={bounty} position="bottom-end" />
@@ -345,7 +349,7 @@ export default function BountyDetailsPage({
       <Container ref={discussionSectionRef} size="xl" mt={32}>
         <Stack spacing="xl">
           <Group position="apart">
-            <Title order={2} size={28} weight={600}>
+            <Title id="comments" order={2} size={28} weight={600}>
               Discussion
             </Title>
           </Group>
@@ -435,7 +439,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const minUnitAmount = bounty.minBenefactorUnitAmount;
 
-  const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty.id });
+  const { toggle, engagements, toggling } = useBountyEngagement();
 
   const isFavorite = !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !!engagements?.Track?.find((id) => id === bounty.id);
@@ -760,21 +764,23 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               </Group>
             </Accordion.Control>
             <Accordion.Panel>
-              <Stack spacing={2}>
-                {filesCount > 0 ? (
-                  <SimpleGrid cols={1} spacing={2}>
-                    {files.map((file) => (
-                      <AttachmentCard key={file.id} {...file} />
-                    ))}
-                  </SimpleGrid>
-                ) : (
-                  <Center p="xl">
-                    <Text size="md" color="dimmed">
-                      No files were provided for this bounty
-                    </Text>
-                  </Center>
-                )}
-              </Stack>
+              <ScrollArea.Autosize maxHeight={300}>
+                <Stack spacing={2}>
+                  {filesCount > 0 ? (
+                    <SimpleGrid cols={1} spacing={2}>
+                      {files.map((file) => (
+                        <AttachmentCard key={file.id} {...file} />
+                      ))}
+                    </SimpleGrid>
+                  ) : (
+                    <Center p="xl">
+                      <Text size="md" color="dimmed">
+                        No files were provided for this bounty
+                      </Text>
+                    </Center>
+                  )}
+                </Stack>
+              </ScrollArea.Autosize>
             </Accordion.Panel>
           </Accordion.Item>
         )}

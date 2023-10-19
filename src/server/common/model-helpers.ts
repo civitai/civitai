@@ -68,5 +68,5 @@ export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][
 }
 
 export function isNsfwImage(image: Pick<Image, 'nsfw'>) {
-  return image.nsfw !== NsfwLevel.None;
+  return image?.nsfw !== NsfwLevel.None;
 }
