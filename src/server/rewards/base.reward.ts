@@ -106,6 +106,10 @@ export function createBuzzEvent<T>({
             forId: event.forId,
             byUserId: event.byUserId,
           },
+          externalTransactionId:
+            event.type === 'userReferred' || event.type === 'refereeCreated'
+              ? `${event.type}:${event.forId}-${event.ip}`
+              : undefined,
         }))
     );
   };

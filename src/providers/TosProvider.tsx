@@ -23,21 +23,18 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
       !session.user.username ||
       !!session.user.onboardingSteps?.length);
 
-  return (
-    <>
-      {children}
-      {opened && (
-        <Modal
-          opened
-          onClose={() => undefined}
-          closeOnEscape={false}
-          withCloseButton={false}
-          closeOnClickOutside={false}
-          fullScreen
-        >
-          <DynamicOnboardingModal />
-        </Modal>
-      )}
-    </>
+  return opened ? (
+    <Modal
+      opened
+      onClose={() => undefined}
+      closeOnEscape={false}
+      withCloseButton={false}
+      closeOnClickOutside={false}
+      fullScreen
+    >
+      <DynamicOnboardingModal />
+    </Modal>
+  ) : (
+    children
   );
 }
