@@ -415,12 +415,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           placeholder="Price"
                           withAsterisk
                           min={0}
-                          max={100000}
+                          max={10000}
                           sx={{ flexGrow: 1 }}
-                          format="currency"
-                          precision={2}
-                          step={0.01}
-                          icon={<CurrencyIcon currency={Currency.USD} size={18} />}
+                          step={5}
+                          icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                         />
                       )}
                   </>
@@ -451,12 +449,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       placeholder="Price"
                       withAsterisk
                       min={0}
-                      max={100000}
+                      max={10000}
                       sx={{ flexGrow: 1 }}
-                      precision={2}
-                      step={0.01}
-                      icon={<IconCurrencyDollar size={18} />}
-                      format="currency"
+                      step={5}
+                      icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     />
                   </Group>
                 )}
