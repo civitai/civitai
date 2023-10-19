@@ -12,9 +12,17 @@ import {
   Tooltip,
   createStyles,
   Menu,
+  Popover,
 } from '@mantine/core';
 import { CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
-import { IconCirclePlus, IconCloudOff, IconDotsVertical, IconPhoto } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconCirclePlus,
+  IconCloudOff,
+  IconDotsVertical,
+  IconInfoCircle,
+  IconPhoto,
+} from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -51,6 +59,9 @@ import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
+import { formatDate } from '~/utils/date-helpers';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -305,8 +316,46 @@ export function Collection({
   const collectionType = collection?.type;
   // TODO.collections: This is tied to images for now but
   // we will need to add a check for other resources later
+  const metadata = collection?.metadata ?? {};
   const canAddContent =
-    collectionType === CollectionType.Image && (permissions?.write || permissions?.writeReview);
+    collectionType === CollectionType.Image &&
+    (permissions?.write || permissions?.writeReview) &&
+    (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
+    (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
+
+  const submissionPeriod =
+    metadata.submissionStartDate || metadata.submissionEndDate || metadata.maxItemsPerUser ? (
+      <Popover
+        zIndex={200}
+        position="bottom-end"
+        shadow="md"
+        radius={12}
+        onClose={() => setOpened(false)}
+        middlewares={{ flip: true, shift: true }}
+      >
+        <Popover.Target>
+          <ActionIcon variant="transparent" size="lg">
+            <IconInfoCircle />
+          </ActionIcon>
+        </Popover.Target>
+        <Popover.Dropdown maw={468} p="md" w="100%">
+          <Stack spacing="xs">
+            {metadata.submissionStartDate && (
+              <Text size="sm">
+                Submission start date: {formatDate(metadata.submissionStartDate)}
+              </Text>
+            )}
+            {metadata.submissionEndDate && (
+              <Text size="sm">Submission end date: {formatDate(metadata.submissionEndDate)}</Text>
+            )}
+
+            {metadata.maxItemsPerUser && (
+              <Text size="sm">Max items per user: {metadata.maxItemsPerUser}</Text>
+            )}
+          </Stack>
+        </Popover.Dropdown>
+      </Popover>
+    ) : null;
 
   return (
     <>
@@ -350,17 +399,20 @@ export function Collection({
               )}
               <Stack spacing={8} sx={{ flex: 1 }}>
                 <Stack spacing={0}>
-                  <Title
-                    order={1}
-                    lineClamp={1}
-                    sx={(theme) => ({
-                      [theme.fn.smallerThan('sm')]: {
-                        fontSize: '28px',
-                      },
-                    })}
-                  >
-                    {collection?.name ?? 'Loading...'}
-                  </Title>
+                  <Group>
+                    <Title
+                      order={1}
+                      lineClamp={1}
+                      sx={(theme) => ({
+                        [theme.fn.smallerThan('sm')]: {
+                          fontSize: '28px',
+                        },
+                      })}
+                    >
+                      {collection?.name ?? 'Loading...'}
+                    </Title>
+                    {submissionPeriod}
+                  </Group>
                   {collection?.description && (
                     <Text size="xs" color="dimmed">
                       <ReactMarkdown
@@ -393,7 +445,7 @@ export function Collection({
                 <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
                   <CollectionFollowAction collection={collection} permissions={permissions} />
                   {canAddContent && (
-                    <Tooltip label="Add from your library" position="bottom" withArrow>
+                    <Tooltip label="Add from your library." position="bottom" withArrow>
                       <ActionIcon
                         color="blue"
                         variant="subtle"
@@ -416,17 +468,38 @@ export function Collection({
                 </Group>
               )}
             </Group>
-            {collection && collectionType === CollectionType.Model && (
-              <ModelCollection collection={collection} />
-            )}
-            {collection && collectionType === CollectionType.Image && (
-              <ImageCollection collection={collection} permissions={permissions} />
-            )}
-            {collection && collectionType === CollectionType.Post && (
-              <PostCollection collection={collection} />
-            )}
-            {collection && collectionType === CollectionType.Article && (
-              <ArticleCollection collection={collection} />
+            {metadata.submissionStartDate && new Date(metadata.submissionStartDate) > new Date() ? (
+              <AlertWithIcon icon={<IconAlertCircle />}>
+                <Text>
+                  This collection is not accepting entries just yet. Please come back after{' '}
+                  {formatDate(metadata.submissionStartDate)}
+                </Text>
+              </AlertWithIcon>
+            ) : (
+              <>
+                {isCollectionSubsmissionPeriod(collection) && (
+                  <AlertWithIcon icon={<IconAlertCircle />}>
+                    <Text>
+                      This collection is accepting entries until{' '}
+                      {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
+                      will only see your entries, both reviewed and unreviewed. Once the submission
+                      period ends, you will see all entries.
+                    </Text>
+                  </AlertWithIcon>
+                )}
+                {collection && collectionType === CollectionType.Model && (
+                  <ModelCollection collection={collection} />
+                )}
+                {collection && collectionType === CollectionType.Image && (
+                  <ImageCollection collection={collection} permissions={permissions} />
+                )}
+                {collection && collectionType === CollectionType.Post && (
+                  <PostCollection collection={collection} />
+                )}
+                {collection && collectionType === CollectionType.Article && (
+                  <ArticleCollection collection={collection} />
+                )}
+              </>
             )}
             {!collectionType && !isLoading && (
               <Center py="xl">

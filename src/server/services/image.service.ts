@@ -595,8 +595,8 @@ export const getAllImages = async ({
 
   // Filter to a specific collection and relevant status:
   if (collectionId) {
-    const displayReviewItems = userId
-      ? ` OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
+    const displayOwnedItems = userId
+      ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
     const useRandomCursor = cursor && sort === ImageSort.Random;
 
@@ -617,10 +617,17 @@ export const getAllImages = async ({
         ct AS (
           SELECT ci."imageId", ci."randomId"
           FROM "CollectionItem" ci
+          JOIN "Collection" c ON c.id = ci."collectionId" 
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
-            AND (ci."status" = 'ACCEPTED'${Prisma.raw(displayReviewItems)})
-            ${Prisma.raw(sort === ImageSort.Random ? `AND ci."randomId" IS NOT NULL` : '')}
+            AND (
+              (
+                ci."status" = 'ACCEPTED'
+                AND ((c.metadata::json->'submissionEndDate') IS NULL OR (c.metadata::json->>'submissionEndDate')::TIMESTAMP WITH TIME ZONE <= NOW())
+                ${Prisma.raw(sort === ImageSort.Random ? `AND ci."randomId" IS NOT NULL` : '')}
+              )
+              ${Prisma.raw(displayOwnedItems)}
+            )
             ${Prisma.raw(
               useRandomCursor ? `AND ci."randomId" <= (SELECT "randomId" FROM ctcursor)` : ''
             )}

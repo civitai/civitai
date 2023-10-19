@@ -68,6 +68,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { isModerator } from '~/server/routers/base.router';
+import { createNotification } from '~/server/services/notification.service';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -354,24 +355,18 @@ export const saveItemInCollections = async ({
   collectionIds = uniq(collectionIds);
   removeFromCollectionIds = uniq(removeFromCollectionIds);
 
+  const collections = await dbRead.collection.findMany({
+    where: {
+      id: { in: collectionIds },
+    },
+  });
+
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
     const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
     // check if all collections match the Model type
-    const collections = await dbRead.collection.findMany({
-      where: {
-        id: { in: collectionIds },
-        OR: [
-          {
-            type: null,
-          },
-          {
-            type,
-          },
-        ],
-      },
-    });
+    const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
-    if (collections.length !== collectionIds.length) {
+    if (filteredCollections.length !== collectionIds.length) {
       throw throwBadRequestError('Collection type mismatch');
     }
   }
@@ -379,10 +374,24 @@ export const saveItemInCollections = async ({
   const data = (
     await Promise.all(
       collectionIds.map(async (collectionId) => {
+        const collection = collections.find((c) => c.id === collectionId);
+
+        if (!collection) {
+          return null;
+        }
+
+        const metadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
         const permission = await getUserCollectionPermissionsById({
           userId,
           isModerator,
           id: collectionId,
+        });
+
+        await validateContestCollectionEntry({
+          metadata,
+          collectionId,
+          userId,
+          [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
         });
 
         if (!permission.isContributor && !permission.isOwner) {
@@ -1091,8 +1100,9 @@ export const updateCollectionItemsStatus = async ({
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, type: true },
+    select: { id: true, type: true, mode: true, name: true },
   });
+
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
   const { manage, isOwner } = await getUserCollectionPermissionsById({
@@ -1100,6 +1110,7 @@ export const updateCollectionItemsStatus = async ({
     userId,
     isModerator,
   });
+
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
@@ -1108,8 +1119,148 @@ export const updateCollectionItemsStatus = async ({
     data: { status },
   });
 
+  if (collection.mode === CollectionMode.Contest) {
+    const updatedItems = await dbWrite.collectionItem.findMany({
+      where: { id: { in: collectionItemIds }, collectionId },
+    });
+
+    await Promise.all(
+      updatedItems.map(async (item) => {
+        if (!item.addedById) {
+          return;
+        }
+
+        await createNotification({
+          type: 'contest-collection-item-status-change',
+          userId: item.addedById,
+          details: {
+            status,
+            collectionId: collection.id,
+            collectionName: collection.name,
+            imageId: item.imageId,
+            articleId: item.articleId,
+            modelId: item.modelId,
+            postId: item.postId,
+          },
+        });
+      })
+    );
+  }
+
   // Send back the collection to update/invalidate state accordingly
   return collection;
+};
+
+const validateContestCollectionEntry = async ({
+  collectionId,
+  userId,
+  metadata,
+  articleIds = [],
+  modelIds = [],
+  imageIds = [],
+  postIds = [],
+}: {
+  collectionId: number;
+  userId: number;
+  metadata?: CollectionMetadataSchema;
+  articleIds?: number[];
+  modelIds?: number[];
+  imageIds?: number[];
+  postIds?: number[];
+}) => {
+  if (!metadata) {
+    return;
+  }
+
+  const savedItemsCount =
+    (articleIds?.length ?? 0) +
+    (modelIds?.length ?? 0) +
+    (imageIds?.length ?? 0) +
+    (postIds?.length ?? 0);
+
+  if (metadata.maxItemsPerUser) {
+    // check how many items user has created:
+    const itemCount = await dbRead.collectionItem.count({
+      where: {
+        collectionId,
+        addedById: userId,
+      },
+    });
+
+    if (itemCount + savedItemsCount > metadata.maxItemsPerUser) {
+      throw throwBadRequestError(`You have reached the maximum number of items in collection`);
+    }
+  }
+
+  if (
+    (metadata.submissionStartDate && new Date(metadata.submissionStartDate) > new Date()) ||
+    (metadata.submissionEndDate && new Date(metadata.submissionEndDate) < new Date())
+  ) {
+    throw throwBadRequestError('Collection is not accepting submissions at this time');
+  }
+
+  if (metadata.submissionStartDate) {
+    // confirm items were created after the start date
+    if (articleIds.length > 0) {
+      const articles = await dbRead.article.findMany({
+        where: {
+          id: { in: articleIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (articles.length > 0) {
+        throw throwBadRequestError(
+          `Some articles were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+
+    if (modelIds.length > 0) {
+      const models = await dbRead.model.findMany({
+        where: {
+          id: { in: modelIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (models.length > 0) {
+        throw throwBadRequestError(
+          `Some models were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+
+    if (imageIds.length > 0) {
+      const images = await dbRead.image.findMany({
+        where: {
+          id: { in: imageIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (images.length > 0) {
+        throw throwBadRequestError(
+          `Some images were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+
+    if (postIds.length > 0) {
+      const posts = await dbRead.post.findMany({
+        where: {
+          id: { in: postIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (posts.length > 0) {
+        throw throwBadRequestError(
+          `Some posts were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+  }
 };
 
 export const bulkSaveItems = async ({
@@ -1121,9 +1272,22 @@ export const bulkSaveItems = async ({
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { type: true },
+    select: { type: true, metadata: true, name: true },
   });
+
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
+
+  await validateContestCollectionEntry({
+    metadata,
+    collectionId,
+    userId,
+    articleIds,
+    modelIds,
+    imageIds,
+    postIds,
+  });
 
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (
@@ -1132,7 +1296,14 @@ export const bulkSaveItems = async ({
   ) {
     const existingArticleIds = (
       await dbRead.collectionItem.findMany({
-        select: { articleId: true },
+        select: {
+          articleId: true,
+          article: {
+            select: {
+              createdAt: true,
+            },
+          },
+        },
         where: { articleId: { in: articleIds }, collectionId },
       })
     ).map((item) => item.articleId);
@@ -1148,6 +1319,7 @@ export const bulkSaveItems = async ({
           : CollectionItemStatus.ACCEPTED,
       }));
   }
+
   if (
     modelIds.length > 0 &&
     (collection.type === CollectionType.Model || collection.type === null)
