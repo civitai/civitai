@@ -344,6 +344,20 @@ export const getModelsWithImagesAndModelVersions = async ({
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
+  let modelVersionWhere: Prisma.ModelVersionWhereInput | undefined = {};
+
+  if (!user?.isModerator || !input.status?.length) {
+    modelVersionWhere.status = ModelStatus.Published;
+  }
+
+  if (input.baseModels) {
+    modelVersionWhere.baseModel = { in: input.baseModels };
+  }
+
+  if (Object.keys(modelVersionWhere).length === 0) {
+    modelVersionWhere = undefined;
+  }
+
   const { items, isPrivate } = await getModels({
     input: { ...input, take },
     user,
@@ -381,10 +395,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           createdAt: true,
           generationCoverage: { select: { covered: true } },
         },
-        where:
-          !user?.isModerator || !input.status?.length
-            ? { status: ModelStatus.Published }
-            : undefined,
+        where: modelVersionWhere,
       },
       tagsOnModels: { select: { tagId: true } },
       user: { select: simpleUserSelect },
