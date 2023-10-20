@@ -58,6 +58,15 @@ const schema = z.object({
   jobHasCompleted: z.boolean(),
 });
 
+// Initialized, Claimed, Rejected, LateRejected, ClaimExpired, Updated, Failed, Succeeded, Expired, Deleted
+const mapTrainingStatus = {
+  Updated: TrainingStatus.Processing,
+  Succeeded: TrainingStatus.InReview,
+  Failed: TrainingStatus.Failed,
+  Rejected: TrainingStatus.Failed,
+  LateRejected: TrainingStatus.Failed,
+} as const;
+
 // breaking change
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') {
@@ -71,29 +80,20 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
-  // Initialized, Claimed, Rejected, LateRejected, ClaimExpired, Updated, Failed, Succeeded, Expired, Deleted
-  const status = {
-    Succeeded: TrainingStatus.InReview,
-    Updated: TrainingStatus.Processing,
-    Failed: TrainingStatus.Failed,
-    Rejected: TrainingStatus.Failed,
-    LateRejected: TrainingStatus.Failed,
-    Deleted: TrainingStatus.Failed,
-    Expired: TrainingStatus.Failed,
-  }[data.type];
-
   switch (data.type) {
+    case 'Updated':
     case 'Succeeded':
     case 'Failed':
     case 'Rejected':
     case 'LateRejected':
-    case 'Updated':
       if (!data.context) {
         return res.status(400).json({ ok: false, error: 'context is undefined' });
       }
 
+      const status = mapTrainingStatus[data.type];
+
       try {
-        await updateRecords({ ...data.context, jobId: data.jobId }, status as TrainingStatus);
+        await updateRecords({ ...data.context, jobId: data.jobId }, status);
       } catch (e: unknown) {
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }

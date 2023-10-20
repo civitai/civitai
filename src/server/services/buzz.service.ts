@@ -362,6 +362,8 @@ export async function refundTransaction(
     body,
   });
 
+  // TODO.buzz make this reusable
+  //  also, i'm not sure this error handling is working, I saw a strange HTML error with this
   if (!response.ok) {
     const cause: { reason: string } = JSON.parse(await response.text());
 
