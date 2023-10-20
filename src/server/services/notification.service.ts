@@ -74,7 +74,7 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
     where: { userId: data.userId, type: data.type },
   });
   // If the user has this notification type disabled, don't create a notification.
-  if (!userNotificationSettings?.disabledAt) return;
+  if (!!userNotificationSettings?.disabledAt) return;
 
   return dbWrite.notification.create({ data });
 };
