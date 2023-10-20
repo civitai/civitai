@@ -93,6 +93,8 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -811,13 +813,32 @@ const useStyles = createStyles((theme) => ({
 
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
-  const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+  const currentUser = useCurrentUser();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+  } = useHiddenPreferencesContext();
+
+  const { data: entries = [], isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
   const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
     trpc.bounty.getEntries.useQuery({
       id: bounty.id,
       owned: true,
     });
-  const currentUser = useCurrentUser();
+
+  const filteredEntries = useMemo(
+    () =>
+      applyUserPreferencesBounties<(typeof entries)[number]>({
+        items: entries,
+        hiddenImages,
+        hiddenTags,
+        hiddenUsers,
+        currentUserId: currentUser?.id,
+      }),
+    [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers]
+  );
+
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
     ? null
@@ -868,7 +889,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
     );
   }
 
-  if (!entries?.length) {
+  if (!filteredEntries?.length) {
     return (
       <Wrapper>
         <Group spacing="xs">
@@ -902,7 +923,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         ]}
         style={{ width: '100%' }}
       >
-        {entries.map((entry) => (
+        {filteredEntries.map((entry) => (
           <BountyEntryCard
             key={entry.id}
             data={entry}
