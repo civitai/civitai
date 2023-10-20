@@ -57,6 +57,8 @@ export function ModelsInfinite({
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
+  console.log(models, filters);
+
   return (
     <>
       {isLoading ? (
@@ -69,7 +71,12 @@ export function ModelsInfinite({
           {features.modelCardV2 ? (
             <MasonryGrid
               data={models}
-              render={ModelCard}
+              render={(props) => (
+                <ModelCard
+                  {...props}
+                  useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
+                />
+              )}
               itemId={(x) => x.id}
               empty={<NoContent />}
             />
@@ -83,7 +90,12 @@ export function ModelsInfinite({
               }}
               adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
               maxItemHeight={600}
-              render={AmbientModelCard}
+              render={(props) => (
+                <AmbientModelCard
+                  {...props}
+                  useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
+                />
+              )}
               itemId={(data) => data.id}
             />
           )}

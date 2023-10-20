@@ -67,7 +67,7 @@ const querySchema = z.object({
   hidden: z.coerce.boolean().optional(),
 });
 
-export function ModelCard({ data }: Props) {
+export function ModelCard({ data, useModelVersionRedirect }: Props) {
   const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
@@ -188,7 +188,9 @@ export function ModelCard({ data }: Props) {
   return (
     <FeedCard
       className={!data.image ? classes.noImage : undefined}
-      href={`/models/${data.id}/${slugit(data.name)}`}
+      href={`/models/${data.id}/${
+        useModelVersionRedirect ? `?modelVersionId=${data.version.id}` : slugit(data.name)
+      }`}
       // sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
       <InView rootMargin="600px">
@@ -453,4 +455,4 @@ export function ModelCard({ data }: Props) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number] };
+type Props = { data: UseQueryModelReturn[number]; useModelVersionRedirect?: boolean };
