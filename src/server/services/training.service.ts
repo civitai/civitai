@@ -179,7 +179,7 @@ export const createTrainingRequest = async ({
       `You don't have enough Buzz to perform this action (required: ${price})`
     );
   }
-  await createBuzzTransaction({
+  const { transactionId } = await createBuzzTransaction({
     fromAccountId: userId,
     toAccountId: 0,
     amount: price,
@@ -191,8 +191,8 @@ export const createTrainingRequest = async ({
   const generationRequest = {
     $type: 'imageResourceTraining',
     // priority: 10,
-    callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/image-resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId }, // TODO transaction id
+    callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/resource-training?token=${env.WEBHOOK_TOKEN}`,
+    properties: { userId, transactionId },
     model: modelMap[baseModel!],
     trainingData: trainingUrl,
     maxRetryAttempt: constants.maxTrainingRetries,
