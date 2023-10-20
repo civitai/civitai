@@ -36,7 +36,9 @@ import {
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { chunk, uniqBy } from 'lodash-es';
-import { modelsSearchIndex } from '~/server/search-index';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { calculateGenerationBill } from '~/server/common/generation';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -325,6 +327,29 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
+  const totalCost = calculateGenerationBill({
+    baseModel: params.baseModel,
+    quantity: params.quantity,
+    steps: params.steps,
+    aspectRatio: params.aspectRatio,
+  });
+
+  let buzzTransaction;
+
+  if (totalCost > 0) {
+    buzzTransaction = await createBuzzTransaction({
+      fromAccountId: userId,
+      type: TransactionType.Generation,
+      amount: totalCost,
+      details: {
+        resources,
+        params,
+      },
+      toAccountId: 0,
+      description: 'Image generation',
+    });
+  }
+
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -343,6 +368,10 @@ export const createGenerationRequest = async ({
   if (!response.ok) {
     const message = await response.json();
     throw throwBadRequestError(message);
+    // TODO.luis: Refund buzz. Once brett stuff is merged.
+    if (buzzTransaction) {
+      //refund
+    }
   }
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);

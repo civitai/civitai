@@ -1,5 +1,5 @@
-import { generation, GenerationBaseModel, getGenerationConfig } from '~/server/common/constants';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
+import { generation, GenerationBaseModel, getGenerationConfig } from '~/server/common/constants';
 import { isNumber } from '~/utils/type-guards';
 
 export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {

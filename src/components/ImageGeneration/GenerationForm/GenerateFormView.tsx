@@ -51,8 +51,6 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { calculateGenerationBill } from '../utils/generation.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 export function GenerateFormView({
   form,

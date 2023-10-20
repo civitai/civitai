@@ -4,6 +4,8 @@ import {
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   GetUserBuzzTransactionsSchema,
+  TransactionType,
+  UserBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
 import {
   completeStripeBuzzTransaction,
@@ -39,24 +41,6 @@ export async function getUserTransactionsHandler({
   }
 }
 
-export function createTransactionHandler({
-  input,
-  ctx,
-}: {
-  input: CreateBuzzTransactionInput;
-  ctx: DeepNonNullable<Context>;
-}) {
-  try {
-    const { id: fromAccountId } = ctx.user;
-    if (fromAccountId === input.toAccountId)
-      throw throwBadRequestError('You cannot send buzz to the same account');
-
-    return createBuzzTransaction({ ...input, fromAccountId: ctx.user.id });
-  } catch (error) {
-    throw getTRPCErrorFromUnknown(error);
-  }
-}
-
 export function completeStripeBuzzPurchaseHandler({
   input,
   ctx,
@@ -68,6 +52,28 @@ export function completeStripeBuzzPurchaseHandler({
     const { id } = ctx.user;
 
     return completeStripeBuzzTransaction({ ...input, userId: id });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function createBuzzTipTransactionHandler({
+  input,
+  ctx,
+}: {
+  input: UserBuzzTransactionInputSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: fromAccountId } = ctx.user;
+    if (fromAccountId === input.toAccountId)
+      throw throwBadRequestError('You cannot send buzz to the same account');
+
+    return createBuzzTransaction({
+      ...input,
+      fromAccountId: ctx.user.id,
+      type: TransactionType.Tip,
+    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

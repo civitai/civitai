@@ -118,16 +118,15 @@ export function InteractiveTipBuzzButton({
     defaultValue: false,
   });
 
-  const { createBuzzTransactionMutation } = useBuzzTransaction();
+  const { tipUserMutation } = useBuzzTransaction();
   const { trackAction } = useTrackEvent();
 
   const selfView = toUserId === currentUser?.id;
 
   const onSendTip = async (tipAmount: number) => {
-    createBuzzTransactionMutation.mutate(
+    tipUserMutation.mutate(
       {
         toAccountId: toUserId,
-        type: TransactionType.Tip,
         amount: Number(tipAmount),
         entityId,
         entityType,
