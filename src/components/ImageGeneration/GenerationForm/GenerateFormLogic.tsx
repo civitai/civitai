@@ -14,10 +14,10 @@ import { uniqBy } from 'lodash-es';
 import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
-import { calculateGenerationBill } from '~/components/ImageGeneration/utils/generation.utils';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { calculateGenerationBill } from '~/server/common/generation';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -32,7 +32,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     shouldUnregister: false,
   });
 
-  const { conditionalPerformTransaction, createBuzzTransactionMutation } = useBuzzTransaction({
+  const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required buzz: ${numberWithCommas(
         requiredBalance
@@ -122,16 +122,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         resources: _resources.filter((x) => x.covered !== false),
         params,
       });
-
-      if (totalCost > 0) {
-        await createBuzzTransactionMutation.mutateAsync({
-          type: TransactionType.Generation,
-          amount: totalCost,
-          details: data,
-          toAccountId: 0,
-          description: 'Image generation',
-        });
-      }
 
       onSuccess?.();
       generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'

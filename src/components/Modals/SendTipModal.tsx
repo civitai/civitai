@@ -166,7 +166,7 @@ const { openModal, Modal } = createContextModal<{
       performTransactionOnPurchase: true,
     });
 
-    const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
+    const tipUserMutation = trpc.buzz.tipUser.useMutation({
       async onSuccess() {
         setLoading(false);
         handleClose();
@@ -190,9 +190,8 @@ const { openModal, Modal } = createContextModal<{
           details: { toUserId, entityType, entityId, amount: amountToSend },
         }).catch(() => undefined);
 
-        return createBuzzTransactionMutation.mutate({
+        return tipUserMutation.mutate({
           toAccountId: toUserId,
-          type: TransactionType.Tip,
           amount: amountToSend,
           description,
           entityId,
@@ -203,7 +202,7 @@ const { openModal, Modal } = createContextModal<{
       conditionalPerformTransaction(amountToSend, performTransaction);
     };
 
-    const sending = loading || createBuzzTransactionMutation.isLoading;
+    const sending = loading || tipUserMutation.isLoading;
     const [amount, description, customAmount] = form.watch([
       'amount',
       'description',

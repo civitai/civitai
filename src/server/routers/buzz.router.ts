@@ -1,13 +1,13 @@
 import {
   completeStripeBuzzPurchaseHandler,
-  createTransactionHandler,
+  createBuzzTipTransactionHandler,
   getUserAccountHandler,
   getUserTransactionsHandler,
 } from '~/server/controllers/buzz.controller';
 import {
   completeStripeBuzzPurchaseTransactionInput,
-  createBuzzTransactionInput,
   getUserBuzzTransactionsSchema,
+  userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
@@ -18,10 +18,10 @@ export const buzzRouter = router({
     .input(getUserBuzzTransactionsSchema)
     .use(isFlagProtected('buzz'))
     .query(getUserTransactionsHandler),
-  createTransaction: protectedProcedure
-    .input(createBuzzTransactionInput)
+  tipUser: protectedProcedure
+    .input(userBuzzTransactionInputSchema)
     .use(isFlagProtected('buzz'))
-    .mutation(createTransactionHandler),
+    .mutation(createBuzzTipTransactionHandler),
   completeStripeBuzzPurchase: protectedProcedure
     .input(completeStripeBuzzPurchaseTransactionInput)
     .use(isFlagProtected('buzz'))
