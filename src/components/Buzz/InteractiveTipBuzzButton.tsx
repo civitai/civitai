@@ -217,7 +217,7 @@ export function InteractiveTipBuzzButton({
     setShowCountDown(false);
   };
 
-  const clickStart = (e: Event) => {
+  const clickStart = (e: any) => {
     if (
       status != 'confirming' &&
       (interval.active || startTimerTimeoutRef.current || confirmTimeoutRef.current || !currentUser)
@@ -237,7 +237,7 @@ export function InteractiveTipBuzzButton({
     }, 150);
   };
 
-  const clickEnd = (e: Event) => {
+  const clickEnd = (e: any) => {
     if (startTimerTimeoutRef.current !== null) {
       // Was click
       setBuzzCounter((x) => x + CLICK_AMOUNT);
