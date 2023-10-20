@@ -1685,11 +1685,13 @@ export const getImagesByEntity = async ({
   ids,
   type,
   imagesPerId = 4,
+  include,
 }: {
   id?: number;
   ids?: number[];
   type: ImageEntityType;
   imagesPerId?: number;
+  include?: ['tags'];
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
@@ -1735,7 +1737,38 @@ export const getImagesByEntity = async ({
     FROM targets t
     JOIN "Image" i ON i.id = t.id`;
 
-  return images;
+  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
+  if (include && include.includes('tags')) {
+    const imageIds = images.map((i) => i.id);
+    const rawTags = await dbRead.imageTag.findMany({
+      where: { imageId: { in: imageIds } },
+      select: {
+        imageId: true,
+        tagId: true,
+        tagName: true,
+        tagType: true,
+        tagNsfw: true,
+        score: true,
+        automated: true,
+        upVotes: true,
+        downVotes: true,
+        needsReview: true,
+      },
+    });
+
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfw: tagNsfw,
+      name: tagName,
+    }));
+  }
+
+  return images.map((i) => ({
+    ...i,
+    tags: tagsVar?.filter((x) => x.imageId === i.id),
+  }));
 };
 
 export const createEntityImages = async ({

@@ -114,6 +114,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                         type={image.type}
                         width={IMAGE_CARD_WIDTH}
                         className={classes.image}
+                        wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
                       />
                     ) : (
                       <MediaHash

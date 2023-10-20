@@ -25,6 +25,7 @@ export interface ImageProps {
   needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
+  tags?: Array<{ id: number }>;
 }
 
 type ImageViewerState = {

@@ -1,21 +1,16 @@
 import { Carousel } from '@mantine/carousel';
 import {
-  ActionIcon,
   AspectRatio,
   Box,
   Button,
   Center,
   createStyles,
   Group,
-  Indicator,
-  Loader,
   Paper,
   Stack,
   Text,
   ThemeIcon,
-  UnstyledButton,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
@@ -23,10 +18,11 @@ import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuar
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NsfwLevel } from '@prisma/client';
-import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import Link from 'next/link';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useMemo } from 'react';
+import { applyUserPreferencesImages } from '../Search/search.utils';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -107,8 +103,28 @@ export function ImageCarousel({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: loadingHiddenPreferences,
+  } = useHiddenPreferencesContext();
 
-  if (!images.length) {
+  const filteredImages = useMemo(
+    () =>
+      !loadingHiddenPreferences
+        ? applyUserPreferencesImages<(typeof images)[number]>({
+            items: images,
+            hiddenImages,
+            hiddenTags,
+            hiddenUsers,
+            currentUserId: currentUser?.id,
+          })
+        : [],
+    [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images, loadingHiddenPreferences]
+  );
+
+  if (!filteredImages.length) {
     return (
       <Paper
         p="sm"
@@ -153,14 +169,14 @@ export function ImageCarousel({
       slideSize="50%"
       breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
       slideGap="xl"
-      align={images.length > 2 ? 'start' : 'center'}
+      align={filteredImages.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
-      withControls={images.length > 2 ? true : false}
+      withControls={filteredImages.length > 2 ? true : false}
       controlSize={mobile ? 32 : 56}
       loop
     >
       <ImageGuard
-        images={images}
+        images={filteredImages}
         nsfw={nsfw}
         connect={{ entityId, entityType }}
         render={(image) => {

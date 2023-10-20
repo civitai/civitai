@@ -97,14 +97,6 @@ const steps: [number, number][] = [
   [0, 1],
 ];
 
-/*
-1. If user clicks, show confirmation with click amount
-
-1. If user holds, wait 150ms, then start incrementing counter
-2. If user releases, stop incrementing counter and show confirmation
-3. If user clicks on tip amount, stop confirmation timer and switch to editing tip amount
-*/
-
 export function InteractiveTipBuzzButton({
   toUserId,
   entityId,
@@ -136,7 +128,7 @@ export function InteractiveTipBuzzButton({
     defaultValue: false,
   });
 
-  const { createBuzzTransactionMutation } = useBuzzTransaction();
+  const { tipUserMutation } = useBuzzTransaction();
   const { trackAction } = useTrackEvent();
 
   const selfView = toUserId === currentUser?.id;
@@ -167,10 +159,9 @@ export function InteractiveTipBuzzButton({
     }
 
     const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
-    createBuzzTransactionMutation.mutate(
+    tipUserMutation.mutate(
       {
         toAccountId: toUserId,
-        type: TransactionType.Tip,
         amount,
         entityId,
         entityType,
@@ -354,7 +345,7 @@ export function InteractiveTipBuzzButton({
               variant="transparent"
               color={status === 'confirmed' ? 'green' : 'yellow.5'}
               onClick={sendTip}
-              loading={createBuzzTransactionMutation.isLoading}
+              loading={tipUserMutation.isLoading}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
             </ActionIcon>

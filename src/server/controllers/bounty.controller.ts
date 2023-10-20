@@ -199,6 +199,7 @@ export const getBountyEntriesHandler = async ({
       ids: entries.map((entry) => entry.id),
       type: 'BountyEntry',
       imagesPerId: 4,
+      include: ['tags'],
     });
 
     const files = await getFilesByEntity({

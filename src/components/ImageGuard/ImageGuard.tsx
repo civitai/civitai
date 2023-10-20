@@ -296,7 +296,7 @@ ImageGuard.Report = function ReportImage({
   const handleClick = (e: React.SyntheticEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+    openContext('report', { entityType: ReportEntity.Image, entityId: image.id }, { zIndex: 1000 });
   };
 
   const handleEditClick = (e: React.SyntheticEvent) => {

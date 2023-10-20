@@ -81,16 +81,14 @@ export const useBuzzTransaction = (opts?: {
 
   const { trackAction } = useTrackEvent();
 
-  // TODO.buzz extend this to use elsewhere
-  const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
+  const tipUserMutation = trpc.buzz.tipUser.useMutation({
     onError(error) {
       showErrorNotification({
-        title: 'Error performing transaction',
+        title: 'Error tipping user',
         error: new Error(error.message),
       });
     },
   });
-
   const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
@@ -123,6 +121,6 @@ export const useBuzzTransaction = (opts?: {
   return {
     hasRequiredAmount,
     conditionalPerformTransaction,
-    createBuzzTransactionMutation,
+    tipUserMutation,
   };
 };

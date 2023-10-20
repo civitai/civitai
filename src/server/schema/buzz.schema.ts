@@ -62,34 +62,34 @@ export const getUserBuzzTransactionsResponse = z.object({
     .array(),
 });
 
-export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
-export const createBuzzTransactionInput = z
-  .object({
-    // To user id (0 is central bank)
-    toAccountId: z.number().optional(),
-    type: z.nativeEnum(TransactionType),
-    amount: z.number().min(1),
-    description: z.string().trim().nonempty().nullish(),
-    details: z.object({}).passthrough().nullish(),
-    entityId: z.number().optional(),
-    entityType: z.string().optional(),
-    externalTransactionId: z.string().optional(),
-  })
-  .refine(
-    (data) => {
-      if (
-        data.type === TransactionType.Tip &&
-        ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
-      )
-        return false;
+export const buzzTransactionSchema = z.object({
+  // To user id (0 is central bank)
+  toAccountId: z.number().optional(),
+  type: z.nativeEnum(TransactionType),
+  amount: z.number().min(1),
+  description: z.string().trim().nonempty().nullish(),
+  details: z.object({}).passthrough().nullish(),
+  entityId: z.number().optional(),
+  entityType: z.string().optional(),
+  externalTransactionId: z.string().optional(),
+});
 
-      return true;
-    },
-    {
-      message: 'Please provide both the entityId and entityType',
-      params: ['entityId', 'entityType'],
-    }
-  );
+export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
+export const createBuzzTransactionInput = buzzTransactionSchema.refine(
+  (data) => {
+    if (
+      data.type === TransactionType.Tip &&
+      ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
+    )
+      return false;
+
+    return true;
+  },
+  {
+    message: 'Please provide both the entityId and entityType',
+    params: ['entityId', 'entityType'],
+  }
+);
 
 export type CompleteStripeBuzzPurchaseTransactionInput = z.infer<
   typeof completeStripeBuzzPurchaseTransactionInput
@@ -99,4 +99,10 @@ export const completeStripeBuzzPurchaseTransactionInput = z.object({
   amount: z.number().min(1),
   stripePaymentIntentId: z.string(),
   details: z.object({}).passthrough().nullish(),
+});
+
+export type UserBuzzTransactionInputSchema = z.infer<typeof userBuzzTransactionInputSchema>;
+
+export const userBuzzTransactionInputSchema = buzzTransactionSchema.omit({
+  type: true,
 });
