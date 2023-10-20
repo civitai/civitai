@@ -839,6 +839,8 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
     [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers]
   );
 
+  const hiddenItems = entries.length - filteredEntries.length;
+
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
     ? null
@@ -872,6 +874,11 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
             </Tooltip>
+            {hiddenItems > 0 && (
+              <Text color="dimmed">
+                {hiddenItems.toLocaleString()} entries have been hidden due to your settings.
+              </Text>
+            )}
           </Group>
           {children}
         </Stack>
