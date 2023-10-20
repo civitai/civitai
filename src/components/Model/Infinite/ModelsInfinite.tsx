@@ -57,8 +57,6 @@ export function ModelsInfinite({
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
-  console.log(models, filters);
-
   return (
     <>
       {isLoading ? (
