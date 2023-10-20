@@ -206,6 +206,7 @@ export const constants = {
     cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
     referralBonusAmount: 500,
     maxTipAmount: 100000000,
+    minTipAmount: 50,
   },
 } as const;
 

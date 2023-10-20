@@ -111,7 +111,12 @@ const schema = z
   .object({
     // Using string here since chip component only works with string values
     amount: z.string(),
-    customAmount: z.number().positive().min(100).max(constants.buzz.maxTipAmount).optional(),
+    customAmount: z
+      .number()
+      .positive()
+      .min(constants.buzz.minTipAmount)
+      .max(constants.buzz.maxTipAmount)
+      .optional(),
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
@@ -262,7 +267,7 @@ const { openModal, Modal } = createContextModal<{
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip. Minimum 100 BUZZ"
+                placeholder="Your tip. Minimum 50 BUZZ"
                 variant="filled"
                 rightSectionWidth="10%"
                 min={1}
