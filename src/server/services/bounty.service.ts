@@ -373,7 +373,7 @@ export const getBountyImages = async ({
     select: { image: { select: imageSelect } },
   });
 
-  return connections.map(({ image }) => image);
+  return connections.map(({ image }) => ({ ...image, tags: image.tags.map((t) => t.tag) }));
 };
 
 export const getBountyFiles = async ({ id }: GetByIdInput) => {

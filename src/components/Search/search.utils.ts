@@ -81,7 +81,7 @@ export const applyUserPreferencesImages = <T>({
     user?: {
       id: number;
     };
-    tags: {
+    tags?: {
       id: number;
     }[];
   }[];
@@ -114,7 +114,7 @@ export const applyUserPreferencesArticles = <T>({
     user?: {
       id: number;
     };
-    tags: {
+    tags?: {
       id: number;
     }[];
   }[];

@@ -9,6 +9,7 @@ import { MediaType } from '@prisma/client';
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
     controls?: boolean;
+    wrapperProps?: React.ComponentPropsWithoutRef<'div'>;
   };
 
 export function EdgeMedia({
@@ -25,6 +26,7 @@ export function EdgeMedia({
   style,
   children,
   controls,
+  wrapperProps,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width });
@@ -80,6 +82,7 @@ export function EdgeMedia({
           className={cx(classes.responsive, className)}
           style={style}
           controls={controls}
+          wrapperProps={wrapperProps}
         />
       );
     case 'audio':

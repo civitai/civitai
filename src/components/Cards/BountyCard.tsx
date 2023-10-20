@@ -224,9 +224,8 @@ export function BountyCard({ data }: Props) {
                       color={isTracked ? theme.colors.green[5] : 'currentColor'}
                     />
                   }
-                  color={isTracked ? 'green' : 'dark'}
+                  color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
-                  className={classes.iconBadge}
                   size="lg"
                   // @ts-ignore: transparent variant does work
                   variant="transparent"
@@ -241,10 +240,9 @@ export function BountyCard({ data }: Props) {
                       fill={isFavorite ? theme.colors.red[5] : 'currentColor'}
                     />
                   }
-                  color={isFavorite ? 'red' : 'dark'}
+                  color={isFavorite ? 'red' : theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
-                  className={classes.iconBadge}
                   // @ts-ignore
                   variant="transparent"
                 >
@@ -252,10 +250,9 @@ export function BountyCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconMessageCircle2 size={14} />}
-                  color="dark"
+                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
-                  className={classes.iconBadge}
                   // @ts-ignore
                   variant="transparent"
                 >
@@ -263,7 +260,7 @@ export function BountyCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconSwords size={14} />}
-                  color="dark"
+                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
