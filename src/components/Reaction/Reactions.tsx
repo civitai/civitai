@@ -151,6 +151,7 @@ export function Reactions({
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
             entityType={entityType}
             entityId={entityId}
+            hideLoginPopover
           />
         )}
       </Group>
@@ -274,6 +275,7 @@ function BuzzTippingBadge({
   toUserId: number;
   entityType: string;
   entityId: number;
+  hideLoginPopover?: boolean;
 }) {
   const theme = useMantineTheme();
   const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {

@@ -1,8 +1,12 @@
 import {
+  ActionIcon,
+  createStyles,
   Group,
+  keyframes,
   Popover,
   Stack,
   Text,
+  TextInput,
   UnstyledButton,
   UnstyledButtonProps,
   useMantineTheme,
@@ -11,7 +15,7 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { IconBolt } from '@tabler/icons-react';
+import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showConfirmNotification } from '~/utils/notifications';
 import { v4 as uuidv4 } from 'uuid';
@@ -29,10 +33,12 @@ type Props = UnstyledButtonProps & {
   toUserId: number;
   entityId: number;
   entityType: string;
+  hideLoginPopover?: boolean;
 };
 
 const CONFIRMATION_THRESHOLD = 100;
 const CLICK_AMOUNT = 10;
+const CONFIRMATION_TIMEOUT = 5000;
 
 /**NOTES**
  Why use zustand?
@@ -81,36 +87,48 @@ export const useBuzzTippingStore = ({
 };
 
 const steps: [number, number][] = [
-  [20000, 2500],
-  [5000, 1000],
-  [2000, 250],
-  [1000, 100],
-  [500, 50],
-  [100, 20],
-  [50, 10],
+  // [20000, 2500],
+  // [5000, 1000],
+  // [2000, 250],
+  // [1000, 100],
+  // [500, 50],
+  // [100, 20],
+  // [50, 10],
   [0, 1],
 ];
+
+/*
+1. If user clicks, show confirmation with click amount
+
+1. If user holds, wait 150ms, then start incrementing counter
+2. If user releases, stop incrementing counter and show confirmation
+3. If user clicks on tip amount, stop confirmation timer and switch to editing tip amount
+*/
 
 export function InteractiveTipBuzzButton({
   toUserId,
   entityId,
   entityType,
   children,
+  hideLoginPopover = false,
   ...buttonProps
 }: Props) {
-  const theme = useMantineTheme();
+  const { theme, classes, cx } = useStyle();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
   const [buzzCounter, setBuzzCounter] = useState(0);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const startTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
+  const [showCountDown, setShowCountDown] = useState(false);
 
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
       return Math.min(currentUser?.balance ?? 0, prevCounter + step);
     });
-  }, 150);
+  }, 100);
 
   const onTip = useStore((state) => state.onTip);
   const [dismissed, setDismissed] = useLocalStorage({
@@ -123,12 +141,37 @@ export function InteractiveTipBuzzButton({
 
   const selfView = toUserId === currentUser?.id;
 
-  const onSendTip = async (tipAmount: number) => {
+  const cancelTip = () => {
+    if (status !== 'confirming') return;
+
+    setStatus('pending');
+    const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
+    trackAction({
+      type: 'TipInteractive_Cancel',
+      details: { toUserId, entityId, entityType, amount },
+    }).catch(() => undefined);
+
+    setTimeout(() => reset(), 100);
+  };
+
+  const sendTip = () => {
+    if (status !== 'confirming') return;
+
+    setStatus('confirmed');
+
+    // Stop countdown
+    setShowCountDown(false);
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+
+    const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
     createBuzzTransactionMutation.mutate(
       {
         toAccountId: toUserId,
         type: TransactionType.Tip,
-        amount: Number(tipAmount),
+        amount,
         entityId,
         entityType,
         details: {
@@ -142,35 +185,75 @@ export function InteractiveTipBuzzButton({
             onTip({ entityType, entityId, amount });
           }
         },
+        onSettled: () => {
+          setTimeout(() => {
+            setStatus('pending');
+            setTimeout(() => reset(), 100);
+          }, 1500);
+        },
       }
     );
   };
 
   const reset = () => {
     setBuzzCounter(0);
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    setShowCountDown(false);
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
     }
   };
 
-  const startCounter = () => {
-    if (interval.active || timeoutRef.current || !currentUser) {
+  const startConfirming = () => {
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+
+    setStatus('confirming');
+    setShowCountDown(true);
+    confirmTimeoutRef.current = setTimeout(() => {
+      setTimeout(() => reset(), 100);
+      setStatus('pending');
+    }, CONFIRMATION_TIMEOUT);
+  };
+
+  const stopCountdown = () => {
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+    setShowCountDown(false);
+  };
+
+  const clickStart = (e: Event) => {
+    if (
+      status != 'confirming' &&
+      (interval.active || startTimerTimeoutRef.current || confirmTimeoutRef.current || !currentUser)
+    ) {
       return;
     }
 
-    interval.start();
+    if (confirmTimeoutRef.current) {
+      setShowCountDown(false);
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+
+    startTimerTimeoutRef.current = setTimeout(() => {
+      interval.start();
+      startTimerTimeoutRef.current = null;
+    }, 150);
   };
 
-  const stopCounter = () => {
-    const isClick = buzzCounter === 0;
+  const clickEnd = (e: Event) => {
+    if (startTimerTimeoutRef.current !== null) {
+      // Was click
+      setBuzzCounter((x) => x + CLICK_AMOUNT);
+      clearTimeout(startTimerTimeoutRef.current);
+      startTimerTimeoutRef.current = null;
 
-    if (interval.active) {
-      interval.stop();
-      const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
-      const requiresConfirmation = amount >= CONFIRMATION_THRESHOLD;
-
-      if (!dismissed && isClick) {
+      if (!dismissed) {
         showNotification({
           title: "Looks like you're onto your first tip!",
           message: (
@@ -180,63 +263,21 @@ export function InteractiveTipBuzzButton({
             </Text>
           ),
         });
+        setDismissed(true);
       }
-
-      setDismissed(true);
-
-      if (amount && !timeoutRef.current) {
-        const uuid = uuidv4();
-        trackAction({
-          type: 'TipInteractive_Click',
-          details: { toUserId, entityId, entityType, amount },
-        }).catch(() => undefined);
-
-        showConfirmNotification({
-          id: uuid,
-          color: 'yellow.7',
-          title: 'Please confirm your tip:',
-          message: (
-            <Stack spacing={'xs'}>
-              <Group spacing={4}>
-                <Text>
-                  You are about to tip{' '}
-                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={amount} />
-                </Text>
-              </Group>
-              <Text> Are you sure?</Text>
-              {!requiresConfirmation && (
-                <Text color="red">
-                  This action will be confirmed automatically if you do nothing.
-                </Text>
-              )}
-            </Stack>
-          ),
-          onConfirm: requiresConfirmation
-            ? () => {
-                onSendTip(amount);
-                hideNotification(uuid);
-                reset();
-              }
-            : undefined,
-          onCancel: () => {
-            trackAction({
-              type: 'TipInteractive_Cancel',
-              details: { toUserId, entityId, entityType, amount },
-            }).catch(() => undefined);
-            hideNotification(uuid);
-            reset();
-          },
-        });
-
-        if (!requiresConfirmation) {
-          timeoutRef.current = setTimeout(() => {
-            hideNotification(uuid);
-            onSendTip(amount);
-            reset();
-          }, 8000);
-        }
-      }
+    } else if (interval.active) {
+      // Was hold
+      interval.stop();
+      const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
+      trackAction({
+        type: 'TipInteractive_Click',
+        details: { toUserId, entityId, entityType, amount },
+      }).catch(() => undefined);
+    } else {
+      return;
     }
+
+    startConfirming();
   };
 
   useEffect(() => {
@@ -247,52 +288,125 @@ export function InteractiveTipBuzzButton({
 
   const mouseHandlerProps = !selfView
     ? {
-        onMouseDown: startCounter,
-        onMouseUp: stopCounter,
-        onMouseLeave: stopCounter,
-        onTouchStart: startCounter,
-        onTouchEnd: stopCounter,
+        onMouseDown: clickStart,
+        onTouchStart: clickStart,
+        onMouseUp: clickEnd,
+        onMouseLeave: clickEnd,
+        onTouchEnd: clickEnd,
       }
     : {};
 
+  const buzzButton = (
+    <Popover
+      withArrow
+      withinPortal
+      radius="md"
+      opened={interval.active || status !== 'pending'}
+      zIndex={999}
+      position="top"
+    >
+      <Popover.Target>
+        <UnstyledButton
+          {...buttonProps}
+          {...mouseHandlerProps}
+          style={{
+            position: 'relative',
+            touchAction: 'none',
+            userSelect: 'none',
+            cursor: !selfView ? 'pointer' : 'default',
+          }}
+          onClick={undefined}
+        >
+          {children}
+        </UnstyledButton>
+      </Popover.Target>
+      <Popover.Dropdown py={4} className={cx({ [classes.confirming]: showCountDown })}>
+        <Group className={classes.popoverContent}>
+          {status !== 'pending' && (
+            <ActionIcon color="red.5" onClick={cancelTip}>
+              <IconX size={20} />
+            </ActionIcon>
+          )}
+          <Stack spacing={2} align="center">
+            <Text color="yellow.7" weight={500} size="xs" opacity={0.8}>
+              Tipping
+            </Text>
+            <Group spacing={0} ml={-8}>
+              <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
+              <div
+                contentEditable
+                onBlur={(e) => {
+                  let amount = Number(e.currentTarget.textContent);
+                  if (isNaN(amount) || amount < 1) amount = 1;
+                  else if (amount > 9999) amount = 9999;
+                  else if (currentUser?.balance && amount > currentUser?.balance)
+                    amount = currentUser?.balance ?? 0;
+                  setBuzzCounter(amount);
+                }}
+                onFocus={stopCountdown}
+                className={classes.tipAmount}
+                dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
+              ></div>
+            </Group>
+          </Stack>
+          {status !== 'pending' && (
+            <ActionIcon
+              variant="transparent"
+              color={status === 'confirmed' ? 'green' : 'yellow.5'}
+              onClick={sendTip}
+              loading={createBuzzTransactionMutation.isLoading}
+            >
+              {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
+            </ActionIcon>
+          )}
+        </Group>
+      </Popover.Dropdown>
+    </Popover>
+  );
+  if (hideLoginPopover) return buzzButton;
+
   return (
     <LoginPopover>
-      <UnstyledButton
-        {...buttonProps}
-        {...mouseHandlerProps}
-        style={{
-          position: 'relative',
-          touchAction: 'none',
-          cursor: !selfView ? 'pointer' : 'default',
-        }}
-        onClick={undefined}
-      >
-        <Popover
-          withArrow
-          withinPortal
-          radius="md"
-          opened={interval.active}
-          zIndex={999}
-          position="top"
-        >
-          <Popover.Target>
-            <div>{children}</div>
-          </Popover.Target>
-          <Popover.Dropdown py={4}>
-            <Stack spacing={2}>
-              <Text color="yellow.7" weight={500} size="xs" opacity={0.8}>
-                Tipping
-              </Text>
-              <Group spacing={0}>
-                <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
-                <Text color="yellow.7" weight={500} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {buzzCounter}
-                </Text>
-              </Group>
-            </Stack>
-          </Popover.Dropdown>
-        </Popover>
-      </UnstyledButton>
+      <div>{buzzButton}</div>
     </LoginPopover>
   );
 }
+
+const useStyle = createStyles((theme) => ({
+  popoverContent: {
+    position: 'relative',
+    zIndex: 3,
+  },
+  confirming: {
+    [`&:before`]: {
+      content: '""',
+      position: 'absolute',
+      zIndex: 2,
+      top: 0,
+      left: 0,
+      height: '100%',
+      width: 0,
+      // backgroundColor: theme.colors.gray[1],
+      backgroundColor: theme.colors.red[6],
+      opacity: 0,
+      animation: `${fillEffect} ${CONFIRMATION_TIMEOUT}ms linear forwards`,
+    },
+  },
+  tipAmount: {
+    fontVariantNumeric: 'tabular-nums',
+    fontWeight: 500,
+    color: theme.colors.yellow[7],
+    fontSize: 16,
+    padding: 0,
+    lineHeight: 1,
+    display: 'inline-block',
+  },
+}));
+
+const fillEffect = keyframes({
+  to: {
+    width: '100%',
+    opacity: 0.3,
+    // backgroundColor: 'red',
+  },
+});
