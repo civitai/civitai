@@ -3,13 +3,11 @@ import * as z from 'zod';
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail } from '~/server/email/templates';
+import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-export type EpochSchema = z.infer<typeof epoch_schema>;
-
-// TODO: delete this file once all the old jobs are complete
-
-const epoch_schema = z.object({
+export type EpochSchema = z.infer<typeof epochSchema>;
+const epochSchema = z.object({
   epoch_number: z.number(),
   model_url: z.string(),
   sample_images: z
@@ -31,7 +29,7 @@ const context = z.object({
   start_time: z.number(),
   end_time: z.number().optional(),
   duration: z.number().optional(),
-  epochs: z.array(epoch_schema).optional(),
+  epochs: z.array(epochSchema).optional(),
   upload_duration: z.number().optional(),
   sample_prompts: z.array(z.string()).optional(),
   logs: z
@@ -43,16 +41,33 @@ const context = z.object({
 });
 
 const schema = z.object({
-  type: z.string(),
   jobId: z.string(),
-  date: z.string(),
-  duration: z.string().optional(),
-  totalDuration: z.string().optional(),
-  workerId: z.string().optional(),
-  attempt: z.number().optional(),
+  type: z.string(),
+  dateTime: z.string(),
+  // serviceProvider: z.string().nullish(),
+  workerId: z.string().nullish(),
   context: context.nullable(),
+  claimDuration: z.string().nullish(),
+  jobDuration: z.string().nullish(),
+  retryAttempt: z.number().nullish(),
+  // cost: z.number().nullish(),
+  jobProperties: z.object({
+    transactionId: z.string(),
+    // userId: z.number(),
+  }),
+  jobHasCompleted: z.boolean(),
 });
 
+// Initialized, Claimed, Rejected, LateRejected, ClaimExpired, Updated, Failed, Succeeded, Expired, Deleted
+const mapTrainingStatus = {
+  Updated: TrainingStatus.Processing,
+  Succeeded: TrainingStatus.InReview,
+  Failed: TrainingStatus.Failed,
+  Rejected: TrainingStatus.Failed,
+  LateRejected: TrainingStatus.Failed,
+} as const;
+
+// breaking change
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -65,37 +80,38 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
-  const status = {
-    Success: TrainingStatus.InReview,
-    Update: TrainingStatus.Processing,
-    Fail: TrainingStatus.Failed,
-    Reject: TrainingStatus.Failed,
-    LateReject: TrainingStatus.Failed,
-  }[data.type];
-
   switch (data.type) {
-    case 'Success':
-    case 'Fail':
-    case 'Reject':
-    case 'LateReject':
-    case 'Update':
+    case 'Updated':
+    case 'Succeeded':
+    case 'Failed':
+    case 'Rejected':
+    case 'LateRejected':
       if (!data.context) {
         return res.status(400).json({ ok: false, error: 'context is undefined' });
       }
 
+      const status = mapTrainingStatus[data.type];
+
       try {
-        await updateRecords({ ...data.context, jobId: data.jobId }, status as TrainingStatus);
+        await updateRecords({ ...data.context, jobId: data.jobId }, status);
       } catch (e: unknown) {
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
 
       break;
-    case 'Expire':
-    case 'Claim':
-      // TODO: handle these now that we have the job id
+    case 'Initialized':
+    case 'Claimed':
+    case 'ClaimExpired':
+    case 'Deleted':
+    case 'Expired':
       break;
     default:
       return res.status(400).json({ ok: false, error: 'type not supported' });
+  }
+
+  if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
+    // nb: in the case of deleted or expired, the job history will not be updated (and the user won't see it)
+    await refundTransaction(data.jobProperties.transactionId, 'Refund for failed training job.');
   }
 
   return res.status(200).json({ ok: true });
@@ -110,7 +126,7 @@ async function updateRecords(
   });
 
   if (!modelFile) {
-    throw new Error('ModelFile not found');
+    throw new Error(`ModelFile not found: "${modelFileId}"`);
   }
 
   const thisMetadata = (modelFile.metadata ?? {}) as FileMetadata;
