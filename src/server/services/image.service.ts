@@ -1739,33 +1739,30 @@ export const getImagesByEntity = async ({
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
-    // Then do smt:
-    if (include?.includes('tags')) {
-      const imageIds = images.map((i) => i.id);
-      const rawTags = await dbRead.imageTag.findMany({
-        where: { imageId: { in: imageIds } },
-        select: {
-          imageId: true,
-          tagId: true,
-          tagName: true,
-          tagType: true,
-          tagNsfw: true,
-          score: true,
-          automated: true,
-          upVotes: true,
-          downVotes: true,
-          needsReview: true,
-        },
-      });
+    const imageIds = images.map((i) => i.id);
+    const rawTags = await dbRead.imageTag.findMany({
+      where: { imageId: { in: imageIds } },
+      select: {
+        imageId: true,
+        tagId: true,
+        tagName: true,
+        tagType: true,
+        tagNsfw: true,
+        score: true,
+        automated: true,
+        upVotes: true,
+        downVotes: true,
+        needsReview: true,
+      },
+    });
 
-      tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
-        ...tag,
-        id: tagId,
-        type: tagType,
-        nsfw: tagNsfw,
-        name: tagName,
-      }));
-    }
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfw: tagNsfw,
+      name: tagName,
+    }));
   }
 
   return images.map((i) => ({

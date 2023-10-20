@@ -13,6 +13,7 @@ import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
+import { ModalProps } from '@mantine/core';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -146,7 +147,8 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
 
 export function openContext<TName extends keyof typeof registry>(
   modal: TName,
-  props: Parameters<(typeof registry)[TName]['fn']>[0]
+  props: Parameters<(typeof registry)[TName]['fn']>[0],
+  modalProps?: Omit<ModalProps, 'opened' | 'onClose'>
 ) {
-  registry[modal].fn(props as any);
+  registry[modal].fn(props as any, modalProps);
 }

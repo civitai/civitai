@@ -1,21 +1,16 @@
 import { Carousel } from '@mantine/carousel';
 import {
-  ActionIcon,
   AspectRatio,
   Box,
   Button,
   Center,
   createStyles,
   Group,
-  Indicator,
-  Loader,
   Paper,
   Stack,
   Text,
   ThemeIcon,
-  UnstyledButton,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
@@ -23,8 +18,6 @@ import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuar
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NsfwLevel } from '@prisma/client';
-import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import Link from 'next/link';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
@@ -114,18 +107,21 @@ export function ImageCarousel({
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
+    isLoading: loadingHiddenPreferences,
   } = useHiddenPreferencesContext();
 
   const filteredImages = useMemo(
     () =>
-      applyUserPreferencesImages<(typeof images)[number]>({
-        items: images,
-        hiddenImages,
-        hiddenTags,
-        hiddenUsers,
-        currentUserId: currentUser?.id,
-      }),
-    [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images]
+      !loadingHiddenPreferences
+        ? applyUserPreferencesImages<(typeof images)[number]>({
+            items: images,
+            hiddenImages,
+            hiddenTags,
+            hiddenUsers,
+            currentUserId: currentUser?.id,
+          })
+        : [],
+    [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images, loadingHiddenPreferences]
   );
 
   if (!filteredImages.length) {

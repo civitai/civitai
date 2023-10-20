@@ -818,6 +818,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
+    isLoading: loadingHiddenPreferences,
   } = useHiddenPreferencesContext();
 
   const { data: entries = [], isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
@@ -829,14 +830,16 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 
   const filteredEntries = useMemo(
     () =>
-      applyUserPreferencesBounties<(typeof entries)[number]>({
-        items: entries,
-        hiddenImages,
-        hiddenTags,
-        hiddenUsers,
-        currentUserId: currentUser?.id,
-      }),
-    [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers]
+      !loadingHiddenPreferences
+        ? applyUserPreferencesBounties<(typeof entries)[number]>({
+            items: entries,
+            hiddenImages,
+            hiddenTags,
+            hiddenUsers,
+            currentUserId: currentUser?.id,
+          })
+        : [],
+    [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers, loadingHiddenPreferences]
   );
 
   const hiddenItems = entries.length - filteredEntries.length;
