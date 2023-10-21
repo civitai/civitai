@@ -80,6 +80,11 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
+  if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
+    // nb: in the case of deleted or expired, the job history will not be updated (and the user won't see it)
+    await refundTransaction(data.jobProperties.transactionId, 'Refund for failed training job.');
+  }
+
   switch (data.type) {
     case 'Updated':
     case 'Succeeded':
@@ -107,11 +112,6 @@ export default WebhookEndpoint(async (req, res) => {
       break;
     default:
       return res.status(400).json({ ok: false, error: 'type not supported' });
-  }
-
-  if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
-    // nb: in the case of deleted or expired, the job history will not be updated (and the user won't see it)
-    await refundTransaction(data.jobProperties.transactionId, 'Refund for failed training job.');
   }
 
   return res.status(200).json({ ok: true });
