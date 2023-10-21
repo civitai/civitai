@@ -149,7 +149,7 @@ export function InteractiveTipBuzzButton({
     setTimeout(() => reset(), 100);
   };
 
-  const sendTip = () => {
+  const sendTip = (amount?: number) => {
     if (status !== 'confirming') return;
 
     setStatus('confirmed');
@@ -161,7 +161,7 @@ export function InteractiveTipBuzzButton({
       confirmTimeoutRef.current = null;
     }
 
-    const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
+    amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
     tipUserMutation.mutate(
       {
         toAccountId: toUserId,
@@ -187,6 +187,17 @@ export function InteractiveTipBuzzButton({
         },
       }
     );
+  };
+
+  const processEnteredNumber = (value: string) => {
+    let amount = Number(value);
+    if (isNaN(amount) || amount < 1) amount = 1;
+    else if (amount > 9999) amount = 9999;
+    else if (currentUser?.balance && amount > currentUser?.balance)
+      amount = currentUser?.balance ?? 0;
+    setBuzzCounter(amount);
+
+    return amount;
   };
 
   const reset = () => {
@@ -344,14 +355,15 @@ export function InteractiveTipBuzzButton({
             <Group spacing={0} ml={-8}>
               <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
               <div
-                contentEditable
+                contentEditable={status === 'confirming'}
                 onBlur={(e) => {
-                  let amount = Number(e.currentTarget.textContent);
-                  if (isNaN(amount) || amount < 1) amount = 1;
-                  else if (amount > 9999) amount = 9999;
-                  else if (currentUser?.balance && amount > currentUser?.balance)
-                    amount = currentUser?.balance ?? 0;
-                  setBuzzCounter(amount);
+                  processEnteredNumber(e.currentTarget.textContent ?? '1');
+                }}
+                onKeyDown={(e) => {
+                  if (e.ctrlKey && e.key === 'Enter') {
+                    const amount = processEnteredNumber(e.currentTarget.textContent ?? '1');
+                    sendTip(amount);
+                  }
                 }}
                 onFocus={stopCountdown}
                 className={classes.tipAmount}
@@ -363,7 +375,7 @@ export function InteractiveTipBuzzButton({
             <ActionIcon
               variant="transparent"
               color={status === 'confirmed' ? 'green' : 'yellow.5'}
-              onClick={sendTip}
+              onClick={() => sendTip()}
               loading={tipUserMutation.isLoading}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
@@ -409,6 +421,7 @@ const useStyle = createStyles((theme) => ({
     fontSize: 16,
     padding: 0,
     lineHeight: 1,
+    outline: 0,
     display: 'inline-block',
   },
 }));
