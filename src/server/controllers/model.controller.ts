@@ -531,7 +531,7 @@ export const getDownloadCommandHandler = async ({
     if (type) fileWhere.type = type;
     if (format) fileWhere.metadata = { path: ['format'], equals: format };
 
-    const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
+    // const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },

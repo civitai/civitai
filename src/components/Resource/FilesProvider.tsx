@@ -58,7 +58,7 @@ type FilesContextState = {
 
 type FilesProviderProps = {
   model?: Partial<ModelUpsertInput>;
-  version?: Partial<ModelVersionById>;
+  version?: Pick<Partial<ModelVersionById>, 'id' | 'files'>;
   children: React.ReactNode;
 };
 

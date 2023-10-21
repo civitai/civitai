@@ -20,3 +20,7 @@ export const modelFileSelect = Prisma.validator<Prisma.ModelFileSelect>()({
     },
   },
 });
+const modelFile = Prisma.validator<Prisma.ModelFileDefaultArgs>()({
+  select: modelFileSelect,
+});
+export type ModelFileModel = Prisma.ModelFileGetPayload<typeof modelFile>;

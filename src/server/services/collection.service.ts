@@ -14,6 +14,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
+  Collection,
   CollectionContributorPermission,
   CollectionItemStatus,
   CollectionMode,
@@ -63,11 +64,9 @@ import {
 } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { collectionsSearchIndex } from '~/server/search-index';
-import { isModerator } from '~/server/routers/base.router';
 import { createNotification } from '~/server/services/notification.service';
 
 export type CollectionContributorPermissionFlags = {
@@ -291,12 +290,12 @@ export const getUserCollectionsWithPermissions = async <
     });
   }
 
-  const collections = await dbRead.collection.findMany({
+  const collections = (await dbRead.collection.findMany({
     where: {
       AND,
     },
     select,
-  });
+  })) as Collection[];
 
   // Return user collections first && add isOwner  property
   return collections
@@ -919,7 +918,7 @@ export const getUserCollectionItemsByItem = async ({
       ],
       userId,
     },
-    select: { id: true },
+    select: { id: true, userId: true },
   });
 
   if (userCollections.length === 0) return [];
