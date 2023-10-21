@@ -431,6 +431,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       fromAccountId: 0,
       toAccountId: user.id,
       type: TransactionType.Reward,
+      externalTransactionId: invoice.id,
       amount: 5000, // Hardcoded for now cause we only have one subscription option
       description: 'Membership bonus',
       details: { invoiceId: invoice.id },
