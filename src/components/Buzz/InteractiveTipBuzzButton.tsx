@@ -28,6 +28,8 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { useBuzzTransaction } from './buzz.utils';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { isTouchDevice } from '~/utils/device-helpers';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -106,6 +108,7 @@ export function InteractiveTipBuzzButton({
   ...buttonProps
 }: Props) {
   const { theme, classes, cx } = useStyle();
+  const mobile = useIsMobile();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -218,6 +221,12 @@ export function InteractiveTipBuzzButton({
   };
 
   const clickStart = (e: any) => {
+    if (isTouchDevice()) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type == 'mousedown') return;
+    }
+
     if (
       status != 'confirming' &&
       (interval.active || startTimerTimeoutRef.current || confirmTimeoutRef.current || !currentUser)
@@ -238,6 +247,8 @@ export function InteractiveTipBuzzButton({
   };
 
   const clickEnd = (e: any) => {
+    if (isTouchDevice() && e.type == 'mouseup') return;
+
     if (startTimerTimeoutRef.current !== null) {
       // Was click
       setBuzzCounter((x) => x + CLICK_AMOUNT);
@@ -295,15 +306,23 @@ export function InteractiveTipBuzzButton({
       opened={interval.active || status !== 'pending'}
       zIndex={999}
       position="top"
+      offset={mobile ? 20 : 0}
     >
       <Popover.Target>
         <UnstyledButton
           {...buttonProps}
           {...mouseHandlerProps}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }}
           style={{
             position: 'relative',
             touchAction: 'none',
             userSelect: 'none',
+            WebkitUserSelect: 'none',
+            WebkitTouchCallout: 'none',
             cursor: !selfView ? 'pointer' : 'default',
           }}
           onClick={undefined}
