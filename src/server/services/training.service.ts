@@ -73,7 +73,7 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
     throw throwBadRequestError('Failed to move asset');
   }
   const data = await response.json();
-  const result: moveAssetResponse | undefined = data.result;
+  const result: moveAssetResponse | undefined = data.jobs?.[0]?.result;
 
   if (!result || !result.found) {
     throw throwBadRequestError('Failed to move asset');
@@ -114,7 +114,7 @@ export const deleteAssets = async (jobId: string) => {
   }
 
   const data = await response.json();
-  return data.result;
+  return data.jobs?.[0]?.result;
 };
 
 export const createTrainingRequest = async ({

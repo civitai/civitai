@@ -3,14 +3,15 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { createTrainingRequest } from '~/server/services/training.service';
-import { createJob } from './job';
+import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
 // this is actually 3, but it's 0 indexed
 const MAX_ATTEMPTS = 2;
 
 export const resubmitTrainingJobs = createJob(
   'resubmit-training-jobs',
-  '20,50 * * * *',
+  // '20,50 * * * *',
+  UNRUNNABLE_JOB_CRON,
   async () => {
     // Get the training jobs that are potentially stuck
     // --------------------------------------------

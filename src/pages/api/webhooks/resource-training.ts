@@ -46,7 +46,7 @@ const schema = z.object({
   dateTime: z.string(),
   // serviceProvider: z.string().nullish(),
   workerId: z.string().nullish(),
-  context: context.nullable(),
+  context: context.nullish(),
   claimDuration: z.string().nullish(),
   jobDuration: z.string().nullish(),
   retryAttempt: z.number().nullish(),
