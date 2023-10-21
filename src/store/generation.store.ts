@@ -129,7 +129,7 @@ const formatGenerationData = (
       ? params.sampler
       : undefined;
 
-  const formData: Partial<GenerateFormModel> = { ...params, aspectRatio };
+  const formData: Partial<GenerateFormModel> = removeEmpty({ ...params, aspectRatio });
   if (type === 'params') return formData;
   else if (type === 'run') {
     const resource = resources[0];
