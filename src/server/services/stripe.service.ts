@@ -402,9 +402,10 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   // Check if user exists and has a customerId
-  const user = await dbRead.user.findUnique({
+  // Use write db to avoid replication lag between webhook requests
+  const user = await dbWrite.user.findUnique({
     where: { email: invoice.customer_email as string },
-    select: { id: true, customerId: true, subscription: { select: { status: true } } },
+    select: { id: true, customerId: true },
   });
   if (user && !user.customerId) {
     // Since we're handling an invoice, we assume that the user
@@ -424,7 +425,8 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
 
   await dbWrite.purchase.createMany({ data: purchases });
 
-  if (invoice.subscription && user && user.subscription?.status === 'active') {
+  // Don't check for subscription active because there is a chance it hasn't been updated yet
+  if (invoice.subscription && user) {
     await createBuzzTransaction({
       fromAccountId: 0,
       toAccountId: user.id,
