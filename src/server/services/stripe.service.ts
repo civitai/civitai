@@ -1,3 +1,4 @@
+import { chunk } from 'lodash-es';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   handleLogError,
@@ -565,15 +566,18 @@ export const getPaymentIntentsForBuzz = async ({
       unixStartingAt || unixEndingAt ? { gte: unixStartingAt, lte: unixEndingAt } : undefined,
   });
 
-  const buzzPurchases = await Promise.all(
-    paymentIntents.data
-      .filter(
-        (intent) =>
-          intent.status === 'succeeded' &&
-          intent.metadata.type === 'buzzPurchase' &&
-          !intent.metadata.transactionId
-      )
-      .map((intent) => {
+  const filteredPayments = paymentIntents.data.filter(
+    (intent) =>
+      intent.status === 'succeeded' &&
+      intent.metadata.type === 'buzzPurchase' &&
+      !intent.metadata.transactionId
+  );
+  const batches = chunk(filteredPayments, 10);
+
+  const processedPurchases: Array<{ transactionId: string }> = [];
+  for (const batch of batches) {
+    const processed = await Promise.all(
+      batch.map((intent) => {
         const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
 
         return completeStripeBuzzTransaction({
@@ -589,7 +593,9 @@ export const getPaymentIntentsForBuzz = async ({
           userId: metadata.userId ?? userId,
         });
       })
-  );
+    );
+    processedPurchases.concat(processed);
+  }
 
-  return buzzPurchases;
+  return processedPurchases;
 };
