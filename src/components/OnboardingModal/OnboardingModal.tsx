@@ -15,6 +15,7 @@ import {
   ThemeIcon,
   Badge,
   TextInput,
+  ButtonProps,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -43,6 +44,7 @@ import {
   checkUserCreatedAfterBuzzLaunch,
   getUserBuzzBonusAmount,
 } from '~/server/common/user-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -135,6 +137,13 @@ export default function OnboardingModal() {
         await invalidateModeratedContent(utils);
         // context.closeModal(id);
       },
+      onError(error) {
+        showErrorNotification({
+          title: 'Cannot save',
+          error: new Error(error.message),
+          reason: 'An unknown error occurred. Please try again later',
+        });
+      },
     });
 
   const goNext = () => {
@@ -156,7 +165,6 @@ export default function OnboardingModal() {
     );
   };
 
-  const handleDeclineTOS = () => signOut();
   const handleAcceptTOS = () => {
     acceptTOS(undefined, {
       async onSuccess() {
@@ -251,14 +259,7 @@ export default function OnboardingModal() {
               )}
             </ScrollArea>
             <Group position="apart" align="flex-start">
-              <Stack spacing={0}>
-                <Button variant="default" onClick={handleDeclineTOS}>
-                  Decline
-                </Button>
-                <Text size="xs" color="dimmed">
-                  You will be logged out.
-                </Text>
-              </Stack>
+              <CancelButton showWarning>Decline</CancelButton>
               <Button
                 rightIcon={<IconCheck />}
                 size="lg"
@@ -314,19 +315,22 @@ export default function OnboardingModal() {
                         : error.message}
                     </Alert>
                   )}
-                  <Button
-                    disabled={
-                      !usernameAvailable ||
-                      !username ||
-                      usernameAvailableLoading ||
-                      !(form.formState.isValid || !form.formState.isDirty)
-                    }
-                    size="lg"
-                    type="submit"
-                    loading={isLoading}
-                  >
-                    Save
-                  </Button>
+                  <Group position="apart">
+                    <CancelButton size="lg">Sign Out</CancelButton>
+                    <Button
+                      disabled={
+                        !usernameAvailable ||
+                        !username ||
+                        usernameAvailableLoading ||
+                        !(form.formState.isValid || !form.formState.isDirty)
+                      }
+                      size="lg"
+                      type="submit"
+                      loading={isLoading}
+                    >
+                      Save
+                    </Button>
+                  </Group>
                 </Stack>
               </Form>
             </Stack>
@@ -361,13 +365,16 @@ export default function OnboardingModal() {
                 description="We'll send you model and creator highlights, AI news, as well as comprehensive guides from
                 leaders in the AI Content Universe. We hate spam as much as you do."
               />
-              <Button
-                size="lg"
-                onClick={() => handleCompleteStep(OnboardingStep.Moderation)}
-                loading={completeStepLoading}
-              >
-                Save
-              </Button>
+              <Group position="apart">
+                <CancelButton size="lg">Sign Out</CancelButton>
+                <Button
+                  size="lg"
+                  onClick={() => handleCompleteStep(OnboardingStep.Moderation)}
+                  loading={completeStepLoading}
+                >
+                  Save
+                </Button>
+              </Group>
             </Stack>
           </Container>
         </Stepper.Step>
@@ -404,13 +411,16 @@ export default function OnboardingModal() {
                   </Text>
                 }
               />
-              <Button
-                size="lg"
-                onClick={handleCompleteBuzzStep}
-                loading={completeStepLoading || referrerRefetching}
-              >
-                Done
-              </Button>
+              <Group position="apart">
+                <CancelButton size="lg">Sign Out</CancelButton>
+                <Button
+                  size="lg"
+                  onClick={handleCompleteBuzzStep}
+                  loading={completeStepLoading || referrerRefetching}
+                >
+                  Done
+                </Button>
+              </Group>
               {showReferral && (
                 <Button
                   variant="subtle"
@@ -467,6 +477,7 @@ export default function OnboardingModal() {
                       )
                     )
                   }
+                  autoFocus
                 />
               )}
             </Stack>
@@ -488,6 +499,27 @@ const StepperTitle = ({
         {title}
       </Title>
       <Text>{description}</Text>
+    </Stack>
+  );
+};
+
+const CancelButton = ({
+  children,
+  showWarning,
+  ...props
+}: ButtonProps & { showWarning?: boolean }) => {
+  const handleCancelOnboarding = () => signOut();
+
+  return (
+    <Stack spacing={0}>
+      <Button {...props} variant="default" onClick={handleCancelOnboarding}>
+        {children}
+      </Button>
+      {showWarning && (
+        <Text size="xs" color="dimmed">
+          You will be logged out.
+        </Text>
+      )}
     </Stack>
   );
 };
