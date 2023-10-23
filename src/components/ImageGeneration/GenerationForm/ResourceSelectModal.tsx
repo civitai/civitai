@@ -47,7 +47,11 @@ export default function ResourceSelectModal({
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
-  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
+  const {
+    data = [],
+    isInitialLoading: isLoading,
+    isRefetching,
+  } = trpc.generation.getResources.useQuery(
     {
       types,
       query: debounced,
@@ -75,13 +79,13 @@ export default function ResourceSelectModal({
           autoFocus
         />
       </Stack>
-      {isLoading ? (
+      {isLoading || isRefetching ? (
         <Center p="xl">
           <Loader />
         </Center>
       ) : (
         <>
-          {!debounced?.length && <Divider label="Popular Resources" labelPosition="center" />}
+          {!debounced?.length && <Divider label="Featured resources" labelPosition="center" />}
           <Stack spacing={0}>
             {data
               .filter((resource) => !notIds.includes(resource.id))
