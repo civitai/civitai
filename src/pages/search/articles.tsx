@@ -1,28 +1,14 @@
-import {
-  Stack,
-  Text,
-  createStyles,
-  Box,
-  Center,
-  Loader,
-  Title,
-  ThemeIcon,
-  Anchor,
-} from '@mantine/core';
-import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { Stack, Text, Box, Center, Loader, Title, ThemeIcon, Anchor } from '@mantine/core';
+import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 
-import { env } from '~/env/client.mjs';
 import {
   ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
 import { useEffect, useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';

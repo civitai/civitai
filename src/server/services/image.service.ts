@@ -85,16 +85,14 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
 };
 
 // consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
-export const updateImageById = async <TSelect extends Prisma.ImageSelect>({
+export const updateImageById = async ({
   id,
-  select,
   data,
 }: {
   id: number;
   data: Prisma.ImageUpdateArgs['data'];
-  select: TSelect;
 }) => {
-  const image = await dbWrite.image.update({ where: { id }, data, select });
+  const image = await dbWrite.image.update({ where: { id }, data });
 
   if (image.tosViolation) {
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);

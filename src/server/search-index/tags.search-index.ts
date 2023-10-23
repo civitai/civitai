@@ -80,7 +80,7 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: Prisma.Enumerable<Prisma.TagWhereInput>;
+  whereOr?: Prisma.TagWhereInput[];
   skip?: number;
   take?: number;
 }) => {
@@ -192,11 +192,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: {
-        id: {
-          in: itemIds,
-        },
-      },
+      whereOr: [{ id: { in: itemIds } }],
     });
 
     itemsToIndex.push(...newItems);

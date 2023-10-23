@@ -1,15 +1,11 @@
 import { client, updateDocs } from '~/server/meilisearch/client';
-import {
-  getOrCreateIndex,
-  onSearchIndexDocumentsCleanup,
-  waitForTasksWithRetries,
-} from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
-import { MetricTimeframe, Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 
@@ -82,7 +78,7 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: Prisma.Enumerable<Prisma.ArticleWhereInput>;
+  whereOr?: Prisma.ArticleWhereInput[];
   skip?: number;
   take?: number;
 }) => {

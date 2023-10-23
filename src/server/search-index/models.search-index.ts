@@ -129,7 +129,7 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: Prisma.Enumerable<Prisma.ModelWhereInput>;
+  whereOr?: Prisma.ModelWhereInput[];
   skip?: number;
   take?: number;
 }) => {
@@ -384,11 +384,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const { indexReadyRecords, indexRecordsWithImages } = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: {
-        id: {
-          in: itemIds,
-        },
-      },
+      whereOr: [{ id: { in: itemIds } }],
     });
 
     itemsToIndex.indexReadyRecords.push(...indexReadyRecords);
