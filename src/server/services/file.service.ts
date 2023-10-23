@@ -80,9 +80,11 @@ export const updateEntityFiles = async ({
 export const getFileWithPermission = async ({
   fileId,
   userId,
+  isModerator,
 }: {
   fileId: number;
   userId?: number;
+  isModerator?: boolean;
 }) => {
   const file = await dbRead.file.findUnique({
     where: { id: fileId },
@@ -93,7 +95,11 @@ export const getFileWithPermission = async ({
 
   switch (file.entityType) {
     case 'BountyEntry': {
-      const bountyEntryFiles = await getBountyEntryFilteredFiles({ id: file.entityId, userId });
+      const bountyEntryFiles = await getBountyEntryFilteredFiles({
+        id: file.entityId,
+        userId,
+        isModerator,
+      });
       if (!bountyEntryFiles.some((x) => x.id === fileId && !!x.url)) {
         return null;
       }
