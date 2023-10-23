@@ -17,7 +17,7 @@ import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
 import { MetadataParam } from '@stripe/stripe-js';
 import { constants } from '~/server/common/constants';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { createBuzzTransaction } from './buzz.service';
+import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
 
 const baseUrl = getBaseUrl();
@@ -535,4 +535,61 @@ export const getPaymentIntent = async ({
   return {
     clientSecret: paymentIntent.client_secret,
   };
+};
+
+export const getPaymentIntentsForBuzz = async ({
+  userId,
+  startingAt,
+  endingAt,
+}: Schema.GetPaymentIntentsForBuzzSchema) => {
+  let customer: string | undefined;
+  if (userId) {
+    const user = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { customerId: true },
+    });
+    if (!user) throw new Error(`No user with id ${userId}`);
+
+    customer = user.customerId ?? undefined; // undefined is required for the stripe api
+  }
+
+  // Converting to unix timestamps because that's what the stripe api expects
+  const unixStartingAt = startingAt ? Math.floor(startingAt.getTime() / 1000) : undefined;
+  const unixEndingAt = endingAt ? Math.floor(endingAt.getTime() / 1000) : undefined;
+
+  const stripe = await getServerStripe();
+  const paymentIntents = await stripe.paymentIntents.list({
+    customer,
+    limit: 100, // max limit is 100
+    created:
+      unixStartingAt || unixEndingAt ? { gte: unixStartingAt, lte: unixEndingAt } : undefined,
+  });
+
+  const buzzPurchases = await Promise.all(
+    paymentIntents.data
+      .filter(
+        (intent) =>
+          intent.status === 'succeeded' &&
+          intent.metadata.type === 'buzzPurchase' &&
+          !intent.metadata.transactionId
+      )
+      .map((intent) => {
+        const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
+
+        return completeStripeBuzzTransaction({
+          amount: metadata.buzzAmount ?? intent.amount * 10,
+          stripePaymentIntentId: intent.id,
+          details: {
+            userId,
+            unitAmount: intent.amount,
+            buzzAmount: intent.amount * 10,
+            type: 'buzzPurchase',
+            ...intent.metadata,
+          },
+          userId: metadata.userId ?? userId,
+        });
+      })
+  );
+
+  return buzzPurchases;
 };
