@@ -57,6 +57,7 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
     },
     {
       onError: () => debouncer(refetch),
+      enabled: !!requestIds.length,
     }
   );
 
@@ -79,9 +80,12 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
             item.estimatedCompletionDate = request.estimatedCompletionDate;
             item.status = request.status;
             item.queuePosition = request.queuePosition;
-            item.images = item.images?.map((x) => {
-              const match = request.images?.find((image) => image.hash === x.hash);
-              return { ...x, ...match };
+            item.images = item.images?.map((image) => {
+              const match = request.images?.find((x) => x.hash === image.hash);
+              if (!match) return image;
+              const status = image.status !== 'Started' ? image.status : match.status;
+              const available = image.available ? image.available : match.available;
+              return { ...image, ...match, status, available };
             });
           }
         }
