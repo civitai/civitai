@@ -6,7 +6,11 @@ import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { CreateTrainingRequestInput, MoveAssetInput } from '~/server/schema/training.schema';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  getUserBuzzAccount,
+  refundTransaction,
+} from '~/server/services/buzz.service';
 import {
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -179,14 +183,20 @@ export const createTrainingRequest = async ({
       `You don't have enough Buzz to perform this action (required: ${price})`
     );
   }
+
+  const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
+
+  // nb: going to hold off on externalTransactionId for now
+  //     if we fail it, they'll never be able to proceed
+  //     if we catch it, we have to match on a very changeable error message rather than code
+  //        also, we will not have a transactionId, which means we can't refund them later in the process
   const { transactionId } = await createBuzzTransaction({
     fromAccountId: userId,
     toAccountId: 0,
     amount: price,
     type: TransactionType.Training,
+    // externalTransactionId: `training|mvId:${modelVersionId}`,
   });
-
-  const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
 
   const generationRequest = {
     $type: 'imageResourceTraining',
@@ -217,13 +227,7 @@ export const createTrainingRequest = async ({
   // console.log(response);
 
   if (!response.ok) {
-    await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: userId,
-      amount: price,
-      type: TransactionType.Refund,
-      description: 'Refunding due to an error submitting the training job',
-    });
+    await refundTransaction(transactionId, 'Refund due to an error submitting the training job.');
   }
 
   if (response.status === 429) {
