@@ -206,7 +206,7 @@ export const bountyMetrics = createMetricProcessor({
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("bountyId", timeframe) DO UPDATE
-        SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "entryCount" = EXCLUDED."entryCount",  "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount";
+        SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "entryCount" = EXCLUDED."entryCount",  "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "commentCount" = EXCLUDED."commentCount";
     `;
 
     const affected = await db.$queryRaw<{ id: number }[]>`
@@ -224,7 +224,7 @@ export const bountyMetrics = createMetricProcessor({
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "BountyMetric" SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0  WHERE timeframe = 'Day';
+      UPDATE "BountyMetric" SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0, "commentCount" = 0  WHERE timeframe = 'Day';
     `;
   },
   rank: {

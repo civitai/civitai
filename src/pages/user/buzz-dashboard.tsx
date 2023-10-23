@@ -209,11 +209,11 @@ export default function UserBuzzDashboard() {
                     className={classes.lifetimeBuzzContainer}
                     style={{ flex: 1, display: 'flex' }}
                   >
-                    <Group position="apart" style={{ flex: 1 }} noWrap>
+                    <Group position="apart" sx={{ flex: 1 }} noWrap>
                       <Title order={3} size={22} color="yellow.8">
                         Lifetime Buzz
                       </Title>
-                      <Group className={classes.lifetimeBuzzBadge} spacing={2}>
+                      <Group className={classes.lifetimeBuzzBadge} spacing={2} noWrap>
                         <CurrencyIcon currency={Currency.BUZZ} size={24} />
                         {lifetimeBalance === null ? (
                           <Loader variant="dots" color="yellow.7" />

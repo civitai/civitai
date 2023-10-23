@@ -521,6 +521,11 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
 
+  const handleCloseMenu = () => {
+    closeBurger();
+    setUserMenuOpened(false);
+  };
+
   useEffect(() => {
     if (showSearch && searchRef.current) {
       searchRef.current.focus(); // Automatically focus input on mount
@@ -552,7 +557,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
               cursor: 'pointer',
             })}
-            onClick={() => setUserMenuOpened(false)}
+            onClick={handleCloseMenu}
             noWrap
             {...groupProps}
           >
