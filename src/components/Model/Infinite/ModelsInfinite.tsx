@@ -69,12 +69,7 @@ export function ModelsInfinite({
           {features.modelCardV2 ? (
             <MasonryGrid
               data={models}
-              render={(props) => (
-                <ModelCard
-                  {...props}
-                  useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
-                />
-              )}
+              render={ModelCard}
               itemId={(x) => x.id}
               empty={<NoContent />}
             />
@@ -88,12 +83,7 @@ export function ModelsInfinite({
               }}
               adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
               maxItemHeight={600}
-              render={(props) => (
-                <AmbientModelCard
-                  {...props}
-                  useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
-                />
-              )}
+              render={AmbientModelCard}
               itemId={(data) => data.id}
             />
           )}

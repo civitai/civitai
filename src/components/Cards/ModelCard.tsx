@@ -51,7 +51,7 @@ import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkMan
 import { generationPanel } from '~/store/generation.store';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { InView } from 'react-intersection-observer';
-import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import { UseQueryModelReturn, useModelFilters } from '~/components/Model/model.utils';
 import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
@@ -67,7 +67,7 @@ const querySchema = z.object({
   hidden: z.coerce.boolean().optional(),
 });
 
-export function ModelCard({ data, useModelVersionRedirect }: Props) {
+export function ModelCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
@@ -188,10 +188,7 @@ export function ModelCard({ data, useModelVersionRedirect }: Props) {
   return (
     <FeedCard
       className={!data.image ? classes.noImage : undefined}
-      href={`/models/${data.id}/${
-        useModelVersionRedirect ? `?modelVersionId=${data.version.id}` : slugit(data.name)
-      }`}
-      // sx={{ opacity: isHidden ? 0.1 : undefined }}
+      href={`/models/${data.id}/${slugit(data.name)}?modelVersionId=${data.version.id}`}
     >
       <InView rootMargin="600px">
         {({ ref, inView }) => (
@@ -455,4 +452,4 @@ export function ModelCard({ data, useModelVersionRedirect }: Props) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number]; useModelVersionRedirect?: boolean };
+type Props = { data: UseQueryModelReturn[number] };

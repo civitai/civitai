@@ -50,3 +50,10 @@ export const paymentIntentCreationSchema = z.object({
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
 });
+
+export type GetPaymentIntentsForBuzzSchema = z.infer<typeof getPaymentIntentsForBuzzSchema>;
+export const getPaymentIntentsForBuzzSchema = z.object({
+  userId: z.coerce.number().optional(),
+  startingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
+  endingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
+});
