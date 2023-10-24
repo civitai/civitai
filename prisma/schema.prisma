@@ -71,6 +71,7 @@ model UserReferralCode {
   code      String    @unique
   note      String?
   deletedAt DateTime?
+  createdAt DateTime  @default(now())
 
   referees UserReferral[]
 
