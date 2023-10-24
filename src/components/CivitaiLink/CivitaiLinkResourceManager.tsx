@@ -13,6 +13,7 @@ const supportedModelTypes: ModelType[] = [
   'LORA',
   'LoCon',
   'Controlnet',
+  'Upscaler',
 ];
 
 export function CivitaiLinkResourceManager({

@@ -609,11 +609,11 @@ export default function BountyEntryDetailsPage({
         <Card className={classes.sidebar} p={0}>
           <Stack style={{ flex: 1, overflow: 'hidden' }}>
             {userSection}
-            {awardSection}
-            {shareSection}
-            {filesSection}
             <Card.Section style={{ overflowY: 'auto' }}>
               <Stack spacing="md">
+                {awardSection}
+                {shareSection}
+                {filesSection}
                 {notesSection}
                 <div style={{ paddingTop: 8 }}>
                   <Divider
