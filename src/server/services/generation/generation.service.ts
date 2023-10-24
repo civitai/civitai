@@ -100,14 +100,21 @@ export const getGenerationResources = async ({
   const preselectedVersions: number[] = [];
   if (!ids && !query) {
     const featuredCollection = await dbRead.collection
-      .findUnique({
-        where: { id: 104 },
+      .findFirst({
+        where: { userId: -1, name: 'Generator' },
         select: {
           items: {
             select: {
               model: {
                 select: {
-                  modelVersions: { select: { id: true } },
+                  name: true,
+                  type: true,
+                  modelVersions: {
+                    select: { id: true, name: true },
+                    where: { status: 'Published' },
+                    orderBy: { index: 'asc' },
+                    take: 1,
+                  },
                 },
               },
             },

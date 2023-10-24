@@ -1,14 +1,17 @@
 import { Stack, StackProps, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 
+const ICON_CONTAINER_SIZE_RATIO = 1.6;
+
 export function NoContent({
   message,
+  iconSize = 128,
   ...props
-}: Omit<StackProps, 'children' | 'align'> & { message?: string }) {
+}: Omit<StackProps, 'children' | 'align'> & { message?: string; iconSize?: number }) {
   return (
     <Stack {...props} align="center">
-      <ThemeIcon size={128} radius={100}>
-        <IconCloudOff size={80} />
+      <ThemeIcon size={iconSize} radius={100}>
+        <IconCloudOff size={iconSize / ICON_CONTAINER_SIZE_RATIO} />
       </ThemeIcon>
       <Text size={32} align="center">
         No results found
