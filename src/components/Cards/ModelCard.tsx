@@ -4,13 +4,11 @@ import {
   Divider,
   Group,
   Menu,
-  Rating,
   Stack,
   Text,
   UnstyledButton,
 } from '@mantine/core';
 import {
-  IconStar,
   IconDownload,
   IconHeart,
   IconMessageCircle2,
@@ -49,9 +47,8 @@ import { CollectionType } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { InView } from 'react-intersection-observer';
-import { UseQueryModelReturn, useModelFilters } from '~/components/Model/model.utils';
+import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
@@ -59,6 +56,7 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -177,6 +175,10 @@ export function ModelCard({ data }: Props) {
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
 
+  const { useModelVersionRedirect } = useModelCardContext();
+  let href = `/models/${data.id}/${slugit(data.name)}`;
+  if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
+
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
     const elem = document.getElementById(`${modelId}`);
@@ -186,10 +188,7 @@ export function ModelCard({ data }: Props) {
   }, [modelId, data.id]);
 
   return (
-    <FeedCard
-      className={!data.image ? classes.noImage : undefined}
-      href={`/models/${data.id}/${slugit(data.name)}?modelVersionId=${data.version.id}`}
-    >
+    <FeedCard className={!data.image ? classes.noImage : undefined} href={href}>
       <InView rootMargin="600px">
         {({ ref, inView }) => (
           <div className={classes.root} ref={ref}>

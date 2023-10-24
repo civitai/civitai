@@ -10,7 +10,6 @@ import {
   Indicator,
   LoadingOverlay,
   Menu,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -19,14 +18,12 @@ import { NextLink } from '@mantine/next';
 import { CollectionType, ModelStatus } from '@prisma/client';
 import {
   IconBrush,
-  IconStar,
   IconDownload,
   IconHeart,
   IconMessageCircle2,
   IconFlag,
   IconTagOff,
   IconDotsVertical,
-  IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
 } from '@tabler/icons-react';
@@ -56,7 +53,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -66,6 +62,7 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 
 const mantineColors: DefaultMantineColor[] = [
   'blue',
@@ -379,6 +376,10 @@ export function AmbientModelCard({ data, height }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
+  const { useModelVersionRedirect } = useModelCardContext();
+  let href = `/models/${data.id}/${slugit(data.name)}`;
+  if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
+
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
     const elem = document.getElementById(`${modelId}`);
@@ -401,7 +402,7 @@ export function AmbientModelCard({ data, height }: Props) {
           <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
             {inView && (
               <NextLink
-                href={`/models/${data.id}/${slugit(data.name)}?modelVersionId=${data.version.id}`}
+                href={href}
                 className={classes.link}
                 style={{ height }}
                 onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {

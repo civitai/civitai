@@ -10,7 +10,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
+import { AmbientModelCard } from '~/components/Model/Infinite/AmbientModelCard';
 import {
   ModelQueryParams,
   UseQueryModelReturn,
@@ -22,6 +22,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
@@ -58,7 +59,7 @@ export function ModelsInfinite({
   //#endregion
 
   return (
-    <>
+    <ModelCardContextProvider useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}>
       {isLoading ? (
         <Center p="xl">
           <Loader size="xl" />
@@ -108,6 +109,6 @@ export function ModelsInfinite({
           </Text>
         </Stack>
       )}
-    </>
+    </ModelCardContextProvider>
   );
 }
