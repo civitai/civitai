@@ -15,6 +15,7 @@ import {
   throwBadRequestError,
   throwInsufficientFundsError,
   throwRateLimitError,
+  withRetries,
 } from '~/server/utils/errorHandling';
 import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
@@ -227,7 +228,9 @@ export const createTrainingRequest = async ({
   // console.log(response);
 
   if (!response.ok) {
-    await refundTransaction(transactionId, 'Refund due to an error submitting the training job.');
+    await withRetries(async () =>
+      refundTransaction(transactionId, 'Refund due to an error submitting the training job.')
+    );
   }
 
   if (response.status === 429) {
