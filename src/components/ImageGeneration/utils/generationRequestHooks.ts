@@ -20,13 +20,7 @@ export const useGetGenerationRequests = (
     ...options,
   });
   const requests = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
-  const images = useMemo(
-    () =>
-      requests
-        .filter((x) => x.status === GenerationRequestStatus.Succeeded)
-        .flatMap((x) => x.images ?? []),
-    [requests]
-  );
+  const images = useMemo(() => requests.flatMap((x) => x.images ?? []), [requests]);
   return { data, requests, images, ...rest };
 };
 
