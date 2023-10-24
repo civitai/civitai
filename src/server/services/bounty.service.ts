@@ -63,6 +63,7 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     if (engagement === 'tracking') AND.push({ engagements: { some: { type: 'Track', userId } } });
     if (engagement === 'supporter') AND.push({ benefactors: { some: { userId } } });
     if (engagement === 'awarded') AND.push({ benefactors: { some: { awartedTo: { userId } } } });
+    if (engagement === 'active') AND.push({ entries: { some: { userId } } });
   }
 
   if (baseModels && baseModels.length) {

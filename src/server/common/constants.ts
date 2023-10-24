@@ -183,7 +183,7 @@ export const constants = {
     maxVideoDurationSeconds: 120,
   },
   bounties: {
-    engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
+    engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
   },
