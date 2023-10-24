@@ -18,7 +18,7 @@ export const upsertComment = async ({
 }: UpsertCommentV2Input & { userId: number }) => {
   // only check for threads on comment create
   let thread = await dbWrite.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
   if (!data.id) {
@@ -103,7 +103,7 @@ export const getCommentsThreadDetails = async ({
   hidden = false,
 }: CommentConnectorInput) => {
   return await dbRead.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: {
       id: true,
       locked: true,
@@ -118,12 +118,12 @@ export const getCommentsThreadDetails = async ({
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
   const thread = await dbWrite.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
   if (!thread) throw throwNotFoundError();
   return await dbWrite.thread.update({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     data: { locked: !thread.locked },
     select: { locked: true },
   });

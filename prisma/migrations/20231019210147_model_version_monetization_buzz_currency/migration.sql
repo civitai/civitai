@@ -1,5 +1,5 @@
 
-BEGIN
+BEGIN;
 
 UPDATE "ModelVersionMonetization" SET "unitAmount" = "unitAmount" * 10 WHERE "unitAmount" IS NOT NULL;
 UPDATE "ModelVersionSponsorshipSettings" SET "unitAmount" = "unitAmount" * 10 WHERE "unitAmount" IS NOT NULL;

@@ -8,7 +8,7 @@ export const collectionNotifications = createNotificationProcessor({
       url: details.imageId
         ? `/images/${details.imageId}`
         : details.modelId
-        ? `/model/${details.modelId}`
+        ? `/models/${details.modelId}`
         : details.articleId
         ? `/articles/${details.articleId}`
         : details.postId

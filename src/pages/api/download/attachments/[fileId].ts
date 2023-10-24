@@ -55,7 +55,11 @@ export default RateLimitedEndpoint(
 
     const { fileId } = queryResults.data;
 
-    const file = await getFileWithPermission({ fileId, userId: session?.user?.id });
+    const file = await getFileWithPermission({
+      fileId,
+      userId: session?.user?.id,
+      isModerator: session?.user?.isModerator,
+    });
 
     if (!file) return notFound(req, res, 'File not found');
 

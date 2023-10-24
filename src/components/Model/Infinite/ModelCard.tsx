@@ -186,7 +186,7 @@ const useStyles = createStyles((theme) => {
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function AmbientModelCard({ data, height, useModelVersionRedirect }: Props) {
+export function AmbientModelCard({ data, height }: Props) {
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const hiddenQuery = router.query.hidden === 'true';
@@ -401,9 +401,7 @@ export function AmbientModelCard({ data, height, useModelVersionRedirect }: Prop
           <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
             {inView && (
               <NextLink
-                href={`/models/${data.id}/${
-                  useModelVersionRedirect ? `?modelVersionId=${data.version.id}` : slugit(data.name)
-                }`}
+                href={`/models/${data.id}/${slugit(data.name)}?modelVersionId=${data.version.id}`}
                 className={classes.link}
                 style={{ height }}
                 onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -601,5 +599,4 @@ type Props = {
   index: number;
   data: UseQueryModelReturn[number];
   height: number;
-  useModelVersionRedirect?: boolean;
 };

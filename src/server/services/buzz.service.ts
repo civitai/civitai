@@ -263,6 +263,7 @@ export async function createBuzzTransactionMany(
   return data;
 }
 
+const MAX_RETRIES = 3;
 export async function completeStripeBuzzTransaction({
   amount,
   stripePaymentIntentId,
@@ -274,8 +275,6 @@ export async function completeStripeBuzzTransaction({
 }: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
   transactionId: string;
 }> {
-  const MAX_RETRIES = 3;
-
   try {
     const stripe = await getServerStripe();
     const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);

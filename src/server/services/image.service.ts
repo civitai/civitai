@@ -85,16 +85,14 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
 };
 
 // consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
-export const updateImageById = async <TSelect extends Prisma.ImageSelect>({
+export const updateImageById = async ({
   id,
-  select,
   data,
 }: {
   id: number;
   data: Prisma.ImageUpdateArgs['data'];
-  select: TSelect;
 }) => {
-  const image = await dbWrite.image.update({ where: { id }, data, select });
+  const image = await dbWrite.image.update({ where: { id }, data });
 
   if (image.tosViolation) {
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
@@ -493,7 +491,6 @@ export const getAllImages = async ({
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
     AND.push(Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
-    AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
 
   if (tagReview) {
@@ -617,7 +614,7 @@ export const getAllImages = async ({
         ct AS (
           SELECT ci."imageId", ci."randomId"
           FROM "CollectionItem" ci
-          JOIN "Collection" c ON c.id = ci."collectionId" 
+          JOIN "Collection" c ON c.id = ci."collectionId"
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
             AND (

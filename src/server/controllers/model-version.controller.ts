@@ -1,7 +1,7 @@
-import { ModelStatus, ModelVersionMonetizationType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { BaseModel, BaseModelType } from '~/server/common/constants';
 
+import { BaseModel, BaseModelType } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -11,6 +11,7 @@ import {
   PublishVersionInput,
 } from '~/server/schema/model-version.schema';
 import { DeclineReviewSchema, ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import {
   deleteVersionById,
   getModelVersionRunStrategies,
@@ -28,7 +29,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { modelFileSelect } from '../selectors/modelFile.selector';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -68,28 +69,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             user: { select: { id: true } },
           },
         },
-        files: withFiles
-          ? {
-              select: {
-                name: true,
-                id: true,
-                sizeKB: true,
-                type: true,
-                metadata: true,
-                pickleScanResult: true,
-                pickleScanMessage: true,
-                virusScanResult: true,
-                scannedAt: true,
-                visibility: true,
-                hashes: {
-                  select: {
-                    type: true,
-                    hash: true,
-                  },
-                },
-              },
-            }
-          : false,
+        files: withFiles ? { select: modelFileSelect } : false,
         posts: withFiles ? { select: { id: true } } : false,
         monetization: {
           select: {
@@ -115,8 +95,8 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       ...version,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
-      files: version.files as Array<
-        Omit<(typeof version.files)[number], 'metadata'> & { metadata: FileMetadata }
+      files: version.files as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
       >,
     };
   } catch (e) {

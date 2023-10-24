@@ -1,5 +1,4 @@
 import React, { forwardRef } from 'react';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteItem, Badge, Center, Group, Stack } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
