@@ -73,7 +73,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             {user ? (
               user?.id !== -1 && (
                 <UnstyledButton
-                  sx={{ color: isAwarded ? theme.colors.dark[7] : 'white', fontWeight: 500 }}
+                  sx={{ color: isAwarded ? theme.colors.dark[7] : 'white' }}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();

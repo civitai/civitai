@@ -72,15 +72,19 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   }
 
   if (status) {
-    if (status === BountyStatus.Open) AND.push({ complete: false, expiresAt: { gt: new Date() } });
-    else if (status === BountyStatus.Awarded) AND.push({ complete: true, entries: { some: {} } });
+    if (status === BountyStatus.Open)
+      AND.push({ complete: false, refunded: false, expiresAt: { gt: new Date() } });
+    else if (status === BountyStatus.Awarded)
+      AND.push({ complete: true, entries: { some: {} }, refunded: false });
     else if (status === BountyStatus.Expired) {
+      // 1. return refunded ones with entries & expired
+      // 3. return completed with no entries & expired.
+      // 2. return non completed & expired ones
       const OR: Prisma.BountyWhereInput[] = [
-        { expiresAt: { lt: new Date() }, entries: { none: {} } },
+        { expiresAt: { lt: new Date() }, entries: { some: {} }, refunded: true },
+        { expiresAt: { lt: new Date() }, entries: { none: {} }, complete: true },
+        { expiresAt: { lt: new Date() }, complete: false },
       ];
-      // Also fetch bounties where it has entries but the creator hasn't awarded anyone
-      if (userId)
-        OR.push({ userId, expiresAt: { lt: new Date() }, entries: { some: {} }, complete: false });
 
       AND.push({ OR });
     }
