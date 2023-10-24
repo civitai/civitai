@@ -576,7 +576,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   metadata,
                 });
               } catch (e: unknown) {
-                console.log(e);
                 setZipping(false);
                 updateNotification({
                   id: notificationId,

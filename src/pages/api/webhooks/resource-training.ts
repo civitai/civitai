@@ -5,6 +5,8 @@ import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail } from '~/server/email/templates';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
+import { logToAxiom } from '~/server/logging/client';
 
 export type EpochSchema = z.infer<typeof epochSchema>;
 const epochSchema = z.object({
@@ -67,14 +69,19 @@ const mapTrainingStatus = {
   LateRejected: TrainingStatus.Failed,
 } as const;
 
-// breaking change
+const logWebhook = (data: MixedObject) => {
+  logToAxiom({ name: 'resource-training', type: 'error', ...data }, 'webhooks').catch();
+};
+
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') {
+    logWebhook({ message: 'Wrong method', data: { method: req.method } });
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success) {
+    logWebhook({ message: 'Could not parse body', data: { error: bodyResults.error } });
     return res.status(400).json({ ok: false, errors: bodyResults.error });
   }
 
@@ -82,7 +89,25 @@ export default WebhookEndpoint(async (req, res) => {
 
   if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
     // nb: in the case of deleted or expired, the job history will not be updated (and the user won't see it)
-    await refundTransaction(data.jobProperties.transactionId, 'Refund for failed training job.');
+    logWebhook({
+      type: 'info',
+      message: `Attempting to refund user`,
+      data: { type: data.type, jobId: data.jobId, transactionId: data.jobProperties.transactionId },
+    });
+    try {
+      await withRetries(async () =>
+        refundTransaction(data.jobProperties.transactionId, 'Refund for failed training job.')
+      );
+    } catch (e: unknown) {
+      logWebhook({
+        message: 'Could not refund user',
+        data: {
+          error: (e as Error)?.message,
+          jobId: data.jobId,
+          transactionId: data.jobProperties.transactionId,
+        },
+      });
+    }
   }
 
   switch (data.type) {
@@ -92,6 +117,10 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Rejected':
     case 'LateRejected':
       if (!data.context) {
+        logWebhook({
+          message: 'Context missing',
+          data: { jobId: data.jobId },
+        });
         return res.status(400).json({ ok: false, error: 'context is undefined' });
       }
 
@@ -100,6 +129,10 @@ export default WebhookEndpoint(async (req, res) => {
       try {
         await updateRecords({ ...data.context, jobId: data.jobId }, status);
       } catch (e: unknown) {
+        logWebhook({
+          message: 'Failed to update record',
+          data: { error: (e as Error)?.message, jobId: data.jobId },
+        });
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
 
@@ -111,6 +144,10 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Expired':
       break;
     default:
+      logWebhook({
+        message: 'Type not supported',
+        data: { type: data.type, jobId: data.jobId },
+      });
       return res.status(400).json({ ok: false, error: 'type not supported' });
   }
 

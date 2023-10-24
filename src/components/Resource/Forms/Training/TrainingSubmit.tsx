@@ -459,7 +459,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       showNotification({
         message: 'Model was already submitted for training.',
       });
-      router.replace(userTrainingDashboardURL);
+      router.replace(userTrainingDashboardURL).then();
       return;
     }
 
@@ -585,8 +585,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 title: 'Successfully submitted for training!',
                 message: 'You will be emailed when training is complete.',
               });
-              setAwaitInvalidate(false);
-              await router.replace(userTrainingDashboardURL);
+              router.replace(userTrainingDashboardURL).then(() => setAwaitInvalidate(false));
             },
             onError: () => {
               // set the status back to pending
