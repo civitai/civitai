@@ -124,8 +124,6 @@ export const getGenerationResources = async ({
     ids = preselectedVersions;
   }
 
-  console.log('ids', ids);
-
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
   if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
   if (!!types?.length)
