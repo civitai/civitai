@@ -491,7 +491,6 @@ export const getAllImages = async ({
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
     AND.push(Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
-    AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
 
   if (tagReview) {
@@ -615,7 +614,7 @@ export const getAllImages = async ({
         ct AS (
           SELECT ci."imageId", ci."randomId"
           FROM "CollectionItem" ci
-          JOIN "Collection" c ON c.id = ci."collectionId" 
+          JOIN "Collection" c ON c.id = ci."collectionId"
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
             AND (
