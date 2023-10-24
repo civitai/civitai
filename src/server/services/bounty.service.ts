@@ -63,6 +63,7 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     if (engagement === 'tracking') AND.push({ engagements: { some: { type: 'Track', userId } } });
     if (engagement === 'supporter') AND.push({ benefactors: { some: { userId } } });
     if (engagement === 'awarded') AND.push({ benefactors: { some: { awartedTo: { userId } } } });
+    if (engagement === 'active') AND.push({ entries: { some: { userId } } });
   }
 
   if (baseModels && baseModels.length) {
@@ -72,15 +73,19 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   }
 
   if (status) {
-    if (status === BountyStatus.Open) AND.push({ complete: false, expiresAt: { gt: new Date() } });
-    else if (status === BountyStatus.Awarded) AND.push({ complete: true, entries: { some: {} } });
+    if (status === BountyStatus.Open)
+      AND.push({ complete: false, refunded: false, expiresAt: { gt: new Date() } });
+    else if (status === BountyStatus.Awarded)
+      AND.push({ complete: true, entries: { some: {} }, refunded: false });
     else if (status === BountyStatus.Expired) {
+      // 1. return refunded ones expired
+      // 3. return finished (expired) but not completed yet (48hr period).
+      // 2. return completed no entries.
       const OR: Prisma.BountyWhereInput[] = [
-        { expiresAt: { lt: new Date() }, entries: { none: {} } },
+        { expiresAt: { lt: new Date() }, refunded: true },
+        { expiresAt: { lt: new Date() }, complete: false },
+        { expiresAt: { lt: new Date() }, entries: { none: {} }, complete: true },
       ];
-      // Also fetch bounties where it has entries but the creator hasn't awarded anyone
-      if (userId)
-        OR.push({ userId, expiresAt: { lt: new Date() }, entries: { some: {} }, complete: false });
 
       AND.push({ OR });
     }

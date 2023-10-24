@@ -18,9 +18,12 @@ import {
   ThemeIcon,
   Alert,
   ScrollArea,
+  Textarea,
+  Modal,
+  NumberInput,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -95,6 +98,7 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -369,6 +373,9 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const currentUser = useCurrentUser();
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
+  const minUnitAmount = bounty.minBenefactorUnitAmount;
+  const [addToBountyModalOpen, setAddToBountyModalOpen] = useState<boolean>(false);
+  const [addToBountyAmount, setAddToBountyAmount] = useState<number>(minUnitAmount);
 
   const { trackAction } = useTrackEvent();
 
@@ -438,8 +445,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     return bounty.benefactors.some((b) => b.user.id === currentUser.id);
   }, [bounty, currentUser]);
   const currency = getBountyCurrency(bounty);
-
-  const minUnitAmount = bounty.minBenefactorUnitAmount;
 
   const { toggle, engagements, toggling } = useBountyEngagement();
 
@@ -571,10 +576,12 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             })}
             noWrap
           >
-            <Group spacing={2}>
-              <CurrencyIcon currency={currency} size={20} />
-              <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
-            </Group>
+            <Tooltip label="Minimum amount to add">
+              <Group spacing={2}>
+                <CurrencyIcon currency={currency} size={20} />
+                <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
+              </Group>
+            </Tooltip>
             <Button
               variant="filled"
               h="100%"
@@ -582,46 +589,73 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-
                 // Ignore track error
                 trackAction({ type: 'AddToBounty_Click' }).catch(() => undefined);
-
-                openConfirmModal({
-                  title: isBenefactor ? 'Add to bounty' : 'Become a supporter',
-                  children: (
-                    <Stack spacing={0}>
-                      <Text size="sm">
-                        Are you sure you want{' '}
-                        {isBenefactor ? 'add' : 'become a supporter by adding'}{' '}
-                        <Text component="span" weight={590}>
-                          <CurrencyIcon currency={currency} size={16} />{' '}
-                          {formatCurrencyForDisplay(minUnitAmount, currency)}
-                        </Text>{' '}
-                        to this bounty?
-                      </Text>
-                      <Text color="red.4" size="sm">
-                        This action is non refundable.
-                      </Text>
-
-                      {!isBenefactor && (
-                        <Text size="sm" mt="sm">
-                          <strong>Note:</strong> As a supporter, you will be <strong>unable</strong>{' '}
-                          to add entries to this bounty
-                        </Text>
-                      )}
-                    </Stack>
-                  ),
-                  centered: true,
-                  labels: { confirm: 'Confirm', cancel: 'No, go back' },
-                  onConfirm: () => {
-                    onAddToBounty(minUnitAmount);
-                    trackAction({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
-                  },
-                });
+                setAddToBountyAmount(minUnitAmount);
+                setAddToBountyModalOpen(true);
               }}
             >
               {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Support'}
             </Button>
+            <Modal
+              opened={addToBountyModalOpen}
+              onClose={() => {
+                setAddToBountyModalOpen(false);
+              }}
+              title="Support this bounty"
+            >
+              <Stack>
+                <Stack spacing="xs">
+                  <NumberInput
+                    min={minUnitAmount}
+                    step={5}
+                    value={addToBountyAmount}
+                    onChange={(val) => setAddToBountyAmount(val ?? minUnitAmount)}
+                    mb="md"
+                  />
+                  <Text size="sm">
+                    Are you sure you want {isBenefactor ? 'to add' : 'become a supporter'}{' '}
+                    <Text component="span" weight={590}>
+                      <CurrencyIcon currency={currency} size={16} />{' '}
+                      {formatCurrencyForDisplay(addToBountyAmount, currency)}
+                    </Text>{' '}
+                    to this bounty?
+                  </Text>
+                  <Text color="red.4" size="sm">
+                    This action is non reversible.
+                  </Text>
+
+                  {!isBenefactor && (
+                    <Text size="sm" mt="sm">
+                      <strong>Note:</strong> As a supporter, you will be <strong>unable</strong> to
+                      add entries to this bounty
+                    </Text>
+                  )}
+                </Stack>
+                <Group position="right">
+                  <Button variant="default" onClick={() => setAddToBountyModalOpen(false)}>
+                    Cancel
+                  </Button>
+
+                  <BuzzTransactionButton
+                    loading={isLoading}
+                    type="submit"
+                    label="Continue"
+                    buzzAmount={addToBountyAmount}
+                    color="yellow.7"
+                    onPerformTransaction={() => {
+                      if (addToBountyAmount < minUnitAmount) {
+                        return;
+                      }
+
+                      onAddToBounty(addToBountyAmount);
+                      trackAction({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
+                      setAddToBountyModalOpen(false);
+                    }}
+                  />
+                </Group>
+              </Stack>
+            </Modal>
           </Group>
         )}
         <Group spacing={8} noWrap>

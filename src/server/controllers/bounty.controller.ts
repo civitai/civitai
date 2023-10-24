@@ -181,6 +181,7 @@ export const getBountyEntriesHandler = async ({
         reactions: {
           select: getReactionsSelectV2,
         },
+
         stats: {
           select: {
             likeCountAllTime: true,
@@ -193,6 +194,7 @@ export const getBountyEntriesHandler = async ({
           },
         },
       },
+      sort: 'benefactorCount',
     });
 
     const images = await getImagesByEntity({
