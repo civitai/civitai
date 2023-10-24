@@ -181,6 +181,7 @@ export const getBountyEntriesHandler = async ({
         reactions: {
           select: getReactionsSelectV2,
         },
+
         stats: {
           select: {
             likeCountAllTime: true,

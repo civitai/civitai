@@ -610,7 +610,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     min={minUnitAmount}
                     step={5}
                     value={addToBountyAmount}
-                    onChange={(val) => setAddToBountyAmount(val)}
+                    onChange={(val) => setAddToBountyAmount(val ?? minUnitAmount)}
                     mb="md"
                   />
                   <Text size="sm">

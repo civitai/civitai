@@ -1,4 +1,12 @@
-import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  createStyles,
+  Group,
+  keyframes,
+  Stack,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -12,29 +20,60 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { IconFiles } from '@tabler/icons-react';
+import { IconAward, IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { Reactions } from '~/components/Reaction/Reactions';
 
 const IMAGE_CARD_WIDTH = 450;
 
+const moveBackground = keyframes({
+  '0%': {
+    backgroundPosition: '0% 50%',
+  },
+  '50%': {
+    backgroundPosition: '100% 50%',
+  },
+  '100%': {
+    backgroundPosition: '0% 50%',
+  },
+});
+
+const useStyles = createStyles((theme) => ({
+  awardedBanner: {
+    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
+    animation: `${moveBackground} 5s ease infinite`,
+    backgroundSize: '200% 200%',
+    color: theme.colors.yellow[7],
+  },
+}));
+
 export function BountyEntryCard({ data, currency, renderActions }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
+  const { classes: awardedStyles } = useStyles();
+  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { user, images, awardedUnitAmountTotal } = data;
   const cover = images?.[0];
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;
+  const isAwarded = awardedUnitAmountTotal > 0;
 
   return (
-    <FeedCard aspectRatio="square" href={`/bounties/${data.bountyId}/entries/${data.id}`}>
+    <FeedCard
+      aspectRatio="square"
+      href={`/bounties/${data.bountyId}/entries/${data.id}`}
+      pos="relative"
+    >
       <div className={cx(classes.root, classes.withHeader, classes.noHover)}>
-        <Stack className={classes.header}>
+        <Stack
+          className={cx(classes.header, {
+            [awardedStyles.awardedBanner]: isAwarded,
+          })}
+        >
           <Group position="apart" noWrap>
             {user ? (
               user?.id !== -1 && (
                 <UnstyledButton
-                  sx={{ color: 'white' }}
+                  sx={{ color: isAwarded ? theme.colors.dark[7] : 'white', fontWeight: 500 }}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
