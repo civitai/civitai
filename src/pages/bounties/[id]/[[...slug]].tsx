@@ -576,10 +576,12 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             })}
             noWrap
           >
-            <Group spacing={2}>
-              <CurrencyIcon currency={currency} size={20} />
-              <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
-            </Group>
+            <Tooltip label="Minimum amount to add">
+              <Group spacing={2}>
+                <CurrencyIcon currency={currency} size={20} />
+                <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
+              </Group>
+            </Tooltip>
             <Button
               variant="filled"
               h="100%"
@@ -589,6 +591,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 e.stopPropagation();
                 // Ignore track error
                 trackAction({ type: 'AddToBounty_Click' }).catch(() => undefined);
+                setAddToBountyAmount(minUnitAmount);
                 setAddToBountyModalOpen(true);
               }}
             >
@@ -596,7 +599,9 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             </Button>
             <Modal
               opened={addToBountyModalOpen}
-              onClose={() => setAddToBountyModalOpen(false)}
+              onClose={() => {
+                setAddToBountyModalOpen(false);
+              }}
               title="Support this bounty"
             >
               <Stack>
