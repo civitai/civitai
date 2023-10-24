@@ -77,13 +77,13 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     else if (status === BountyStatus.Awarded)
       AND.push({ complete: true, entries: { some: {} }, refunded: false });
     else if (status === BountyStatus.Expired) {
-      // 1. return refunded ones with entries & expired
-      // 3. return completed with no entries & expired.
-      // 2. return non completed & expired ones
+      // 1. return refunded ones expired
+      // 3. return finished (expired) but not completed yet (48hr period).
+      // 2. return completed no entries.
       const OR: Prisma.BountyWhereInput[] = [
-        { expiresAt: { lt: new Date() }, entries: { some: {} }, refunded: true },
-        { expiresAt: { lt: new Date() }, entries: { none: {} }, complete: true },
+        { expiresAt: { lt: new Date() }, refunded: true },
         { expiresAt: { lt: new Date() }, complete: false },
+        { expiresAt: { lt: new Date() }, entries: { none: {} }, complete: true },
       ];
 
       AND.push({ OR });
