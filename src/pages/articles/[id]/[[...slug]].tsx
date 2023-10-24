@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Badge,
   Box,
   Button,
@@ -123,13 +124,14 @@ export default function ArticleDetailsPage({
   const tags = article.tags.filter((tag) => !tag.isCategory);
 
   const actionButtons = (
-    <Group spacing={4} noWrap>
-      <InteractiveTipBuzzButton toUserId={article.user.id} entityType={'Article'} entityId={id}>
+    <Group spacing={4} align="center" noWrap>
+      <InteractiveTipBuzzButton toUserId={article.user.id} entityType="Article" entityId={id}>
         <IconBadge
           radius="sm"
           sx={{ cursor: 'pointer' }}
           color="gray"
           size="lg"
+          h={28}
           icon={<IconBolt />}
         >
           <Text className={classes.badgeText}>
@@ -146,6 +148,7 @@ export default function ArticleDetailsPage({
                 radius="sm"
                 color="gray"
                 size="lg"
+                h={28}
                 icon={
                   <IconBookmark
                     color={isFavorite ? theme.colors.gray[2] : undefined}
@@ -164,13 +167,9 @@ export default function ArticleDetailsPage({
         </ToggleArticleEngagement>
       </LoginRedirect>
       <ShareButton url={`/articles/${article.id}/${slugit(article.title)}`} title={article.title}>
-        <Button
-          variant="subtle"
-          color="gray"
-          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-        >
+        <ActionIcon variant="subtle" color="gray">
           <IconShare3 />
-        </Button>
+        </ActionIcon>
       </ShareButton>
     </Group>
   );

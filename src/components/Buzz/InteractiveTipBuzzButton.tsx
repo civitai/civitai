@@ -389,7 +389,7 @@ export function InteractiveTipBuzzButton({
 
   return (
     <LoginPopover>
-      <div>{buzzButton}</div>
+      <div style={{ display: 'flex' }}>{buzzButton}</div>
     </LoginPopover>
   );
 }
