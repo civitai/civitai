@@ -49,6 +49,7 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
+import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1061,29 +1062,35 @@ export const getImage = async ({
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
-  return await dbRead.imageResourceHelper.findMany({
-    where: { imageId: id, OR: [{ hash: { not: null } }, { modelVersionId: { not: null } }] },
-    select: {
-      id: true,
-      reviewId: true,
-      reviewRating: true,
-      reviewDetails: true,
-      reviewCreatedAt: true,
-      name: true,
-      hash: true,
-      modelVersionId: true,
-      modelVersionName: true,
-      modelVersionCreatedAt: true,
-      modelId: true,
-      modelName: true,
-      modelRating: true,
-      modelRatingCount: true,
-      modelDownloadCount: true,
-      modelCommentCount: true,
-      modelFavoriteCount: true,
-      modelType: true,
-    },
-  });
+  const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
+    SELECT
+      irh."id",
+      irh."reviewId",
+      irh."reviewRating",
+      irh."reviewDetails",
+      irh."reviewCreatedAt",
+      irh."name",
+      irh."hash",
+      irh."modelVersionId",
+      irh."modelVersionName",
+      irh."modelVersionCreatedAt",
+      irh."modelId",
+      irh."modelName",
+      irh."modelRating",
+      irh."modelRatingCount",
+      irh."modelDownloadCount",
+      irh."modelCommentCount",
+      irh."modelFavoriteCount",
+      irh."modelType"
+    FROM
+      "ImageResourceHelper" irh
+    JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
+    WHERE
+      irh."imageId" = ${Prisma.sql`${id}`}
+    AND (irh."hash" IS NOT NULL OR irh."modelVersionId" IS NOT NULL)
+  `;
+
+  return resources;
 };
 
 type ImagesForModelVersions = {

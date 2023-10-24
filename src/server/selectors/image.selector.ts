@@ -98,3 +98,31 @@ export const prepareUpdateImage = (image: ImageUploadProps) => {
   };
   return payload;
 };
+
+export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHelperSelect>()({
+  id: true,
+  reviewId: true,
+  reviewRating: true,
+  reviewDetails: true,
+  reviewCreatedAt: true,
+  name: true,
+  hash: true,
+  modelVersionId: true,
+  modelVersionName: true,
+  modelVersionCreatedAt: true,
+  modelId: true,
+  modelName: true,
+  modelRating: true,
+  modelRatingCount: true,
+  modelDownloadCount: true,
+  modelCommentCount: true,
+  modelFavoriteCount: true,
+  modelType: true,
+});
+
+const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultArgs>()({
+  select: imageResourceHelperSelect,
+});
+export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
+  typeof imageResourceHelper
+>;
