@@ -194,6 +194,7 @@ export const getBountyEntriesHandler = async ({
           },
         },
       },
+      sort: 'benefactorCount',
     });
 
     const images = await getImagesByEntity({
