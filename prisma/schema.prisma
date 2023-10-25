@@ -1044,6 +1044,7 @@ model Image {
   sizeKB            Int?
   ingestion         ImageIngestionStatus    @default(Pending)
   blockedFor        String?
+  scanJobs          Json?
 
   reports         ImageReport[]
   reactions       ImageReaction[]
