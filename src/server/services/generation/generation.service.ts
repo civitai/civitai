@@ -97,8 +97,42 @@ export const getGenerationResources = async ({
   user,
   supported,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Resource[]> => {
+  const preselectedVersions: number[] = [];
+  if (!ids && !query) {
+    const featuredCollection = await dbRead.collection
+      .findFirst({
+        where: { userId: -1, name: 'Generator' },
+        select: {
+          items: {
+            select: {
+              model: {
+                select: {
+                  name: true,
+                  type: true,
+                  modelVersions: {
+                    select: { id: true, name: true },
+                    where: { status: 'Published' },
+                    orderBy: { index: 'asc' },
+                    take: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
+      })
+      .catch(() => null);
+
+    if (featuredCollection)
+      preselectedVersions.push(
+        ...featuredCollection.items.flatMap((x) => x.model?.modelVersions.map((x) => x.id) ?? [])
+      );
+
+    ids = preselectedVersions;
+  }
+
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
-  if (ids) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
+  if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
   if (!!types?.length)
     sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
   if (!!notTypes?.length)

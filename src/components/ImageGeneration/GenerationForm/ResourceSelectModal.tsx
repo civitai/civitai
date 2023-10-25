@@ -17,6 +17,7 @@ import React, { useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { getDisplayName } from '~/utils/string-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { NoContent } from '~/components/NoContent/NoContent';
 
 type ResourceSelectModalProps = {
   notIds?: number[];
@@ -47,7 +48,11 @@ export default function ResourceSelectModal({
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
-  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
+  const {
+    data = [],
+    isInitialLoading: isLoading,
+    isRefetching,
+  } = trpc.generation.getResources.useQuery(
     {
       types,
       query: debounced,
@@ -75,36 +80,40 @@ export default function ResourceSelectModal({
           autoFocus
         />
       </Stack>
-      {isLoading ? (
+      {isLoading || isRefetching ? (
         <Center p="xl">
           <Loader />
         </Center>
       ) : (
         <>
-          {!debounced?.length && <Divider label="Popular Resources" labelPosition="center" />}
-          <Stack spacing={0}>
-            {data
-              .filter((resource) => !notIds.includes(resource.id))
-              .map((resource) => (
-                <Stack
-                  spacing={0}
-                  key={`${resource.modelId}_${resource.id}`}
-                  onClick={() => handleSelect(resource)}
-                  className={classes.resource}
-                  p="xs"
-                >
-                  <Group position="apart" noWrap>
-                    <Text weight={500} lineClamp={1} size="sm">
-                      {resource.modelName}
-                    </Text>
-                  </Group>
-                  <Group position="apart">
-                    <Text size="xs">{resource.name}</Text>
-                    <Badge>{getDisplayName(resource.modelType)}</Badge>
-                  </Group>
-                </Stack>
-              ))}
-          </Stack>
+          {!debounced?.length && <Divider label="Featured resources" labelPosition="center" />}
+          {data.length > 0 ? (
+            <Stack spacing={0}>
+              {data
+                .filter((resource) => !notIds.includes(resource.id))
+                .map((resource) => (
+                  <Stack
+                    spacing={0}
+                    key={`${resource.modelId}_${resource.id}`}
+                    onClick={() => handleSelect(resource)}
+                    className={classes.resource}
+                    p="xs"
+                  >
+                    <Group position="apart" noWrap>
+                      <Text weight={500} lineClamp={1} size="sm">
+                        {resource.modelName}
+                      </Text>
+                    </Group>
+                    <Group position="apart">
+                      <Text size="xs">{resource.name}</Text>
+                      <Badge>{getDisplayName(resource.modelType)}</Badge>
+                    </Group>
+                  </Stack>
+                ))}
+            </Stack>
+          ) : (
+            <NoContent iconSize={80} mt="xl" />
+          )}
         </>
       )}
     </Stack>
