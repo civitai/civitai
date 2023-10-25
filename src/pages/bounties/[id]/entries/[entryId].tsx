@@ -41,7 +41,8 @@ import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useHotkeys } from '@mantine/hooks';
 import {
   IconChevronLeft,
-  IconChevronRight, IconInfoCircle,
+  IconChevronRight,
+  IconInfoCircle,
   IconLock,
   IconLockOpen,
   IconShare3,
@@ -72,7 +73,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
-import {ImageMetaPopover} from "~/components/ImageMeta/ImageMeta";
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -781,20 +782,21 @@ export function BountyEntryCarousel({
                     width={image.width ?? 1200}
                     anim
                   />
-
                 </ImageGuard.Safe>
                 {image.meta && (
                   <ImageMetaPopover
                     meta={image.meta}
                     generationProcess={image.generationProcess ?? undefined}
                     imageId={image.id}
-                    style={{
-                      position: 'absolute',
-                      bottom: '10px',
-                      right: '10px',
-                    }}
                   >
-                    <ActionIcon  variant="light">
+                    <ActionIcon
+                      style={{
+                        position: 'absolute',
+                        bottom: '10px',
+                        right: '10px',
+                      }}
+                      variant="light"
+                    >
                       <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                     </ActionIcon>
                   </ImageMetaPopover>

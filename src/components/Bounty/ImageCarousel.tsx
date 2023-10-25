@@ -12,7 +12,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import {IconInfoCircle, IconPhotoOff} from '@tabler/icons-react';
+import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
@@ -24,7 +24,7 @@ import Link from 'next/link';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useMemo } from 'react';
 import { applyUserPreferencesImages } from '../Search/search.utils';
-import {ImageMetaPopover} from "~/components/ImageMeta/ImageMeta";
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -91,6 +91,11 @@ const useStyles = createStyles((theme) => ({
   viewport: {
     overflowX: 'clip',
     overflowY: 'visible',
+  },
+  meta: {
+    position: 'absolute',
+    bottom: '10px',
+    right: '10px',
   },
 }));
 
@@ -236,23 +241,18 @@ export function ImageCarousel({
                             aspectRatio={1}
                           />
                         )}
+                        {image.meta && (
+                          <ImageMetaPopover
+                            meta={image.meta}
+                            generationProcess={image.generationProcess ?? undefined}
+                            imageId={image.id}
+                          >
+                            <ActionIcon variant="light" className={classes.meta}>
+                              <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                            </ActionIcon>
+                          </ImageMetaPopover>
+                        )}
                       </div>
-                      {image.meta && (
-                        <ImageMetaPopover
-                          meta={image.meta}
-                          generationProcess={image.generationProcess ?? undefined}
-                          imageId={image.id}
-                          style={{
-                            position: 'absolute',
-                            bottom: '10px',
-                            right: '10px',
-                          }}
-                        >
-                          <ActionIcon  variant="light">
-                            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                          </ActionIcon>
-                        </ImageMetaPopover>
-                      )}
                     </Center>
                   )}
                 </ImageGuard.Content>
