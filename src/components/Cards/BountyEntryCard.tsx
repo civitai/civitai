@@ -59,7 +59,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 
   return (
     <FeedCard
-      aspectRatio="square"
+      aspectRatio="portrait"
       href={`/bounties/${data.bountyId}/entries/${data.id}`}
       pos="relative"
     >
