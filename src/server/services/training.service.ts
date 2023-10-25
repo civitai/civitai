@@ -203,7 +203,7 @@ export const createTrainingRequest = async ({
     $type: 'imageResourceTraining',
     // priority: 10,
     callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId, transactionId },
+    properties: { userId, transactionId, modelFileId: modelVersion.fileId },
     model: modelMap[baseModel!],
     trainingData: trainingUrl,
     maxRetryAttempt: constants.maxTrainingRetries,

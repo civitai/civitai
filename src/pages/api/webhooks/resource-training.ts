@@ -24,11 +24,10 @@ const epochSchema = z.object({
 
 type ContextProps = z.infer<typeof context>;
 const context = z.object({
-  modelFileId: z.number().gt(0),
-  status: z.string(),
+  status: z.string().optional(),
   message: z.string().optional(),
-  model: z.string(),
-  start_time: z.number(),
+  model: z.string().optional(),
+  start_time: z.number().optional(),
   end_time: z.number().optional(),
   duration: z.number().optional(),
   epochs: z.array(epochSchema).optional(),
@@ -55,6 +54,7 @@ const schema = z.object({
   // cost: z.number().nullish(),
   jobProperties: z.object({
     transactionId: z.string(),
+    modelFileId: z.number().gt(0),
     // userId: z.number(),
   }),
   jobHasCompleted: z.boolean(),
@@ -103,6 +103,7 @@ export default WebhookEndpoint(async (req, res) => {
         message: 'Could not refund user',
         data: {
           error: (e as Error)?.message,
+          cause: (e as Error)?.cause,
           jobId: data.jobId,
           transactionId: data.jobProperties.transactionId,
         },
@@ -116,22 +117,17 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Failed':
     case 'Rejected':
     case 'LateRejected':
-      if (!data.context) {
-        logWebhook({
-          message: 'Context missing',
-          data: { jobId: data.jobId },
-        });
-        return res.status(400).json({ ok: false, error: 'context is undefined' });
-      }
-
       const status = mapTrainingStatus[data.type];
 
       try {
-        await updateRecords({ ...data.context, jobId: data.jobId }, status);
+        await updateRecords(
+          { ...data.context, modelFileId: data.jobProperties.modelFileId, jobId: data.jobId },
+          status
+        );
       } catch (e: unknown) {
         logWebhook({
           message: 'Failed to update record',
-          data: { error: (e as Error)?.message, jobId: data.jobId },
+          data: { error: (e as Error)?.message, cause: (e as Error)?.cause, jobId: data.jobId },
         });
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
@@ -155,7 +151,14 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 async function updateRecords(
-  { modelFileId, message, epochs, start_time, end_time, jobId }: ContextProps & { jobId: string },
+  {
+    modelFileId,
+    message,
+    epochs,
+    start_time,
+    end_time,
+    jobId,
+  }: ContextProps & { modelFileId: number; jobId: string },
   status: TrainingStatus
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -192,10 +195,12 @@ async function updateRecords(
     ...thisMetadata,
     trainingResults: {
       ...trainingResults,
-      epochs: epochs,
+      epochs: epochs ?? [],
       attempts: attempts,
       history: history,
-      start_time: trainingResults.start_time || new Date(start_time * 1000).toISOString(),
+      start_time:
+        trainingResults.start_time ||
+        (start_time ? new Date(start_time * 1000).toISOString() : null),
       end_time: end_time && new Date(end_time * 1000).toISOString(),
     },
   };
