@@ -1,5 +1,6 @@
 import { Carousel } from '@mantine/carousel';
 import {
+  ActionIcon,
   AspectRatio,
   Box,
   Button,
@@ -11,7 +12,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { IconPhotoOff } from '@tabler/icons-react';
+import {IconInfoCircle, IconPhotoOff} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
@@ -23,6 +24,7 @@ import Link from 'next/link';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useMemo } from 'react';
 import { applyUserPreferencesImages } from '../Search/search.utils';
+import {ImageMetaPopover} from "~/components/ImageMeta/ImageMeta";
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -235,6 +237,22 @@ export function ImageCarousel({
                           />
                         )}
                       </div>
+                      {image.meta && (
+                        <ImageMetaPopover
+                          meta={image.meta}
+                          generationProcess={image.generationProcess ?? undefined}
+                          imageId={image.id}
+                          style={{
+                            position: 'absolute',
+                            bottom: '10px',
+                            right: '10px',
+                          }}
+                        >
+                          <ActionIcon  variant="light">
+                            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                          </ActionIcon>
+                        </ImageMetaPopover>
+                      )}
                     </Center>
                   )}
                 </ImageGuard.Content>
