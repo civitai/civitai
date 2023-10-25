@@ -262,10 +262,12 @@ export const ingestImage = async ({
     }),
   });
   if (response.status === 202) {
-    await dbClient.image.updateMany({
+    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as { jobId: string };
+    await dbClient.image.update({
       where: { id },
-      data: { scanRequestedAt },
+      data: { scanRequestedAt, scanJobs },
     });
+
     return true;
   } else {
     await logToDb('image-ingestion', {
@@ -273,6 +275,7 @@ export const ingestImage = async ({
       imageId: id,
       url,
     });
+
     return false;
   }
 };
@@ -1807,7 +1810,9 @@ export const createEntityImages = async ({
   });
 
   const batches = chunk(imageRecords, 50);
-  await Promise.all(batches.map((images) => ingestImageBulk({ images, tx })));
+  for (const batch of batches) {
+    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+  }
 
   await tx.imageConnection.createMany({
     data: imageRecords.map((image) => ({

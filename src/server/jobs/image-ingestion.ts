@@ -4,7 +4,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
-import { deleteImageById, ingestImage, ingestImageBulk } from '~/server/services/image.service';
+import { deleteImageById, ingestImage } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
@@ -37,7 +37,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
 
   const batches = chunk(images, 250);
   for (const batch of batches) {
-    await ingestImageBulk({ images: batch });
+    await Promise.all(batch.map((image) => ingestImage({ image })));
   }
 });
 
