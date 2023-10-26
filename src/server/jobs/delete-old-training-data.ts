@@ -64,6 +64,14 @@ export const deleteOldTrainingData = createJob(
           const result = await deleteAssets(jobId);
           if (!result || !result.total) {
             hasError = true;
+            logJob({
+              message: `Delete assets result blank`,
+              data: {
+                jobId: jobId,
+                modelFileId: mf_id,
+                result: result,
+              },
+            });
           }
         } catch (e) {
           hasError = true;
@@ -88,6 +96,14 @@ export const deleteOldTrainingData = createJob(
                 const result = await deleteAssets(histJobId);
                 if (!result || !result.total) {
                   hasError = true;
+                  logJob({
+                    message: `Delete assets result blank`,
+                    data: {
+                      jobId: jobId,
+                      modelFileId: mf_id,
+                      result: result,
+                    },
+                  });
                 }
                 seenJobs.push(histJobId);
               } catch (e) {
