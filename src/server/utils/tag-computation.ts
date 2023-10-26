@@ -79,6 +79,7 @@ const tagCombos: ComputedTagCombo[] = [
       'pelvic curtain',
       'topless male',
       'no bra + (wet clothes|see-through) + female',
+      'naked towel + wet',
       // 'bulge',
       // 'cameltoe',
     ],

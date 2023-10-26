@@ -38,67 +38,69 @@ import { CollectionMode } from '@prisma/client';
 import { applyUserPreferencesCollections } from '~/components/Search/search.utils';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
-const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
-  return {
-    grid: {
-      display: 'grid',
-      gridTemplateColumns: `repeat(auto-fit, minmax(320px, 1fr))`,
-      columnGap: theme.spacing.md,
-      gridTemplateRows: `repeat(2, auto)`,
-      gridAutoRows: 0,
-      overflow: 'hidden',
-      marginTop: -theme.spacing.md,
-
-      '& > *': {
-        marginTop: theme.spacing.md,
-      },
-
-      [theme.fn.smallerThan('md')]: {
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
-        gridTemplateRows: `repeat(2, auto)`,
-        scrollSnapType: 'x mandatory',
-        overflowX: 'auto',
-      },
-
-      [theme.fn.smallerThan('sm')]: {
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count}, 280px)`,
-        gridTemplateRows: 'auto',
-        scrollSnapType: 'x mandatory',
-        overflowX: 'auto',
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-        paddingLeft: theme.spacing.md,
+const useStyles = createStyles<string, { count: number; rows: number }>(
+  (theme, { count, rows }) => {
+    return {
+      grid: {
+        display: 'grid',
+        gridTemplateColumns: `repeat(auto-fit, minmax(320px, 1fr))`,
+        columnGap: theme.spacing.md,
+        gridTemplateRows: `repeat(${rows}, auto)`,
+        gridAutoRows: 0,
+        overflow: 'hidden',
+        marginTop: -theme.spacing.md,
 
         '& > *': {
-          scrollSnapAlign: 'center',
+          marginTop: theme.spacing.md,
+        },
+
+        [theme.fn.smallerThan('md')]: {
+          gridAutoFlow: 'column',
+          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
+          gridTemplateRows: `repeat(${rows}, auto)`,
+          scrollSnapType: 'x mandatory',
+          overflowX: 'auto',
+        },
+
+        [theme.fn.smallerThan('sm')]: {
+          gridAutoFlow: 'column',
+          gridTemplateColumns: `repeat(${count}, 280px)`,
+          gridTemplateRows: 'auto',
+          scrollSnapType: 'x mandatory',
+          overflowX: 'auto',
+          marginRight: -theme.spacing.md,
+          marginLeft: -theme.spacing.md,
+          paddingLeft: theme.spacing.md,
+
+          '& > *': {
+            scrollSnapAlign: 'center',
+          },
         },
       },
-    },
 
-    meta: {
-      display: 'none',
-      [theme.fn.smallerThan('md')]: {
-        display: 'block',
-      },
-    },
-
-    gridMeta: {
-      gridColumn: '1 / span 2',
-      display: 'flex',
-      flexDirection: 'column',
-
-      '& > *': {
-        flex: 1,
-      },
-
-      [theme.fn.smallerThan('md')]: {
+      meta: {
         display: 'none',
+        [theme.fn.smallerThan('md')]: {
+          display: 'block',
+        },
       },
-    },
-  };
-});
+
+      gridMeta: {
+        gridColumn: '1 / span 2',
+        display: 'flex',
+        flexDirection: 'column',
+
+        '& > *': {
+          flex: 1,
+        },
+
+        [theme.fn.smallerThan('md')]: {
+          display: 'none',
+        },
+      },
+    };
+  }
+);
 
 const icons = {
   model: IconCategory,
@@ -115,10 +117,13 @@ export const CollectionHomeBlock = ({ ...props }: Props) => {
   );
 };
 
+const ITEMS_PER_ROW = 7;
 const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+  const rows = metadata.collection?.rows ?? 2;
   const { classes, cx } = useStyles({
     count: homeBlock?.collection?.items.length ?? 0,
+    rows,
   });
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
@@ -147,8 +152,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       }
     });
 
-    return shuffle(filteredItems).slice(0, 14);
-  }, [collection?.items, loadingPreferences, hiddenModels, hiddenImages, hiddenUsers]);
+    return shuffle(filteredItems).slice(0, ITEMS_PER_ROW * rows);
+  }, [collection?.items, loadingPreferences, hiddenModels, hiddenImages, hiddenUsers, rows]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
@@ -277,7 +282,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         >
           {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
           {isLoading || loadingPreferences
-            ? Array.from({ length: 14 }).map((_, index) => (
+            ? Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
                 <AspectRatio ratio={7 / 9} key={index}>
                   <Skeleton width="100%" />
                 </AspectRatio>
