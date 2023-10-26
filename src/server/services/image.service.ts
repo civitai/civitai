@@ -567,7 +567,9 @@ export const getAllImages = async ({
     const followedUsersIds =
       followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
     AND.push(
-      Prisma.sql`u."id" IN (${followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null})`
+      Prisma.sql`i."userId" IN (${
+        followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null
+      })`
     );
   }
 
