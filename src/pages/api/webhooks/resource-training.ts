@@ -3,10 +3,10 @@ import * as z from 'zod';
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
-import { logToAxiom } from '~/server/logging/client';
 
 export type EpochSchema = z.infer<typeof epochSchema>;
 const epochSchema = z.object({
@@ -67,6 +67,8 @@ const mapTrainingStatus = {
   Failed: TrainingStatus.Failed,
   Rejected: TrainingStatus.Failed,
   LateRejected: TrainingStatus.Failed,
+  Deleted: TrainingStatus.Failed,
+  Expired: TrainingStatus.Failed,
 } as const;
 
 const logWebhook = (data: MixedObject) => {
@@ -88,7 +90,6 @@ export default WebhookEndpoint(async (req, res) => {
   const data = bodyResults.data;
 
   if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
-    // nb: in the case of deleted or expired, the job history will not be updated (and the user won't see it)
     logWebhook({
       type: 'info',
       message: `Attempting to refund user`,
@@ -117,11 +118,13 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Failed':
     case 'Rejected':
     case 'LateRejected':
+    case 'Deleted':
+    case 'Expired':
       const status = mapTrainingStatus[data.type];
 
       try {
         await updateRecords(
-          { ...data.context, modelFileId: data.jobProperties.modelFileId, jobId: data.jobId },
+          { ...(data.context ?? {}), modelFileId: data.jobProperties.modelFileId },
           status
         );
       } catch (e: unknown) {
@@ -136,8 +139,6 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Initialized':
     case 'Claimed':
     case 'ClaimExpired':
-    case 'Deleted':
-    case 'Expired':
       break;
     default:
       logWebhook({
@@ -151,14 +152,7 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 async function updateRecords(
-  {
-    modelFileId,
-    message,
-    epochs,
-    start_time,
-    end_time,
-    jobId,
-  }: ContextProps & { modelFileId: number; jobId: string },
+  { modelFileId, message, epochs, start_time, end_time }: ContextProps & { modelFileId: number },
   status: TrainingStatus
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -177,9 +171,6 @@ async function updateRecords(
   if (!last || last.status !== status) {
     // push to history
     history.push({
-      jobId: jobId,
-      // last should always be present for new jobs and have a jobToken
-      jobToken: last?.jobToken || '',
       time: new Date().toISOString(),
       status,
       message,

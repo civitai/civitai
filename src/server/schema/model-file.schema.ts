@@ -7,11 +7,12 @@ export const trainingResultsSchema = z.object({
   start_time: z.string().nullish(),
   end_time: z.string().nullish(),
   attempts: z.number().nullish(),
+  jobId: z.string().nullish(),
+  transactionId: z.string().nullish(),
   history: z
     .array(
       z.object({
-        jobId: z.string(),
-        jobToken: z.string(),
+        jobId: z.string().optional(), // nb: this is an old reference prior to 10/26/23
         time: z.string(),
         status: z.nativeEnum(TrainingStatus),
         message: z.string().nullish(),

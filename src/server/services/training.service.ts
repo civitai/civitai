@@ -252,10 +252,10 @@ export const createTrainingRequest = async ({
         ...fileMetadata,
         trainingResults: {
           ...(fileMetadata.trainingResults || {}),
+          jobId: data.jobs?.[0]?.jobId as string,
+          transactionId,
           history: (fileMetadata.trainingResults?.history || []).concat([
             {
-              jobId: data.jobs?.[0]?.jobId as string,
-              jobToken: data.token as string,
               time: new Date().toISOString(),
               status: TrainingStatus.Submitted,
             },

@@ -18,12 +18,12 @@ import { Job } from '~/server/jobs/job';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { processImportsJob } from '~/server/jobs/process-imports';
+import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
-import { resubmitTrainingJobs } from '~/server/jobs/resubmit-training-jobs';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
@@ -34,7 +34,6 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
-import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -60,7 +59,6 @@ export const jobs: Job[] = [
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,
-  resubmitTrainingJobs,
   deleteOldTrainingData,
   updateCollectionItemRandomId,
   ...metricJobs,
