@@ -64,7 +64,7 @@ const imageFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  view: viewModeSchema.default('categories'),
+  view: viewModeSchema.default('feed'),
   excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).optional(),
   withMeta: z.boolean().optional(),
@@ -82,7 +82,7 @@ const postFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
-  view: viewModeSchema.default('categories'),
+  view: viewModeSchema.default('feed'),
   followed: z.boolean().optional(),
 });
 
@@ -91,7 +91,7 @@ const articleFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostBookmarks),
-  view: viewModeSchema.default('categories'),
+  view: viewModeSchema.default('feed'),
   followed: z.boolean().optional(),
 });
 

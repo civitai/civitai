@@ -45,8 +45,10 @@ export default function ModelsPage() {
   const { username, favorites, hidden, query, collectionId } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
-  const canToggleView = !username && !favorites && !hidden && !collectionId;
-  const view = canToggleView ? queryView ?? storedView : 'feed';
+  const canToggleView =
+    env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !username && !favorites && !hidden && !collectionId;
+  const view =
+    env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && canToggleView ? queryView ?? storedView : 'feed';
 
   return (
     <>

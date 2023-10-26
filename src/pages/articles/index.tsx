@@ -48,7 +48,7 @@ export default function ArticlesPage() {
   const storedView = useFiltersContext((state) => state.articles.view);
   const { query } = useArticleQueryParams();
 
-  const view = query.view ?? storedView;
+  const view = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS ? query.view ?? storedView : false;
 
   return (
     <>

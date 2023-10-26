@@ -123,6 +123,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
+  NEXT_PUBLIC_UI_CATEGORY_VIEWS: z.coerce.boolean().default(true),
 });
 
 /**
@@ -152,4 +153,5 @@ export const clientEnv = {
   NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
+  NEXT_PUBLIC_UI_CATEGORY_VIEWS: process.env.NEXT_PUBLIC_UI_CATEGORY_VIEWS !== 'false',
 };

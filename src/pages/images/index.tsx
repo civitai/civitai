@@ -30,8 +30,8 @@ export default function ImagesPage() {
   const features = useFeatureFlags();
   const { view: queryView, hidden } = useImageFilters('images');
   const { classes, theme } = useStyles();
-  const canToggleView = !hidden;
-  const view = canToggleView ? queryView : 'feed';
+  const canToggleView = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !hidden;
+  const view = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && canToggleView ? queryView : 'feed';
 
   return (
     <>
