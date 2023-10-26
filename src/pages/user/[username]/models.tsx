@@ -37,7 +37,7 @@ export default function UserModelsPage() {
   );
   const viewingPublished = section === 'published';
   const viewingDraft = section === 'draft';
-  const viewingTraining = section === 'training' && features.imageTraining;
+  const viewingTraining = section === 'training' && features.imageTrainingResults;
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
@@ -118,7 +118,7 @@ function ContentToggle({
     { label: 'Published', value: 'published' },
     { label: 'Draft', value: 'draft' },
   ];
-  if (features.imageTraining) tabs.push({ label: 'Training', value: 'training' });
+  if (features.imageTrainingResults) tabs.push({ label: 'Training', value: 'training' });
   return (
     <SegmentedControl
       {...props}

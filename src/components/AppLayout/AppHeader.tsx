@@ -328,7 +328,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       },
       {
         href: `/user/${currentUser?.username}/models?section=training`,
-        visible: !!currentUser && features.imageTraining,
+        visible: !!currentUser && features.imageTrainingResults,
         label: (
           <Group align="center" spacing="xs">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
@@ -457,7 +457,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
     ],
     [
       currentUser,
-      features.imageTraining,
+      features.imageTrainingResults,
       features.alternateHome,
       features.bounties,
       features.buzz,

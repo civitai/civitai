@@ -40,6 +40,8 @@ const tagNameOverrides: Record<string, string> = {
   'multiple boys': 'men',
   pussy: 'vagina',
   ass: 'butt',
+  'ass focus': 'butt focus',
+  'huge ass': 'huge butt',
 };
 export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;

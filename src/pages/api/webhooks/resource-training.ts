@@ -3,10 +3,10 @@ import * as z from 'zod';
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
-import { logToAxiom } from '~/server/logging/client';
 
 export type EpochSchema = z.infer<typeof epochSchema>;
 const epochSchema = z.object({
@@ -24,11 +24,10 @@ const epochSchema = z.object({
 
 type ContextProps = z.infer<typeof context>;
 const context = z.object({
-  modelFileId: z.number().gt(0),
-  status: z.string(),
+  status: z.string().optional(),
   message: z.string().optional(),
-  model: z.string(),
-  start_time: z.number(),
+  model: z.string().optional(),
+  start_time: z.number().optional(),
   end_time: z.number().optional(),
   duration: z.number().optional(),
   epochs: z.array(epochSchema).optional(),
@@ -55,6 +54,7 @@ const schema = z.object({
   // cost: z.number().nullish(),
   jobProperties: z.object({
     transactionId: z.string(),
+    modelFileId: z.number().gt(0),
     // userId: z.number(),
   }),
   jobHasCompleted: z.boolean(),
@@ -67,6 +67,8 @@ const mapTrainingStatus = {
   Failed: TrainingStatus.Failed,
   Rejected: TrainingStatus.Failed,
   LateRejected: TrainingStatus.Failed,
+  Deleted: TrainingStatus.Failed,
+  Expired: TrainingStatus.Failed,
 } as const;
 
 const logWebhook = (data: MixedObject) => {
@@ -88,7 +90,6 @@ export default WebhookEndpoint(async (req, res) => {
   const data = bodyResults.data;
 
   if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
-    // nb: in the case of deleted or expired, the job history will not be updated (and the user won't see it)
     logWebhook({
       type: 'info',
       message: `Attempting to refund user`,
@@ -103,6 +104,7 @@ export default WebhookEndpoint(async (req, res) => {
         message: 'Could not refund user',
         data: {
           error: (e as Error)?.message,
+          cause: (e as Error)?.cause,
           jobId: data.jobId,
           transactionId: data.jobProperties.transactionId,
         },
@@ -116,22 +118,19 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Failed':
     case 'Rejected':
     case 'LateRejected':
-      if (!data.context) {
-        logWebhook({
-          message: 'Context missing',
-          data: { jobId: data.jobId },
-        });
-        return res.status(400).json({ ok: false, error: 'context is undefined' });
-      }
-
+    case 'Deleted':
+    case 'Expired':
       const status = mapTrainingStatus[data.type];
 
       try {
-        await updateRecords({ ...data.context, jobId: data.jobId }, status);
+        await updateRecords(
+          { ...(data.context ?? {}), modelFileId: data.jobProperties.modelFileId },
+          status
+        );
       } catch (e: unknown) {
         logWebhook({
           message: 'Failed to update record',
-          data: { error: (e as Error)?.message, jobId: data.jobId },
+          data: { error: (e as Error)?.message, cause: (e as Error)?.cause, jobId: data.jobId },
         });
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
@@ -140,8 +139,6 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Initialized':
     case 'Claimed':
     case 'ClaimExpired':
-    case 'Deleted':
-    case 'Expired':
       break;
     default:
       logWebhook({
@@ -155,7 +152,7 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 async function updateRecords(
-  { modelFileId, message, epochs, start_time, end_time, jobId }: ContextProps & { jobId: string },
+  { modelFileId, message, epochs, start_time, end_time }: ContextProps & { modelFileId: number },
   status: TrainingStatus
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -174,9 +171,6 @@ async function updateRecords(
   if (!last || last.status !== status) {
     // push to history
     history.push({
-      jobId: jobId,
-      // last should always be present for new jobs and have a jobToken
-      jobToken: last?.jobToken || '',
       time: new Date().toISOString(),
       status,
       message,
@@ -192,10 +186,12 @@ async function updateRecords(
     ...thisMetadata,
     trainingResults: {
       ...trainingResults,
-      epochs: epochs,
+      epochs: epochs ?? [],
       attempts: attempts,
       history: history,
-      start_time: trainingResults.start_time || new Date(start_time * 1000).toISOString(),
+      start_time:
+        trainingResults.start_time ||
+        (start_time ? new Date(start_time * 1000).toISOString() : null),
       end_time: end_time && new Date(end_time * 1000).toISOString(),
     },
   };

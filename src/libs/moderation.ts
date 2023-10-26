@@ -94,7 +94,7 @@ export const moderationCategories: ModerationCategory[] = [
   {
     label: 'Offensive Gestures',
     value: 'rude gestures',
-    children: [{ label: 'Offensive hand gestures', value: 'middle finger' }],
+    children: [{ label: 'Offensive gestures', value: 'middle finger' }],
   },
   {
     label: 'Hate Symbols',

@@ -19,6 +19,7 @@ const featureFlags = createFeatureFlags({
   civitaiLink: ['mod', 'founder'],
   stripe: ['mod'],
   imageTraining: ['dev', 'mod', 'founder'],
+  imageTrainingResults: ['user'],
   imageGeneration: {
     toggleable: true,
     default: true,

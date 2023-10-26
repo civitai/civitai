@@ -108,7 +108,9 @@ export const getPostsInfinite = async ({
     const followedUsersIds =
       followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
     AND.push(
-      Prisma.sql`u."id" IN (${followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null})`
+      Prisma.sql`p."userId" IN (${
+        followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null
+      })`
     );
   }
 
