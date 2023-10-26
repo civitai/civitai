@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
@@ -38,3 +39,18 @@ const userWithCosmetics = Prisma.validator<Prisma.UserArgs>()({
 });
 
 export type UserWithCosmetics = Prisma.UserGetPayload<typeof userWithCosmetics>;
+
+export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
+  ...userWithCosmeticsSelect,
+  profile: {
+    select: {
+      bio: true,
+      coverImage: {
+        select: imageSelect,
+      },
+      message: true,
+      profileSectionsSettings: true,
+      privacySettings: true,
+    },
+  },
+});

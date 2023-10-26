@@ -101,6 +101,7 @@ model User {
   leaderboardShowcase String?
   referral            UserReferral?
   onboardingSteps     OnboardingStep[]      @default([Moderation, Buzz])
+  profile             UserProfile?
 
   accounts             Account[]
   sessions             Session[]
@@ -1062,6 +1063,7 @@ model Image {
   collectionItems CollectionItem[]
   collections     Collection[]
   connections     ImageConnection[]
+  profiles        UserProfile[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -3195,6 +3197,33 @@ model GenerationCoverage {
   covered        Boolean
 
   @@id([modelId, modelVersionId])
+}
+
+model UserProfile {
+  userId                  Int
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coverImageId            Int?
+  coverImage              Image?    @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  bio                     String?
+  message                 String?
+  messageAddedAt          DateTime?
+  privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
+  profileSectionsSettings Json      @default("{\"showcase\":{\"enabled\":true,\"index\":0},\"popularModels\":{\"enabled\":true,\"index\":1},\"popularImages\":{\"enabled\":true,\"index\":2},\"recent\":{\"enabled\":true,\"index\":3},\"models\":{\"enabled\":true,\"index\":4},\"images\":{\"enabled\":true,\"index\":4},\"articles\":{\"enabled\":true,\"index\":4},\"reviews\":{\"enabled\":true,\"index\":5}}")
+
+  showcaseItems UserProfileShowcaseItem[]
+
+  @@id([userId])
+}
+
+model UserProfileShowcaseItem {
+  profileId  Int
+  profile    UserProfile @relation(fields: [profileId], references: [userId], onDelete: Cascade)
+  entityId   Int
+  entityType String
+  index      Int         @default(0)
+
+  @@id([entityType, entityId, profileId])
+  @@index([profileId])
 }
 
 /// @view
