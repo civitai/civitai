@@ -45,8 +45,9 @@ const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
 
 export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
-  if (!env.GENERATION_ENDPOINT) throw throwBadRequestError('Missing GENERATION_ENDPOINT env');
-  if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
+  if (!env.ORCHESTRATOR_ENDPOINT) throw throwBadRequestError('Missing ORCHESTRATOR_ENDPOINT env');
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw throwBadRequestError('Missing ORCHESTRATOR_ACCESS_TOKEN env');
 
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
@@ -61,11 +62,11 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
     destinationUri,
   };
 
-  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs?wait=true`, {
+  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs?wait=true`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
     },
     body: JSON.stringify(reqBody),
   });
@@ -93,19 +94,20 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
 };
 
 export const deleteAssets = async (jobId: string) => {
-  if (!env.GENERATION_ENDPOINT) throw throwBadRequestError('Missing GENERATION_ENDPOINT env');
-  if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
+  if (!env.ORCHESTRATOR_ENDPOINT) throw throwBadRequestError('Missing ORCHESTRATOR_ENDPOINT env');
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw throwBadRequestError('Missing ORCHESTRATOR_ACCESS_TOKEN env');
 
   const reqBody = {
     $type: 'clearAssets',
     jobId,
   };
 
-  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs?wait=true`, {
+  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs?wait=true`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
     },
     body: JSON.stringify(reqBody),
   });
@@ -126,8 +128,9 @@ export const createTrainingRequest = async ({
   userId,
   modelVersionId,
 }: CreateTrainingRequestInput & { userId: number }) => {
-  if (!env.GENERATION_ENDPOINT) throw throwBadRequestError('Missing GENERATION_ENDPOINT env');
-  if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
+  if (!env.ORCHESTRATOR_ENDPOINT) throw throwBadRequestError('Missing ORCHESTRATOR_ENDPOINT env');
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw throwBadRequestError('Missing ORCHESTRATOR_ACCESS_TOKEN env');
 
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
@@ -216,11 +219,11 @@ export const createTrainingRequest = async ({
 
   // console.log(JSON.stringify(generationRequest));
 
-  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
+  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
     },
     body: JSON.stringify(generationRequest),
   });

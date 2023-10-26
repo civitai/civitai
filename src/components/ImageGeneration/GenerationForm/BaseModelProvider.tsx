@@ -41,7 +41,7 @@ export function BaseModelProvider<T extends FieldValues>({
 
   return (
     <BaseModelsContext.Provider value={{ baseModels, baseModel }}>
-      <InputText type="hidden" name="baseModel" />
+      <InputText type="hidden" name="baseModel" clearable={false} hidden />
       {children({ baseModel })}
     </BaseModelsContext.Provider>
   );
