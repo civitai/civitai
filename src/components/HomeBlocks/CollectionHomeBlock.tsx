@@ -148,7 +148,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     });
 
     return shuffle(filteredItems).slice(0, 14);
-  }, [collection?.items, loadingPreferences]);
+  }, [collection?.items, loadingPreferences, hiddenModels, hiddenImages, hiddenUsers]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
@@ -276,7 +276,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           settings={{ displayReactionCount: collection?.mode !== CollectionMode.Contest }}
         >
           {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-          {isLoading
+          {isLoading || loadingPreferences
             ? Array.from({ length: 14 }).map((_, index) => (
                 <AspectRatio ratio={7 / 9} key={index}>
                   <Skeleton width="100%" />
