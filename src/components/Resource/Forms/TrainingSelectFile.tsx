@@ -263,7 +263,12 @@ export default function TrainingSelectFile({
         <Stack p="xl" align="center">
           <Loader />
           <Stack spacing="sm" align="center">
-            <Text>Models are currently training...</Text>
+            <Text>
+              Models are currently training{' '}
+              {modelVersion.trainingDetails?.params?.maxTrainEpochs
+                ? `(${epochs.length}/${modelVersion.trainingDetails.params.maxTrainEpochs})`
+                : '...'}
+            </Text>
             <Text>Results will stream in as they complete.</Text>
           </Stack>
         </Stack>
@@ -273,7 +278,12 @@ export default function TrainingSelectFile({
             <Stack p="xl" align="center">
               <Loader />
               <Stack spacing="sm" align="center">
-                <Text>Models are currently training...</Text>
+                <Text>
+                  Models are currently training{' '}
+                  {modelVersion.trainingDetails?.params?.maxTrainEpochs
+                    ? `(${epochs.length}/${modelVersion.trainingDetails.params.maxTrainEpochs})`
+                    : '...'}
+                </Text>
                 <Text>Results will stream in as they complete.</Text>
               </Stack>
             </Stack>
