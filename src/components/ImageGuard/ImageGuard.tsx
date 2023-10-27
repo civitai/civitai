@@ -5,6 +5,7 @@ import {
   Button,
   Group,
   HoverCard,
+  MantineSize,
   Menu,
   Popover,
   Stack,
@@ -505,6 +506,7 @@ const NsfwBadge = ({
   onClick,
   nsfwLevel,
   canToggleNsfw,
+  size = 'sm',
 }: {
   showImage: boolean;
   onClick: () => void;
@@ -513,6 +515,7 @@ const NsfwBadge = ({
   className?: string;
   nsfwLevel?: NsfwLevel;
   canToggleNsfw?: boolean;
+  size?: MantineSize;
 }) => {
   const { color, label, shade } = nsfwLevel
     ? nsfwLevelUI[nsfwLevel] ?? nsfwLevelUI[NsfwLevel.X]
@@ -523,7 +526,7 @@ const NsfwBadge = ({
       <Badge
         color="red"
         variant="filled"
-        size="sm"
+        size={size}
         px={6}
         sx={(theme) => ({
           cursor: canToggleNsfw ? 'pointer' : undefined,
@@ -582,6 +585,7 @@ ImageGuard.ToggleImage = function ToggleImage(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  size?: MantineSize;
 }) {
   const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
@@ -604,6 +608,7 @@ ImageGuard.ToggleConnect = function ToggleConnect(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  size?: MantineSize;
 }) {
   // const currentUser = useCurrentUser();
   // const { blurNsfw: toggleable } = currentUser ?? {};
@@ -635,6 +640,7 @@ ImageGuard.GroupToggleConnect = function GroupToggleConnect(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  size?: MantineSize;
 }) {
   const currentUser = useCurrentUser();
   const { connect, images } = useImageGuardContext();
