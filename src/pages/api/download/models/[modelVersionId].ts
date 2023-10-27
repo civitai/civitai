@@ -91,6 +91,7 @@ export default RateLimitedEndpoint(
         earlyAccessTimeFrame: true,
         createdAt: true,
         vaeId: true,
+        requireAuth: true,
       },
     });
 
@@ -110,9 +111,13 @@ export default RateLimitedEndpoint(
     if (!canDownload) return errorResponse(404, 'Model not found');
 
     // Handle unauthenticated downloads
-    if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
+    const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
+    if (requireAuth && !userId) {
       if (req.headers['content-type'] === 'application/json')
-        return errorResponse(401, 'Unauthorized');
+        return errorResponse(
+          401,
+          'Unauthorized - The creator of this asset requires authentication'
+        );
       else
         return res.redirect(
           getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}` })

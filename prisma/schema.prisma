@@ -529,6 +529,7 @@ model ModelVersion {
   baseModelType        String?
   meta                 Json                      @default("{}")
   earlyAccessTimeFrame Int                       @default(0)
+  requireAuth          Boolean                   @default(false)
   monetization         ModelVersionMonetization?
 
   metrics                 ModelVersionMetric[]
