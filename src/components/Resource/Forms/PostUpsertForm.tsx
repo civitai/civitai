@@ -8,7 +8,11 @@ import { useRouter } from 'next/router';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { hiddenLabel, ManagePostMaturity } from '~/components/Post/Edit/EditPostControls';
+import {
+  hiddenLabel,
+  ManagePostMaturity,
+  ManagePostStatus,
+} from '~/components/Post/Edit/EditPostControls';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';

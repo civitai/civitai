@@ -1,4 +1,13 @@
-import { Stack, Text, Tooltip, Button, Checkbox, TooltipProps, Group } from '@mantine/core';
+import {
+  Stack,
+  Text,
+  Tooltip,
+  Button,
+  Checkbox,
+  TooltipProps,
+  Group,
+  ThemeIcon,
+} from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { trpc } from '~/utils/trpc';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -9,6 +18,8 @@ import { PostEditActions } from '~/components/Post/Edit/PostEditActions';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CollectionType } from '@prisma/client';
+import { formatDate } from '~/utils/date-helpers';
+import { IconClock } from '@tabler/icons-react';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -32,6 +43,8 @@ export function EditPostControls() {
     </Stack>
   );
 }
+
+const today = new Date();
 
 export function ManagePostStatus() {
   const router = useRouter();
@@ -114,6 +127,13 @@ export function ManagePostStatus() {
               </Text>
             </Tooltip>
           </>
+        ) : publishedAt > today ? (
+          <Group spacing={4}>
+            <ThemeIcon color="gray" variant="filled" radius="xl">
+              <IconClock size={20} />
+            </ThemeIcon>
+            Scheduled for {formatDate(publishedAt)}
+          </Group>
         ) : (
           <>
             Published <DaysFromNow date={publishedAt} />
