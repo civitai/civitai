@@ -5,4 +5,5 @@ export { goodContentReward } from './passive/goodContent.reward';
 export { collectedContentReward } from './passive/collectedContent.reward';
 export { refereeCreatedReward } from './active/refereeCreated.reward';
 export { userReferredReward } from './active/userReferred.reward';
-export { reportAcceptedReward } from './active/reportAccepted.reward';
+export { reportAcceptedReward } from './passive/reportAccepted.reward';
+export { firstDailyFollowReward } from './active/firstDailyFollow.reward';
