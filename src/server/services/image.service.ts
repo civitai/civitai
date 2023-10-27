@@ -55,14 +55,14 @@ import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
-  const otherImagesWithSameUrl = await dbWrite.image.count({
+  const otherImagesWithSameUrl = await dbWrite.image.findFirst({
     where: {
       url: url,
       id: { not: id },
     },
   });
 
-  return otherImagesWithSameUrl > 0;
+  return !!otherImagesWithSameUrl;
 };
 
 export const deleteImageById = async ({ id }: GetByIdInput) => {
@@ -73,7 +73,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     });
     if (!image) return;
 
-    if (isProd && !imageUrlInUse({ url: image.url, id }))
+    if (isProd && !(await imageUrlInUse({ url: image.url, id })))
       await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
