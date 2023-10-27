@@ -55,7 +55,8 @@ import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
-  const otherImagesWithSameUrl = await dbWrite.image.findFirst({
+  const otherImagesWithSameUrl = await dbRead.image.findFirst({
+    select: { id: true },
     where: {
       url: url,
       id: { not: id },
