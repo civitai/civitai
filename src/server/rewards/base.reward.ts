@@ -7,6 +7,7 @@ import { redis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
+import { withRetries } from '../utils/errorHandling';
 
 export function createBuzzEvent<T>({
   type,
@@ -89,28 +90,28 @@ export function createBuzzEvent<T>({
     return data;
   };
 
-  const sendAward = async (events: BuzzEventLog | BuzzEventLog[]) => {
-    if (!Array.isArray(events)) events = [events];
-
-    await createBuzzTransactionMany(
-      events
-        .filter((x) => x.awardAmount > 0)
-        .map((event) => ({
-          type: TransactionType.Reward,
-          toAccountId: event.toUserId,
-          fromAccountId: 0, // central bank
-          amount: event.awardAmount,
-          description: `Buzz Reward: ${description}`,
-          details: {
-            type: event.type,
-            forId: event.forId,
-            byUserId: event.byUserId,
-          },
-          externalTransactionId:
-            event.type === 'userReferred' || event.type === 'refereeCreated'
-              ? `${event.type}:${event.forId}-${event.ip}`
-              : undefined,
-        }))
+  const sendAward = async (events: BuzzEventLog[]) => {
+    await withRetries(() =>
+      createBuzzTransactionMany(
+        events
+          .filter((x) => x.awardAmount > 0)
+          .map((event) => ({
+            type: TransactionType.Reward,
+            toAccountId: event.toUserId,
+            fromAccountId: 0, // central bank
+            amount: event.awardAmount,
+            description: `Buzz Reward: ${description}`,
+            details: {
+              type: event.type,
+              forId: event.forId,
+              byUserId: event.byUserId,
+            },
+            externalTransactionId:
+              event.type === 'userReferred' || event.type === 'refereeCreated'
+                ? `${event.type}:${event.forId}-${event.ip}`
+                : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`,
+          }))
+      )
     );
   };
 
@@ -168,7 +169,7 @@ export function createBuzzEvent<T>({
 
     if (event.status === 'awarded') {
       try {
-        await sendAward(event);
+        await sendAward([event]);
       } catch (error) {
         throw new Error(`Failed to send award for buzz event: ${error}`);
       }

@@ -68,6 +68,7 @@ import {
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
+  withRetries,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
@@ -232,14 +233,16 @@ export const completeOnboardingHandler = async ({
 
     // There are no more onboarding steps, so we can reward the user
     if (updatedUser.onboardingSteps.length === 0) {
-      await createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: updatedUser.id,
-        amount: getUserBuzzBonusAmount(ctx.user),
-        description: 'Onboarding bonus',
-        type: TransactionType.Reward,
-        externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
-      }).catch(handleLogError);
+      await withRetries(() =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: updatedUser.id,
+          amount: getUserBuzzBonusAmount(ctx.user),
+          description: 'Onboarding bonus',
+          type: TransactionType.Reward,
+          externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
+        })
+      ).catch(handleLogError);
     }
 
     return updatedUser;
