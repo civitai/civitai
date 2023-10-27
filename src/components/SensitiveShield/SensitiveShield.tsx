@@ -2,13 +2,13 @@ import { Button, Container, Group, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconEyeOff, IconKey } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { ReactNode, useState } from 'react';
+import { useState } from 'react';
 
 export function SensitiveShield({
   children,
   enabled = true,
 }: {
-  children?: ReactNode;
+  children?: JSX.Element;
   enabled?: boolean;
 }) {
   const router = useRouter();
