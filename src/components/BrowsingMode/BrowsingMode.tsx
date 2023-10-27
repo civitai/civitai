@@ -134,7 +134,7 @@ export function BrowsingModeMenu() {
               <Text size="xs" weight={500}>
                 Blur Mature Content
               </Text>
-              <Switch ml="auto" checked={blurred} onChange={toggle} />
+              <Switch ml="auto" checked={blurred} onChange={() => toggle()} />
             </Group>
           )}
         </BlurToggle>

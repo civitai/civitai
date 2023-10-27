@@ -359,7 +359,7 @@ export default function OnboardingModal() {
                 icon={<IconAlertCircle />}
                 iconColor="yellow"
                 size="sm"
-              >{`This feature is in beta. There may still be some content visible to you that you've requested to hide.`}</AlertWithIcon>
+              >{`Despite AI and community moderation efforts, things are not always tagged correctly so you may still see content you wanted hidden.`}</AlertWithIcon>
               <NewsletterToggle
                 label="Send me the Civitai Newsletter"
                 description="We'll send you model and creator highlights, AI news, as well as comprehensive guides from

@@ -121,6 +121,7 @@ export const createCollectionHomeBlockHandler = async ({
       id: collection.id,
       // Right now this is the standard.
       limit: 8,
+      rows: 2,
     },
   };
 
