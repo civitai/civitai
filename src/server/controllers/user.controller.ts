@@ -5,7 +5,7 @@ import {
   OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { orderBy } from 'lodash';
+import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';

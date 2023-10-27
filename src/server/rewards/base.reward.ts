@@ -1,6 +1,6 @@
 import { ClickHouseClient } from '@clickhouse/client';
 import { PrismaClient } from '@prisma/client';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';

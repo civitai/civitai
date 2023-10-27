@@ -45,12 +45,14 @@ export function ManagePostStatus() {
   const images = useEditPostContext((state) => state.images);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
+  const isReordering = useEditPostContext((state) => state.reorder);
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
   const canPublish =
     tags.filter((x) => !!x.id).length > 0 &&
-    images.filter((x) => x.discriminator === 'image').length > 0;
+    images.filter((x) => x.discriminator === 'image').length > 0 &&
+    !isReordering;
 
   const handlePublish = () => {
     if (!currentUser) return;

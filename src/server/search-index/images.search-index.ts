@@ -28,7 +28,7 @@ import {
 import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
