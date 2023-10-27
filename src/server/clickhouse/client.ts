@@ -165,7 +165,7 @@ export class Tracker {
   }
 
   private async track(table: string, custom: object) {
-    if (!clickhouse || !env.CLICKHOUSE_TRACKER_URL) return;
+    if (!env.CLICKHOUSE_TRACKER_URL) return;
 
     if (this.session) await this.session;
 
