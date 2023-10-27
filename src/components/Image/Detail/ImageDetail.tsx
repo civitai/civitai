@@ -43,13 +43,11 @@ import { CollectionType, NsfwLevel } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
   const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
-  const queryUtils = trpc.useContext();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;

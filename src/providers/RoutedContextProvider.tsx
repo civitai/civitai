@@ -86,7 +86,7 @@ const registry = {
         },
         {
           pathname: `/images/${imageId}`,
-          query: args,
+          // query: args,
         },
         { shallow: true },
       ];
