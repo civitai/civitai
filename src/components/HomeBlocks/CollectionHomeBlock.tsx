@@ -35,7 +35,6 @@ import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { CollectionMode } from '@prisma/client';
-import { applyUserPreferencesCollections } from '~/components/Search/search.utils';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 const useStyles = createStyles<string, { count: number; rows: number }>(
@@ -43,7 +42,7 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
     return {
       grid: {
         display: 'grid',
-        gridTemplateColumns: `repeat(auto-fit, minmax(320px, 1fr))`,
+        gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
         columnGap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
@@ -164,7 +163,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     return filteredItems.slice(0, itemsToShow);
   }, [collection?.items, loadingPreferences, hiddenModels, hiddenImages, hiddenUsers, rows]);
 
-  if (!metadata.link) metadata.link = `/collections/${collection?.id}`;
+  if (!metadata.link) metadata.link = `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
