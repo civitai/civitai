@@ -28,6 +28,7 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMemo } from 'react';
 import { formatDate } from '~/utils/date-helpers';
+import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -62,21 +63,9 @@ export const getServerSideProps = createServerSideProps({
 
 export function UserProfileOverview({ username }: { username: string }) {
   const currentUser = useCurrentUser();
-
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
-
-  const awards = useMemo(
-    () =>
-      !user
-        ? []
-        : user.cosmetics
-            .map((c) => c.cosmetic)
-            .filter((c) => c.type === 'Badge' && !!c.data)
-            .slice(0, 4),
-    [user]
-  );
 
   if (isLoading) {
     return (
@@ -90,116 +79,11 @@ export function UserProfileOverview({ username }: { username: string }) {
     return <NotFound />;
   }
 
-  const { profile, stats } = user;
-
   return (
     <>
       <SidebarLayout.Root>
         <SidebarLayout.Sidebar>
-          <Stack>
-            <Avatar
-              src={
-                user.image
-                  ? getEdgeUrl(user.image, {
-                      width: 88,
-                      anim: currentUser
-                        ? !currentUser.autoplayGifs
-                          ? false
-                          : undefined
-                        : undefined,
-                    })
-                  : undefined
-              }
-              alt={`${user.username}'s Avatar` ?? undefined}
-              radius="md"
-              size={88}
-              imageProps={{ loading: 'lazy' }}
-              sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
-            >
-              {user.username ? getInitials(user.username) : null}
-            </Avatar>
-            <RankBadge rank={user.rank} size="lg" withTitle />
-            <Stack spacing={0}>
-              <Text weight={700} size={24}>
-                {user.username}
-              </Text>
-              <Group spacing="sm">
-                <Text color="dimmed">Santiago, RD - TODO</Text>
-                <IconMapPin size={16} />
-              </Group>
-            </Stack>
-            {profile?.bio && <ContentClamp maxHeight={48}>{profile.bio}</ContentClamp>}
-            <Group spacing={4}>
-              {sortDomainLinks(user.links).map((link, index) => (
-                <ActionIcon
-                  key={index}
-                  component="a"
-                  href={link.url}
-                  target="_blank"
-                  rel="nofollow noreferrer"
-                  size={24}
-                >
-                  <DomainIcon domain={link.domain} size={24} />
-                </ActionIcon>
-              ))}
-            </Group>
-            <Group grow>
-              <FollowUserButton
-                userId={user.id}
-                leftIcon={<IconRss size={16} />}
-                size="md"
-                sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-              />
-            </Group>
-
-            <Divider my="sm" />
-
-            {stats && (
-              <UserStats
-                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
-                followers={stats.followerCountAllTime}
-                favorites={stats.favoriteCountAllTime}
-                downloads={stats.downloadCountAllTime}
-              />
-            )}
-            <TipBuzzButton
-              toUserId={user.id}
-              size="md"
-              variant="light"
-              color="yellow.7"
-              label="Tip buzz"
-              sx={{ fontSize: '14px', fontWeight: 590 }}
-            />
-
-            <Divider my="sm" />
-
-            {awards.length > 0 && (
-              <Stack>
-                <Text size="md" color="dimmed" weight={590}>
-                  Awards
-                </Text>
-                <Group spacing="xs">
-                  {awards.map((award) => {
-                    const data = (award.data ?? {}) as { url?: string };
-                    const url = (data.url ?? '') as string;
-
-                    if (!url) {
-                      return null;
-                    }
-
-                    return (
-                      <Tooltip key={award.id} label={award.name} withinPortal>
-                        <EdgeMedia src={url} width={56} />
-                      </Tooltip>
-                    );
-                  })}
-                </Group>
-                <Divider my="sm" />
-              </Stack>
-            )}
-
-            <Text color="dimmed">Joined {formatDate(user.createdAt)}</Text>
-          </Stack>
+          <ProfileSidebar username={username} />
         </SidebarLayout.Sidebar>
         <SidebarLayout.Content>My profiles</SidebarLayout.Content>
       </SidebarLayout.Root>

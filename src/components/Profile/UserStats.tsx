@@ -1,37 +1,7 @@
-import {
-  Badge,
-  Divider,
-  Group,
-  MantineSize,
-  Rating,
-  Stack,
-  Text,
-  useMantineTheme,
-} from '@mantine/core';
-import {
-  IconStar,
-  IconUpload,
-  IconUsers,
-  IconHeart,
-  IconDownload,
-  IconChecks,
-  IconUser,
-  IconArrowDown,
-  IconStarFilled,
-} from '@tabler/icons-react';
+import { Group, Stack, Text } from '@mantine/core';
+import { IconHeart, IconUser, IconArrowDown, IconStarFilled } from '@tabler/icons-react';
 
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
-import { StatTooltip } from '~/components/Tooltips/StatTooltip';
-import { StarRating } from '../StartRating/StarRating';
-
-const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
-  xs: { textSize: 'xs', iconSize: 12 },
-  sm: { textSize: 'xs', iconSize: 14 },
-  md: { textSize: 'sm', iconSize: 14 },
-  lg: { textSize: 'sm', iconSize: 16 },
-  xl: { textSize: 'md', iconSize: 18 },
-};
 
 const UserStat = ({
   value,
