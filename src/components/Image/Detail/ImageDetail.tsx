@@ -257,7 +257,7 @@ export function ImageDetail() {
                           </Text>
                           <Group spacing={4}>
                             <IconEye size={14} stroke={1.5} />
-                            <Text color="dimmed" size="xs" inline>
+                            <Text color="dimmed" size="xs" lh={1} mt={-2}>
                               total views
                             </Text>
                           </Group>

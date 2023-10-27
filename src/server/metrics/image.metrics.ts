@@ -266,7 +266,7 @@ export const imageMetrics = createMetricProcessor({
             entityId
           FROM views
           WHERE entityType = 'Image'
-          AND time >= ${clickhouseSince}
+          AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
         )
         SELECT
           imageId,
@@ -293,37 +293,41 @@ export const imageMetrics = createMetricProcessor({
     ];
     const batches = chunk(viewedImages, 1000);
     for (const batch of batches) {
-      const batchJson = JSON.stringify(batch);
-      await db.$executeRaw`
-        INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
-        SELECT
-          imageId,
-          timeframe,
-          viewCount
-        FROM
-        (
-            SELECT
-                CAST(mvs::json->>'imageId' AS INT) AS imageId,
-                tf.timeframe,
-                CAST(
-                  CASE
-                    WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
-                    WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
-                    WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
-                    WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
-                    WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
-                  END
-                AS int) as views
-            FROM json_array_elements(${batchJson}::json) mvs
-            CROSS JOIN (
-                SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-            ) tf
-        ) im
-        WHERE im.views IS NOT NULL
-        AND im.imageId IN (SELECT id FROM "Image")
-        ON CONFLICT ("imageId", timeframe) DO UPDATE
-          SET "viewCount" = EXCLUDED."viewCount";
-      `;
+      try {
+        const batchJson = JSON.stringify(batch);
+        await db.$executeRaw`
+          INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
+          SELECT
+            imageId,
+            timeframe,
+            views
+          FROM
+          (
+              SELECT
+                  CAST(mvs::json->>'imageId' AS INT) AS imageId,
+                  tf.timeframe,
+                  CAST(
+                    CASE
+                      WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                      WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                      WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                      WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                      WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
+                    END
+                  AS int) as views
+              FROM json_array_elements(${batchJson}::json) mvs
+              CROSS JOIN (
+                  SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+              ) tf
+          ) im
+          WHERE im.views IS NOT NULL
+          AND im.imageId IN (SELECT id FROM "Image")
+          ON CONFLICT ("imageId", timeframe) DO UPDATE
+            SET "viewCount" = EXCLUDED."viewCount";
+        `;
+      } catch (err) {
+        throw err;
+      }
     }
     //---------------------------------------
 

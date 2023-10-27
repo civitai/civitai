@@ -21,7 +21,7 @@ import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
-import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
+import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { scanFilesJob } from '~/server/jobs/scan-files';
@@ -43,7 +43,7 @@ export const jobs: Job[] = [
   addOnDemandRunStrategiesJob,
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
-  removeDisconnectedImages,
+  resetImageViewCounts,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
