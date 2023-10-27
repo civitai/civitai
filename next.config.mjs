@@ -1,4 +1,5 @@
 // @ts-check
+import { withAxiom } from "next-axiom";
 
 /**
  * Don't be scared of the generics here.
@@ -12,7 +13,7 @@ function defineNextConfig(config) {
   return config;
 }
 
-export default defineNextConfig({
+export default defineNextConfig(withAxiom({
   reactStrictMode: true,
   // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
   i18n: {
@@ -35,12 +36,30 @@ export default defineNextConfig({
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
-    modularizeImports: {
-      'lodash': {
-        transform: 'lodash/{{member}}',
-        preventFullImport: true
-      }
+
+  },
+  headers: async () => {
+    // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc
+    const headers = [{
+      source: '/sitemap(-\\w+)?.xml',
+      headers: [
+        { key: 'X-Robots-Tag', value: 'noindex' },
+        { key: 'Content-Type', value: 'application/xml' },
+        { key: 'Cache-Control', value: 'public, max-age=86400, must-revalidate' }
+      ],
+    }];
+
+    if (process.env.NODE_ENV !== 'production') {
+      headers.push({
+        source: '/:path*',
+        headers: [{
+          key: 'X-Robots-Tag',
+          value: 'noindex',
+        }],
+      });
     }
+
+    return headers;
   },
   poweredByHeader: false,
   redirects: async () => {
@@ -57,7 +76,7 @@ export default defineNextConfig({
       },
       {
         source: '/discord',
-        destination: 'https://discord.gg/UwX5wKwm6c',
+        destination: 'https://discord.gg/civitai',
         permanent: true,
       },
       {
@@ -68,6 +87,21 @@ export default defineNextConfig({
       {
         source: '/reddit',
         destination: 'https://reddit.com/r/civitai',
+        permanent: true,
+      },
+      {
+        source: '/instagram',
+        destination: 'https://www.instagram.com/hellocivitai/',
+        permanent: true,
+      },
+      {
+        source: '/tiktok',
+        destination: 'https://www.tiktok.com/@hellocivitai',
+        permanent: true,
+      },
+      {
+        source: '/youtube',
+        destination: 'https://www.youtube.com/@civitai',
         permanent: true,
       },
       {
@@ -95,7 +129,37 @@ export default defineNextConfig({
         destination: 'https://forms.clickup.com/8459928/f/825mr-5844/5NXSA2EIT3YOS2JSF7',
         permanent: true,
       },
+      {
+        source: '/canny/feedback',
+        destination: 'https://feedback.civitai.com/?b=feature-request',
+        permanent: true,
+      },
+      {
+        source: '/feedback',
+        destination: 'https://feedback.civitai.com/?b=feature-request',
+        permanent: true,
+      },
+      {
+        source: '/canny/bugs',
+        destination: 'https://feedback.civitai.com/?b=bug',
+        permanent: true,
+      },
+      {
+        source: '/bugs',
+        destination: 'https://feedback.civitai.com/?b=bug',
+        permanent: true,
+      },
+      {
+        source: '/leaderboard',
+        destination: '/leaderboard/overall',
+        permanent: true,
+      },
+      {
+        source: '/forms/bounty-refund',
+        destination: 'https://forms.clickup.com/8459928/f/825mr-8331/R30FGV9JFHLF527GGN',
+        permanent: true,
+      }
     ];
   },
   output: 'standalone',
-});
+}));

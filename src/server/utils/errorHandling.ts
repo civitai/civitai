@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
+import { log } from 'next-axiom';
+import { isProd } from '~/env/other';
+import { logToAxiom } from '../logging/client';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
@@ -62,7 +65,7 @@ export function throwDbError(error: unknown) {
   });
 }
 
-export const handleTRPCError = (error: unknown) => {
+export const handleTRPCError = (error: Error): TRPCError => {
   const isTrpcError = error instanceof TRPCError;
   if (!isTrpcError) {
     if (error instanceof Prisma.PrismaClientKnownRequestError)
@@ -83,6 +86,8 @@ export const handleTRPCError = (error: unknown) => {
         message: 'An unexpected error ocurred, please try again later',
         cause: error,
       });
+  } else {
+    return error;
   }
 };
 
@@ -108,5 +113,43 @@ export function throwNotFoundError(message: string | null = null) {
   throw new TRPCError({
     code: 'NOT_FOUND',
     message,
+  });
+}
+
+export function throwRateLimitError(message: string | null = null, error?: unknown) {
+  message ??= `Slow down! You've made too many requests. Please take a breather`;
+  throw new TRPCError({
+    code: 'TOO_MANY_REQUESTS',
+    message,
+    cause: error,
+  });
+}
+
+export function throwInsufficientFundsError(message: string | null = null, error?: unknown) {
+  message ??= `Hey buddy, seems like you don't have enough funds to perform this action.`;
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message,
+    cause: error,
+  });
+}
+
+export function handleLogError(e: Error) {
+  const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
+  if (isProd)
+    logToAxiom(
+      { name: error.name, message: error.message, stack: error.stack, cause: error.cause },
+      'civitai-prod'
+    ).catch();
+  else console.error(error);
+}
+
+export function withRetries<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  return fn().catch((error: Error) => {
+    if (retries > 0) {
+      return withRetries(fn, retries - 1);
+    } else {
+      throw error;
+    }
   });
 }

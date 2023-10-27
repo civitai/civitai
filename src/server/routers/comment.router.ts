@@ -9,18 +9,21 @@ import {
   getCommentsInfiniteHandler,
   setTosViolationHandler,
   toggleLockHandler,
-  toggleReactionHandler,
   upsertCommentHandler,
+  toggleHideCommentHandler,
 } from '~/server/controllers/comment.controller';
+import { getCommentCountByModel } from '~/server/services/comment.service';
+import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
   commentUpsertInput,
   getAllCommentsSchema,
+  getCommentCountByModelSchema,
   getCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { toggleReactionInput } from '~/server/schema/review.schema';
+import { toggleReactionInput } from '~/server/schema/comment.schema';
 import {
   guardedProcedure,
   middleware,
@@ -87,6 +90,9 @@ export const commentRouter = router({
   getReactions: publicProcedure.input(getCommentReactionsSchema).query(getCommentReactionsHandler),
   getCommentsById: publicProcedure.input(getByIdSchema).query(getCommentCommentsHandler),
   getCommentsCount: publicProcedure.input(getByIdSchema).query(getCommentCommentsCountHandler),
+  getCommentCountByModel: publicProcedure
+    .input(getCommentCountByModelSchema)
+    .query(({ input }) => getCommentCountByModel(input)),
   upsert: guardedProcedure
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
@@ -96,7 +102,13 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
+  toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(({ input, ctx }) =>
+    toggleReactionHandler({
+      ctx,
+      input: { entityType: 'commentOld', entityId: input.id, reaction: input.reaction },
+    })
+  ),
+  toggleHide: protectedProcedure.input(getByIdSchema).mutation(toggleHideCommentHandler),
   toggleLock: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

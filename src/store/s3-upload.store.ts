@@ -1,4 +1,4 @@
-import negate from 'lodash/negate';
+import { negate } from 'lodash-es';
 import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -298,12 +298,15 @@ export const useS3UploadStore = create<StoreProps>()(
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
               xhr.send(part);
               // currentXhr = xhr;
-
-              updateFile(pendingItem.uuid, {
-                abort: () => {
-                  if (xhr) xhr.abort();
-                },
-              });
+              try {
+                updateFile(pendingItem.uuid, {
+                  abort: () => {
+                    if (xhr) xhr.abort();
+                  },
+                });
+              } catch (e) {
+                resolve('error');
+              }
             });
 
           // Make part requests
@@ -322,17 +325,21 @@ export const useS3UploadStore = create<StoreProps>()(
 
             // If we failed to upload, abort the whole thing
             if (uploadStatus !== 'success') {
-              updateFile(pendingItem.uuid, {
-                status: uploadStatus,
-                progress: 0,
-                speed: 0,
-                timeRemaining: 0,
-                uploaded: 0,
-              });
-              await abortUpload().catch((err) => {
+              try {
+                updateFile(pendingItem.uuid, {
+                  status: uploadStatus,
+                  progress: 0,
+                  speed: 0,
+                  timeRemaining: 0,
+                  uploaded: 0,
+                });
+
+                await abortUpload();
+              } catch (err) {
                 console.error('Failed to abort upload');
                 console.error(err);
-              });
+              }
+
               return;
             }
           }

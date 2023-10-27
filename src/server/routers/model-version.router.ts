@@ -1,17 +1,31 @@
 import {
+  declineReviewHandler,
   deleteModelVersionHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
   publishModelVersionHandler,
+  requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
+  unpublishModelVersionHandler,
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  deleteExplorationPromptSchema,
+  getModelVersionByModelTypeSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
+  publishVersionSchema,
+  upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
-import { getVersionById } from '~/server/services/model-version.service';
+import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
+import {
+  deleteExplorationPrompt,
+  getExplorationPromptsById,
+  getModelVersionsByModelType,
+  getVersionById,
+  upsertExplorationPrompt,
+} from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
   isFlagProtected,
@@ -45,6 +59,9 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 export const modelVersionRouter = router({
   getById: publicProcedure.input(getModelVersionSchema).query(getModelVersionHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
+  getExplorationPromptsById: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getExplorationPromptsById(input)),
   toggleNotifyEarlyAccess: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('earlyAccessModel'))
@@ -55,7 +72,27 @@ export const modelVersionRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteModelVersionHandler),
   publish: protectedProcedure
-    .input(getByIdSchema)
+    .input(publishVersionSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelVersionHandler),
+  unpublish: protectedProcedure
+    .input(unpublishModelSchema)
+    .use(isOwnerOrModerator)
+    .mutation(unpublishModelVersionHandler),
+  upsertExplorationPrompt: protectedProcedure
+    .input(upsertExplorationPromptSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => upsertExplorationPrompt(input)),
+  deleteExplorationPrompt: protectedProcedure
+    .input(deleteExplorationPromptSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => deleteExplorationPrompt(input)),
+  requestReview: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(requestReviewHandler),
+  declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
+  getModelVersionsByModelType: protectedProcedure
+    .input(getModelVersionByModelTypeSchema)
+    .query(({ input }) => getModelVersionsByModelType(input)),
 });

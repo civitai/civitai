@@ -1,13 +1,9 @@
 import {
-  Box,
   Container,
-  Table,
   Stack,
   Group,
-  Pagination,
   Text,
   Loader,
-  LoadingOverlay,
   Badge,
   Menu,
   SegmentedControl,
@@ -20,20 +16,17 @@ import {
   Input,
   MantineSize,
   Anchor,
-  ScrollArea,
   SelectItem,
 } from '@mantine/core';
 import { ReportReason, ReportStatus } from '@prisma/client';
-import { IconExternalLink } from '@tabler/icons';
+import { IconExternalLink } from '@tabler/icons-react';
 import produce from 'immer';
-import upperFirst from 'lodash/upperFirst';
+import { upperFirst } from 'lodash-es';
 import Link from 'next/link';
-import { GetServerSideProps } from 'next/types';
 import { useRouter } from 'next/router';
 import { useState, useMemo, useEffect } from 'react';
 import { z } from 'zod';
 
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
 import { formatDate } from '~/utils/date-helpers';
@@ -63,19 +56,6 @@ import {
 } from 'mantine-react-table';
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
-
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerAuthSession(context);
-  if (!session?.user?.isModerator || session.user?.bannedAt) {
-    return {
-      redirect: {
-        destination: '/',
-        permanent: false,
-      },
-    };
-  }
-  return { props: {} };
-};
 
 const limit = constants.reportingFilterDefaults.limit;
 
@@ -236,7 +216,7 @@ export default function Reports() {
 
   return (
     <>
-      <Meta title="Reports" />
+      <Meta title="Reports" deIndex="noindex, nofollow" />
       <Container size="xl" pb="xl">
         <Stack>
           <Group align="flex-end">
@@ -429,7 +409,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
                     variant="link"
                     href={getEdgeUrl(cuid, { width: 450, name: cuid })}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="nofollow noreferrer"
                   >
                     Image {i + 1}
                   </Text>
@@ -451,21 +431,6 @@ function ReportDetails({ report }: { report: ReportDetail }) {
       return { label, value: value?.toString() };
     });
 
-  if (report.image) {
-    const sourceHref = report.image.reviewId
-      ? `/models/${report.image.modelId}/?modal=reviewThread&reviewId=${report.image.reviewId}`
-      : `/models/${report.image.modelId}`;
-
-    detailItems.push({
-      label: 'Source',
-      value: (
-        <Text component="a" href={sourceHref} variant="link" target="_blank">
-          {report.image.reviewId ? 'Review' : 'Model Samples'}
-        </Text>
-      ),
-    });
-  }
-
   if (report.reason === 'Ownership') {
     detailItems.unshift({
       label: 'Claiming User',
@@ -482,28 +447,27 @@ function ReportDetails({ report }: { report: ReportDetail }) {
 
 const getReportLink = (report: ReportDetail) => {
   if (report.model) return `/models/${report.model.id}`;
-  else if (report.review)
-    return `/models/${report.review.modelId}/?modal=reviewThread&reviewId=${report.review.id}`;
   else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
     return `/models/${report.comment.modelId}/?modal=commentThread&commentId=${
       report.comment.parentId ?? report.comment.id
     }&highlight=${report.comment.id}`;
-  else if (report.image) {
-    const returnUrl = report.image.reviewId
-      ? `/models/${report.image.modelId}/?modal=reviewThread&reviewId=${report.image.reviewId}`
-      : `/models/${report.image.modelId}`;
-    const parts = [`returnUrl=${encodeURIComponent(returnUrl)}`];
-    if (report.image.modelId) parts.push(`modelId=${report.image.modelId}`);
-    if (report.image.modelVersionId) parts.push(`modelVersionId=${report.image.modelVersionId}`);
-    if (report.image.reviewId) parts.push(`reviewId=${report.image.reviewId}`);
-    return `/images/${report.image.id}/?${parts.join('&')}`;
-  }
+  else if (report.image) return `/images/${report.image.id}`;
+  else if (report.article) return `/articles/${report.article.id}`;
+  else if (report.post) return `/posts/${report.post.id}`;
+  else if (report.reportedUser) return `/user/${report.reportedUser.username}`;
+  else if (report.collection) return `/collections/${report.collection.id}`;
+  else if (report.bounty) return `/bounties/${report.bounty.id}`;
+  else if (report.bountyEntry)
+    return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {
   // TODO.Briant - create a helper function for this
   const queryClient = useQueryClient();
+  // TODO.manuel - not sure why we use useQueryClient here to optimistically update the query
+  // but doing this hotfix for now
+  const queryUtils = trpc.useContext();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {
@@ -511,10 +475,19 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
       queryClient.setQueriesData(
         { queryKey, exact: false },
         produce((old: any) => {
-          const item = old?.items?.find((x: any) => x.id === id);
+          const item = old?.items?.find((x: any) => x.id == id);
           if (item) item.status = request.status;
         })
       );
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to set report status',
+        error: new Error(error.message),
+      });
+    },
+    async onSettled() {
+      await queryUtils.report.getAll.invalidate();
     },
   });
   const statusColor = reportStatusColorScheme[status];

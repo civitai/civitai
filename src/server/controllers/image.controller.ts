@@ -10,28 +10,15 @@ import {
   getImageResources,
   moderateImages,
 } from './../services/image.service';
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { UpdateImageInput } from '~/server/schema/image.schema';
 import {
-  GetModelVersionImagesSchema,
-  GetReviewImagesSchema,
-  GetGalleryImageInput,
-  GetImageConnectionsSchema,
-  ImageUpdateSchema,
-  UpdateImageInput,
-} from '~/server/schema/image.schema';
-import { imageGallerySelect } from '~/server/selectors/image.selector';
-import {
-  getModelVersionImages,
-  getReviewImages,
-  getGalleryImages,
   deleteImageById,
-  updateImageById,
   updateImageReportStatusByReason,
-  getImageConnectionsById,
   updateImage,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -41,102 +28,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ImageSort } from '~/server/common/enums';
-
-export const getModelVersionImagesHandler = ({
-  input: { modelVersionId },
-}: {
-  input: GetModelVersionImagesSchema;
-}) => {
-  try {
-    return getModelVersionImages({ modelVersionId });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const getReviewImagesHandler = ({
-  input: { reviewId },
-}: {
-  input: GetReviewImagesSchema;
-}) => {
-  try {
-    return getReviewImages({ reviewId });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export type GalleryImageDetail = AsyncReturnType<typeof getGalleryImageDetailHandler>;
-export const getGalleryImageDetailHandler = async ({
-  input: { id },
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: Context;
-}) => {
-  try {
-    const isMod = ctx.user?.isModerator;
-    const item = await dbRead.image.findFirst({
-      where: { id, OR: isMod ? undefined : [{ needsReview: false }, { userId: ctx.user?.id }] },
-      // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
-      select: imageGallerySelect({ user: ctx.user }),
-    });
-    if (!item) throw throwNotFoundError(`No image with id ${id} found`);
-    const { stats, tags, ...image } = item;
-    return {
-      ...image,
-      metrics: {
-        likeCount: stats?.likeCountAllTime ?? 0,
-        dislikeCount: stats?.dislikeCountAllTime ?? 0,
-        laughCount: stats?.laughCountAllTime ?? 0,
-        cryCount: stats?.cryCountAllTime ?? 0,
-        heartCount: stats?.heartCountAllTime ?? 0,
-        commentCount: stats?.commentCountAllTime ?? 0,
-      },
-      tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
-    };
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
-export const getGalleryImagesInfiniteHandler = async ({
-  input: { limit, ...input },
-  ctx,
-}: {
-  input: GetGalleryImageInput;
-  ctx: Context;
-}) => {
-  try {
-    const take = limit + 1;
-    const items = await getGalleryImages({
-      limit: take,
-      ...input,
-      infinite: true,
-      user: ctx.user,
-    });
-
-    let nextCursor: number | undefined;
-    if (items.length > limit) {
-      const nextItem = items.pop();
-      nextCursor = nextItem?.id;
-    }
-
-    return {
-      nextCursor,
-      items: items.map(({ tags, ...item }) => ({
-        ...item,
-        tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
-      })),
-    };
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
+import { trackModActivity } from '~/server/services/moderator.service';
 
 type SortableImage = {
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   createdAt: Date;
   connections: {
     index: number | null;
@@ -148,50 +43,53 @@ const sortByIndex = (a: SortableImage, b: SortableImage) => {
   return aIndex - bIndex;
 };
 
-export type GetGalleryImagesReturnType = AsyncReturnType<typeof getGalleryImagesHandler>;
-export const getGalleryImagesHandler = async ({
+export const moderateImageHandler = async ({
   input,
   ctx,
 }: {
-  input: GetGalleryImageInput;
-  ctx: Context;
+  input: ImageModerationSchema;
+  ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const items = await getGalleryImages({
-      ...input,
-      user: ctx.user,
-      // orderBy: [{ connections: { index: 'asc' } }, { id: 'desc' }], // Disabled for performance reasons
-    });
-    const parsedItems = items.map(({ tags, ...item }) => ({
-      ...item,
-      tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
-    }));
-
-    const isOwnerOrModerator =
-      parsedItems.every((x) => x.user.id === ctx.user?.id) || ctx.user?.isModerator;
-    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
-
-    return prioritizeSafeImages && !isOwnerOrModerator
-      ? parsedItems.sort((a, b) => (a.nsfw === b.nsfw ? sortByIndex(a, b) : a.nsfw ? 1 : -1))
-      : parsedItems.sort(sortByIndex);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const moderateImageHandler = async ({ input }: { input: ImageModerationSchema }) => {
-  try {
     await moderateImages(input);
+    await trackModActivity(ctx.user.id, {
+      entityType: 'image',
+      entityId: input.ids,
+      activity: 'review',
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
 
-export const deleteImageHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
+    const imageTags = await dbRead.imageTag.findMany({
+      where: {
+        imageId: input.id,
+      },
+      select: {
+        tagName: true,
+      },
+    });
+
     const image = await deleteImageById(input);
-    if (!image) throw throwNotFoundError(`No image with id ${input.id} found`);
+
+    if (image) {
+      await ctx.track.image({
+        type: 'Delete',
+        imageId: input.id,
+        nsfw: image.nsfw,
+        tags: imageTags.map((x) => x.tagName),
+      });
+    }
 
     return image;
   } catch (error) {
@@ -216,9 +114,22 @@ export const setTosViolationHandler = async ({
     const image = await dbRead.image.findFirst({
       where: { id },
       select: {
-        user: { select: { id: true } },
-        imagesOnModels: {
-          select: { modelVersion: { select: { model: { select: { name: true } } } } },
+        nsfw: true,
+        tags: {
+          select: {
+            tag: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        userId: true,
+        postId: true,
+        post: {
+          select: {
+            title: true,
+          },
         },
       },
     });
@@ -233,11 +144,12 @@ export const setTosViolationHandler = async ({
 
     // Create notifications in the background
     createNotification({
-      userId: image.user.id,
+      userId: image.userId,
       type: 'tos-violation',
       details: {
-        modelName: image.imagesOnModels?.modelVersion.model.name,
+        modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',
+        url: `/posts/${image.postId}`,
       },
     }).catch((error) => {
       // Print out any errors
@@ -246,24 +158,14 @@ export const setTosViolationHandler = async ({
 
     // Delete image
     await deleteImageById({ id });
+
+    await ctx.track.image({
+      type: 'DeleteTOS',
+      imageId: id,
+      nsfw: image.nsfw,
+      tags: image.tags.map((x) => x.tag.name),
+    });
     return image;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
-export const getImageConnectionDataHandler = async ({
-  input,
-}: {
-  input: GetImageConnectionsSchema;
-}) => {
-  try {
-    const image = await getImageConnectionsById(input);
-    if (!image) throw throwNotFoundError(`No image with id ${input.id}`);
-
-    const { connections } = image;
-    return connections;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -301,11 +203,25 @@ export const getInfiniteImagesHandler = async ({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
+      headers: { src: 'getInfiniteImagesHandler' },
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+const getReactionTotals = (post: ImagesAsPostModel) => {
+  const stats = post.images[0]?.stats;
+  if (!stats) return 0;
+
+  return (
+    stats.likeCountAllTime +
+    stats.laughCountAllTime +
+    stats.heartCountAllTime +
+    stats.cryCountAllTime -
+    stats.dislikeCountAllTime
+  );
 };
 
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
@@ -321,12 +237,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     let remaining = limit;
 
     while (true) {
-      // TODO Optimize: override the select statement to exclude repeated elements like creator data
       const { nextCursor, items } = await getAllImages({
         ...input,
+        followed: false,
         cursor,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         userId: ctx.user?.id,
+        headers: { src: 'getImagesAsPostsInfiniteHandler' },
       });
 
       // Merge images by postId
@@ -360,19 +277,19 @@ export const getImagesAsPostsInfiniteHandler = async ({
         id: true,
         modelVersionId: true,
       },
+      orderBy: { rating: 'desc' },
     });
 
     // Prepare the results
     const results = Object.values(posts).map((images) => {
       const [image] = images;
       const user = image.user;
-      const review = reviews.find(
-        (review) => review.userId === user.id && review.modelVersionId === image.modelVersionId
-      );
+      const review = reviews.find((review) => review.userId === user.id);
       const createdAt = images.map((image) => image.createdAt).sort()[0];
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       return {
         postId: image.postId as number,
+        postTitle: image.postTitle,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
         createdAt,
@@ -396,8 +313,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       });
     else if (input.sort === ImageSort.MostReactions)
       results.sort((a, b) => {
-        const aReactions = Object.values(a.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
-        const bReactions = Object.values(b.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
+        const aReactions = getReactionTotals(a);
+        const bReactions = getReactionTotals(b);
         if (aReactions < bReactions) return 1;
         if (aReactions > bReactions) return -1;
         return 0;
@@ -424,7 +341,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    return await getImage({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator });
+    const result = await getImage({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -447,3 +370,26 @@ export const getImageResourcesHandler = async ({
   }
 };
 // #endregion
+
+// export const getReportedImages = async ({
+//   input,
+//   ctx,
+// }: {
+//   input: any;
+//   ctx: DeepNonNullable<Context>;
+// }) => {
+//   try {
+//     const images = await dbRead.image.findMany({
+//       where: {
+//         reports: { some: { report: { status: 'Pending' } } },
+//       },
+//       select: {
+
+//       }
+//     });
+
+//     return images;
+//   } catch (error) {
+//     throw throwDbError(error);
+//   }
+// };

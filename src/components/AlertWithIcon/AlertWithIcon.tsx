@@ -28,7 +28,7 @@ export const AlertWithIcon = ({
               {title}
             </Text>
           )}
-          <Text size={size} sx={{ lineHeight: 1.1 }}>
+          <Text size={size} sx={{ lineHeight: 1.15 }}>
             {children}
           </Text>
         </Stack>

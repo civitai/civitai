@@ -4,19 +4,32 @@ import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { queueMetricUpdate } from '~/server/jobs/update-metrics';
+import { userMetrics } from '~/server/metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
   GetAllCommentsSchema,
+  GetCommentCountByModelInput,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { CommentGetById } from '~/types/router';
 
-export const getComments = <TSelect extends Prisma.CommentSelect>({
-  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
+export const getComments = async <TSelect extends Prisma.CommentSelect>({
+  input: {
+    limit = DEFAULT_PAGE_SIZE,
+    page,
+    cursor,
+    modelId,
+    userId,
+    filterBy,
+    sort,
+    hidden = false,
+  },
   select,
   user,
 }: {
@@ -28,18 +41,20 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
   const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
+  const excludedUserIds = await getHiddenUsersForUser({ userId: user?.id });
+
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  return dbRead.comment.findMany({
+  const comments = await dbRead.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       modelId,
-      userId,
-      reviewId: { equals: null },
+      userId: userId ? userId : excludedUserIds ? { notIn: excludedUserIds } : undefined,
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
+      hidden,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -56,6 +71,8 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
     },
     select,
   });
+
+  return comments;
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({
@@ -117,9 +134,35 @@ export const createOrUpdateComment = ({
     select: {
       id: true,
       modelId: true,
-      reviewId: true,
       content: true,
+      nsfw: true,
     },
+  });
+};
+
+export const toggleHideComment = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator: boolean }) => {
+  const AND = [Prisma.sql`c.id = ${id}`];
+  // Only comment owner, model owner, or moderator can hide comment
+  if (!isModerator) AND.push(Prisma.sql`(m."userId" = ${userId} OR c."userId" = ${userId})`);
+
+  const comments = await dbWrite.$queryRaw<{ hidden: boolean }[]>`
+    SELECT
+      c.hidden
+    FROM "Comment" c
+    JOIN "Model" m ON m.id = c."modelId"
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  if (!comments.length) throw throwNotFoundError(`You don't have permission to hide this comment`);
+  const hidden = comments[0].hidden;
+
+  await dbWrite.comment.updateMany({
+    where: { id },
+    data: { hidden: !hidden },
   });
 };
 
@@ -130,9 +173,12 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  await dbWrite.comment.delete({ where: { id } });
-  if (modelId) await queueMetricUpdate('Model', modelId);
-  if (model?.userId) await queueMetricUpdate('User', model.userId);
+  const deleted = await dbWrite.comment.delete({ where: { id } });
+  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+
+  if (model?.userId) await userMetrics.queueUpdate(model.userId);
+
+  return deleted;
 };
 
 export const updateCommentById = ({
@@ -158,4 +204,11 @@ export const updateCommentReportStatusByReason = ({
     where: { reason, comment: { commentId: id } },
     data: { status },
   });
+};
+
+export const getCommentCountByModel = ({
+  modelId,
+  hidden = false,
+}: GetCommentCountByModelInput) => {
+  return dbRead.comment.count({ where: { modelId, hidden } });
 };

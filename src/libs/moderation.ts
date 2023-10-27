@@ -1,3 +1,4 @@
+import { NsfwLevel } from '@prisma/client';
 import { TagVotableEntityType } from '~/libs/tags';
 
 export type ModerationCategory = {
@@ -29,6 +30,7 @@ export const modelModerationCategories: ModerationCategory[] = [
       { label: 'Emaciated Figures', value: 'emaciated bodies' },
       { label: 'Deceased Bodies', value: 'corpses' },
       { label: 'Hanging', value: 'hanging' },
+      { label: 'Disturbing', value: 'disturbing' },
     ],
   },
   {
@@ -86,12 +88,13 @@ export const moderationCategories: ModerationCategory[] = [
       { label: 'Deceased Bodies', value: 'corpses' },
       { label: 'Hanging', value: 'hanging', hidden: true },
       { label: 'Explosions', value: 'explosions and blasts' },
+      { label: 'Disturbing', value: 'disturbing' },
     ],
   },
   {
     label: 'Offensive Gestures',
     value: 'rude gestures',
-    children: [{ label: 'Offensive hand gestures', value: 'middle finger' }],
+    children: [{ label: 'Offensive gestures', value: 'middle finger' }],
   },
   {
     label: 'Hate Symbols',
@@ -115,4 +118,19 @@ export const topLevelModerationCategories = moderationCategories.map((x) => x.va
 export const entityModerationCategories: Record<TagVotableEntityType, ModerationCategory[]> = {
   image: moderationCategories,
   model: modelModerationCategories,
+};
+
+export const nsfwLevelOrder = [
+  NsfwLevel.None,
+  NsfwLevel.Soft,
+  NsfwLevel.Mature,
+  NsfwLevel.X,
+  NsfwLevel.Blocked,
+];
+export const nsfwLevelUI = {
+  [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
+  [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
+  [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
+  [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
+  [NsfwLevel.Blocked]: { label: '18', color: 'red', shade: 9 },
 };

@@ -7,7 +7,7 @@ export function IconBadge({ icon, children, tooltip, href, ...props }: IconBadge
       component={NextLink}
       href={href}
       styles={{
-        leftSection: { lineHeight: 1 },
+        leftSection: { marginRight: 4 },
         root: { paddingLeft: 3, paddingRight: 5, cursor: 'pointer' },
       }}
       radius="sm"
@@ -20,7 +20,7 @@ export function IconBadge({ icon, children, tooltip, href, ...props }: IconBadge
   ) : (
     <Badge
       styles={{
-        leftSection: { lineHeight: 1 },
+        leftSection: { marginRight: 4 },
         root: { paddingLeft: 3, paddingRight: 5 },
       }}
       radius="sm"
@@ -41,9 +41,9 @@ export function IconBadge({ icon, children, tooltip, href, ...props }: IconBadge
   );
 }
 
-type IconBadgeProps = {
+export type IconBadgeProps = {
   icon: React.ReactNode;
-  tooltip?: string;
+  tooltip?: React.ReactNode;
   onClick?: React.MouseEventHandler<any> | undefined; //eslint-disable-line
   href?: string;
 } & Omit<BadgeProps, 'leftSection'>;

@@ -1,4 +1,6 @@
 import { constants } from '~/server/common/constants';
+import { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import {
   AddTagVotesSchema,
   AdjustTagsSchema,
@@ -10,21 +12,22 @@ import {
   ModerateTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { getHomeExcludedTags } from '~/server/services/system-cache';
 import {
   addTags,
-  disableTags,
-  moderateTags,
   addTagVotes,
+  deleteTags,
+  disableTags,
   getTags,
   getTagWithModelCount,
   getVotableTags,
+  moderateTags,
   removeTagVotes,
-  deleteTags,
 } from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
 
 export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTagByNameInput }) => {
   try {
@@ -34,15 +37,17 @@ export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTag
   }
 };
 
-export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
+export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; ctx: Context }) => {
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
+    const { adminTags } = getFeatureFlags({ user: ctx?.user });
 
     const results = await getTags({
       ...input,
       take,
       skip,
+      includeAdminTags: adminTags,
     });
 
     return getPagingData(results, take, page);
@@ -170,9 +175,20 @@ export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema })
   }
 };
 
-export const moderateTagsHandler = async ({ input }: { input: ModerateTagsSchema }) => {
+export const moderateTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModerateTagsSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     await moderateTags(input);
+    await trackModActivity(ctx.user.id, {
+      entityType: input.entityType,
+      entityId: input.entityIds,
+      activity: 'moderateTag',
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -181,6 +197,15 @@ export const moderateTagsHandler = async ({ input }: { input: ModerateTagsSchema
 export const deleteTagsHandler = async ({ input }: { input: DeleteTagsSchema }) => {
   try {
     await deleteTags(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getHomeExcludedTagsHandler = async () => {
+  try {
+    const tags = await getHomeExcludedTags();
+    return tags;
   } catch (error) {
     throw throwDbError(error);
   }

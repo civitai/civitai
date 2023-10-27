@@ -8,7 +8,7 @@ import {
   createStyles,
   Box,
 } from '@mantine/core';
-import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
+import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import useIsClient from '~/hooks/useIsClient';
@@ -16,7 +16,7 @@ import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
 import { toStringList } from '~/utils/array-helpers';
 import { useDidUpdate } from '@mantine/hooks';
-import isEqual from 'lodash/isEqual';
+import { isEqual } from 'lodash-es';
 import { bytesToKB } from '~/utils/number-helpers';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 import { ModelFileType } from '~/server/common/constants';

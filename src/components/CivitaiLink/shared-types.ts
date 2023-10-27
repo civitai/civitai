@@ -43,13 +43,16 @@ export type ResourceType =
   | 'Checkpoint'
   | 'CheckpointConfig'
   | 'TextualInversion'
+  | 'MotionModule'
   | 'Hypernetwork'
   | 'AestheticGradient'
   | 'VAE'
+  | 'Upscaler'
   | 'Controlnet'
   | 'Poses'
   | 'Other'
-  | 'Wildcards';
+  | 'Wildcards'
+  | 'Workflows';
 
 type CommandBase = {
   id: string;
@@ -99,13 +102,33 @@ export type CommandActivitiesClear = {
   type: 'activities:clear';
 };
 
+export type CommandImageTxt2Img = {
+  type: 'image:txt2img';
+  quantity: number;
+  batchSize: number;
+  model: string;
+  vae?: string;
+  params: {
+    prompt: string;
+    negativePrompt: string;
+    sampler: string;
+    width: number;
+    height: number;
+    cfgScale: number;
+    steps: number;
+    seed?: number;
+    clipSkip?: number;
+  };
+};
+
 export type CommandRequest =
   | CommandResourcesList
   | CommandResourcesAdd
   | CommandResourcesRemove
   | CommandResourcesAddCancel
   | CommandActivitiesList
-  | CommandActivitiesClear;
+  | CommandActivitiesClear
+  | CommandImageTxt2Img;
 export type Command = CommandRequest & CommandBase;
 
 export type CommandTypes = Command['type'];
@@ -159,12 +182,18 @@ export type ResponseActivitesClear = ResponseBase & {
   activities: Response[];
 };
 
+export type ResponseImageTxt2Img = ResponseBase & {
+  type: 'image:txt2img';
+  images: string[];
+};
+
 export type Response =
   | ResponseResourcesList
   | ResponseResourcesAdd
   | ResponseResourcesRemove
   | ResponseResourcesAddCancel
   | ResponseActivitesList
-  | ResponseActivitesClear;
+  | ResponseActivitesClear
+  | ResponseImageTxt2Img;
 
 export type ActivitiesResponse = ResponseResourcesAdd | ResponseResourcesRemove;

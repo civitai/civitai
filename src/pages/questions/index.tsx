@@ -1,7 +1,5 @@
 import { Container, Stack, Title, Group, Button, Badge, Alert, Text } from '@mantine/core';
-import { GetServerSideProps } from 'next';
 import Link from 'next/link';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
 import { Meta } from '~/components/Meta/Meta';
 import { Questions } from '~/components/Questions/Questions.Provider';
@@ -9,30 +7,28 @@ import { constants } from '~/server/common/constants';
 import { parseCookies } from '~/providers/CookiesProvider';
 import { openContextModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { env } from '~/env/client.mjs';
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const page = context.query.page ? Number(context.query.page) : 1;
-  const {
-    sort = constants.questionFilterDefaults.sort,
-    period = constants.questionFilterDefaults.period,
-    status,
-  } = parseCookies(context.req.cookies).questions;
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg, ctx }) => {
+    const page = ctx.query.page ? Number(ctx.query.page) : 1;
+    const {
+      sort = constants.questionFilterDefaults.sort,
+      period = constants.questionFilterDefaults.period,
+      status,
+    } = parseCookies(ctx.req.cookies).questions;
 
-  const ssg = await getServerProxySSGHelpers(context);
-  await ssg.question.getPaged.prefetch({
-    page,
-    limit: constants.questionFilterDefaults.limit,
-    sort,
-    period,
-    status,
-  });
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-    },
-  };
-};
+    await ssg?.question.getPaged.prefetch({
+      page,
+      limit: constants.questionFilterDefaults.limit,
+      sort,
+      period,
+      status,
+    });
+  },
+});
 
 const openModal = () =>
   openContextModal({
@@ -48,7 +44,11 @@ export default function QuestionsList() {
 
   return (
     <>
-      <Meta title="Questions | Civitai" />
+      <Meta
+        title="Civitai Questions | Ask the Generative AI Community"
+        description="Got questions about Stable Diffusion, fine-tuning, or prompting? Dive into our community forum and ask generative AI experts for guidance"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions`, rel: 'canonical' }]}
+      />
       <Container pb="xl">
         <Stack spacing="md">
           <Group position="apart">
@@ -59,8 +59,8 @@ export default function QuestionsList() {
               </Badge>
             </Title>
             {!isMuted && (
-              <Link href="/questions/create" passHref>
-                <Button component="a">Ask question</Button>
+              <Link href="/questions/create">
+                <Button>Ask question</Button>
               </Link>
             )}
           </Group>

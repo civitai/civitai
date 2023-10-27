@@ -1,7 +1,7 @@
 import { Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
-import { IconAlertCircle } from '@tabler/icons';
+import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -48,7 +48,7 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
     },
     onSuccess() {
       showSuccessNotification({
-        message: alreadyNotifying
+        message: !alreadyNotifying
           ? 'You have been removed from the notification list'
           : 'You will be notified when this is available for download',
       });

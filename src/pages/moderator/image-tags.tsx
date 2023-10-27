@@ -1,13 +1,11 @@
 import {
   ActionIcon,
   AspectRatio,
-  Badge,
   Box,
   Card,
   Center,
   Checkbox,
   Container,
-  Divider,
   Group,
   Loader,
   Paper,
@@ -26,42 +24,39 @@ import {
   IconReload,
   IconSquareCheck,
   IconSquareOff,
-  IconX,
-} from '@tabler/icons';
-import { GetServerSideProps } from 'next';
+} from '@tabler/icons-react';
+import produce from 'immer';
 import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import produce from 'immer';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { ImageConnectionLink } from '~/components/Image/ImageConnectionLink/ImageConnectionLink';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { getTagDisplayName } from '~/libs/tags';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { ImageGetGalleryInfinite, ImageGetInfinite } from '~/types/router';
-import { trpc } from '~/utils/trpc';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { ImageSort } from '~/server/common/enums';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ImageGetInfinite } from '~/types/router';
+import { trpc } from '~/utils/trpc';
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerAuthSession(context);
-  if (!session?.user?.isModerator || session.user?.bannedAt) {
-    return {
-      redirect: {
-        destination: '/',
-        permanent: false,
-      },
-    };
-  }
-  return { props: {} };
-};
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ session }) => {
+//     if (!session?.user?.isModerator || session.user?.bannedAt) {
+//       return {
+//         redirect: {
+//           destination: '/',
+//           permanent: false,
+//         },
+//       };
+//     }
+//   },
+// });
 
 export default function ImageTags() {
   const { ref, inView } = useInView();
@@ -265,10 +260,13 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
-      <Card.Section sx={{ height: `${height}px` }}>
+      <Card.Section
+        sx={{ height: `${height}px`, cursor: 'pointer' }}
+        onClick={() => onSelect(image.id, !selected)}
+      >
         <Checkbox
           checked={selected}
-          onChange={(e) => onSelect(image.id, e.target.checked)}
+          readOnly
           size="lg"
           sx={{
             position: 'absolute',
@@ -283,10 +281,6 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
             <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
               <ImageGuard.ToggleImage
                 sx={(theme) => ({
-                  backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                  color: 'white',
-                  backdropFilter: 'blur(7px)',
-                  boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                   position: 'absolute',
                   top: theme.spacing.xs,
                   left: theme.spacing.xs,
@@ -300,10 +294,11 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                 </AspectRatio>
               </ImageGuard.Unsafe>
               <ImageGuard.Safe>
-                <EdgeImage
+                <EdgeMedia
                   src={image.url}
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
+                  type={image.type}
                   width={450}
                   placeholder="empty"
                 />
@@ -315,6 +310,9 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
                       target="_blank"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
                     >
                       <IconExternalLink
                         color="white"

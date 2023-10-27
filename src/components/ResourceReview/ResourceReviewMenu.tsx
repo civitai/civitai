@@ -1,26 +1,21 @@
-import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text, Loader } from '@mantine/core';
-import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
+import { ActionIcon, Loader, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
-  IconBan,
   IconCalculator,
   IconCalculatorOff,
   IconDotsVertical,
   IconEdit,
   IconFlag,
   IconLock,
-  IconLockOpen,
-  IconSwitchHorizontal,
   IconTrash,
-} from '@tabler/icons';
-import { SessionUser } from 'next-auth';
-import { ToggleLockComments } from '~/components/CommentsV2';
+} from '@tabler/icons-react';
 
+import { ToggleLockComments } from '~/components/CommentsV2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { closeRoutedContext, openRoutedContext } from '~/providers/RoutedContextProvider';
+import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ReviewGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -41,6 +36,7 @@ export function ResourceReviewMenu({
     modelId: number;
     modelVersionId: number;
     exclude?: boolean;
+    metadata?: any;
   };
 } & MenuProps) {
   const currentUser = useCurrentUser();
@@ -125,12 +121,14 @@ export function ResourceReviewMenu({
             >
               Delete review
             </Menu.Item>
-            <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
-              onClick={() => openContext('resourceReviewEdit', review)}
-            >
-              Edit review
-            </Menu.Item>
+            {!isMuted && (
+              <Menu.Item
+                icon={<IconEdit size={14} stroke={1.5} />}
+                onClick={() => openContext('resourceReviewEdit', review)}
+              >
+                Edit review
+              </Menu.Item>
+            )}
           </>
         )}
         {isMod && (
@@ -142,14 +140,14 @@ export function ResourceReviewMenu({
               >
                 Exclude from average
               </Menu.Item>
-            ) : (
+            ) : review.metadata?.excludeReason !== 'reviewManipulation' ? (
               <Menu.Item
                 icon={<IconCalculator size={14} stroke={1.5} />}
                 onClick={handleUnexcludeReview}
               >
                 Unexclude from average
               </Menu.Item>
-            )}
+            ) : null}
             <ToggleLockComments entityId={reviewId} entityType="review">
               {({ toggle, locked, isLoading }) => {
                 return (

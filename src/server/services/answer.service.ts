@@ -36,6 +36,8 @@ export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { us
       answerId: result.id,
       questionId: result.questionId,
     });
+
+  return result;
 };
 
 export const deleteAnswer = async ({ id }: GetByIdInput) => {

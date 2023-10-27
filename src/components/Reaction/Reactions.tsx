@@ -1,14 +1,20 @@
-import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
+import { Button, Group, Text, GroupProps, useMantineTheme, Badge } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPlus } from '@tabler/icons';
+import { IconBolt, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
-import { useMemo, useState } from 'react';
+
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { constants } from '~/server/common/constants';
+import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -16,49 +22,87 @@ export type ReactionMetrics = {
   heartCount?: number;
   laughCount?: number;
   cryCount?: number;
-};
-
-type ReactionToEmoji = { [k in ReviewReactions]: string };
-const availableReactions: ReactionToEmoji = {
-  [ReviewReactions.Like]: '👍',
-  [ReviewReactions.Dislike]: '👎',
-  [ReviewReactions.Heart]: '❤️',
-  [ReviewReactions.Laugh]: '😂',
-  [ReviewReactions.Cry]: '😢',
+  tippedAmountCount?: number;
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
   readonly?: boolean;
-  withinPortal?: boolean;
 };
+
+const availableReactions: Partial<Record<ToggleReactionInput['entityType'], ReviewReactions[]>> = {
+  image: ['Like', 'Heart', 'Laugh', 'Cry'],
+};
+
+export function PostReactions({
+  metrics = {},
+  imageCount,
+  ...groupProps
+}: {
+  metrics?: ReactionMetrics;
+  imageCount?: number;
+} & GroupProps) {
+  const total = Object.values(metrics).reduce((acc, val) => acc + (val ?? 0), 0);
+  if (total === 0) return null;
+
+  return (
+    <Group spacing="xs" sx={{ cursor: 'default' }} {...groupProps}>
+      {imageCount && (
+        <Group spacing={4} align="center">
+          <IconPhoto size={20} strokeWidth={2} />
+          <Text size="sm" weight={500}>
+            {imageCount}
+          </Text>
+        </Group>
+      )}
+      <Group spacing={4} align="center">
+        <IconMoodSmile size={20} strokeWidth={2} />
+        <Text size="sm" weight={500} pr={2}>
+          {total}
+        </Text>
+      </Group>
+    </Group>
+  );
+}
 
 export function Reactions({
   reactions,
-  metrics = {},
+  metrics,
   entityType,
   entityId,
   readonly,
-  withinPortal,
+  targetUserId,
   ...groupProps
-}: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
+}: ReactionsProps &
+  Omit<GroupProps, 'children' | 'onClick'> & {
+    targetUserId?: number;
+  }) {
+  const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
     defaultValue: false,
   });
 
-  const hasAllReactions = Object.entries(metrics).every(([key, value]) => {
-    // ie. converts the key `likeCount` to `Like`
-    const reactionType = capitalize(key).replace(/count/, '');
-    const hasReaction =
-      storedReactions[reactionType] !== undefined
-        ? storedReactions[reactionType]
-        : !!reactions.find((x) => x.reaction === reactionType);
+  const ignoredKeys = ['tippedAmountCount'];
+  const hasAllReactions =
+    !!metrics &&
+    Object.entries(metrics).every(([key, value]) => {
+      if (ignoredKeys.includes(key)) {
+        return true;
+      }
+      // ie. converts the key `likeCount` to `Like`
+      const reactionType = capitalize(key).replace(/count/, '');
+      const hasReaction =
+        storedReactions[reactionType] !== undefined
+          ? storedReactions[reactionType]
+          : !!reactions.find((x) => x.reaction === reactionType);
 
-    return value > 0 || !!storedReactions[reactionType] || hasReaction;
-  });
+      return value > 0 || !!storedReactions[reactionType] || hasReaction;
+    });
+
+  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -72,8 +116,9 @@ export function Reactions({
           }
         }}
         {...groupProps}
+        noWrap
       >
-        {!hasAllReactions && (
+        {!hasAllReactions && !readonly && (
           <Button
             variant="subtle"
             size="xs"
@@ -100,6 +145,15 @@ export function Reactions({
         >
           {ReactionBadge}
         </ReactionsList>
+        {supportsBuzzTipping && targetUserId && (
+          <BuzzTippingBadge
+            toUserId={targetUserId}
+            tippedAmountCount={metrics?.tippedAmountCount ?? 0}
+            entityType={entityType}
+            entityId={entityId}
+            hideLoginPopover
+          />
+        )}
       </Group>
     </LoginPopover>
   );
@@ -121,11 +175,14 @@ function ReactionsList({
     hasReacted: boolean;
     count: number;
     reaction: ReviewReactions;
+    canClick: boolean;
   }) => React.ReactElement;
   readonly?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const keys = Object.keys(availableReactions) as ReviewReactions[];
+  const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
+  available ??= availableReactions[entityType];
+
   return (
     <>
       {keys
@@ -136,6 +193,7 @@ function ReactionsList({
           const userReaction = reactions.find(
             (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
+
           return (
             <ReactionButton
               key={reaction}
@@ -159,26 +217,91 @@ function ReactionBadge({
   hasReacted,
   count,
   reaction,
+  canClick,
 }: {
   hasReacted: boolean;
   count: number;
   reaction: ReviewReactions;
+  canClick: boolean;
 }) {
+  const color = hasReacted ? 'blue' : 'gray';
+  const settings = useReactionSettingsContext();
+  const displayReactionCount = settings?.displayReactionCount ?? true;
   return (
     <Button
       size="xs"
       radius="xs"
-      variant="light"
+      variant={hasReacted ? 'light' : 'subtle'}
+      sx={(theme) => ({
+        '&[data-disabled]': {
+          cursor: 'default',
+          color: theme.fn.variant({ variant: 'light', color }).color,
+          background: 'transparent !important',
+        },
+      })}
+      disabled={!canClick}
       pl={2}
       pr={3}
-      color={hasReacted ? 'blue' : 'gray'}
+      color={color}
       compact
     >
-      <Group spacing={4} align="center">
-        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>{availableReactions[reaction]}</Text>
-        <Text inherit>{count}</Text>
+      <Group spacing={4} align="center" noWrap>
+        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
+          {constants.availableReactions[reaction]}
+        </Text>
+        {displayReactionCount && (
+          <Text
+            sx={(theme) => ({
+              color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,
+            })}
+            inherit
+          >
+            {count}
+          </Text>
+        )}
       </Group>
     </Button>
+  );
+}
+
+function BuzzTippingBadge({
+  tippedAmountCount,
+  entityId,
+  entityType,
+  toUserId,
+  ...props
+}: {
+  tippedAmountCount: number;
+  toUserId: number;
+  entityType: string;
+  entityId: number;
+  hideLoginPopover?: boolean;
+}) {
+  const theme = useMantineTheme();
+  const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
+    image: 'Image',
+  };
+  const buzzTipEntryType = typeToBuzzTipType[entityType];
+  const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType ?? 'Image', entityId });
+
+  if (!buzzTipEntryType) {
+    return null;
+  }
+
+  return (
+    <InteractiveTipBuzzButton
+      toUserId={toUserId}
+      entityType={buzzTipEntryType}
+      entityId={entityId}
+      {...props}
+    >
+      <Badge size="md" radius="xs" variant="light" py={10} px={3} color="yellow.7">
+        <Group spacing={2} align="center" noWrap>
+          <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
+          <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+        </Group>
+      </Badge>
+    </InteractiveTipBuzzButton>
   );
 }
 
@@ -191,7 +314,7 @@ function ReactionSelector({
 }) {
   return (
     <Button size="xs" radius="xs" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
-      {availableReactions[reaction]}
+      {constants.availableReactions[reaction]}
     </Button>
   );
 }

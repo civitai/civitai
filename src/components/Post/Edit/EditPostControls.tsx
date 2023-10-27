@@ -8,10 +8,11 @@ import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { PostEditActions } from '~/components/Post/Edit/PostEditActions';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CollectionType } from '@prisma/client';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
-const matureLabel = 'Mature content may include content that is suggestive or provocative';
+export const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
   multiline: true,
@@ -36,6 +37,8 @@ export function ManagePostStatus() {
   const router = useRouter();
   const returnUrl = router.query.returnUrl as string;
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useContext();
+
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
   const title = useEditPostContext((state) => state.title);
@@ -46,7 +49,8 @@ export function ManagePostStatus() {
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
   const canPublish =
-    tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
+    tags.filter((x) => !!x.id).length > 0 &&
+    images.filter((x) => x.discriminator === 'image').length > 0;
 
   const handlePublish = () => {
     if (!currentUser) return;
@@ -54,8 +58,10 @@ export function ManagePostStatus() {
     mutate(
       { id, publishedAt },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           setPublishedAt(publishedAt);
+          await queryUtils.image.getImagesAsPostsInfinite.invalidate();
+
           if (returnUrl) router.push(returnUrl);
           else router.push(`/user/${currentUser.username}/posts`);
         },
@@ -87,7 +93,11 @@ export function ManagePostStatus() {
           </Tooltip>
         )}
         {publishedAt && (
-          <ShareButton title={title} url={`/posts/${id}`}>
+          <ShareButton
+            title={title}
+            url={`/posts/${id}`}
+            collect={{ type: CollectionType.Post, postId: id }}
+          >
             <Button variant="default" style={{ flex: 1 }}>
               Share
             </Button>

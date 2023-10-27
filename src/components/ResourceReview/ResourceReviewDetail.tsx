@@ -17,7 +17,7 @@ import { NextLink } from '@mantine/next';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { trpc } from '~/utils/trpc';
-import { slugit } from '~/utils/string-helpers';
+import { removeTags, slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
 import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
@@ -30,6 +30,11 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import Link from 'next/link';
 import { formatDate } from '~/utils/date-helpers';
 import { PostSort } from '~/server/common/enums';
+import { Meta } from '~/components/Meta/Meta';
+import { truncate } from 'lodash-es';
+import { StarRating } from '../StartRating/StarRating';
+import { env } from '~/env/client.mjs';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -57,8 +62,38 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
   const commentCount = data.thread?._count.comments ?? 0;
 
+  const metaSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'Review',
+    name: `Review for ${data.model.name} - ${data.modelVersion.name}`,
+    reviewBody: data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : '',
+    author: data.user.username,
+    datePublished: data.createdAt,
+    reviewRating: {
+      '@type': 'Rating',
+      bestRating: 5,
+      worstRating: 1,
+      ratingValue: data.rating,
+    },
+    itemReviewed: {
+      '@type': 'SoftwareApplication',
+      name: data.model.name,
+      applicationCategory: 'Multimedia',
+      applicationSubCategory: 'Stable Diffusion Model',
+      operatingSystem: 'Windows, OSX, Linux',
+    },
+  };
+
   return (
     <>
+      <Meta
+        title={`${data.model.name} - ${data.modelVersion.name} - Review by ${data.user.username}`}
+        description={`${data.rating} star review${
+          data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
+        }`}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}
+        schema={metaSchema}
+      />
       <Container mb="md">
         <Stack>
           <Group position="apart" noWrap align="center">
@@ -119,7 +154,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 paddingRight: 0,
                 height: 'auto',
               }}
-              icon={<Rating size="md" value={data.rating} fractions={2} readOnly />}
+              icon={<StarRating value={data.rating} />}
             ></IconBadge>
           </Group>
         </Stack>
@@ -148,7 +183,13 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                   href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
                   passHref
                 >
-                  <Button component="a" size="xs" variant="light" compact>
+                  <Button
+                    component="a"
+                    size="xs"
+                    variant="light"
+                    styles={{ root: { height: 'auto' }, label: { whiteSpace: 'normal' } }}
+                    compact
+                  >
                     {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
                   </Button>
                 </Link>

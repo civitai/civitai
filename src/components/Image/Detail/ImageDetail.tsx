@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Box,
+  Button,
   Card,
   CloseButton,
   createStyles,
@@ -10,14 +11,16 @@ import {
   Paper,
   ScrollArea,
   Stack,
+  Text,
 } from '@mantine/core';
 import {
-  IconFlag,
   IconInfoCircle,
-  IconShare,
   IconDotsVertical,
   IconAlertTriangle,
-} from '@tabler/icons';
+  IconEye,
+  IconPlaylistAdd,
+} from '@tabler/icons-react';
+import { IconShare3 } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
@@ -25,158 +28,254 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
+import { Meta } from '~/components/Meta/Meta';
+import { TrackView } from '~/components/TrackView/TrackView';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { CollectionType, NsfwLevel } from '@prisma/client';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { trpc } from '~/utils/trpc';
+import { env } from '~/env/client.mjs';
 
 export function ImageDetail() {
-  const { classes, cx } = useStyles();
-  const { image, isLoading, active, toggleInfo, close, isOwner, isMod, shareUrl } =
-    useImageDetailContext();
+  const { classes, cx, theme } = useStyles();
+  const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
+  const queryUtils = trpc.useContext();
 
-  if (!image && isLoading) return <PageLoader />;
+  if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
   return (
-    <MantineProvider theme={{ colorScheme: 'dark' }}>
-      <Paper className={classes.root}>
-        <CloseButton
-          style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-          size="lg"
-          variant="default"
-          onClick={close}
-          className={classes.mobileOnly}
-        />
-        <ImageDetailCarousel className={classes.carousel} />
-        <ActionIcon
-          size="lg"
-          className={cx(classes.info, classes.mobileOnly)}
-          onClick={toggleInfo}
-          variant="default"
-        >
-          <IconInfoCircle />
-        </ActionIcon>
-        <Card
-          className={cx(classes.sidebar, {
-            [classes.active]: active,
-          })}
-        >
-          <Card.Section withBorder>
-            <Stack p="sm" spacing={8}>
-              <Group noWrap>
-                <Group position="apart" style={{ flex: 1 }}>
-                  <UserAvatar
-                    user={image.user}
-                    subText={<DaysFromNow date={image.createdAt} />}
-                    subTextForce
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing={4}>
-                    <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
-                      <ActionIcon size="lg">
-                        <IconShare />
-                      </ActionIcon>
-                    </ShareButton>
-                    <ReportImageButton imageId={image.id}>
-                      <ActionIcon size="lg">
-                        <IconFlag />
-                      </ActionIcon>
-                    </ReportImageButton>
-                    {(isMod || isOwner) && (
-                      <ImageDetailContextMenu>
-                        <ActionIcon size="lg">
-                          <IconDotsVertical />
-                        </ActionIcon>
-                      </ImageDetailContextMenu>
-                    )}
-                  </Group>
-                </Group>
-                <CloseButton size="lg" variant="default" onClick={close} />
-              </Group>
-            </Stack>
-          </Card.Section>
-          <Card.Section
-            component={ScrollArea}
-            style={{ flex: 1, position: 'relative' }}
-            classNames={{ viewport: classes.scrollViewport }}
+    <>
+      <Meta
+        title={`Image posted by ${image.user.username}`}
+        image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
+        deIndex={
+          image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
+        }
+      />
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" />
+      <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
+        <Paper className={classes.root}>
+          <CloseButton
+            style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
+            size="lg"
+            variant="default"
+            onClick={close}
+            className={classes.mobileOnly}
+          />
+          <ImageDetailCarousel className={classes.carousel} />
+          <ActionIcon
+            size="lg"
+            className={cx(classes.info, classes.mobileOnly)}
+            onClick={toggleInfo}
+            variant="default"
           >
-            <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
-              {image.needsReview && (
-                <AlertWithIcon
-                  icon={<IconAlertTriangle />}
-                  color="yellow"
-                  iconColor="yellow"
-                  title="Flagged for review"
-                  radius={0}
-                  px="md"
-                >
-                  {`This image won't be visible to other users until it's reviewed by our moderators.`}
-                </AlertWithIcon>
-              )}
-              <VotableTags
-                entityType="image"
-                entityId={image.id}
-                canAdd
-                canAddModerated={isMod}
-                collapsible
-                px="md"
-              />
-              <div>
-                <Divider
-                  label="Discussion"
-                  labelPosition="center"
-                  styles={{
-                    label: {
-                      marginTop: '-9px !important',
-                      marginBottom: -9,
-                    },
-                  }}
+            <IconInfoCircle />
+          </ActionIcon>
+          <Card
+            className={cx(classes.sidebar, {
+              [classes.active]: active,
+            })}
+          >
+            <Card.Section py="xs" withBorder inheritPadding>
+              <Group position="apart" spacing={8}>
+                <UserAvatar
+                  user={image.user}
+                  avatarProps={{ size: 32 }}
+                  size="sm"
+                  subText={
+                    <Text size="xs" color="dimmed">
+                      Uploaded <DaysFromNow date={image.createdAt} />
+                    </Text>
+                  }
+                  subTextForce
+                  withUsername
+                  linkToProfile
                 />
-                <Paper p="sm" radius={0}>
-                  <Stack spacing={8}>
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                      }}
-                    />
-                    <ImageDetailComments imageId={image.id} userId={image.user.id} />
-                  </Stack>
-                </Paper>
-              </div>
-              <Stack spacing="md" mt="auto">
-                <Divider label="Resources" labelPosition="center" />
-
-                <Box px="md">
-                  <ImageResources imageId={image.id} />
-                </Box>
-                {image.meta && (
-                  <>
-                    <Divider label="Generation Data" labelPosition="center" mb={-15} />
-                    <Box px="md">
-                      <ImageMeta meta={image.meta as ImageMetaProps} />
-                    </Box>
-                  </>
+                <Group spacing={8} sx={{ [theme.fn.smallerThan('sm')]: { flexGrow: 1 } }} noWrap>
+                  <TipBuzzButton
+                    toUserId={image.user.id}
+                    entityId={image.id}
+                    entityType="Image"
+                    size="md"
+                    compact
+                  />
+                  <FollowUserButton userId={image.user.id} size="md" compact />
+                  <CloseButton
+                    size="md"
+                    radius="xl"
+                    variant="transparent"
+                    ml="auto"
+                    iconSize={20}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      close();
+                    }}
+                  />
+                </Group>
+              </Group>
+            </Card.Section>
+            <Card.Section
+              py="xs"
+              sx={{ backgroundColor: theme.colors.dark[7] }}
+              withBorder
+              inheritPadding
+            >
+              <Group position="apart" spacing={8}>
+                <Group spacing={8}>
+                  {image.postId && (
+                    <RoutedContextLink modal="postDetailModal" postId={image.postId}>
+                      <Button
+                        size="md"
+                        radius="xl"
+                        color="gray"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        compact
+                      >
+                        <Group spacing={4}>
+                          <IconEye size={14} />
+                          <Text size="xs">View post</Text>
+                        </Group>
+                      </Button>
+                    </RoutedContextLink>
+                  )}
+                  <Button
+                    size="md"
+                    radius="xl"
+                    color="gray"
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    onClick={() =>
+                      openContext('addToCollection', {
+                        imageId: image.id,
+                        type: CollectionType.Image,
+                      })
+                    }
+                    compact
+                  >
+                    <Group spacing={4}>
+                      <IconPlaylistAdd size={14} />
+                      <Text size="xs">Save</Text>
+                    </Group>
+                  </Button>
+                  <ShareButton
+                    url={shareUrl}
+                    title={`Image by ${image.user.username}`}
+                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                  >
+                    <Button
+                      size="md"
+                      radius="xl"
+                      color="gray"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      compact
+                    >
+                      <Group spacing={4}>
+                        <IconShare3 size={14} />
+                        <Text size="xs">Share</Text>
+                      </Group>
+                    </Button>
+                  </ShareButton>
+                </Group>
+                <ImageDetailContextMenu>
+                  <ActionIcon
+                    size={30}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    radius="xl"
+                  >
+                    <IconDotsVertical size={14} />
+                  </ActionIcon>
+                </ImageDetailContextMenu>
+              </Group>
+            </Card.Section>
+            <Card.Section
+              component={ScrollArea}
+              style={{ flex: 1, position: 'relative' }}
+              classNames={{ viewport: classes.scrollViewport }}
+            >
+              <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
+                {image.needsReview && (
+                  <AlertWithIcon
+                    icon={<IconAlertTriangle />}
+                    color="yellow"
+                    iconColor="yellow"
+                    title="Flagged for review"
+                    radius={0}
+                    px="md"
+                  >
+                    {`This image won't be visible to other users until it's reviewed by our moderators.`}
+                  </AlertWithIcon>
                 )}
+                <VotableTags
+                  entityType="image"
+                  entityId={image.id}
+                  canAdd
+                  canAddModerated={isMod}
+                  collapsible
+                  px="sm"
+                />
+                <div>
+                  <Divider
+                    label="Discussion"
+                    labelPosition="center"
+                    styles={{
+                      label: {
+                        marginTop: '-9px !important',
+                        marginBottom: -9,
+                      },
+                    }}
+                  />
+                  <Paper p="sm" radius={0}>
+                    <Stack spacing={8}>
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                        }}
+                        targetUserId={image.user.id}
+                      />
+                      <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                    </Stack>
+                  </Paper>
+                </div>
+                <Stack spacing="md" mt="auto">
+                  <Divider label="Resources Used" labelPosition="center" />
+
+                  <Box px="md">
+                    <ImageResources imageId={image.id} />
+                  </Box>
+                  {image.meta && (
+                    <>
+                      <Divider label="Generation Data" labelPosition="center" mb={-15} />
+                      <Box px="md">
+                        <ImageMeta meta={image.meta} imageId={image.id} />
+                      </Box>
+                    </>
+                  )}
+                </Stack>
               </Stack>
-            </Stack>
-          </Card.Section>
-        </Card>
-      </Paper>
-    </MantineProvider>
+            </Card.Section>
+          </Card>
+        </Paper>
+      </MantineProvider>
+    </>
   );
 }
 
@@ -197,7 +296,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
     },
     active: { ref: getRef('active') },
     sidebar: {
-      width: 400,
+      width: 457,
       borderRadius: 0,
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',

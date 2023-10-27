@@ -1,4 +1,4 @@
-import { Group, MantineSize, Rating, Text, useMantineTheme } from '@mantine/core';
+import { Badge, Group, MantineSize, Rating, Text, useMantineTheme } from '@mantine/core';
 import {
   IconStar,
   IconUpload,
@@ -6,10 +6,12 @@ import {
   IconHeart,
   IconDownload,
   IconChecks,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
+import { StatTooltip } from '~/components/Tooltips/StatTooltip';
+import { StarRating } from '../StartRating/StarRating';
 
 const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
   xs: { textSize: 'xs', iconSize: 12 },
@@ -26,90 +28,116 @@ export function UserStatBadges({
   uploads,
   downloads,
   answers,
-  size = 'lg',
+  username,
 }: Props) {
   const theme = useMantineTheme();
-  const { textSize, iconSize } = mapBadgeTextIconSize[size];
 
   return (
-    <Group spacing="xs">
+    <Group spacing={8} position="apart">
       {rating != null ? (
         <IconBadge
-          tooltip="Average Rating"
-          sx={{ userSelect: 'none' }}
-          size={size}
-          icon={
-            <Rating
-              size="xs"
-              value={rating.value}
-              readOnly
-              emptySymbol={
-                theme.colorScheme === 'dark' ? (
-                  <IconStar size={iconSize} fill="rgba(255,255,255,.3)" color="transparent" />
-                ) : undefined
-              }
+          radius="xl"
+          tooltip={
+            <StatTooltip
+              label="Average Rating"
+              value={`${formatToLeastDecimals(rating.value)} (${rating.count})`}
             />
           }
-          variant={theme.colorScheme === 'dark' && rating.count > 0 ? 'filled' : 'light'}
+          sx={{ userSelect: 'none' }}
+          size="lg"
+          px={8}
+          icon={<StarRating size={14} value={rating.value} />}
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         >
-          <Text size={textSize} color={rating.count > 0 ? undefined : 'dimmed'}>
+          <Text size="xs" weight={600} inline>
             {abbreviateNumber(rating.count)}
           </Text>
         </IconBadge>
       ) : null}
-      {uploads != null ? (
-        <IconBadge
-          tooltip="Uploads"
-          icon={<IconUpload size={iconSize} />}
-          color="gray"
-          size={size}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        >
-          <Text size={textSize}>{abbreviateNumber(uploads)}</Text>
-        </IconBadge>
-      ) : null}
-      {followers != null ? (
-        <IconBadge
-          tooltip="Followers"
-          icon={<IconUsers size={iconSize} />}
-          color="gray"
-          size={size}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        >
-          <Text size={textSize}>{abbreviateNumber(followers)}</Text>
-        </IconBadge>
-      ) : null}
-      {favorite != null ? (
-        <IconBadge
-          tooltip="Favorites"
-          icon={<IconHeart size={iconSize} />}
-          color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          size={size}
-        >
-          <Text size={textSize}>{abbreviateNumber(favorite)}</Text>
-        </IconBadge>
-      ) : null}
-      {downloads != null ? (
-        <IconBadge
-          tooltip="Downloads"
-          icon={<IconDownload size={iconSize} />}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          size={size}
-        >
-          <Text size={textSize}>{abbreviateNumber(downloads)}</Text>
-        </IconBadge>
-      ) : null}
-      {answers != null && answers > 0 ? (
-        <IconBadge
-          tooltip="Answers"
-          icon={<IconChecks size={iconSize} />}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          size={size}
-        >
-          <Text size={textSize}>{abbreviateNumber(answers)}</Text>
-        </IconBadge>
-      ) : null}
+      <Badge
+        size="lg"
+        color="gray"
+        radius="xl"
+        px={8}
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+      >
+        <Group spacing="xs" noWrap>
+          {uploads != null ? (
+            <IconBadge
+              p={0}
+              tooltip={<StatTooltip label="Uploads" value={uploads} />}
+              icon={<IconUpload size={14} />}
+              color="gray"
+              size="lg"
+              // @ts-ignore: transparent variant does work
+              variant="transparent"
+            >
+              <Text size="xs" weight={600} inline>
+                {abbreviateNumber(uploads)}
+              </Text>
+            </IconBadge>
+          ) : null}
+          {followers != null ? (
+            <IconBadge
+              p={0}
+              tooltip={<StatTooltip label="Followers" value={followers} />}
+              href={username ? `/user/${username}/followers` : undefined}
+              icon={<IconUsers size={14} />}
+              color="gray"
+              size="lg"
+              // @ts-ignore: transparent variant does work
+              variant="transparent"
+            >
+              <Text size="xs" weight={600} inline>
+                {abbreviateNumber(followers)}
+              </Text>
+            </IconBadge>
+          ) : null}
+          {favorite != null ? (
+            <IconBadge
+              p={0}
+              tooltip={<StatTooltip label="Favorites" value={favorite} />}
+              icon={<IconHeart size={14} />}
+              color="gray"
+              // @ts-ignore: transparent variant does work
+              variant="transparent"
+              size="lg"
+            >
+              <Text size="xs" weight={600} inline>
+                {abbreviateNumber(favorite)}
+              </Text>
+            </IconBadge>
+          ) : null}
+          {downloads != null ? (
+            <IconBadge
+              p={0}
+              tooltip={<StatTooltip label="Downloads" value={downloads} />}
+              icon={<IconDownload size={14} />}
+              // @ts-ignore: transparent variant does work
+              variant="transparent"
+              size="lg"
+            >
+              <Text size="xs" weight={600} inline>
+                {abbreviateNumber(downloads)}
+              </Text>
+            </IconBadge>
+          ) : null}
+          {answers != null && answers > 0 ? (
+            <IconBadge
+              p={0}
+              tooltip={<StatTooltip label="Answers" value={answers} />}
+              icon={<IconChecks size={14} />}
+              // @ts-ignore: transparent variant does work
+              variant="transparent"
+              size="lg"
+            >
+              <Text size="xs" weight={600} inline>
+                {abbreviateNumber(answers)}
+              </Text>
+            </IconBadge>
+          ) : null}
+        </Group>
+      </Badge>
     </Group>
   );
 }
@@ -122,5 +150,6 @@ type Props = {
   favorite?: number;
   downloads?: number;
   answers?: number;
+  username?: string | null;
   size?: MantineSize;
 };

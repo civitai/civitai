@@ -4,11 +4,13 @@ import {
   IconDotsVertical,
   IconTrash,
   IconEdit,
+  IconEye,
+  IconEyeOff,
   IconFlag,
   IconLock,
   IconLockOpen,
   IconBan,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { SessionUser } from 'next-auth';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -31,6 +33,8 @@ export function CommentDiscussionMenu({
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
   const isMuted = user?.muted ?? false;
+  const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
+  const isModelOwner = model && user && model.user.id === user.id;
 
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
@@ -108,13 +112,44 @@ export function CommentDiscussionMenu({
     openConfirmModal({
       modalId: 'confirm-tos-violation',
       title: 'Report ToS Violation',
-      children: `Are you sure you want to report this comment for a Terms of Service violation? Once marked, it won't show up for other people`,
+      children: `Are you sure you want to report this comment as a Terms of Service violation?`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', disabled: tosViolationMutation.isLoading },
       closeOnConfirm: false,
       onConfirm: () => tosViolationMutation.mutate({ id: comment.id }),
     });
+  };
+
+  const toggleHideCommentMutation = trpc.comment.toggleHide.useMutation({
+    async onMutate({ id }) {
+      await queryUtils.comment.getById.cancel();
+
+      const prevComment = queryUtils.comment.getById.getData({ id });
+      if (prevComment)
+        queryUtils.comment.getById.setData({ id }, () => ({
+          ...prevComment,
+          hidden: !prevComment.hidden,
+        }));
+
+      return { prevComment };
+    },
+    async onSuccess() {
+      await queryUtils.comment.getAll.invalidate();
+      await queryUtils.comment.getCommentCountByModel.invalidate({
+        modelId: comment.modelId,
+        hidden: true,
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Could not hide comment',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const handleToggleHideComment = () => {
+    toggleHideCommentMutation.mutate({ id: comment.id });
   };
 
   return (
@@ -142,26 +177,40 @@ export function CommentDiscussionMenu({
                 Edit comment
               </Menu.Item>
             )}
-            {isMod && !hideLockOption && (
-              <Menu.Item
-                icon={
-                  comment.locked ? (
-                    <IconLockOpen size={14} stroke={1.5} />
-                  ) : (
-                    <IconLock size={14} stroke={1.5} />
-                  )
-                }
-                onClick={handleToggleLockThread}
-              >
-                {comment.locked ? 'Unlock comment' : 'Lock comment'}
-              </Menu.Item>
-            )}
-            {isMod && (
-              <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
-                Remove as TOS Violation
-              </Menu.Item>
-            )}
           </>
+        )}
+        {isMod && !hideLockOption && (
+          <Menu.Item
+            icon={
+              comment.locked ? (
+                <IconLockOpen size={14} stroke={1.5} />
+              ) : (
+                <IconLock size={14} stroke={1.5} />
+              )
+            }
+            onClick={handleToggleLockThread}
+          >
+            {comment.locked ? 'Unlock comment' : 'Lock comment'}
+          </Menu.Item>
+        )}
+        {(isModelOwner || isMod) && (
+          <Menu.Item
+            icon={
+              comment.hidden ? (
+                <IconEye size={14} stroke={1.5} />
+              ) : (
+                <IconEyeOff size={14} stroke={1.5} />
+              )
+            }
+            onClick={handleToggleHideComment}
+          >
+            {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+          </Menu.Item>
+        )}
+        {isMod && (
+          <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
+            Remove as TOS Violation
+          </Menu.Item>
         )}
         {(!user || !isOwner) && (
           <LoginRedirect reason="report-model">
@@ -181,7 +230,7 @@ export function CommentDiscussionMenu({
 }
 
 type Props = MenuProps & {
-  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked'>;
+  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
   user?: SessionUser | null;
   size?: MantineNumberSize;
   hideLockOption?: boolean;

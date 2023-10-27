@@ -1,4 +1,4 @@
-import { ModelHashType } from '@prisma/client';
+import { ModelHashType, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -6,6 +6,7 @@ import { Session } from 'next-auth';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { BrowsingMode } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -30,7 +31,8 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  const apiCaller = appRouter.createCaller({ ...publicApiContext, user });
+  const browsingMode = req.query.nsfw === 'false' ? BrowsingMode.SFW : BrowsingMode.All;
+  const apiCaller = appRouter.createCaller({ ...publicApiContext(req, res), user, browsingMode });
   try {
     if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
       return res.status(401).json({ error: 'Unauthorized' });
@@ -47,6 +49,7 @@ export default MixedAuthEndpoint(async function handler(
     res.status(200).json({
       items: items.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
+        mode: model.mode == null ? undefined : model.mode,
         creator: {
           username: user.username,
           image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
@@ -61,28 +64,40 @@ export default MixedAuthEndpoint(async function handler(
             if (!primaryFile) return null;
             if (primaryFileOnly) castedFiles = [primaryFile];
 
+            const includeDownloadUrl = model.mode !== ModelModifier.Archived;
+            const includeImages = model.mode !== ModelModifier.TakenDown;
+
             return {
               ...version,
-              files: castedFiles.map(({ hashes, ...file }) => ({
-                ...file,
-                name: getDownloadFilename({ model, modelVersion: version, file }),
-                hashes: hashesAsObject(hashes),
-                downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-                  versionId: version.id,
-                  type: file.type,
-                  format: file.metadata.format,
-                  primary: primaryFile.id === file.id,
-                })}`,
-                primary: primaryFile.id === file.id ? true : undefined,
-              })),
-              images: images.map(({ url, id, ...image }) => ({
-                url: getEdgeUrl(url, { width: 450, name: id.toString() }),
-                ...image,
-              })),
-              downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-                versionId: version.id,
-                primary: true,
-              })}`,
+              files: includeDownloadUrl
+                ? castedFiles.map(({ hashes, ...file }) => ({
+                    ...file,
+                    name: getDownloadFilename({ model, modelVersion: version, file }),
+                    hashes: hashesAsObject(hashes),
+                    downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+                      versionId: version.id,
+                      type: file.type,
+                      meta: file.metadata,
+                      primary: primaryFile.id === file.id,
+                    })}`,
+                    primary: primaryFile.id === file.id ? true : undefined,
+                    url: undefined,
+                    visibility: undefined,
+                  }))
+                : [],
+              images: includeImages
+                ? images.map(({ url, id, ...image }) => ({
+                    id,
+                    url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+                    ...image,
+                  }))
+                : [],
+              downloadUrl: includeDownloadUrl
+                ? `${baseUrl.origin}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    primary: true,
+                  })}`
+                : undefined,
             };
           })
           .filter((x) => x),

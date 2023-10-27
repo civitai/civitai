@@ -8,7 +8,7 @@ import {
   Box,
   Loader,
 } from '@mantine/core';
-import { IconSearch } from '@tabler/icons';
+import { IconSearch } from '@tabler/icons-react';
 import React, { useMemo, forwardRef } from 'react';
 
 type SelectItemProps<T extends string | number> = Omit<SelectItem, 'value'> & {

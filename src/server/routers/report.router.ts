@@ -1,4 +1,5 @@
 import {
+  bulkUpdateReportStatusHandler,
   createReportHandler,
   getReportsHandler,
   setReportStatusHandler,
@@ -6,6 +7,7 @@ import {
 } from '~/server/controllers/report.controller';
 import { isModerator } from '~/server/routers/base.router';
 import {
+  bulkUpdateReportStatusSchema,
   createReportInputSchema,
   getReportsSchema,
   setReportStatusSchema,
@@ -24,4 +26,8 @@ export const reportRouter = router({
     .input(setReportStatusSchema)
     .use(isModerator)
     .mutation(setReportStatusHandler),
+  bulkUpdateStatus: protectedProcedure
+    .input(bulkUpdateReportStatusSchema)
+    .use(isModerator)
+    .mutation(bulkUpdateReportStatusHandler),
 });

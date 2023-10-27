@@ -9,8 +9,8 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Button, Card, Center, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
-import { IconGripVertical } from '@tabler/icons';
-import isEqual from 'lodash/isEqual';
+import { IconGripVertical } from '@tabler/icons-react';
+import { isEqual } from 'lodash-es';
 import { useState } from 'react';
 
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
@@ -90,7 +90,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
       onClose={onClose}
       title={
         <Stack spacing={0}>
-          <Title order={3}>Reorder versions</Title>
+          <Title order={3}>Rearrange versions</Title>
           <Text size="sm" color="dimmed">
             Drag and drop the versions to set their order
           </Text>

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
 
 import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconCloudOff } from '@tabler/icons';
+import { IconCloudOff } from '@tabler/icons-react';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { ResourceReviewCard } from '~/components/ResourceReview/ResourceReviewCard';

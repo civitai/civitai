@@ -1,14 +1,16 @@
 import { useState } from 'react';
+import { getDataFromFile } from '~/utils/metadata';
 
-type TrackedFile = {
-  file: File;
+type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
   progress: number;
   uploaded: number;
   size: number;
   speed: number;
   timeRemaining: number;
-  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
   abort: () => void;
+  id: string;
+  url: string;
 };
 
 type UploadResult = {
@@ -21,6 +23,8 @@ type UploadToCF = (file: File, metadata?: Record<string, string>) => Promise<Upl
 type UseS3UploadTools = {
   uploadToCF: UploadToCF;
   files: TrackedFile[];
+  removeImage: (imageId: string) => void;
+  resetFiles: VoidFunction;
 };
 
 type UseCFImageUpload = () => UseS3UploadTools;
@@ -31,7 +35,7 @@ const pendingTrackedFile = {
   size: 0,
   speed: 0,
   timeRemaining: 0,
-  status: 'pending',
+  status: 'pending' as const,
   abort: () => undefined,
 };
 
@@ -53,19 +57,27 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       body: JSON.stringify({ filename, metadata }),
     });
 
-    const data = await res.json();
+    const data: ImageUploadResponse = await res.json();
 
-    if (data.error) {
+    if ('error' in data) {
       console.error(data.error);
       throw data.error;
     }
 
     const { id, uploadURL: url } = data;
+    const imageData = await getDataFromFile(file);
+    if (!imageData) throw new Error();
 
     const xhr = new XMLHttpRequest();
     setFiles((x) => [
       ...x,
-      { file, ...pendingTrackedFile, abort: xhr.abort.bind(xhr) } as TrackedFile,
+      {
+        ...pendingTrackedFile,
+        ...imageData,
+        abort: xhr.abort.bind(xhr),
+        id,
+        url,
+      },
     ]);
 
     function updateFile(trackedFile: Partial<TrackedFile>) {
@@ -115,18 +127,22 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         updateFile({ status: 'aborted' });
         resolve(false);
       });
-      xhr.open('POST', url, true);
-      const formData = new FormData();
-      formData.append('file', file);
-      xhr.send(formData);
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.send(file);
     });
 
     return { url: url.split('?')[0], id };
+  };
+
+  const removeImage = (imageId: string) => {
+    setFiles((current) => current.filter((x) => x.id !== imageId));
   };
 
   return {
     uploadToCF,
     files,
     resetFiles,
+    removeImage,
   };
 };

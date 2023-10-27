@@ -1,4 +1,4 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import {
   Stack,
   Text,
@@ -9,22 +9,28 @@ import {
   SimpleGrid,
   Button,
   Badge,
+  CopyButton,
+  Tooltip,
+  ActionIcon,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { IconCheck, IconCopy } from '@tabler/icons';
+import { IconCheck, IconCopy, IconBrush } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { encodeMetadata } from '~/utils/image-metadata';
-import { ImageGenerationProcess } from '@prisma/client';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { cloneElement } from 'react';
+import { ImageGenerationProcess, ModelType } from '@prisma/client';
+import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { generationPanel } from '~/store/generation.store';
+import { encodeMetadata } from '~/utils/metadata';
+import { fromJson } from '~/utils/json-helpers';
 
 type Props = {
   meta: ImageMetaProps;
   generationProcess?: ImageGenerationProcess;
+  imageId?: number;
 };
 type MetaDisplay = {
   label: string;
-  value: string;
+  value: React.ReactNode;
 };
 
 const labelDictionary: Record<keyof ImageMetaProps, string> = {
@@ -35,11 +41,14 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   sampler: 'Sampler',
   seed: 'Seed',
   Model: 'Model',
+  'Clip skip': 'Clip skip',
+  clipSkip: 'Clip skip',
+  scheduler: 'Scheduler',
 };
 
-export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
-  const { copied, copy } = useClipboard();
-  // TODO only show keys in our meta list
+export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Props) {
+  const flags = useFeatureFlags();
+
   const metas = useMemo(() => {
     const long: MetaDisplay[] = [];
     const short: MetaDisplay[] = [];
@@ -49,11 +58,38 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
       if (!value) continue;
       const label = labelDictionary[key];
       if (value.length > 30 || key === 'prompt') long.push({ label, value });
-      else if (value.length > 14 || key === 'Model') medium.push({ label, value });
+      else if (
+        value.length > 14 ||
+        key === 'Model' ||
+        (key === 'negativePrompt' && value.length > 0)
+      )
+        medium.push({ label, value });
       else short.push({ label, value });
     }
-    return { long, medium, short };
+
+    let hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
+    if (meta.comfy) {
+      // @ts-ignore: ignoring because ts is acting up with meta.comfy not being defined
+      medium.push({ label: 'Workflow', value: <ComfyNodes meta={meta} /> });
+      hasControlNet = (meta.controlNets as string[])?.length > 0;
+    }
+
+    return { long, medium, short, hasControlNet };
   }, [meta]);
+
+  // TODO.optimize - can we get this data higher up?
+  const { data = [] } = trpc.image.getResources.useQuery(
+    { id: imageId as number },
+    { enabled: flags.imageGeneration && !!imageId }
+  );
+  const resourceId = data.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
+
+  const { data: resourceCoverage } = trpc.generation.checkResourcesCoverage.useQuery(
+    { id: resourceId as number },
+    { enabled: flags.imageGeneration && !!resourceId }
+  );
+
+  const canCreate = flags.imageGeneration && !!resourceCoverage;
 
   return (
     <Stack spacing="xs">
@@ -86,13 +122,46 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
             <Text size="sm" weight={500}>
               {label}
             </Text>
+
             {label === 'Prompt' && (
-              <Badge size="xs" radius="sm">
-                {generationProcess === 'txt2imgHiRes' ? 'txt2img + Hi-Res' : generationProcess}
-              </Badge>
+              <>
+                <Badge size="xs" radius="sm">
+                  {meta.comfy
+                    ? 'Comfy'
+                    : generationProcess === 'txt2imgHiRes'
+                    ? 'txt2img + Hi-Res'
+                    : generationProcess}
+                  {metas.hasControlNet && ' + ControlNet'}
+                </Badge>
+              </>
+            )}
+            {(label === 'Prompt' || label === 'Negative prompt') && (
+              <CopyButton value={value as string}>
+                {({ copied, copy }) => (
+                  <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
+                    <ActionIcon
+                      variant="transparent"
+                      size="xs"
+                      color={copied ? 'green' : 'blue'}
+                      onClick={copy}
+                      ml="auto"
+                    >
+                      {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
             )}
           </Group>
-          <Code block sx={{ whiteSpace: 'normal', maxHeight: 150, overflowY: 'auto' }}>
+          <Code
+            block
+            sx={{
+              whiteSpace: 'normal',
+              wordBreak: 'break-word',
+              maxHeight: 150,
+              overflowY: 'auto',
+            }}
+          >
             {value}
           </Code>
         </Stack>
@@ -113,24 +182,87 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
             <Text size="sm" mr="xs" weight={500}>
               {label}
             </Text>
-            <Code sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            <Code
+              sx={{
+                flex: '1',
+                textAlign: 'right',
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                maxWidth: 300,
+              }}
+            >
               {value}
             </Code>
           </Group>
         ))}
       </SimpleGrid>
-      <Button
-        size="xs"
-        color={copied ? 'teal' : 'blue'}
-        variant="light"
-        leftIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-        onClick={() => {
-          copy(encodeMetadata(meta));
-        }}
-      >
-        {copied ? 'Copied' : 'Copy Generation Data'}
-      </Button>
+      {canCreate ? (
+        <Button.Group>
+          <Button
+            size="xs"
+            variant="light"
+            leftIcon={<IconBrush size={16} />}
+            onClick={() => generationPanel.open({ type: 'image', id: imageId ?? 0 })}
+            sx={{ flex: 1 }}
+          >
+            Start Creating
+          </Button>
+          <GenerationDataButton meta={meta} iconOnly />
+        </Button.Group>
+      ) : (
+        <GenerationDataButton meta={meta} />
+      )}
     </Stack>
+  );
+}
+
+function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
+  const { copied, copy } = useClipboard();
+  const comfy = typeof meta.comfy === 'string' ? fromJson<ComfyMetaSchema>(meta.comfy) : meta.comfy;
+  const { workflow } = comfy ?? {};
+
+  return (
+    <Group
+      onClick={() => copy(JSON.stringify(workflow))}
+      spacing={4}
+      sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
+    >
+      {workflow?.nodes?.length ?? 0} Nodes
+      {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+    </Group>
+  );
+}
+
+function GenerationDataButton({
+  meta,
+  iconOnly = false,
+}: {
+  meta: ImageMetaProps;
+  iconOnly?: boolean;
+}) {
+  const { copied, copy } = useClipboard();
+  const label = copied ? 'Copied' : 'Copy Generation Data';
+  const button = (
+    <Button
+      size="xs"
+      color={copied ? 'teal' : 'blue'}
+      variant="light"
+      onClick={() => {
+        copy(encodeMetadata(meta));
+      }}
+    >
+      <Group spacing={4}>
+        {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+        {!iconOnly && label}
+      </Group>
+    </Button>
+  );
+
+  if (!iconOnly) return button;
+  return (
+    <Tooltip label={label} color="dark" withArrow withinPortal>
+      {button}
+    </Tooltip>
   );
 }
 
@@ -138,6 +270,7 @@ export function ImageMetaPopover({
   meta,
   generationProcess,
   children,
+  imageId,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   return (
@@ -150,7 +283,7 @@ export function ImageMetaPopover({
       <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
         <Popover.Target>{children}</Popover.Target>
         <Popover.Dropdown>
-          <ImageMeta meta={meta} generationProcess={generationProcess} />
+          <ImageMeta meta={meta} generationProcess={generationProcess} imageId={imageId} />
         </Popover.Dropdown>
       </Popover>
     </div>

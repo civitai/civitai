@@ -9,9 +9,10 @@ import {
   useMantineTheme,
   Button,
   Container,
+  Text,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
-import { IconInfoCircle } from '@tabler/icons';
+import { IconInfoCircle } from '@tabler/icons-react';
 
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -19,7 +20,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { NextLink } from '@mantine/next';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
 
@@ -32,18 +33,18 @@ export function ResourceReviewCarousel({
   modelVersionId: number;
   reviewId: number;
 }) {
-  const theme = useMantineTheme();
+  const { classes, theme } = useStyles();
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
-  const { classes } = useStyles();
 
   const filters = {
     username,
     modelVersionId,
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
+    limit: 10,
   };
 
-  const { data, images } = useQueryImages({ ...filters, limit: 10 });
+  const { data, images } = useQueryImages(filters);
 
   // const images = data?.pages.flatMap((x) => x.items) ?? [];
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
@@ -78,7 +79,7 @@ export function ResourceReviewCarousel({
                   {({ safe }) => (
                     <Center style={{ height: '100%', width: '100%' }}>
                       <div style={{ width: '100%', position: 'relative' }}>
-                        <ImageGuard.ToggleConnect />
+                        <ImageGuard.ToggleConnect position="top-left" />
                         <ImageGuard.Report />
                         <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
                           {/* {!safe ? (
@@ -111,10 +112,11 @@ export function ResourceReviewCarousel({
                             {!safe ? (
                               <MediaHash {...image} />
                             ) : (
-                              <EdgeImage
+                              <EdgeMedia
                                 src={image.url}
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
+                                type={image.type}
                                 width={450}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}
@@ -134,13 +136,14 @@ export function ResourceReviewCarousel({
                             cryCount: image.stats?.cryCountAllTime,
                           }}
                           readonly={!safe}
-                          withinPortal
                           className={classes.reactions}
+                          targetUserId={image.user.id}
                         />
                         {!image.hideMeta && image.meta && (
                           <ImageMetaPopover
-                            meta={image.meta as any}
+                            meta={image.meta}
                             generationProcess={image.generationProcess ?? undefined}
+                            imageId={image.id}
                           >
                             <ActionIcon className={classes.info} variant="transparent" size="lg">
                               <IconInfoCircle
@@ -162,15 +165,6 @@ export function ResourceReviewCarousel({
           />
           {viewMore && (
             <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
-              {/* <Button
-            component={NextLink}
-            href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
-            variant="outline"
-            fullWidth
-            className={classes.viewMore}
-          >
-            View more
-          </Button> */}
               <AspectRatio
                 ratio={1}
                 sx={(theme) => ({
@@ -181,7 +175,7 @@ export function ResourceReviewCarousel({
               >
                 <Button
                   component={NextLink}
-                  href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
+                  href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&username=${username}`}
                   variant="outline"
                   fullWidth
                   className={classes.viewMore}
@@ -193,6 +187,9 @@ export function ResourceReviewCarousel({
             </Carousel.Slide>
           )}
         </Carousel>
+        <Text size="xs" color="dimmed" mt="xs" mb="-xs">
+          Images this user generated with this resource
+        </Text>
       </Container>
     </Box>
   );

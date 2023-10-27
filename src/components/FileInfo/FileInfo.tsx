@@ -1,5 +1,5 @@
 import { Popover, ThemeIcon } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { startCase } from 'lodash-es';
 
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';

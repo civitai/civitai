@@ -32,6 +32,8 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
+import { dbRead } from '../db/client';
+import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -56,16 +58,83 @@ export const createPostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await createPost({ userId: ctx.user.id, ...input });
+    const post = await createPost({ userId: ctx.user.id, ...input });
+    await ctx.track.post({
+      type: 'Create',
+      nsfw: post.nsfw,
+      postId: post.id,
+      tags: post.tags.map((x) => x.name),
+    });
+    if (post.publishedAt) {
+      await ctx.track.post({
+        type: 'Publish',
+        nsfw: post.nsfw,
+        postId: post.id,
+        tags: post.tags.map((x) => x.name),
+      });
+    }
+
+    return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
 
-export const updatePostHandler = async ({ input }: { input: PostUpdateInput }) => {
+export const updatePostHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PostUpdateInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    await updatePost(input);
+    const post = await dbRead.post.findFirst({
+      where: {
+        id: input.id,
+      },
+      select: {
+        publishedAt: true,
+      },
+    });
+    const updatedPost = await updatePost(input);
+
+    if (!post?.publishedAt && updatedPost.publishedAt) {
+      const postTags = await dbRead.postTag.findMany({
+        where: {
+          postId: updatedPost.id,
+        },
+        select: {
+          tagName: true,
+        },
+      });
+      await ctx.track.post({
+        type: 'Publish',
+        nsfw: updatedPost.nsfw,
+        postId: updatedPost.id,
+        tags: postTags.map((x) => x.tagName),
+      });
+
+      // Give reward to owner of modelVersion
+      if (updatedPost.modelVersionId) {
+        await imagePostedToModelReward.apply(
+          {
+            modelVersionId: updatedPost.modelVersionId,
+            posterId: updatedPost.userId,
+          },
+          ctx.ip
+        );
+      }
+
+      // Give reward for first post of the day
+      await firstDailyPostReward.apply(
+        {
+          postId: updatedPost.id,
+          posterId: updatedPost.userId,
+        },
+        ctx.ip
+      );
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -77,6 +146,7 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
     if (!post) throw throwNotFoundError();
+
     return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -146,12 +216,13 @@ export const updatePostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
+  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await reorderPostImages({ ...input });
+    return await reorderPostImages({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -177,7 +248,31 @@ export const addPostTagHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await addPostTag({ ...input });
+    const result = await addPostTag({ ...input });
+    const post = await dbRead.post.findFirstOrThrow({
+      where: {
+        id: input.id,
+      },
+      select: {
+        nsfw: true,
+        tags: {
+          select: {
+            tag: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    await ctx.track.post({
+      type: 'Tags',
+      postId: input.id,
+      nsfw: post.nsfw,
+      tags: post.tags.map((x) => x.tag.name),
+    });
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

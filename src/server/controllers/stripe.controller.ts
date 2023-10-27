@@ -1,15 +1,23 @@
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   createCustomer,
   createSubscribeSession,
   createManageSubscriptionSession,
   createDonateSession,
   getUserSubscription,
+  getBuzzPackages,
+  createBuzzSession,
+  getPaymentIntent,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
 
 import { getPlans } from '~/server/services/stripe.service';
+import { getTRPCErrorFromUnknown } from '@trpc/server';
 
 export const getPlansHandler = async () => {
   return await getPlans();
@@ -39,11 +47,18 @@ export const createDonateSessionHandler = async ({
 }) => {
   const { id, email, customerId } = ctx.user;
   if (!email) throw throwAuthorizationError('email required');
-  return await createDonateSession({
+  const result = await createDonateSession({
     returnUrl,
     customerId,
     user: { id, email },
   });
+
+  await ctx.track.userActivity({
+    type: 'Donate',
+    targetUserId: id,
+  });
+
+  return result;
 };
 
 export const createSubscriptionSessionHandler = async ({
@@ -55,11 +70,18 @@ export const createSubscriptionSessionHandler = async ({
 }) => {
   const { id, email, customerId } = ctx.user;
   if (!email) throw throwAuthorizationError('email required');
-  return await createSubscribeSession({
+  const result = await createSubscribeSession({
     priceId,
     customerId,
     user: { id, email },
   });
+
+  await ctx.track.userActivity({
+    type: 'Subscribe',
+    targetUserId: id,
+  });
+
+  return result;
 };
 
 export const createManageSubscriptionSessionHandler = async ({
@@ -69,4 +91,69 @@ export const createManageSubscriptionSessionHandler = async ({
 }) => {
   if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
   return await createManageSubscriptionSession({ customerId: ctx.user.customerId });
+};
+
+export const getBuzzPackagesHandler = async () => {
+  try {
+    const packages = await getBuzzPackages();
+
+    return packages;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const createBuzzSessionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: Schema.CreateBuzzSessionInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id, email, customerId } = ctx.user;
+    if (!email) throw throwAuthorizationError('email required');
+
+    const result = await createBuzzSession({
+      ...input,
+      customerId,
+      user: { id, email },
+    });
+
+    // await ctx.track.userActivity({
+    //   type: 'Buy',
+    //   targetUserId: id,
+    // });
+
+    return result;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+};
+
+export const getPaymentIntentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: Schema.PaymentIntentCreationSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id, email, customerId } = ctx.user;
+
+    if (!email) throw throwAuthorizationError('email required');
+
+    const result = await getPaymentIntent({
+      ...input,
+      user: {
+        id,
+        email,
+      },
+      customerId,
+    });
+
+    return result;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
 };

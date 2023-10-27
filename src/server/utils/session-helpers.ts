@@ -36,14 +36,27 @@ export async function refreshToken(token: JWT) {
     return token;
 
   const refreshedUser = await getSessionUser({ userId: user.id });
-  if (!refreshedUser) token.user = undefined;
-  else {
-    token.user = refreshedUser;
-    token.signedAt = new Date();
-  }
+  setToken(token, refreshedUser);
   log(`Refreshed session for user ${user.id}`);
 
   return token;
+}
+
+function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
+  if (!session || session.deletedAt) {
+    token.user = undefined;
+    return;
+  }
+
+  // Prepare token
+  token.user = session;
+  const _user = token.user as any;
+  for (const key of Object.keys(_user)) {
+    if (_user[key] instanceof Date) _user[key] = _user[key].toISOString();
+    else if (typeof _user[key] === 'undefined') delete _user[key];
+  }
+
+  token.signedAt = new Date();
 }
 
 export async function invalidateSession(userId: number) {

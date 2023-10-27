@@ -18,7 +18,13 @@ import {
   Loader,
   ScrollArea,
 } from '@mantine/core';
-import { IconInfoCircle, IconRefresh, IconPhoto, IconArrowBigRight, IconBan } from '@tabler/icons';
+import {
+  IconInfoCircle,
+  IconRefresh,
+  IconPhoto,
+  IconArrowBigRight,
+  IconBan,
+} from '@tabler/icons-react';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 
@@ -43,8 +49,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
         .map((partner) => ({
           ...partner,
           available: partner.strategies.length > 0,
-        }))
-        .sort((a, b) => Number(b.available) - Number(a.available)) ?? [];
+        })) ?? [];
 
     const defaultBadgeProps: BadgeProps = {
       variant: 'outline',
@@ -109,6 +114,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
                                     component="a"
                                     href={homepage}
                                     target="_blank"
+                                    rel="nofollow noreferrer"
                                   >
                                     Website
                                   </Button>
@@ -120,6 +126,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
                                     component="a"
                                     href={tos}
                                     target="_blank"
+                                    rel="nofollow noreferrer"
                                   >
                                     Terms of Service
                                   </Button>
@@ -131,6 +138,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
                                     component="a"
                                     href={privacy}
                                     target="_blank"
+                                    rel="nofollow noreferrer"
                                   >
                                     Privacy
                                   </Button>
@@ -174,7 +182,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
                               strategyId: strategies[0]?.id,
                             })}`}
                             target="_blank"
-                            rel="noreferrer"
+                            rel="nofollow noreferrer"
                           >
                             <IconArrowBigRight size={20} />
                           </Button>
@@ -202,7 +210,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
             <Loader />
           </Center>
         ) : !!partnersWithStrategies?.length ? (
-          <ScrollArea.Autosize maxHeight={500}>
+          <ScrollArea.Autosize maxHeight="55vh">
             <Stack>
               {renderPartners(
                 availablePartners,
@@ -227,7 +235,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
                           component="a"
                           href={`https://github.com/civitai/sd_civitai_extension`}
                           target="_blank"
-                          rel="noreferrer"
+                          rel="nofollow noreferrer"
                         >
                           <IconArrowBigRight size={20} />
                         </Button>

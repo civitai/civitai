@@ -131,8 +131,13 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
           </Center>
         ) : (
           <Center>
-            <Button onClick={fetchNextPage} loading={isFetchingNextPage} variant="subtle" fullWidth>
-              {isFetchingNextPage ? 'Loading more...' : 'Load More'}
+            <Button
+              onClick={fetchNextPage}
+              loading={isFetchingNextPage}
+              color="gray"
+              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            >
+              {isFetchingNextPage ? 'Loading more...' : 'Load more'}
             </Button>
           </Center>
         ))}

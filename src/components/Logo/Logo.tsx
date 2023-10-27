@@ -1,10 +1,53 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
+import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
+import { useMemo } from 'react';
+
+const gradients = {
+  blue: {
+    inner: ['#081692', '#1E043C'],
+    outer: ['#1284F7', '#0A20C9'],
+  },
+  halloween: {
+    inner: ['#926711', '#3C1F0E'],
+    outer: ['#F78C22', '#C98C17'],
+  },
+  christmas: {
+    inner: ['#081692', '#1E043C'],
+    outer: ['#1284F7', '#0A20C9'],
+  },
+  newyear: {
+    inner: ['#081692', '#1E043C'],
+    outer: ['#1284F7', '#0A20C9'],
+  },
+};
 
 export function Logo({ ...props }: LogoProps) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
+  const holiday = useMemo(() => {
+    const month = new Date().getMonth();
+    const day = new Date().getDate();
+
+    // Halloween
+    if (new Date().getMonth() === 9) return 'halloween';
+
+    // Christmas
+    if (month === 11 && day <= 25) return 'christmas';
+
+    // New Year
+    if (month === 11 && day >= 26) return 'newyear';
+
+    return null;
+  }, []);
+
+  const holidayClass = holiday ? classes[holiday] : null;
+  const innerGradient = holiday ? gradients[holiday].inner : gradients.blue.inner;
+  const outerGradient = holiday ? gradients[holiday].outer : gradients.blue.outer;
 
   return (
-    <Box className={classes.root} {...props}>
+    <Box className={cx(classes.root, holidayClass)} {...props}>
+      {holiday === 'halloween' && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/images/holiday/ghost.png" alt="ghost" className={classes.flyOver} />
+      )}
       <svg className={classes.svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 107 22.7">
         <g className={classes.text}>
           <path
@@ -33,8 +76,8 @@ export function Logo({ ...props }: LogoProps) {
             y2="2.4614"
             gradientTransform="matrix(1 0 0 -1 0 24)"
           >
-            <stop offset="0" style={{ stopColor: '#081692' }} />
-            <stop offset="1" style={{ stopColor: '#1E043C' }} />
+            <stop offset="0" style={{ stopColor: innerGradient[0] }} />
+            <stop offset="1" style={{ stopColor: innerGradient[1] }} />
           </linearGradient>
           <linearGradient
             id="outerGradient"
@@ -45,8 +88,8 @@ export function Logo({ ...props }: LogoProps) {
             y2="2.45"
             gradientTransform="matrix(1 0 0 -1 0 24)"
           >
-            <stop offset="0" style={{ stopColor: '#1284F7' }} />
-            <stop offset="1" style={{ stopColor: '#0A20C9' }} />
+            <stop offset="0" style={{ stopColor: outerGradient[0] }} />
+            <stop offset="1" style={{ stopColor: outerGradient[1] }} />
           </linearGradient>
           <path
             style={{ fill: 'url(#innerGradient)' }}
@@ -71,34 +114,39 @@ type LogoProps = {
   size?: 'sm' | 'md' | 'lg' | 'xl';
 } & BoxProps;
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles((theme, _, getRef) => ({
   root: {
     height: 30,
+    position: 'relative',
     [theme.fn.smallerThan('sm')]: {
-      overflow: 'hidden',
       height: 45,
       width: 45,
     },
   },
   svg: {
+    ref: getRef('svg'),
     height: 30,
     [theme.fn.smallerThan('sm')]: {
       height: 45,
     },
   },
   c: {
+    ref: getRef('c'),
     fill: theme.colorScheme === 'dark' ? theme.colors.dark[0] : '#111',
   },
 
   ivit: {
+    ref: getRef('ivit'),
     fill: theme.colorScheme === 'dark' ? theme.colors.dark[0] : '#111',
   },
 
   ai: {
+    ref: getRef('ai'),
     fill: theme.colors.blue[8],
   },
 
   accent: {
+    ref: getRef('accent'),
     fill: theme.colors.blue[8],
   },
 
@@ -109,8 +157,99 @@ const useStyles = createStyles((theme) => ({
   },
 
   badge: {
+    ref: getRef('badge'),
     [theme.fn.largerThan('sm')]: {
       display: 'none',
     },
   },
+
+  flyOver: {
+    ref: getRef('flyOver'),
+    position: 'absolute',
+    height: 45,
+    [theme.fn.smallerThan('sm')]: {
+      height: 40,
+    },
+  },
+
+  halloween: {
+    [`.${getRef('ai')}`]: {
+      fill: theme.colors.orange[6],
+    },
+    [`.${getRef('accent')}`]: {
+      fill: theme.colors.orange[6],
+    },
+    [`.${getRef('svg')}`]: {
+      position: 'relative',
+      zIndex: 2,
+    },
+    [`.${getRef('flyOver')}`]: {
+      zIndex: 3,
+      animation: `${flyOver} 8s 4s ease`,
+      opacity: 0,
+      [theme.fn.smallerThan('sm')]: {
+        transform: 'rotate(20deg)',
+        animation: `${peekOut} 5s ease infinite alternate`,
+        zIndex: 1,
+      },
+    },
+  },
+
+  christmas: {},
+
+  newyear: {},
 }));
+
+const flyOver = keyframes({
+  '0%': {
+    top: 5,
+    left: '-10%',
+    opacity: 0,
+    transform: 'scale(0.5) rotate(0deg)',
+  },
+  '15%': {
+    top: -10,
+    left: '5%',
+    opacity: 1,
+    transform: 'scale(1) rotate(2deg)',
+  },
+  '30%': {
+    top: 0,
+    left: '70%',
+    opacity: 0.8,
+    transform: 'scale(1) rotate(15deg)',
+  },
+  ['40%, 100%']: {
+    top: -5,
+    left: '70%',
+    opacity: 0,
+    transform: 'scale(0.5) rotate(-10deg)',
+  },
+});
+
+const peekOut = keyframes({
+  '0%': {
+    top: 5,
+    right: 10,
+    opacity: 0,
+    transform: 'scale(0.5) rotate(0deg)',
+  },
+  '30%': {
+    top: -12,
+    right: -12,
+    opacity: 1,
+    transform: 'scale(1) rotate(40deg)',
+  },
+  '60%': {
+    top: -12,
+    right: -12,
+    opacity: 1,
+    transform: 'scale(1) rotate(40deg)',
+  },
+  '100%': {
+    top: 5,
+    right: 10,
+    opacity: 0,
+    transform: 'scale(0.5) rotate(0deg)',
+  },
+});

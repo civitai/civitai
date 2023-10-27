@@ -69,6 +69,12 @@ export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificati
   return dbWrite.userNotificationSettings.deleteMany({ where: { type, userId } });
 };
 
-export const createNotification = (data: Prisma.NotificationCreateArgs['data']) => {
+export const createNotification = async (data: Prisma.NotificationCreateArgs['data']) => {
+  const userNotificationSettings = await dbWrite.userNotificationSettings.findFirst({
+    where: { userId: data.userId, type: data.type },
+  });
+  // If the user has this notification type disabled, don't create a notification.
+  if (!!userNotificationSettings?.disabledAt) return;
+
   return dbWrite.notification.create({ data });
 };

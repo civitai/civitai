@@ -1,6 +1,8 @@
 import {
   ActionIcon,
+  Anchor,
   AspectRatio,
+  Badge,
   Box,
   Card,
   Center,
@@ -8,8 +10,8 @@ import {
   Container,
   Group,
   Loader,
-  Menu,
   Paper,
+  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -24,161 +26,133 @@ import {
   IconReload,
   IconSquareCheck,
   IconSquareOff,
-  IconTag,
-  IconTagOff,
   IconTrash,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import produce from 'immer';
-import { GetServerSideProps } from 'next';
 import Link from 'next/link';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
+import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ImageSort } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { ImageInclude, ImageMetaProps } from '~/server/schema/image.schema';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageGetInfinite } from '~/types/router';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerAuthSession(context);
-  if (!session?.user?.isModerator || session.user?.bannedAt) {
-    return {
-      redirect: {
-        destination: '/',
-        permanent: false,
-      },
-    };
-  }
-  return { props: {} };
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ session }) => {
+//     if (!session?.user?.isModerator || session.user?.bannedAt) {
+//       return {
+//         redirect: {
+//           destination: '/',
+//           permanent: false,
+//         },
+//       };
+//     }
+//   },
+// });
+
+// const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
+// const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
+
+type StoreState = {
+  selected: Record<number, boolean>;
+  getSelected: () => number[];
+  toggleSelected: (value: number) => void;
+  selectMany: (values: number[]) => void;
+  deselectAll: () => void;
 };
 
-const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
-const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
+const useStore = create<StoreState>()(
+  immer((set, get) => ({
+    selected: {},
+    getSelected: () => {
+      const dict = get().selected;
+      return Object.keys(dict).map(Number);
+    },
+    toggleSelected: (value) => {
+      set((state) => {
+        if (state.selected[value]) delete state.selected[value];
+        else state.selected[value] = true;
+      });
+    },
+    selectMany: (values) => {
+      set((state) => {
+        values.map((value) => {
+          state.selected[value] = true;
+        });
+      });
+    },
+    deselectAll: () => {
+      set((state) => {
+        state.selected = {};
+      });
+    },
+  }))
+);
+
+const ImageReviewType = {
+  minor: 'Minors',
+  poi: 'POI',
+} as const;
+
+type ImageReviewType = keyof typeof ImageReviewType;
 
 export default function Images() {
   const { ref, inView } = useInView();
-  const queryUtils = trpc.useContext();
-  const [selected, selectedHandlers] = useListState([] as number[]);
+  // const queryUtils = trpc.useContext();
+  // const selectMany = useStore((state) => state.selectMany);
+  const deselectAll = useStore((state) => state.deselectAll);
+  const [type, setType] = useState<ImageReviewType | 'reported'>('minor');
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
-    trpc.image.getInfinite.useInfiniteQuery(
-      { needsReview: true, sort: ImageSort.Newest },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
+  const viewingReported = type === 'reported';
+
+  const filters = useMemo(
+    () => ({
+      needsReview: !viewingReported ? type : undefined,
+      reportReview: viewingReported ? true : undefined,
+      include: viewingReported ? (['report'] as ImageInclude[]) : undefined,
+      sort: ImageSort.Newest,
+    }),
+    [type, viewingReported]
+  );
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+    trpc.image.getInfinite.useInfiniteQuery(filters, {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
-  const moderateImagesMutation = trpc.image.moderate.useMutation({
-    async onMutate({ ids, needsReview, delete: deleted }) {
-      await queryUtils.image.getInfinite.cancel();
-      queryUtils.image.getInfinite.setInfiniteData(
-        { needsReview: true, sort: ImageSort.Newest },
-        produce((data) => {
-          if (!data?.pages?.length) return;
-
-          for (const page of data.pages)
-            for (const item of page.items) {
-              if (ids.includes(item.id)) {
-                item.needsReview = deleted === true || needsReview === false ? false : true;
-              }
-            }
-        })
-      );
-    },
-    onSuccess(_, input) {
-      const actions: string[] = [];
-      if (input.delete) actions.push('deleted');
-      else if (!input.needsReview) actions.push('approved');
-      else if (input.nsfw) actions.push('marked as NSFW');
-
-      showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
-    },
-  });
-
-  const disableTagMutation = trpc.tag.disableTags.useMutation();
-  const addTagMutation = trpc.tag.addTags.useMutation();
-
-  const handleSelect = (id: number, checked: boolean) => {
-    const idIndex = selected.indexOf(id);
-    if (checked && idIndex == -1) selectedHandlers.append(id);
-    else if (!checked && idIndex != -1) selectedHandlers.remove(idIndex);
+  const handleTypeChange = (value: ImageReviewType | 'reported') => {
+    setType(value);
   };
 
-  const handleDisableTagOnImage = (imageId: number, tag: number) =>
-    disableTagMutation.mutate({
-      tags: [tag],
-      entityIds: [imageId],
-      entityType: 'image',
-    });
-
-  const handleDeleteSelected = () => {
-    moderateImagesMutation.mutate({
-      ids: selected,
-      delete: true,
-    });
-    selectedHandlers.setState([]);
-  };
-
-  const handleSelectAll = () => {
-    if (selected.length === images.length) handleClearAll();
-    else selectedHandlers.setState(images.map((x) => x.id));
-  };
-
-  const handleClearAll = () => {
-    selectedHandlers.setState([]);
-  };
-
-  const handleApproveSelected = () =>
-    moderateImagesMutation.mutate({
-      ids: selected,
-      needsReview: false,
-    });
-
-  const handleAddTag = (tag: string) =>
-    addTagMutation.mutate({
-      tags: [tag],
-      entityIds: selected,
-      entityType: 'image',
-    });
-
-  const handleDisableTag = (tag: string) =>
-    disableTagMutation.mutate({
-      tags: [tag],
-      entityIds: selected,
-      entityType: 'image',
-    });
-
-  const handleRefresh = () => {
-    handleClearAll();
-    refetch();
-    showNotification({
-      id: 'refreshing',
-      title: 'Refreshing',
-      message: 'Grabbing the latest data...',
-      color: 'blue',
-    });
-  };
+  useEffect(deselectAll, [type, deselectAll]);
 
   useEffect(() => {
     if (inView) fetchNextPage();
   }, [fetchNextPage, inView]);
 
-  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
-    position: 'bottom',
-    withArrow: true,
-    withinPortal: true,
-  };
+  const segments = [
+    ...Object.entries(ImageReviewType).map(([key, value]) => ({ value: key, label: value })),
+    { value: 'reported', label: 'Reported' },
+  ];
 
   return (
-    <Container size="xl">
+    <Container size="xl" py="xl">
       <Stack>
         <Paper
           withBorder
@@ -195,88 +169,18 @@ export default function Images() {
             zIndex: 10,
           }}
         >
-          <Group noWrap spacing="xs">
-            <ButtonTooltip label="Select all" {...tooltipProps}>
-              <ActionIcon variant="outline" onClick={handleSelectAll}>
-                <IconSquareCheck size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-            <ButtonTooltip label="Clear selection" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-                <IconSquareOff size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-            <Menu>
-              <Menu.Target>
-                <ButtonTooltip label="Add tag" {...tooltipProps}>
-                  <ActionIcon variant="outline" disabled={!selected.length}>
-                    <IconTag size="1.25rem" />
-                  </ActionIcon>
-                </ButtonTooltip>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Add Tag</Menu.Label>
-                {ADDABLE_TAGS.map((tag) => (
-                  <Menu.Item key={tag} onClick={() => handleAddTag(tag)}>
-                    {tag}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-            <Menu>
-              <Menu.Target>
-                <ButtonTooltip label="Remove tag" {...tooltipProps}>
-                  <ActionIcon variant="outline" disabled={!selected.length}>
-                    <IconTagOff size="1.25rem" />
-                  </ActionIcon>
-                </ButtonTooltip>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Remove Tag</Menu.Label>
-                {REMOVABLE_TAGS.map((tag) => (
-                  <Menu.Item key={tag} onClick={() => handleDisableTag(tag)}>
-                    {tag}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-            <PopConfirm
-              message={`Are you sure you want to approve ${selected.length} image(s)?`}
-              position="bottom-end"
-              onConfirm={handleApproveSelected}
-              withArrow
-            >
-              <ButtonTooltip label="Accept" {...tooltipProps}>
-                <ActionIcon variant="outline" disabled={!selected.length} color="green">
-                  <IconCheck size="1.25rem" />
-                </ActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-            <PopConfirm
-              message={`Are you sure you want to delete ${selected.length} image(s)?`}
-              position="bottom-end"
-              onConfirm={handleDeleteSelected}
-              withArrow
-            >
-              <ButtonTooltip label="Delete" {...tooltipProps}>
-                <ActionIcon variant="outline" disabled={!selected.length} color="red">
-                  <IconTrash size="1.25rem" />
-                </ActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-            <ButtonTooltip label="Refresh" {...tooltipProps}>
-              <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
-                <IconReload size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-          </Group>
+          <ModerationControls images={images} filters={filters} view={type} />
         </Paper>
 
         <Stack spacing={0} mb="lg">
-          <Title order={1}>Images Needing Review</Title>
+          <Group>
+            <Title order={1}>Images Needing Review</Title>
+            <SegmentedControl size="sm" data={segments} onChange={handleTypeChange} value={type} />
+          </Group>
           <Text color="dimmed">
-            These are images that have been marked by our AI which needs further attention from the
-            mods
+            These are images that have been{' '}
+            {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
+            attention from the mods
           </Text>
         </Stack>
 
@@ -285,18 +189,15 @@ export default function Images() {
             <Loader size="xl" />
           </Center>
         ) : images.length ? (
-          <MasonryGrid
-            items={images}
+          <MasonryGrid2
+            data={images}
             isRefetching={isRefetching}
             isFetchingNextPage={isFetchingNextPage}
-            render={(props) => (
-              <ImageGridItem
-                {...props}
-                selected={selected.includes(props.data.id)}
-                onSelect={handleSelect}
-                disableTag={handleDisableTagOnImage}
-              />
-            )}
+            hasNextPage={hasNextPage}
+            fetchNextPage={fetchNextPage}
+            columnWidth={300}
+            filters={filters}
+            render={(props) => <ImageGridItem {...props} />}
           />
         ) : (
           <NoContent mt="lg" message="There are no images that need review" />
@@ -311,7 +212,197 @@ export default function Images() {
   );
 }
 
-function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: ImageGridItemProps) {
+function ModerationControls({
+  images,
+  filters,
+  view,
+}: {
+  images: ImagesInfiniteModel[];
+  filters: any;
+  view: ImageReviewType | 'reported';
+}) {
+  const queryUtils = trpc.useContext();
+  const viewingReported = view === 'reported';
+  const selected = useStore((state) => Object.keys(state.selected).map(Number));
+  const selectMany = useStore((state) => state.selectMany);
+  const deselectAll = useStore((state) => state.deselectAll);
+
+  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+    position: 'bottom',
+    withArrow: true,
+    withinPortal: true,
+  };
+
+  const moderateImagesMutation = trpc.image.moderate.useMutation({
+    async onMutate({ ids, needsReview, delete: deleted }) {
+      await queryUtils.image.getInfinite.cancel();
+      queryUtils.image.getInfinite.setInfiniteData(
+        filters,
+        produce((data) => {
+          if (!data?.pages?.length) return;
+
+          for (const page of data.pages)
+            for (const item of page.items) {
+              if (ids.includes(item.id)) {
+                item.needsReview =
+                  deleted === true || needsReview === null ? null : item.needsReview;
+              }
+            }
+        })
+      );
+    },
+    onSuccess(_, input) {
+      const actions: string[] = [];
+      if (input.delete) actions.push('deleted');
+      else if (!input.needsReview) actions.push('approved');
+      else if (input.nsfw) actions.push('marked as NSFW');
+
+      showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
+    },
+  });
+
+  const reportMutation = trpc.report.bulkUpdateStatus.useMutation({
+    async onMutate({ ids, status }) {
+      await queryUtils.image.getInfinite.cancel();
+      queryUtils.image.getInfinite.setInfiniteData(
+        filters,
+        produce((data) => {
+          if (!data?.pages?.length) return;
+
+          for (const page of data.pages)
+            for (const item of page.items) {
+              if (item.report && ids.includes(item.report.id)) {
+                item.report.status = status;
+              }
+            }
+        })
+      );
+    },
+    async onSuccess() {
+      await queryUtils.report.getAll.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update',
+        error: new Error(error.message),
+        reason: 'Something went wrong while updating the reports. Please try again later.',
+      });
+    },
+  });
+
+  const handleDeleteSelected = () => {
+    deselectAll();
+    moderateImagesMutation.mutate(
+      {
+        ids: selected,
+        delete: true,
+        reviewType: view,
+      },
+      {
+        onSuccess() {
+          if (viewingReported) {
+            const selectedReports = images
+              .filter((x) => selected.includes(x.id) && !!x.report)
+              // Explicit casting cause we know report is defined
+              .map((x) => x.report?.id as number);
+
+            return reportMutation.mutate({ ids: selectedReports, status: 'Actioned' });
+          }
+        },
+      }
+    );
+  };
+
+  const handleSelectAll = () => {
+    selectMany(images.map((x) => x.id));
+    // if (selected.length === images.length) handleClearAll();
+    // else selectedHandlers.setState(images.map((x) => x.id));
+  };
+
+  const handleClearAll = () => deselectAll();
+
+  const handleApproveSelected = () => {
+    deselectAll();
+    if (viewingReported) {
+      const selectedReports = images
+        .filter((x) => selected.includes(x.id) && !!x.report)
+        // Explicit casting cause we know report is defined
+        .map((x) => x.report?.id as number);
+
+      return reportMutation.mutate({ ids: selectedReports, status: 'Unactioned' });
+    }
+
+    return moderateImagesMutation.mutate({
+      ids: selected,
+      needsReview: null,
+      reviewType: view,
+    });
+  };
+
+  const handleRefresh = () => {
+    handleClearAll();
+    queryUtils.image.getInfinite.invalidate(filters);
+    showNotification({
+      id: 'refreshing',
+      title: 'Refreshing',
+      message: 'Grabbing the latest data...',
+      color: 'blue',
+    });
+  };
+
+  return (
+    <Group noWrap spacing="xs">
+      <ButtonTooltip label="Select all" {...tooltipProps}>
+        <ActionIcon
+          variant="outline"
+          onClick={handleSelectAll}
+          disabled={selected.length === images.length}
+        >
+          <IconSquareCheck size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+      <ButtonTooltip label="Clear selection" {...tooltipProps}>
+        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+          <IconSquareOff size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+      <PopConfirm
+        message={`Are you sure you want to approve ${selected.length} image(s)?`}
+        position="bottom-end"
+        onConfirm={handleApproveSelected}
+        withArrow
+      >
+        <ButtonTooltip label="Accept" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+            <IconCheck size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <PopConfirm
+        message={`Are you sure you want to delete ${selected.length} image(s)?`}
+        position="bottom-end"
+        onConfirm={handleDeleteSelected}
+        withArrow
+      >
+        <ButtonTooltip label="Delete" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+            <IconTrash size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <ButtonTooltip label="Refresh" {...tooltipProps}>
+        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+          <IconReload size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+    </Group>
+  );
+}
+
+function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
+  const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
+  const toggleSelected = useStore((state) => state.toggleSelected);
+
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -320,17 +411,20 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
     return Math.min(imageHeight, 600);
   }, [itemWidth, image.width, image.height]);
 
+  const hasReport = !!image.report;
+  const pendingReport = hasReport && image.report?.status === 'Pending';
+
   return (
     <Card
       shadow="sm"
       p="xs"
-      sx={{ opacity: image.needsReview === false ? 0.2 : undefined }}
+      sx={{ opacity: !image.needsReview && !pendingReport ? 0.2 : undefined }}
       withBorder
     >
       <Card.Section sx={{ height: `${height}px` }}>
         <Checkbox
           checked={selected}
-          onChange={(e) => onSelect(image.id, e.target.checked)}
+          onChange={() => toggleSelected(image.id)}
           size="lg"
           sx={{
             position: 'absolute',
@@ -342,13 +436,12 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
         <ImageGuard
           images={[image]}
           render={(image) => (
-            <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
+            <Box
+              sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}
+              onClick={() => toggleSelected(image.id)}
+            >
               <ImageGuard.ToggleImage
                 sx={(theme) => ({
-                  backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                  color: 'white',
-                  backdropFilter: 'blur(7px)',
-                  boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                   position: 'absolute',
                   top: theme.spacing.xs,
                   left: theme.spacing.xs,
@@ -362,10 +455,11 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                 </AspectRatio>
               </ImageGuard.Unsafe>
               <ImageGuard.Safe>
-                <EdgeImage
+                <EdgeMedia
                   src={image.url}
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
+                  type={image.type}
                   width={450}
                   placeholder="empty"
                 />
@@ -377,6 +471,9 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
                       target="_blank"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
                     >
                       <IconExternalLink
                         color="white"
@@ -413,6 +510,40 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
           )}
         />
       </Card.Section>
+      {hasReport && (
+        <Stack spacing={8} pt="xs">
+          <Group position="apart" noWrap>
+            <Stack spacing={2}>
+              <Text size="xs" color="dimmed" inline>
+                Reported by
+              </Text>
+              <Link href={`/user/${image.report?.user.username}`} passHref>
+                <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                  {image.report?.user.username}
+                </Anchor>
+              </Link>
+            </Stack>
+            <Stack spacing={2} align="flex-end">
+              <Text size="xs" color="dimmed" inline>
+                Reported for
+              </Text>
+              <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
+            </Stack>
+          </Group>
+          <ContentClamp maxHeight={150}>
+            {image.report?.details
+              ? Object.entries(image.report.details).map(([key, value]) => (
+                  <Text key={key} size="sm">
+                    <Text weight="bold" span>
+                      {titleCase(key)}:
+                    </Text>{' '}
+                    {value}
+                  </Text>
+                ))
+              : null}
+          </ContentClamp>
+        </Stack>
+      )}
     </Card>
   );
 }
@@ -421,7 +552,4 @@ type ImageGridItemProps = {
   data: ImageGetInfinite[number];
   index: number;
   width: number;
-  selected: boolean;
-  onSelect: (id: number, checked: boolean) => void;
-  disableTag: (imageId: number, tagId: number) => void;
 };

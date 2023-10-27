@@ -18,7 +18,7 @@ export const upsertComment = async ({
 }: UpsertCommentV2Input & { userId: number }) => {
   // only check for threads on comment create
   let thread = await dbWrite.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
   if (!data.id) {
@@ -59,8 +59,11 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   cursor,
   select,
   sort,
+  excludedUserIds,
+  hidden = false,
 }: GetCommentsV2Input & {
   select: TSelect;
+  excludedUserIds?: number[];
 }) => {
   const orderBy: Prisma.Enumerable<Prisma.CommentV2OrderByWithRelationInput> = [];
   if (sort === CommentV2Sort.Newest) orderBy.push({ createdAt: 'desc' });
@@ -71,45 +74,67 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       thread: { [`${entityType}Id`]: entityId },
+      userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
+      hidden,
     },
     orderBy,
     select,
   });
 };
 
-export const deleteComment = async ({ id }: { id: number }) => {
-  await dbWrite.commentV2.delete({ where: { id } });
+export const deleteComment = ({ id }: { id: number }) => {
+  return dbWrite.commentV2.delete({ where: { id } });
 };
 
-export const getCommentCount = async ({ entityId, entityType }: CommentConnectorInput) => {
+export const getCommentCount = async ({ entityId, entityType, hidden }: CommentConnectorInput) => {
   return await dbRead.commentV2.count({
     where: {
       thread: {
         [`${entityType}Id`]: entityId,
       },
+      hidden,
     },
   });
 };
 
-export const getCommentsThreadDetails = async ({ entityId, entityType }: CommentConnectorInput) => {
+export const getCommentsThreadDetails = async ({
+  entityId,
+  entityType,
+  hidden = false,
+}: CommentConnectorInput) => {
   return await dbRead.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: {
       id: true,
       locked: true,
+      comments: {
+        orderBy: { createdAt: 'asc' },
+        where: { hidden },
+        select: commentV2Select,
+      },
     },
   });
 };
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
   const thread = await dbWrite.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
   if (!thread) throw throwNotFoundError();
   return await dbWrite.thread.update({
-    where: { [`${entityType}Id`]: entityId },
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     data: { locked: !thread.locked },
     select: { locked: true },
+  });
+};
+
+export const toggleHideComment = async ({
+  id,
+  currentToggle,
+}: GetByIdInput & { currentToggle: boolean }) => {
+  return dbWrite.commentV2.update({
+    where: { id },
+    data: { hidden: !currentToggle },
   });
 };

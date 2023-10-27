@@ -15,8 +15,10 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconInfoCircle, IconPhotoOff } from '@tabler/icons';
+import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -25,9 +27,8 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const useStyles = createStyles((theme) => ({
@@ -117,7 +118,6 @@ export function ModelCarousel({
     prioritizedUserIds: [modelUserId],
     period: 'AllTime',
     sort: ImageSort.MostReactions,
-    browsingMode: currentUser ? undefined : BrowsingMode.SFW,
     limit,
   });
 
@@ -166,21 +166,13 @@ export function ModelCarousel({
           </Stack>
           <Group grow w="100%">
             {currentUser ? (
-              <Button
-                component={NextLink}
-                href="/user/account#content-moderation"
-                variant="outline"
-              >
-                Adjust Settings
-              </Button>
+              <Link href="/user/account#content-moderation">
+                <Button variant="outline">Adjust Settings</Button>
+              </Link>
             ) : (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                variant="outline"
-              >
-                Log In
-              </Button>
+              <Link href={`/login?returnUrl=${router.asPath}`}>
+                <Button variant="outline">Log In</Button>
+              </Link>
             )}
             <Button onClick={onBrowseClick} variant="outline">
               Browse Gallery
@@ -218,7 +210,7 @@ export function ModelCarousel({
                 {({ safe }) => (
                   <Center style={{ height: '100%', width: '100%' }}>
                     <div style={{ width: '100%', position: 'relative' }}>
-                      <ImageGuard.ToggleConnect />
+                      <ImageGuard.ToggleConnect position="top-left" />
                       <ImageGuard.Report />
                       <RoutedContextLink
                         modal="imageDetailModal"
@@ -271,13 +263,14 @@ export function ModelCarousel({
                           cryCount: image.stats?.cryCountAllTime,
                         }}
                         readonly={!safe}
-                        withinPortal
                         className={classes.reactions}
+                        targetUserId={image.user.id}
                       />
                       {!image.hideMeta && image.meta && (
                         <ImageMetaPopover
-                          meta={image.meta as ImageMetaProps}
+                          meta={image.meta}
                           generationProcess={image.generationProcess ?? undefined}
+                          imageId={image.id}
                         >
                           <ActionIcon className={classes.info} variant="transparent" size="lg">
                             <IconInfoCircle

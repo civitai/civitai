@@ -8,9 +8,10 @@ import {
   Loader,
   Alert,
   Group,
+  AspectRatio,
 } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { IconInfoCircle } from '@tabler/icons-react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -18,8 +19,10 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 import { useState, useMemo } from 'react';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { useQueryImages } from '~/components/Image/image.utils';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { NsfwLevel } from '@prisma/client';
+import { Blurhash } from 'react-blurhash';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -60,25 +63,33 @@ export function PostImages({
           const width = image.width ?? maxWidth;
           return (
             <RoutedContextLink modal="imageDetailModal" imageId={image.id} postId={postId}>
-              <Paper radius="md" className={classes.frame}>
-                <ImageGuard.ToggleConnect
-                  sx={(theme) => ({
-                    backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                    color: 'white',
-                    backdropFilter: 'blur(7px)',
-                    boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                  })}
-                />
+              <Paper radius="md" className={classes.frame} shadow="md" withBorder>
+                <ImageGuard.ToggleConnect position="top-left" />
                 <ImageGuard.Report />
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <>
-                      <EdgeImage
+                      {!safe && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            bottom: 0,
+                            aspectRatio: (image.width ?? 0) / (image.height ?? 0),
+                          }}
+                        >
+                          <MediaHash {...image} />
+                        </div>
+                      )}
+                      <EdgeMedia
                         src={image.url}
                         name={image.name}
                         alt={image.name ?? undefined}
+                        type={image.type}
                         width={width < maxWidth ? width : maxWidth}
                         className={cx({ [classes.blur]: !safe })}
+                        style={!safe ? { visibility: 'hidden' } : undefined}
+                        anim={safe}
                       />
                       <Reactions
                         p={4}
@@ -93,6 +104,7 @@ export function PostImages({
                           laughCount: image.stats?.laughCountAllTime,
                           cryCount: image.stats?.cryCountAllTime,
                         }}
+                        targetUserId={image.user.id}
                       />
                     </>
                   )}
@@ -100,8 +112,9 @@ export function PostImages({
 
                 {image.meta && !image.hideMeta && (
                   <ImageMetaPopover
-                    meta={image.meta as ImageMetaProps}
+                    meta={image.meta}
                     generationProcess={image.generationProcess ?? 'txt2img'}
+                    imageId={image.id}
                   >
                     <ActionIcon variant="transparent" size="lg" className={classes.meta}>
                       <IconInfoCircle

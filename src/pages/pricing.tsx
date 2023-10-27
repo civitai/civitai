@@ -25,9 +25,9 @@ import {
   IconCircleCheck,
   IconExclamationMark,
   IconHeartHandshake,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
@@ -47,7 +47,7 @@ export default function Pricing() {
     trpc.stripe.getUserSubscription.useQuery();
 
   const isLoading = productsLoading || subscriptionLoading;
-  const showSubscribeButton = !subscription;
+  const showSubscribeButton = !subscription || !!subscription.canceledAt;
 
   return (
     <>
@@ -118,7 +118,7 @@ export default function Pricing() {
                   ))}
                 </Grid>
               )}
-              {!!subscription && (
+              {!showSubscribeButton && (
                 <Center>
                   <ManageSubscriptionButton>
                     <Button>Manage your Membership</Button>
@@ -135,7 +135,7 @@ export default function Pricing() {
                   <Stack justify="space-between" style={{ height: '100%' }}>
                     <Stack spacing={0} mb="md">
                       <Center>
-                        <EdgeImage
+                        <EdgeMedia
                           src="ab3e161b-7c66-4412-9573-ca16dde9f900"
                           className={classes.image}
                           width={128}
@@ -149,6 +149,7 @@ export default function Pricing() {
                       benefits={[
                         { content: 'Unique Donator badge' },
                         { content: 'Unique nameplate color' },
+                        { content: 'Unique Discord role for 30 days' },
                       ]}
                     />
                     <DonateButton>

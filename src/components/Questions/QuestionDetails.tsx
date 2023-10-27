@@ -8,7 +8,6 @@ import {
   Divider,
   Menu,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
@@ -18,7 +17,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
-import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons';
+import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink } from '@mantine/next';
@@ -36,20 +35,18 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
     { entityId: question.id, entityType: 'question' },
-    { initialData: question.thread?._count.comments }
+    { initialData: question.thread?._count.comments ?? 0 }
   );
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
   const isMuted = user?.muted ?? false;
 
-  const { classes } = useStyles();
-
   return (
     <Card p="sm" withBorder>
       <Stack spacing="xs">
         <Group position="apart" noWrap align="center">
-          <Title>{question.title}</Title>
+          <Title order={1}>{question.title}</Title>
           {/* TODO - add additional actions and remove condition here */}
           {(isOwner || isModerator) && (
             <Menu position="bottom-end" transition="pop-top-right">
@@ -125,8 +122,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
             <QuestionAnswerComments
               entityId={question.id}
               entityType="question"
-              initialData={question.thread?.comments}
-              initialCount={question.thread?._count.comments}
+              initialCount={question.thread?._count.comments ?? 0}
               userId={question.user.id}
             />
           </Card.Section>
@@ -135,16 +131,3 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
     </Card>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  const borderColor = theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3];
-  return {
-    list: {
-      borderTop: `1px solid ${borderColor}`,
-    },
-    listItem: {
-      padding: theme.spacing.sm,
-      borderBottom: `1px solid ${borderColor}`,
-    },
-  };
-});

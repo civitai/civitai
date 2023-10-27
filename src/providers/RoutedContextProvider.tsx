@@ -1,22 +1,15 @@
-import React, { ComponentType, useEffect, useState } from 'react';
+import React, { ComponentType, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Router, { NextRouter, useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
-import { Freeze } from 'react-freeze';
 import { NextLink } from '@mantine/next';
-import Link from 'next/link';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
-import { Anchor } from '@mantine/core';
+import { Freeze } from '~/components/Freeze/Freeze';
 
-const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
-const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
-const ReviewEdit = dynamic(() => import('~/routed-context/modals/ReviewEdit'));
-const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
-const GalleryDetailModal = dynamic(() => import('~/routed-context/modals/GalleryDetailModal'));
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
@@ -24,6 +17,8 @@ const ModelVersionEdit = dynamic(() => import('~/routed-context/modals/ModelVers
 const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 const PostDetailModal = dynamic(() => import('~/routed-context/modals/PostDetailModal'));
+const HiddenCommentsModal = dynamic(() => import('~/routed-context/modals/HiddenCommentsModal'));
+const CollectionEdit = dynamic(() => import('~/routed-context/modals/CollectionEdit'));
 
 // this is they type I want to hook up at some point
 type ModalRegistry<P> = {
@@ -56,22 +51,6 @@ const registry = {
       { shallow: true },
     ],
   },
-  reviewThread: {
-    Component: ReviewThread,
-    resolve: (args: React.ComponentProps<typeof ReviewThread>) => [
-      { query: { ...Router.query, ...args, modal: 'reviewThread' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
-  reviewEdit: {
-    Component: ReviewEdit,
-    resolve: (args: React.ComponentProps<typeof ReviewEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'reviewEdit' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
   commentThread: {
     Component: CommentThread,
     resolve: (args: React.ComponentProps<typeof CommentThread>) => [
@@ -87,38 +66,6 @@ const registry = {
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],
-  },
-  reviewLightbox: {
-    Component: ReviewLightbox,
-    resolve: (args: React.ComponentProps<typeof ReviewLightbox>) => [
-      { query: { ...Router.query, ...args, modal: 'reviewLightbox' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
-  },
-  modelVersionLightbox: {
-    Component: ModelVersionLightbox,
-    resolve: (args: React.ComponentProps<typeof ModelVersionLightbox>) => [
-      { query: { ...Router.query, ...args, modal: 'modelVersionLightbox' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
-  },
-  galleryDetailModal: {
-    Component: GalleryDetailModal,
-    resolve: ({ galleryImageId, ...args }: React.ComponentProps<typeof GalleryDetailModal>) => {
-      const slug = Router.query.slug ?? 'placeholder';
-      return [
-        {
-          query: { ...Router.query, slug, galleryImageId, ...args, modal: 'galleryDetailModal' },
-        },
-        {
-          pathname: `/gallery/${galleryImageId}`,
-          query: args,
-        }, // could be a page url for reviews here (/comments/:commentId)
-        { shallow: true },
-      ];
-    },
   },
   imageDetailModal: {
     Component: ImageDetailModal,
@@ -165,7 +112,7 @@ const registry = {
     Component: PostDetailModal,
     resolve: ({ postId, postSlug, ...args }: React.ComponentProps<typeof PostDetailModal>) => {
       const slug = Router.query.slug ?? 'placeholder';
-      let pathname = `/post/${postId}`;
+      let pathname = `/posts/${postId}`;
       if (postSlug) pathname += `/${postSlug}`;
       return [
         {
@@ -179,9 +126,27 @@ const registry = {
       ];
     },
   },
+  hiddenCommentsModal: {
+    Component: HiddenCommentsModal,
+    resolve: (args: React.ComponentProps<typeof HiddenCommentsModal>) => {
+      return [
+        { query: { ...Router.query, ...args, modal: 'hiddenCommentsModal' } },
+        undefined,
+        { shallow: true },
+      ];
+    },
+  },
+  collectionEdit: {
+    Component: CollectionEdit,
+    resolve: (args: React.ComponentProps<typeof CollectionEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'collectionEdit' } },
+      undefined, // could be a page url for reviews here (/comments/:commentId)
+      { shallow: true },
+    ],
+  },
 };
 
-export function openRoutedContext<TName extends keyof typeof registry>(
+export async function openRoutedContext<TName extends keyof typeof registry>(
   modal: TName,
   props: React.ComponentProps<(typeof registry)[TName]['Component']>,
   optionsOverride?: { replace?: boolean }
@@ -189,7 +154,7 @@ export function openRoutedContext<TName extends keyof typeof registry>(
   useFreezeStore.getState().setFreeze(true);
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
-  Router.push(url, as, { ...options, ...optionsOverride });
+  await Router.push(url, as, { ...options, ...optionsOverride });
 }
 
 export function closeRoutedContext() {
@@ -216,7 +181,9 @@ export function RoutedContextProvider2() {
   if (!modal) return null;
 
   const query = QS.parse(QS.stringify(router.query));
-  const Modal = registry[modal as keyof typeof registry].Component;
+  delete query.ref;
+  const Modal = registry[modal as keyof typeof registry]?.Component;
+  // TODO.logging - log when modal is specified by we didn't get a Modal
   return Modal ? <Modal {...(query as any)} /> : null;
 }
 
@@ -262,6 +229,7 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       }}
       style={style}
       className={className}
+      rel="nofollow noindex"
     >
       {children}
     </NextLink>
@@ -290,35 +258,12 @@ export const useFreezeStore = create<{
     }),
 }));
 
-let observer: MutationObserver | undefined;
-
 export function FreezeProvider({ children }: { children: React.ReactElement }) {
   const freeze = useFreezeStore((state) => state.freeze);
   // const placeholder = useFreezeStore((state) => state.placeholder);
 
-  useEffect(() => {
-    if (observer) return;
-    observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type !== 'attributes' || mutation.attributeName !== 'style') continue;
-        const target = mutation.target as HTMLElement;
-        if (target.getAttribute('style')?.includes('display: none !important;'))
-          target.setAttribute('style', '');
-      }
-    });
-
-    const fetchFreezeBlockInterval = setInterval(() => {
-      const freezeBlockEl = document.getElementById('freezeBlock');
-      if (!freezeBlockEl || !observer) return;
-      observer.observe(freezeBlockEl, {
-        attributeFilter: ['style'],
-      });
-      clearInterval(fetchFreezeBlockInterval);
-    }, 1000);
-  }, []);
-
   return (
-    <Freeze freeze={freeze} placeholder={null}>
+    <Freeze freeze={freeze}>
       <div id="freezeBlock">{children}</div>
     </Freeze>
   );

@@ -1,32 +1,47 @@
 import { ResourceReviewModel } from '~/server/selectors/resourceReview.selector';
-import { useEffect, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { IconChevronDown } from '@tabler/icons';
+import { IconChevronDown } from '@tabler/icons-react';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
 import {
   useCreateResourceReview,
   useUpdateResourceReview,
 } from '~/components/ResourceReview/resourceReview.utils';
+import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 
 const schema = z.object({
   details: z.string().optional(),
 });
 
+export type ReviewEditCommandsRef = {
+  save: () => void;
+};
+
 export function EditUserResourceReview({
   resourceReview,
   modelId,
   modelName,
+  modelVersionName,
   modelVersionId,
+  openedCommentBox = false,
+  innerRef,
 }: {
   resourceReview?: ResourceReviewModel;
   modelId: number;
   modelName?: string;
+  modelVersionName?: string;
   modelVersionId: number;
+  openedCommentBox?: boolean;
+  innerRef?: React.ForwardedRef<ReviewEditCommandsRef>;
 }) {
-  const [editDetail, setEditDetail] = useState(false);
-  const toggleEditDetail = () => setEditDetail((state) => !state);
+  const [editDetail, setEditDetail] = useState(openedCommentBox);
+  const toggleEditDetail = () => {
+    setEditDetail((state) => !state);
+    if (!editDetail) setTimeout(() => commentRef.current?.focus(), 100);
+  };
+  const commentRef = useRef<EditorCommandsRef | null>(null);
 
   const createMutation = useCreateResourceReview({ modelId, modelVersionId });
   const updateMutation = useUpdateResourceReview({ modelId, modelVersionId });
@@ -64,6 +79,15 @@ export function EditUserResourceReview({
     form.reset({ details: resourceReview?.details ?? undefined });
   }, [resourceReview?.details]); // eslint-disable-line
 
+  // Used to call editor commands outside the component via a ref
+  useImperativeHandle(innerRef, () => ({
+    save: () => {
+      if (form.formState.isDirty) form.handleSubmit(handleSubmit)();
+    },
+  }));
+
+  modelVersionName ??= resourceReview?.modelVersion.name;
+
   return (
     <Card p={8} withBorder>
       <Stack spacing="xs">
@@ -71,9 +95,9 @@ export function EditUserResourceReview({
           <Group align="center" position="apart">
             <Stack spacing={0}>
               {modelName && <Text lineClamp={1}>{modelName}</Text>}
-              {resourceReview?.modelVersion.name && (
+              {modelVersionName && (
                 <Text lineClamp={1} size="xs" color="dimmed">
-                  {resourceReview?.modelVersion.name}
+                  {modelVersionName}
                 </Text>
               )}
             </Stack>
@@ -107,15 +131,21 @@ export function EditUserResourceReview({
                       includeControls={['formatting', 'link']}
                       hideToolbar
                       editorSize="sm"
-                      placeholder="Add review comments..."
+                      innerRef={commentRef}
+                      placeholder={`What did you think of ${modelName}?`}
                       styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
-                      withLinkValidation
+                      // withLinkValidation
                     />
                     <Group grow spacing="xs">
-                      <Button variant="default" onClick={toggleEditDetail}>
+                      <Button size="xs" variant="default" onClick={toggleEditDetail}>
                         Cancel
                       </Button>
-                      <Button type="submit" loading={updateMutation.isLoading}>
+                      <Button
+                        size="xs"
+                        type="submit"
+                        variant={form.formState.isDirty ? undefined : 'outline'}
+                        loading={updateMutation.isLoading}
+                      >
                         Save
                       </Button>
                     </Group>

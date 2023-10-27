@@ -12,6 +12,7 @@ import {
   updateResourceReview,
   createResourceReview,
   getPagedResourceReviews,
+  toggleExcludeResourceReview,
 } from '~/server/services/resourceReview.service';
 import { Context } from '~/server/createContext';
 
@@ -37,7 +38,15 @@ export const createResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await createResourceReview({ ...input, userId: ctx.user.id });
+    const result = await createResourceReview({ ...input, userId: ctx.user.id });
+    await ctx.track.resourceReview({
+      type: 'Create',
+      modelId: result.modelId,
+      modelVersionId: result.modelVersion.id,
+      rating: result.rating,
+      nsfw: result.nsfw,
+    });
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -51,7 +60,16 @@ export const updateResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await updateResourceReview({ ...input });
+    const result = await updateResourceReview({ ...input });
+    await ctx.track.resourceReview({
+      type: 'Update',
+      modelId: result.modelId,
+      modelVersionId: result.modelVersionId,
+      rating: result.rating,
+      nsfw: result.nsfw,
+    });
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -65,7 +83,37 @@ export const deleteResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await deleteResourceReview(input);
+    const result = await deleteResourceReview(input);
+    await ctx.track.resourceReview({
+      type: 'Delete',
+      modelId: result.modelId,
+      modelVersionId: result.modelVersionId,
+      rating: result.rating,
+      nsfw: result.nsfw,
+    });
+    return result;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleExcludeResourceReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const result = await toggleExcludeResourceReview(input);
+    await ctx.track.resourceReview({
+      type: result.exclude ? 'Exclude' : 'Include',
+      modelId: result.modelId,
+      modelVersionId: result.modelVersionId,
+      rating: result.rating,
+      nsfw: result.nsfw,
+    });
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }

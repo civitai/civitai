@@ -1,4 +1,4 @@
-import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
+import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -9,6 +9,7 @@ import {
   ReportEntity,
 } from '~/server/schema/report.schema';
 import { addTagVotes } from '~/server/services/tag.service';
+import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -31,10 +32,12 @@ const validateReportCreation = async ({
   reason: ReportReason;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
+  const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
   const existingReport = await dbWrite.report.findFirst({
-    where: { reason, [reportType]: { [`${reportType}Id`]: entityReportId } },
+    where: { reason, [reportType]: { [entityIdField]: entityReportId } },
     orderBy: { id: 'desc' },
   });
+
   if (!existingReport) return null;
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
@@ -66,6 +69,20 @@ const validateReportCreation = async ({
   return updatedReport;
 };
 
+const reportTypeNameMap: Record<ReportEntity, string> = {
+  [ReportEntity.User]: 'user',
+  [ReportEntity.Model]: 'model',
+  [ReportEntity.Comment]: 'comment',
+  [ReportEntity.CommentV2]: 'comment',
+  [ReportEntity.Image]: 'image',
+  [ReportEntity.ResourceReview]: 'review',
+  [ReportEntity.Article]: 'article',
+  [ReportEntity.Post]: 'post',
+  [ReportEntity.Collection]: 'collection',
+  [ReportEntity.Bounty]: 'bounty',
+  [ReportEntity.BountyEntry]: 'bountyEntry',
+};
+
 export const createReport = async ({
   userId,
   type,
@@ -75,7 +92,7 @@ export const createReport = async ({
 }: CreateReportInput & { userId: number; isModerator?: boolean }) => {
   let isReportingLocked = false;
   if (type === ReportEntity.Image) {
-    const image = await dbRead.imagesOnModels.findFirst({
+    const image = await dbRead.imageResource.findFirst({
       where: { imageId: id, modelVersion: { model: { underAttack: true } } },
       select: { imageId: true },
     });
@@ -89,6 +106,10 @@ export const createReport = async ({
   }
 
   if (isReportingLocked) throwBadRequestError('Reporting is locked for this model.');
+
+  // Add report type to details for notifications
+  if (!data.details) data.details = {};
+  (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
   const validReport =
     data.reason !== ReportReason.NSFW
@@ -113,19 +134,18 @@ export const createReport = async ({
     switch (type) {
       case ReportEntity.Model:
         if (data.reason === ReportReason.NSFW)
-          await addTagVotes({ userId, type, id, tags: data.details.tags, isModerator, vote: 1 });
+          await addTagVotes({
+            userId,
+            type,
+            id,
+            tags: data.details.tags ?? [],
+            isModerator,
+            vote: 1,
+          });
 
         await tx.modelReport.create({
           data: {
             model: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Review:
-        await tx.reviewReport.create({
-          data: {
-            review: { connect: { id } },
             report,
           },
         });
@@ -148,7 +168,7 @@ export const createReport = async ({
         break;
       case ReportEntity.Image:
         if (data.reason === ReportReason.NSFW)
-          addTagVotes({ userId, type, id, tags: data.details.tags, isModerator, vote: 1 });
+          addTagVotes({ userId, type, id, tags: data.details.tags ?? [], isModerator, vote: 1 });
 
         await tx.imageReport.create({
           data: {
@@ -156,11 +176,82 @@ export const createReport = async ({
             report,
           },
         });
+        if (data.reason === ReportReason.TOSViolation) {
+          await tx.imageEngagement.create({
+            data: {
+              imageId: id,
+              userId,
+              type: ImageEngagementType.Hide,
+            },
+          });
+          await refreshHiddenImagesForUser({ userId });
+        }
+
         break;
       case ReportEntity.ResourceReview:
         await tx.resourceReviewReport.create({
           data: {
             resourceReview: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Article:
+        if (data.reason === ReportReason.NSFW)
+          await tx.article.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.articleReport.create({
+          data: {
+            article: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Post:
+        if (data.reason === ReportReason.NSFW)
+          await tx.post.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.postReport.create({
+          data: {
+            post: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.User:
+        await tx.userReport.create({
+          data: {
+            user: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Collection:
+        if (data.reason === ReportReason.NSFW)
+          await tx.collection.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.collectionReport.create({
+          data: {
+            collection: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Bounty:
+        if (data.reason === ReportReason.NSFW)
+          await tx.bounty.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.bountyReport.create({
+          data: {
+            bounty: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.BountyEntry:
+        await tx.bountyEntryReport.create({
+          data: {
+            bountyEntry: { connect: { id } },
             report,
           },
         });
@@ -217,22 +308,19 @@ export const updateReportById = ({
   return dbWrite.report.update({ where: { id }, data });
 };
 
+export const bulkUpdateReports = ({
+  ids,
+  data,
+}: {
+  ids: number[];
+  data: Prisma.ReportUpdateManyArgs['data'];
+}) => {
+  return dbWrite.report.updateMany({ where: { id: { in: ids } }, data });
+};
+
 export const getReportCounts = ({ type }: GetReportCountInput) => {
   return dbRead.report.count({
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
-  });
-};
-
-export const getReviewReports = <TSelect extends Prisma.ReviewReportSelect>({
-  reviewId,
-  select,
-}: {
-  reviewId: number;
-  select: TSelect;
-}) => {
-  return dbRead.reviewReport.findMany({
-    select,
-    where: { reviewId },
   });
 };
 

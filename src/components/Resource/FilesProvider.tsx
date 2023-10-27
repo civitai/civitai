@@ -31,12 +31,13 @@ export type FileFromContextProps = {
   type?: ModelFileType | null;
   sizeKB?: number;
   size?: 'full' | 'pruned' | null;
-  fp?: 'fp16' | 'fp32' | null;
+  fp?: 'fp16' | 'fp32' | 'bf16' | null;
   versionId?: number;
   file?: File;
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
+  status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };
 
 type FilesContextState = {
@@ -57,7 +58,7 @@ type FilesContextState = {
 
 type FilesProviderProps = {
   model?: Partial<ModelUpsertInput>;
-  version?: Partial<ModelVersionById>;
+  version?: Pick<Partial<ModelVersionById>, 'id' | 'files'>;
   children: React.ReactNode;
 };
 
@@ -181,7 +182,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       const errors = validation.error.format() as unknown as Array<{
         [k: string]: ZodErrorSchema;
       }>;
-      console.log(errors);
       setErrors(errors);
       return false;
     }
@@ -306,6 +306,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const handleUpload = async ({ type, size, fp, versionId, file, uuid }: FileFromContextProps) => {
     if (!file || !type) return;
+
     setFiles((state) => {
       const index = state.findIndex((x) => x.uuid === uuid);
       if (index === -1) throw new Error('out of bounds');
@@ -313,37 +314,51 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       return [...state];
     });
 
-    return await upload(
-      {
-        file,
-        type: type === 'Model' ? UploadType.Model : UploadType.Default,
-        meta: { versionId, type, size, fp, uuid },
-      },
-      async ({ meta, size, ...result }) => {
-        const { versionId, type, uuid, ...metadata } = meta as {
-          versionId: number;
-          type: ModelFileType;
-          uuid: string;
-        };
-        if (versionId) {
-          try {
-            const saved = await createFileMutation.mutateAsync({
-              ...result,
-              sizeKB: bytesToKB(size),
-              modelVersionId: versionId,
-              type,
-              metadata,
-            });
-            setItems((items) => items.filter((x) => x.uuid !== result.uuid));
-            setFiles((state) => {
-              const index = state.findIndex((x) => x.uuid === uuid);
-              state[index] = { ...state[index], id: saved.id, isUploading: false };
-              return [...state];
-            });
-          } catch (e: unknown) {}
+    try {
+      return await upload(
+        {
+          file,
+          type: type === 'Model' ? UploadType.Model : UploadType.Default,
+          meta: { versionId, type, size, fp, uuid },
+        },
+        async ({ meta, size, ...result }) => {
+          const { versionId, type, uuid, ...metadata } = meta as {
+            versionId: number;
+            type: ModelFileType;
+            uuid: string;
+          };
+          if (versionId) {
+            try {
+              const saved = await createFileMutation.mutateAsync({
+                ...result,
+                sizeKB: bytesToKB(size),
+                modelVersionId: versionId,
+                type,
+                metadata,
+              });
+              setItems((items) => items.filter((x) => x.uuid !== result.uuid));
+              setFiles((state) => {
+                const index = state.findIndex((x) => x.uuid === uuid);
+                state[index] = { ...state[index], id: saved.id, isUploading: false };
+                return [...state];
+              });
+            } catch (e: unknown) {}
+          }
         }
-      }
-    );
+      );
+    } catch (e) {
+      showErrorNotification({
+        title: 'Failed to upload file',
+        error: e as Error,
+      });
+
+      setFiles((state) => {
+        const index = state.findIndex((x) => x.uuid === uuid);
+        if (index === -1) throw new Error('out of bounds');
+        state[index] = { ...state[index], isPending: true, isUploading: false };
+        return [...state];
+      });
+    }
   };
 
   const startUpload = async () => {
@@ -351,7 +366,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
     await Promise.all(
       toUpload.map((file) => {
-        if (!checkValidation()) return;
+        if (!checkValidation()) throw new Error('validation failed');
 
         handleUpload(file);
       })
@@ -432,19 +447,24 @@ type DropzoneOptions = {
 
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
-    acceptedModelFiles: ['Model', 'Config', 'VAE', 'Training Data'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml', '.onnx'],
+    acceptedModelFiles: ['Model', 'Config', 'Training Data'],
     maxFiles: 11,
   },
+  MotionModule: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.onnx'],
+    acceptedModelFiles: ['Model'],
+    maxFiles: 2,
+  },
   LORA: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 3,
+    maxFiles: 4,
   },
   LoCon: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 3,
+    maxFiles: 4,
   },
   TextualInversion: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
@@ -462,11 +482,22 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     maxFiles: 2,
   },
   Controlnet: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.yaml', '.yml'],
+    acceptedModelFiles: ['Model', 'Config'],
+    maxFiles: 3,
+  },
+  Upscaler: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
     acceptedModelFiles: ['Model'],
-    maxFiles: 2,
+    maxFiles: 1,
+  },
+  VAE: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
+    acceptedModelFiles: ['Model'],
+    maxFiles: 1,
   },
   Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Workflows: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
 };

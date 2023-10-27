@@ -4,6 +4,7 @@ import { humanizeList } from '~/utils/humanizer';
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
 const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
 const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
+const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
 
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
@@ -123,14 +124,19 @@ export const reactionNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       let message: string;
       if (details.version === 2) {
-        const displayModels = details.models.slice(0, 2);
-        const additionalModels = details.models.length - displayModels.length;
-        const modelList =
-          additionalModels > 0
-            ? displayModels.join(', ') + `, and ${additionalModels} more`
-            : humanizeList(displayModels);
+        let modelList: string | undefined;
+        if (details.models) {
+          const displayModels = details.models.slice(0, 2);
+          const additionalModels = details.models.length - displayModels.length;
+          modelList =
+            additionalModels > 0
+              ? displayModels.join(', ') + `, and ${additionalModels} more`
+              : humanizeList(displayModels);
+        }
 
-        message = `Your image using ${modelList} has received ${details.reactionCount} reactions`;
+        message = `Your image${modelList ? ` using ${modelList}` : ''} has received ${
+          details.reactionCount
+        } reactions`;
       } else {
         message = `Your ${details.reviewId ? 'review image' : 'example image'} on the ${
           details.modelName
@@ -192,6 +198,59 @@ export const reactionNotifications = createNotificationProcessor({
         details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone');
+    `,
+  },
+  'article-reaction-milestone': {
+    displayName: 'Article reaction milestones',
+    prepareMessage: ({ details }) => {
+      const message = `Your article, "${details.articleTitle}" has received ${details.reactionCount} reactions`;
+
+      return { message, url: `/articles/${details.articleId}` };
+    },
+    prepareQuery: ({ lastSent }) => `
+      WITH milestones AS (
+        SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
+      ), affected AS (
+        SELECT DISTINCT
+          "articleId" affected_id
+        FROM "ArticleReaction"
+        WHERE "createdAt" > '${lastSent}'
+      ), affected_value AS (
+        SELECT
+          a.affected_id,
+          COUNT(r."articleId") reaction_count
+        FROM "ArticleReaction" r
+        JOIN affected a ON a.affected_id = r."articleId"
+        GROUP BY a.affected_id
+        HAVING COUNT(*) > ${articleReactionMilestones[0]}
+      ), prior_milestones AS (
+        SELECT DISTINCT
+          affected_id,
+          cast(details->'reactionCount' as int) reaction_count
+        FROM "Notification"
+        JOIN affected ON affected_id = cast(details->'articleId' as int)
+        WHERE type = 'article-reaction-milestone'
+      ), reaction_milestone AS (
+        SELECT
+          a."userId" "ownerId",
+          JSON_BUILD_OBJECT(
+            'articleId', a.id,
+            'articleTitle', a.title,
+            'reactionCount', ms.value
+          ) "details"
+        FROM affected_value af
+        JOIN "Article" a on a.id = af.affected_id
+        JOIN milestones ms ON ms.value <= af.reaction_count
+        WHERE NOT EXISTS (SELECT 1 FROM prior_milestones pm WHERE pm.affected_id = af.affected_id AND pm.reaction_count >= ms.value)
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'article-reaction-milestone' "type",
+        details
+      FROM reaction_milestone
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone');
     `,
   },
 });

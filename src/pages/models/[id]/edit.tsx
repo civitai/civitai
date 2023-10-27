@@ -9,7 +9,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -23,6 +23,7 @@ import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  useSession: true,
   resolver: async ({ session, ssg, ctx }) => {
     const { id } = ctx.params as { id: string };
     if (!session)
@@ -38,14 +39,12 @@ export const getServerSideProps = createServerSideProps({
 
     const model = await dbRead.model.findUnique({
       where: { id: modelId },
-      select: { userId: true },
+      select: { userId: true, deletedAt: true },
     });
-    if (!model) return { notFound: true };
+    const isModerator = session.user?.isModerator ?? false;
+    if (!model || (model.deletedAt && !isModerator)) return { notFound: true };
 
     const isOwner = model.userId === session.user?.id;
-    const isModerator = session.user?.isModerator ?? false;
-
-    console.log({ isOwner, isModerator });
     if (!isOwner && !isModerator)
       return {
         redirect: {

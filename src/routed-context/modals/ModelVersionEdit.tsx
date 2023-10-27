@@ -10,7 +10,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { z } from 'zod';
 
@@ -37,7 +37,13 @@ export default createRoutedContext({
     if (!isLoading && modelVersion && !isOwner) closeRoutedContext();
 
     return (
-      <Modal opened={context.opened} onClose={context.close} withCloseButton={false} fullScreen>
+      <Modal
+        opened={context.opened}
+        onClose={context.close}
+        withCloseButton={false}
+        closeOnEscape={false}
+        fullScreen
+      >
         <Container size="sm">
           {isLoading ? (
             <Center>

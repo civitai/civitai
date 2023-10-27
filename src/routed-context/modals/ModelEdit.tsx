@@ -8,8 +8,9 @@ import {
   Loader,
   Stack,
   Text,
+  Title,
 } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { z } from 'zod';
@@ -43,7 +44,13 @@ export default createRoutedContext({
     if (!isOwner || deleted) closeRoutedContext();
 
     return (
-      <Modal opened={context.opened} onClose={context.close} fullScreen withCloseButton={false}>
+      <Modal
+        opened={context.opened}
+        onClose={context.close}
+        withCloseButton={false}
+        closeOnEscape={false}
+        fullScreen
+      >
         <Container size="sm">
           {loadingModel ? (
             <Center>
@@ -59,6 +66,7 @@ export default createRoutedContext({
                   </Group>
                 </Anchor>
               </Link>
+              <Title order={1}>Edit Model</Title>
               <ModelUpsertForm model={model} onSubmit={context.close}>
                 {({ loading }) => (
                   <Group mt="xl" position="right">

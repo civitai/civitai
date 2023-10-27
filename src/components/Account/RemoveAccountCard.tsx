@@ -1,5 +1,5 @@
 import { Card, Group, Title, Button, Stack } from '@mantine/core';
-import { signOut, useSession } from 'next-auth/react';
+import { signOut } from 'next-auth/react';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';

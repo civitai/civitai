@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
@@ -27,6 +27,8 @@ export const modelFilterSchema = z.object({
   baseModels: z.enum(constants.baseModels).array().optional(),
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
+  earlyAccess: z.boolean().optional(),
+  supportsGeneration: z.boolean().optional(),
 });
 
 export const questionsFilterSchema = z.object({
@@ -47,6 +49,11 @@ export const galleryFilterSchema = z.object({
   excludedTags: z.number().array().optional(),
 });
 
+export const referralsSchema = z.object({
+  code: z.string().optional(),
+  source: z.string().optional(),
+});
+
 const CookiesCtx = createContext<CookiesContext | null>(null);
 export const useCookies = () => {
   const context = useContext(CookiesCtx);
@@ -61,6 +68,7 @@ export const CookiesProvider = ({
   value: CookiesContext;
 }) => {
   const [value] = useSetState(initialValue);
+
   return <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
 };
 
@@ -68,6 +76,7 @@ const cookiesSchema = z.object({
   models: modelFilterSchema,
   questions: questionsFilterSchema,
   gallery: galleryFilterSchema,
+  referrals: referralsSchema,
 });
 export type CookiesContext = z.infer<typeof cookiesSchema>;
 
@@ -85,6 +94,8 @@ export function parseCookies(
       browsingMode: cookies?.['f_browsingMode'],
       status: cookies?.['f_status'],
       checkpointType: cookies?.['f_ckptType'],
+      earlyAccess: cookies?.['f_earlyAccess'],
+      supportsGeneration: cookies?.['f_supportsGeneration'],
     },
     questions: {
       sort: cookies?.['q_sort'],
@@ -102,6 +113,10 @@ export function parseCookies(
       tags: cookies?.['g_tags'],
       excludedTags: cookies?.['g_excludedTags'],
     },
+    referrals: {
+      code: cookies?.['ref_code'],
+      source: cookies?.['ref_source'],
+    },
   });
 }
 
@@ -118,6 +133,8 @@ const zodParse = z
           browsingMode: z.string(),
           status: z.string(),
           checkpointType: z.string(),
+          earlyAccess: z.string(),
+          supportsGeneration: z.string(),
         })
         .partial(),
       questions: z
@@ -140,16 +157,24 @@ const zodParse = z
           excludedTags: z.string(),
         })
         .partial(),
+      referrals: z
+        .object({
+          code: z.string(),
+          source: z.string(),
+        })
+        .partial(),
     })
   )
   .implement(
-    ({ models, questions, gallery }) =>
+    ({ models, questions, gallery, referrals }) =>
       ({
         models: {
           ...models,
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
           status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
+          earlyAccess: models.earlyAccess === 'true',
+          supportsGeneration: models.supportsGeneration === 'true',
         },
         questions,
         gallery: {
@@ -163,6 +188,7 @@ const zodParse = z
             ? JSON.parse(decodeURIComponent(gallery.excludedTags))
             : [],
         },
+        referrals,
       } as CookiesContext)
   );
 

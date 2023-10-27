@@ -1,6 +1,8 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { getUploadUrl } from '~/utils/cf-images-utils';
+import { getCustomPutUrl } from '~/utils/s3-utils';
+import { env } from '~/env/server.mjs';
+import { randomUUID } from 'crypto';
 
 export default async function imageUpload(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
@@ -10,7 +12,11 @@ export default async function imageUpload(req: NextApiRequest, res: NextApiRespo
     return;
   }
 
-  const result = await getUploadUrl(userId, req.body.metadata);
+  const imageKey = randomUUID();
+  const result = await getCustomPutUrl(env.S3_IMAGE_UPLOAD_BUCKET, imageKey);
 
-  res.status(200).json(result);
+  res.status(200).json({
+    id: result.key,
+    uploadURL: result.url,
+  });
 }

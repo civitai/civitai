@@ -30,9 +30,13 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { IconInfoCircle } from '@tabler/icons';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { constants } from '~/server/common/constants';
+import { removeEmpty } from '~/utils/object-helpers';
+import { auditImageMeta } from '~/utils/media-preprocessors';
+import { useState } from 'react';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -44,7 +48,7 @@ const tooltipProps: Partial<TooltipProps> = {
 
 const schema = z.object({
   hideMeta: z.boolean().default(false),
-  meta: imageGenerationSchema.partial(),
+  meta: imageGenerationSchema.partial().omit({ comfy: true }),
 });
 
 export function EditImageDrawer() {
@@ -77,11 +81,11 @@ export function EditImageDrawer() {
 export function EditImage({ imageId, onClose }: { imageId: number; onClose: () => void }) {
   const images = useEditPostContext((state) => state.images);
   const setImage = useEditPostContext((state) => state.setImage);
-  const image = images.find((x) => x.type === 'image' && x.data.id === imageId)?.data as
+  const image = images.find((x) => x.discriminator === 'image' && x.data.id === imageId)?.data as
     | PostEditImage
     | undefined;
+  const [blockedFor, setBlockedFor] = useState<string[]>();
 
-  const hasTags = !!image?._count.tags;
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
     hideMeta: image?.hideMeta ?? false,
@@ -98,17 +102,20 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
   const form = useForm({ schema, defaultValues, mode: 'onChange' });
   const { mutate, isLoading } = trpc.post.updateImage.useMutation();
 
-  const handleSubmit = (data: z.infer<typeof schema>) => {
+  const handleSubmit = async (data: z.infer<typeof schema>) => {
     if (!image) return;
-    const meta = { ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta };
+    const meta = removeEmpty({ ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta });
     const payload = { ...image, ...data, meta };
-    mutate(payload, {
-      onSuccess: (response) => {
-        showSuccessNotification({ message: 'Image details saved successfully' });
-        setImage(response.id, () => response);
-        onClose();
-      },
-    });
+    const { blockedFor } = await auditImageMeta(meta, image.nsfw !== 'None');
+    setBlockedFor(blockedFor);
+    if (!blockedFor)
+      mutate(payload, {
+        onSuccess: (response) => {
+          showSuccessNotification({ message: 'Image details saved successfully' });
+          setImage(response.id, () => response);
+          onClose();
+        },
+      });
   };
 
   if (!image) return <NotFound />;
@@ -153,7 +160,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
               />
               <InputCheckbox name="hideMeta" label="Hide generation data" />
             </Stack> */}
-            <Input.Wrapper label="Tags">
+            {/* <Input.Wrapper label="Tags">
               <Group spacing={4}>
                 {hasTags ? (
                   <VotableTags entityId={image.id} entityType="image" canAdd canAddModerated />
@@ -164,7 +171,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                   </Alert>
                 )}
               </Group>
-            </Input.Wrapper>
+            </Input.Wrapper> */}
             <Input.Wrapper label="Resources">
               {!!image.resourceHelper.length ? (
                 <Stack>
@@ -180,6 +187,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                           href="https://github.com/civitai/sd_civitai_extension"
                           target="_blank"
                           variant="link"
+                          rel="nofollow"
                         >
                           Civitai Extension for Automatic 1111 Stable Diffusion Web UI
                         </Text>{' '}
@@ -248,6 +256,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                     href="https://github.com/civitai/sd_civitai_extension"
                     target="_blank"
                     variant="link"
+                    rel="nofollow"
                   >
                     Civitai Extension for Automatic 1111 Stable Diffusion Web UI
                   </Text>
@@ -256,7 +265,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             </Input.Wrapper>
             <Grid gutter="xs">
               <Grid.Col span={12}>
-                <InputTextArea name="meta.prompt" label="Prompt" autosize maxRows={3} />
+                <InputTextArea
+                  name="meta.prompt"
+                  label="Prompt"
+                  autosize
+                  maxRows={3}
+                  error={!!blockedFor?.length ? `blocked for: ${blockedFor.join(', ')}` : undefined}
+                />
               </Grid.Col>
               <Grid.Col span={12}>
                 <InputTextArea
@@ -277,28 +292,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                   name="meta.sampler"
                   clearable
                   searchable
-                  data={[
-                    'Euler a',
-                    'Euler',
-                    'LMS',
-                    'Heun',
-                    'DPM2',
-                    'DPM2 a',
-                    'DPM++ 2S a',
-                    'DPM++ 2M',
-                    'DPM++ SDE',
-                    'DPM fast',
-                    'DPM adaptive',
-                    'LMS Karras',
-                    'DPM2 Karras',
-                    'DPM2 a Karras',
-                    'DPM++ 2S a Karras',
-                    'DPM++ 2M Karras',
-                    'DPM++ SDE Karras',
-                    'DDIM',
-                    'PLMS',
-                    'UniPC',
-                  ]}
+                  data={constants.samplers as unknown as string[]}
                   label="Sampler"
                 />
               </Grid.Col>

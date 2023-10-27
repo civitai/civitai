@@ -17,13 +17,15 @@ import {
   Button,
   Tooltip,
   StackProps,
-  Alert,
   CopyButton,
   ColorSwatch,
   useMantineTheme,
   List,
   Box,
+  Badge,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import { showNotification } from '@mantine/notifications';
 import {
   IconDownload,
   IconLink,
@@ -36,7 +38,10 @@ import {
   IconCopy,
   IconAlertTriangle,
   IconNetworkOff,
-} from '@tabler/icons';
+  IconScreenShare,
+  IconHeart,
+  IconVideo,
+} from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
@@ -45,6 +50,7 @@ import {
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
@@ -65,9 +71,118 @@ export function CivitaiLinkPopover() {
   );
 }
 
+type HelpStatus = 'pending' | 'processing' | 'complete';
+function SupporterHelp() {
+  const [status, setStatus] = useState<HelpStatus>('pending');
+  const user = useCurrentUser();
+  if (!user) return null;
+
+  const refreshSession = () => {
+    setStatus('processing');
+    showNotification({
+      id: 'refresh-session',
+      title: 'Refreshing account data...',
+      message: 'Fetching fresh data for your account',
+      loading: true,
+    });
+    user.refresh();
+    setTimeout(() => {
+      showNotification({
+        id: 'refresh-session',
+        title: 'Account data refreshed!',
+        message: 'The data for your account has been updated',
+        loading: false,
+      });
+      setStatus('complete');
+    }, 5000);
+  };
+
+  if (status === 'processing') {
+    return (
+      <Text size="xs" ta="center">
+        Refreshing your account data...
+      </Text>
+    );
+  } else if (status === 'complete') {
+    return (
+      <Text size="xs" ta="center" px="xs">
+        Oh, no! You are still seeing this...
+        <br /> Please check your subscription status and try again.
+      </Text>
+    );
+  }
+
+  return (
+    <Text size="xs" ta="center">
+      Are you a support and seeing this message?{' '}
+      <Text
+        component="span"
+        variant="link"
+        td="underline"
+        onClick={() => refreshSession()}
+        sx={{ cursor: 'pointer' }}
+      >
+        Click here
+      </Text>
+    </Text>
+  );
+}
+
+function AboutCivitaiLink() {
+  return (
+    <>
+      <AlertWithIcon
+        icon={<IconAlertTriangle size={16} />}
+        iconColor="yellow"
+        radius={0}
+        size="md"
+        color="yellow"
+      >
+        This feature is currently in early access and only available to Supporters.
+      </AlertWithIcon>
+      <SupporterHelp />
+      <Stack py="sm" px="lg" spacing={4}>
+        <Center p="md" pb={0}>
+          <CivitaiLinkSvg />
+        </Center>
+        <Text my="xs">
+          Interact with your{' '}
+          <Text
+            component="a"
+            variant="link"
+            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Automatic1111 Stable Diffusion
+          </Text>{' '}
+          instance in realtime from Civitai
+        </Text>
+      </Stack>
+      <Divider />
+      <Group spacing={0} grow>
+        <Button
+          leftIcon={<IconVideo size={18} />}
+          radius={0}
+          component="a"
+          href="/v/civitai-link-intro"
+          variant="light"
+        >
+          Video Demo
+        </Button>
+        <Button rightIcon={<IconHeart size={18} />} radius={0} component={NextLink} href="/pricing">
+          Become a Supporter
+        </Button>
+      </Group>
+    </>
+  );
+}
+
 function LinkDropdown() {
   const [manage, setManage] = useState(false);
   const { instance, instances, status, error } = useCivitaiLink();
+  const features = useFeatureFlags();
+  const notAllowed = !features.civitaiLink;
 
   const handleManageClick = () => {
     setManage((o) => !o);
@@ -79,9 +194,14 @@ function LinkDropdown() {
     <Paper style={{ overflow: 'hidden' }}>
       <Stack spacing={0} p="xs">
         <Group position="apart" noWrap>
-          <Title order={4} size="sm">
-            Civitai Link
-          </Title>
+          <Group spacing="xs">
+            <Title order={4} size="sm">
+              Civitai Link
+            </Title>
+            <Badge size="xs" color="yellow">
+              alpha
+            </Badge>
+          </Group>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
               <ActionIcon onClick={handleManageClick}>
@@ -99,6 +219,8 @@ function LinkDropdown() {
       <Divider />
       {manage ? (
         <InstancesManager />
+      ) : notAllowed ? (
+        <AboutCivitaiLink />
       ) : (
         {
           'not-connected': <NotConnected error={error} />,
@@ -248,6 +370,7 @@ function GetStarted() {
             variant="link"
             href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
             target="_blank"
+            rel="nofollow noreferrer"
           >
             Automatic1111 Stable Diffusion
           </Text>{' '}
@@ -355,15 +478,13 @@ function LinkButton() {
   // only show the connected indicator if there are any instances
   const { status } = useCivitaiLink();
   const activityProgress = useCivitaiLinkStore((state) => state.activityProgress);
-  const features = useFeatureFlags();
-  if (!features.civitaiLink) return null;
   const color = civitaiLinkStatusColors[status];
 
   return (
     <Box sx={{ position: 'relative' }}>
       <ActionIcon>
         <Indicator color={color} showZero={!!color} dot={!!color}>
-          <IconLink />
+          <IconScreenShare />
         </Indicator>
       </ActionIcon>
       {activityProgress && activityProgress > 0 && activityProgress < 100 && (

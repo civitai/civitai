@@ -1,13 +1,13 @@
 import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { TagType } from '@prisma/client';
-import { IconChevronDown, IconChevronUp } from '@tabler/icons';
+import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import produce from 'immer';
 import { useMemo } from 'react';
 import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useUpdateHiddenPreferences } from '~/hooks/hidden-preferences';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 
@@ -29,15 +29,16 @@ export function VotableTags({
   collapsible = false,
   ...props
 }: GalleryTagProps) {
-  const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
   const setVote = useVotableTagStore((state) => state.setVote);
-  const { data: tags = initialTags, isLoading } = trpc.tag.getVotableTags.useQuery(
+  const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
-    { enabled: !initialTags }
+    { enabled: !initialTags, initialData: initialTags }
   );
   canAdd = canAdd && !initialTags;
   canAddModerated = canAddModerated && !initialTags;
+
+  const updateHiddenPreferences = useUpdateHiddenPreferences();
 
   const handleTagMutation = (changedTags: string[], vote: number, tagType: TagType) => {
     const preppedTags = changedTags.map(
@@ -63,7 +64,10 @@ export function VotableTags({
               setVote({ entityId: id, entityType: type, name: tag.name, vote });
               existing.vote = vote;
             }
-          } else old.push(tag);
+          } else {
+            old.push(tag);
+            setVote({ entityId: id, entityType: type, name: tag.name, vote });
+          }
         }
       })
     );
@@ -77,12 +81,13 @@ export function VotableTags({
     if (vote == 0) removeVotes({ tags: [tag], type, id });
     else addVotes({ tags: [tag], vote, type, id });
     handleTagMutation([tag], vote, tagType);
+    updateHiddenPreferences({ kind: type, data: [{ id }], hidden: vote > 0 });
   };
 
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
     if (!tags) return [];
-    const displayTags = tags.sort((a, b) => {
+    const displayTags = [...tags].sort((a, b) => {
       const aMod = a.type === 'Moderation';
       const bMod = b.type === 'Moderation';
       const aNew = a.id === 0;
@@ -95,7 +100,7 @@ export function VotableTags({
     });
     if (!collapsible || showAll) return displayTags;
     return displayTags.slice(0, limit);
-  }, [tags, showAll, collapsible, limit, currentUser?.isModerator]);
+  }, [tags, showAll, collapsible, limit]);
 
   if (!initialTags && isLoading)
     return (
@@ -125,7 +130,10 @@ export function VotableTags({
             name={tag.name}
             initialVote={tag.vote}
             needsReview={tag.needsReview}
+            concrete={tag.concrete}
+            lastUpvote={tag.lastUpvote}
             type={tag.type}
+            nsfw={tag.nsfw}
             score={tag.score}
             onChange={({ name, vote }) => {
               handleVote({ tag: name, vote });

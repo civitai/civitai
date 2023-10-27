@@ -1,22 +1,15 @@
 import { Button, Group, Popover, Text, Tooltip } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPlus } from '@tabler/icons';
-import groupBy from 'lodash/groupBy';
+import { IconMoodSmile, IconPlus } from '@tabler/icons-react';
+import { groupBy } from 'lodash-es';
 import { Session } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { ReviewGetReactions } from '~/types/router';
-import { toStringList } from '~/utils/array-helpers';
 
-type ReactionToEmoji = { [k in ReviewReactions]: string };
-const availableReactions: ReactionToEmoji = {
-  [ReviewReactions.Like]: '👍',
-  [ReviewReactions.Dislike]: '👎',
-  [ReviewReactions.Heart]: '❤️',
-  [ReviewReactions.Laugh]: '😂',
-  [ReviewReactions.Cry]: '😢',
-};
+import { constants } from '~/server/common/constants';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { CommentGetReactions } from '~/types/router';
+import { toStringList } from '~/utils/array-helpers';
 
 const ReactionPickerContext = createContext<{
   onEmojiClick: (reaction: ReviewReactions) => void;
@@ -68,7 +61,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
 }
 
 type ReactionPickerProps = {
-  reactions: NonNullable<ReviewGetReactions>;
+  reactions: NonNullable<CommentGetReactions>;
   onSelect: (reaction: ReviewReactions) => void;
   disabled?: boolean;
 };
@@ -94,7 +87,7 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
         compact
       >
         <Group spacing={4} align="center">
-          <Text inherit>{availableReactions[reaction]}</Text>
+          <Text inherit>{constants.availableReactions[reaction]}</Text>
           <Text inherit>{reactions.length}</Text>
         </Group>
       </Button>
@@ -113,7 +106,7 @@ function ReactionSelector() {
 
   return (
     <Group spacing={4}>
-      {Object.entries(availableReactions).map(([reaction, emoji], index) => (
+      {Object.entries(constants.availableReactions).map(([reaction, emoji], index) => (
         <Tooltip key={index} label={reaction}>
           <Button
             size="xs"

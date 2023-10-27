@@ -1,5 +1,5 @@
 import { Popover, Indicator, ActionIcon } from '@mantine/core';
-import { IconFilter, IconChevronDown } from '@tabler/icons';
+import { IconFilter, IconChevronDown } from '@tabler/icons-react';
 
 export function FiltersDropdown({
   children,

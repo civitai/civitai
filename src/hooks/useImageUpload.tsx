@@ -102,14 +102,14 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
         (async function () {
           const existingFile = files.find((x) => x.uuid === item.uuid);
           if (!existingFile) return;
-          const { id } = await uploadToCF(item.file); // TODO.uncomment
+          const { id } = await uploadToCF(item.file);
           filesHandler.setState(
             produce((state) => {
               const index = state.findIndex((x) => x.uuid === item.uuid);
               if (index > -1) {
                 const previewUrl = state[index].previewUrl;
                 if (previewUrl) state[index].onLoad = () => URL.revokeObjectURL(previewUrl);
-                state[index].url = id; // TODO.uncomment
+                state[index].url = id;
                 state[index].file = undefined;
                 state[index].status = 'complete';
               }

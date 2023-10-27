@@ -15,9 +15,9 @@ import {
   IconMug,
   IconPigMoney,
   IconWorld,
-  TablerIcon,
-  TablerIconProps,
-} from '@tabler/icons';
+  Icon as TablerIcon,
+  TablerIconsProps,
+} from '@tabler/icons-react';
 import { IconBrandHuggingFace } from '~/components/SVG/IconHuggingFace';
 import { getDomainLinkType, DomainLink } from '~/utils/domain-link';
 
@@ -25,7 +25,7 @@ export function DomainIcon({
   url,
   domain,
   ...iconProps
-}: { url?: string; domain?: DomainLink } & TablerIconProps) {
+}: { url?: string; domain?: DomainLink } & TablerIconsProps) {
   const type = url ? getDomainLinkType(url) : domain;
   const Icon = type ? tablerIconMap[type] : IconWorld;
   return <Icon {...iconProps} />;

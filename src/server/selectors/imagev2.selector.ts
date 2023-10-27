@@ -2,6 +2,7 @@ import { imageTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect, simpleUserSelect } from '~/server/selectors/user.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export const imageResourceSelect = Prisma.validator<Prisma.ImageResourceSelect>()({
   id: true,
@@ -42,6 +43,8 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     createdAt: true,
     mimeType: true,
     scannedAt: true,
+    type: true,
+    metadata: true,
     stats: {
       select: {
         cryCountAllTime: true,
@@ -50,6 +53,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
         laughCountAllTime: true,
         likeCountAllTime: true,
         commentCountAllTime: true,
+        tippedAmountCountAllTime: true,
       },
     },
     reactions: {
@@ -65,7 +69,8 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
   });
 
 type ImageV2NavigationProps = { previewUrl?: string };
-export type ImageV2Model = Prisma.ImageGetPayload<typeof imageV2Model> & ImageV2NavigationProps;
+export type ImageV2Model = Omit<Prisma.ImageGetPayload<typeof imageV2Model>, 'meta'> &
+  ImageV2NavigationProps & { postTitle?: string; meta: ImageMetaProps | null };
 const imageV2Model = Prisma.validator<Prisma.ImageArgs>()({ select: getImageV2Select({}) });
 
 export const imageV2DetailSelect = Prisma.validator<Prisma.ImageSelect>()({

@@ -1,15 +1,5 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-
-const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
-  return {
-    model: `/models/${threadParentId}?modal=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
-    image: `/images/${threadParentId}?highlight=${details.commentId}`,
-    post: `/posts/${threadParentId}?highlight=${details.commentId}#comments`,
-    // review: '/models/'
-    // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
-    // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
-  }[threadType as string] as string;
-};
+import { threadUrlMap } from '~/server/notifications/comment.notifications';
 
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
@@ -20,7 +10,9 @@ export const mentionNotifications = createNotificationProcessor({
       if (isCommentV2) {
         const url = threadUrlMap(details);
         return {
-          message: `${details.username} mentioned you in a comment on a ${details.threadType}`,
+          message: `${details.username} mentioned you in a comment on a ${
+            details.threadType === 'comment' ? 'comment thread' : details.threadType
+          }`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
@@ -44,7 +36,7 @@ export const mentionNotifications = createNotificationProcessor({
             'mentionedIn', 'comment',
             'commentId', c.id,
             'threadId', c."threadId",
-            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId"),
+            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId", t."articleId", t."bountyId", t."bountyEntryId"),
             'threadType', CASE
               WHEN t."imageId" IS NOT NULL THEN 'image'
               WHEN t."modelId" IS NOT NULL THEN 'model'
@@ -52,6 +44,9 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN t."questionId" IS NOT NULL THEN 'question'
               WHEN t."answerId" IS NOT NULL THEN 'answer'
               WHEN t."reviewId" IS NOT NULL THEN 'review'
+              WHEN t."articleId" IS NOT NULL THEN 'article'
+              WHEN t."bountyId" IS NOT NULL THEN 'bounty'
+              WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
               ELSE 'comment'
             END,
             'username', u.username
@@ -64,7 +59,7 @@ export const mentionNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          AND t."reviewId" IS NULL
+          AND t."bountyEntryId" IS NULL
 
         UNION
 
@@ -74,7 +69,7 @@ export const mentionNotifications = createNotificationProcessor({
             'mentionedIn', 'comment',
             'modelId', c."modelId",
             'commentId', c.id,
-            'parentId', COALESCE(c."parentId", c."reviewId"),
+            'parentId', c."parentId",
             'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
             'modelName', m.name,
             'username', u.username

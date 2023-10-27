@@ -1,5 +1,5 @@
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
-import { IconPencil, IconTrash } from '@tabler/icons';
+import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { GetUserLinksResult } from '~/server/controllers/user-link.controller';
 import { trpc } from '~/utils/trpc';

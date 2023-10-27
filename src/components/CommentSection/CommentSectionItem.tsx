@@ -1,6 +1,12 @@
 import { Anchor, Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
+import {
+  IconDotsVertical,
+  IconTrash,
+  IconEdit,
+  IconFlag,
+  IconArrowBackUp,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -37,7 +43,6 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
 
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onSuccess() {
-      await queryUtils.review.getCommentsById.invalidate();
       await queryUtils.comment.getCommentsById.invalidate();
       setEditComment(null);
     },
@@ -51,18 +56,8 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
 
   const deleteMutation = trpc.comment.delete.useMutation({
     async onMutate() {
-      await queryUtils.review.getCommentsCount.cancel();
       await queryUtils.comment.getCommentsCount.cancel();
-      const { reviewId, parentId } = comment;
-
-      if (reviewId) {
-        const prevCount = queryUtils.review.getCommentsCount.getData({ id: reviewId }) ?? 0;
-        queryUtils.review.getCommentsCount.setData({ id: reviewId }, (old = 0) =>
-          old > 0 ? old - 1 : old
-        );
-
-        return { prevCount };
-      }
+      const { parentId } = comment;
 
       if (parentId) {
         const prevCount = queryUtils.comment.getCommentsCount.getData({ id: parentId }) ?? 0;
@@ -76,14 +71,11 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
       return {};
     },
     async onSuccess() {
-      await queryUtils.review.getCommentsById.invalidate();
       await queryUtils.comment.getCommentsById.invalidate();
     },
     onError(error, _variables, context) {
-      const { reviewId, parentId } = comment;
+      const { parentId } = comment;
 
-      if (reviewId)
-        queryUtils.review.getCommentsCount.setData({ id: reviewId }, context?.prevCount);
       if (parentId)
         queryUtils.comment.getCommentsCount.setData({ id: parentId }, context?.prevCount);
 
@@ -196,7 +188,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                   setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
                 hideToolbar
-                withLinkValidation
+                // withLinkValidation
               />
             )}
           </Stack>

@@ -1,5 +1,3 @@
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import {
   createStyles,
   Stack,
@@ -15,9 +13,12 @@ import {
   Popover,
   Code,
   BadgeProps,
+  Button,
+  Skeleton,
+  Loader,
 } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Fragment, useState } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -26,35 +27,66 @@ import {
   IconExclamationMark,
   IconExclamationCircle,
   IconCheck,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { ImageIngestionStatus } from '@prisma/client';
+import { isDefined } from '~/utils/type-guards';
+import {
+  ImageIngestionProvider,
+  useImageIngestionContext,
+} from '~/components/Image/Ingestion/ImageIngestionProvider';
+import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
+import { postImageTransmitter } from '~/store/post-image-transmitter.store';
+import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
+  const currentUser = useCurrentUser();
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
   const images = useEditPostContext((state) => state.images);
 
-  const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
+  const imageIds = images
+    .map((x) => (x.discriminator === 'image' ? x.data.id : undefined))
+    .filter(isDefined);
+
+  const handleDrop = async (files: File[]) => {
+    if (currentUser?.muted) return;
+    upload({ postId, modelVersionId }, files);
+  };
+
+  useEffect(() => {
+    const files = postImageTransmitter.getData();
+    if (files) handleDrop(files);
+  }, []);
 
   return (
     <Stack>
-      <ImageDropzone onDrop={handleDrop} count={images.length} max={max} />
-      <Stack>
-        {images.map(({ type, data }, index) => (
-          <Fragment key={index}>
-            {type === 'image' && <ImageController image={data} />}
-            {type === 'upload' && <ImageUpload {...data} />}
-            {type === 'blocked' && <ImageBlocked {...data} />}
-          </Fragment>
-        ))}
-      </Stack>
+      <ImageDropzone
+        onDrop={handleDrop}
+        count={images.length}
+        max={max}
+        accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+      />
+      <ImageIngestionProvider ids={imageIds}>
+        <Stack>
+          {images.map(({ discriminator: type, data }, index) => (
+            <Fragment key={index}>
+              {type === 'image' && <ImageController image={data} />}
+              {type === 'upload' && <ImageUpload {...data} />}
+              {type === 'blocked' && <ImageBlocked {...data} />}
+            </Fragment>
+          ))}
+        </Stack>
+      </ImageIngestionProvider>
       <EditImageDrawer />
     </Stack>
   );
@@ -74,7 +106,10 @@ function ImageController({
     generationProcess,
     needsReview,
     resourceHelper,
-    _count,
+    blockedFor,
+    mimeType,
+    type,
+    metadata,
   },
 }: {
   image: PostEditImage;
@@ -85,75 +120,168 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
+  const data = useImageIngestionContext(useCallback((state) => state.images[id] ?? {}, [id]));
+  const pending = useImageIngestionContext(
+    useCallback((state) => state.pending[id] ?? { attempts: 0, success: false }, [id])
+  );
+  const isBlocked = data?.ingestion === ImageIngestionStatus.Blocked;
+  const isLoading = pending.attempts < 5 && !pending.success;
+  const loadingFailed = !isLoading && !data;
+
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
-      <EdgeImage
+      <EdgeMedia
         src={previewUrl ?? url}
         alt={name ?? undefined}
         width={width ?? 1200}
+        type={type}
         onLoad={() => setWithBorder(true)}
+        className={cx({ [classes.blocked]: isBlocked })}
       />
-      {!!_count.tags && (
-        <VotableTags entityType="image" entityId={id} p="xs" canAdd canAddModerated />
+
+      {(!data || data.ingestion !== ImageIngestionStatus.Blocked) && (
+        <>
+          {isLoading ? (
+            <Group p="xs" sx={{ width: '100%' }} spacing="xs" noWrap>
+              <Loader size={20} />
+              <Skeleton height={20} />
+            </Group>
+          ) : loadingFailed ? (
+            <Alert color="yellow" m="xs">
+              There are no tags associated with this image yet. Tags will be assigned to this image
+              soon.
+            </Alert>
+          ) : !!data.tags?.length ? (
+            <VotableTags
+              entityType="image"
+              entityId={id}
+              p="xs"
+              canAdd
+              canAddModerated
+              tags={data.tags}
+            />
+          ) : null}
+          <>
+            <Group className={classes.actions}>
+              {meta ? (
+                <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+                  Generation Data
+                </Badge>
+              ) : (
+                <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
+                  Missing Generation Data
+                </Badge>
+              )}
+              {resourceHelper.length ? (
+                <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+                  Resources: {resourceHelper.length}
+                </Badge>
+              ) : (
+                <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
+                  Missing Resources
+                </Badge>
+              )}
+              <Menu position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <ActionIcon size="lg" variant="transparent" p={0}>
+                    <IconDotsVertical
+                      size={24}
+                      color="#fff"
+                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                    />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
+                  <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+                    {({ onClick, isLoading }) => (
+                      <Menu.Item color="red" onClick={onClick}>
+                        Delete image
+                      </Menu.Item>
+                    )}
+                  </DeleteImage>
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
+          </>
+        </>
       )}
-      <>
-        <Group className={classes.actions}>
-          {meta ? (
-            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Generation Data
-            </Badge>
-          ) : (
-            <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
-              Missing Generation Data
-            </Badge>
-          )}
-          {resourceHelper.length ? (
-            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Resources: {resourceHelper.length}
-            </Badge>
-          ) : (
-            <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
-              Missing Resources
-            </Badge>
-          )}
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <ActionIcon size="lg" variant="transparent" p={0}>
-                <IconDotsVertical
-                  size={24}
-                  color="#fff"
-                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+      {data?.ingestion === ImageIngestionStatus.Blocked && (
+        <Card
+          radius={0}
+          p={0}
+          sx={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%,-50%)',
+            minWidth: 300,
+          }}
+        >
+          <Alert
+            color="red"
+            radius={0}
+            title={
+              <Group spacing={4}>
+                <Popover position="top" withinPortal withArrow>
+                  <Popover.Target>
+                    <ActionIcon>
+                      <IconInfoCircle />
+                    </ActionIcon>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack spacing={0}>
+                      <Text size="xs" weight={500}>
+                        Blocked for
+                      </Text>
+                      <Code color="red">{blockedFor}</Code>
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
+                <Text>TOS Violation</Text>
+              </Group>
+            }
+          >
+            <Stack align="flex-end" spacing={0}>
+              <Text>This image has been flagged as a TOS violation.</Text>
+              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)} skipConfirm>
                 {({ onClick, isLoading }) => (
-                  <Menu.Item color="red" onClick={onClick}>
-                    Delete image
-                  </Menu.Item>
+                  <Button onClick={onClick} loading={isLoading}>
+                    Ok
+                  </Button>
                 )}
               </DeleteImage>
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
-      </>
+            </Stack>
+          </Alert>
+        </Card>
+      )}
     </Card>
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file, mimeType }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
-  const trackedFile = items.find((x) => x.meta.uuid === uuid);
+  const trackedFile = items.find((x) => x.file === file);
   const removeFile = useEditPostContext((state) => state.removeFile);
+  const hasError =
+    trackedFile && (trackedFile.status === 'error' || trackedFile.status === 'aborted');
+
+  useEffect(() => {
+    if (trackedFile?.status === 'dequeued') removeFile(uuid);
+  }, [trackedFile?.status]); //eslint-disable-line
 
   return (
     <Card className={classes.container} withBorder p={0}>
-      <EdgeImage src={url} alt={name ?? undefined} />
+      <EdgeMedia src={url} alt={name ?? undefined} type={MEDIA_TYPE[mimeType]} />
       {trackedFile && (
-        <Card radius={0} p="sm" className={cx(classes.footer, classes.ambient)}>
+        <Alert
+          radius={0}
+          p="sm"
+          color={hasError ? 'red' : undefined}
+          variant={hasError ? 'filled' : undefined}
+          className={cx(classes.footer, { [classes.ambient]: !hasError })}
+        >
           <Group noWrap>
             <Text>{trackedFile.status}</Text>
             <Progress
@@ -165,13 +293,17 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
               striped
               animate
             />
-            {trackedFile.status === 'error' && (
+            {hasError ? (
               <ActionIcon color="red" onClick={() => removeFile(uuid)}>
                 <IconX />
               </ActionIcon>
-            )}
+            ) : trackedFile.status !== 'success' ? (
+              <ActionIcon onClick={trackedFile.abort}>
+                <IconX />
+              </ActionIcon>
+            ) : null}
           </Group>
-        </Card>
+        </Alert>
       )}
       {status === 'blocked' && (
         <>
@@ -276,6 +408,9 @@ const useStyles = createStyles((theme) => {
       alignItems: 'center',
       minHeight: 200,
     },
+    blocked: {
+      opacity: 0.3,
+    },
     actions: {
       position: 'absolute',
       top: theme.spacing.sm,
@@ -300,6 +435,12 @@ const useStyles = createStyles((theme) => {
     },
     ambient: {
       backgroundColor: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.5),
+    },
+    error: {
+      backgroundColor: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.red[8] : theme.colors.red[6],
+        0.5
+      ),
     },
   };
 });

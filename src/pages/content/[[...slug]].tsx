@@ -1,13 +1,16 @@
 import fs from 'fs';
 import matter from 'gray-matter';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
-import { Container, Title } from '@mantine/core';
+import { Container, Table, Title } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
+import Link from 'next/link';
+import { env } from '~/env/client.mjs';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -55,10 +58,32 @@ export default function ContentPage({
       <Meta
         title={`${title} | Civitai`}
         description={description ?? truncate(removeTags(content), { length: 150 })}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/content/${title}`, rel: 'canonical' }]}
       />
       <Container size="md">
         <Title order={1}>{title}</Title>
-        <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
+        <ReactMarkdown
+          rehypePlugins={[rehypeRaw, remarkGfm]}
+          className="markdown-content"
+          components={{
+            a: ({ node, ...props }) => {
+              return (
+                <Link href={props.href as string}>
+                  <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                    {props.children[0]}
+                  </a>
+                </Link>
+              );
+            },
+            table: ({ node, ...props }) => {
+              return (
+                <Table {...props} striped withBorder withColumnBorders>
+                  {props.children}
+                </Table>
+              );
+            },
+          }}
+        >
           {content}
         </ReactMarkdown>
       </Container>

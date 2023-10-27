@@ -1,7 +1,7 @@
 import { ImageAnalysisInput } from '../server/schema/image.schema';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
-import Queue from '~/utils/queue';
+import QueueOld from '~/utils/queue';
 import { env as clientEnv } from '~/env/client.mjs';
 import {
   WorkerIncomingMessage,
@@ -168,7 +168,7 @@ const start = async (port: MessagePort) => {
 
   const handleAnalyze = async (payload: AnalyzePayload) => {
     for (let i = 0; i < payload.length; i++) {
-      Queue.enqueue(
+      QueueOld.enqueue(
         () =>
           new Promise(async (resolve, reject) => {
             const { uuid, file, imageData } = payload[i];

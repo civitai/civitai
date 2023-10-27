@@ -64,8 +64,6 @@ const pushMetadata = async ({
 } & TokenRequest &
   Record<DiscordMetadataKeys, unknown>) => {
   log(`Pushing metadata for ${username}`);
-  access_token = await getUserToken({ user_id, access_token, refresh_token, expires_at });
-  const userClient = new REST({ version: '10', authPrefix: 'Bearer' }).setToken(access_token);
 
   // strip keys with null values out of the metadata
   Object.keys(metadata).forEach(
@@ -73,16 +71,22 @@ const pushMetadata = async ({
       !metadata[key as DiscordMetadataKeys] && delete metadata[key as DiscordMetadataKeys]
   );
 
-  const res = await userClient.put(Routes.userApplicationRoleConnection(env.DISCORD_CLIENT_ID), {
-    body: {
-      platform_name: 'Civitai',
-      platform_username: username,
-      metadata,
-    },
-  });
-  log(`Pushed metadata for ${username}`);
+  try {
+    access_token = await getUserToken({ user_id, access_token, refresh_token, expires_at });
+    const userClient = new REST({ version: '10', authPrefix: 'Bearer' }).setToken(access_token);
 
-  return res;
+    const res = await userClient.put(Routes.userApplicationRoleConnection(env.DISCORD_CLIENT_ID), {
+      body: {
+        platform_name: 'Civitai',
+        platform_username: username,
+        metadata,
+      },
+    });
+    log(`Pushed metadata for ${username}`);
+    return res;
+  } catch (e) {
+    log(`Failed to push metadata for ${username}`, e);
+  }
 };
 
 const DiscordMetadataType = {

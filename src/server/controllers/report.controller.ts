@@ -3,13 +3,16 @@ import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
 import {
+  BulkUpdateReportStatusInput,
   CreateReportInput,
   GetReportsInput,
   SetReportStatusInput,
   UpdateReportSchema,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { trackModActivity } from '~/server/services/moderator.service';
 import {
+  bulkUpdateReports,
   createReport,
   getReportById,
   getReports,
@@ -17,7 +20,7 @@ import {
 } from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
-export function createReportHandler({
+export async function createReportHandler({
   input,
   ctx,
 }: {
@@ -25,18 +28,40 @@ export function createReportHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    return createReport({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+    const result = await createReport({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+
+    if (result) {
+      await ctx.track.report({
+        type: 'Create',
+        entityId: input.id,
+        entityType: input.type,
+        reason: input.reason,
+        status: result.status,
+      });
+    }
+
+    return result;
   } catch (e) {
     throw throwDbError(e);
   }
 }
 
-export async function setReportStatusHandler({ input }: { input: SetReportStatusInput }) {
+export async function setReportStatusHandler({
+  input,
+  ctx,
+}: {
+  input: SetReportStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) {
   try {
     const { id, status } = input;
     const report = await getReportById({
       id,
-      select: { alsoReportedBy: true, previouslyReviewedCount: true },
+      select: { alsoReportedBy: true, previouslyReviewedCount: true, reason: true },
     });
     if (!report) throw throwNotFoundError(`No report with id ${id}`);
 
@@ -44,12 +69,65 @@ export async function setReportStatusHandler({ input }: { input: SetReportStatus
       id,
       data: {
         status,
+        statusSetAt: new Date(),
+        statusSetBy: ctx.user.id,
         previouslyReviewedCount:
           status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
       },
     });
 
+    await trackModActivity(ctx.user.id, {
+      entityType: 'report',
+      entityId: id,
+      activity: 'review',
+    });
+
+    // await ctx.track.report({
+    //   type: 'StatusChange',
+    //   entityId: input.id,
+    //   entityType: report.type,
+    //   reason: report.reason,
+    //   status,
+    // });
+
     return updatedReport;
+  } catch (e) {
+    if (e instanceof TRPCError) throw e;
+    else throw throwDbError(e);
+  }
+}
+
+export async function bulkUpdateReportStatusHandler({
+  input,
+  ctx,
+}: {
+  input: BulkUpdateReportStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { ids, status } = input;
+    const { count } = await bulkUpdateReports({
+      ids,
+      data: {
+        status,
+        statusSetAt: new Date(),
+        statusSetBy: ctx.user.id,
+        previouslyReviewedCount: status === ReportStatus.Actioned ? { increment: 1 } : undefined,
+      },
+    });
+
+    // Track mod activity in the background
+    Promise.all(
+      ids.map((id) =>
+        trackModActivity(ctx.user.id, {
+          entityType: 'report',
+          entityId: id,
+          activity: 'review',
+        })
+      )
+    );
+
+    return count;
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);
@@ -70,9 +148,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
         status: true,
         internalNotes: true,
         alsoReportedBy: true,
-        // model: { select: { modelId: true } },
-        // review: { select: { reviewId: true } },
-        // comment: { select: { commentId: true } },
         model: {
           select: {
             model: {
@@ -82,19 +157,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
                 name: true,
                 nsfw: true,
                 tosViolation: true,
-              },
-            },
-          },
-        },
-        review: {
-          select: {
-            review: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-                modelId: true,
               },
             },
           },
@@ -122,7 +184,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
                 nsfw: true,
                 tosViolation: true,
                 modelId: true,
-                reviewId: true,
                 parentId: true,
               },
             },
@@ -136,14 +197,61 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
                 user: { select: simpleUserSelect },
                 nsfw: true,
                 tosViolation: true,
-                connections: {
-                  select: {
-                    modelId: true,
-                    modelVersionId: true,
-                    reviewId: true,
-                  },
-                },
               },
+            },
+          },
+        },
+        article: {
+          select: {
+            article: {
+              select: {
+                id: true,
+                nsfw: true,
+                title: true,
+                publishedAt: true,
+                tosViolation: true,
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
+        post: {
+          select: {
+            post: {
+              select: {
+                id: true,
+                nsfw: true,
+                title: true,
+                publishedAt: true,
+                tosViolation: true,
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
+        reportedUser: {
+          select: {
+            user: { select: { ...simpleUserSelect, email: true } },
+          },
+        },
+        collection: {
+          select: {
+            collection: {
+              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
+            },
+          },
+        },
+        bounty: {
+          select: {
+            bounty: {
+              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
+            },
+          },
+        },
+        bountyEntry: {
+          select: {
+            bountyEntry: {
+              select: { id: true, bountyId: true, user: { select: simpleUserSelect } },
             },
           },
         },
@@ -154,15 +262,15 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
         return {
           ...item,
           model: item.model?.model,
-          review: item.review?.review,
           comment: item.comment?.comment,
           resourceReview: item.resourceReview?.resourceReview,
-          image: item.image && {
-            ...item.image.image,
-            modelId: item.image.image.connections?.modelId,
-            modelVersionId: item.image.image.connections?.modelVersionId,
-            reviewId: item.image.image.connections?.reviewId,
-          },
+          image: item.image?.image,
+          article: item.article?.article,
+          post: item.post?.post,
+          reportedUser: item.reportedUser?.user,
+          collection: item.collection?.collection,
+          bounty: item.bounty?.bounty,
+          bountyEntry: item.bountyEntry?.bountyEntry,
         };
       }),
       ...result,

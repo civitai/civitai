@@ -8,7 +8,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { ScanResultCode } from '@prisma/client';
-import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons';
+import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
 
@@ -90,6 +90,7 @@ export function VerifiedText({ file, iconOnly }: Props) {
                 component="a"
                 href="https://github.com/civitai/civitai/wiki/Model-Safety-Checks"
                 target="_blank"
+                rel="nofollow noreferrer"
                 size="xs"
                 color="dimmed"
                 td="underline"

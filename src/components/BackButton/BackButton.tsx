@@ -3,7 +3,7 @@ import { useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { UrlObject } from 'url';
 import { ActionIcon, Group } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconArrowLeft } from '@tabler/icons-react';
 
 export function NavigateBack({
   url,
@@ -30,7 +30,8 @@ export function NavigateBack({
     if (hasHistory) router.back();
     else {
       const navigate = options.replace ? router.replace : router.push;
-      navigate(url, as, { shallow: true, ...options });
+
+      navigate(url, as, options);
     }
   };
 

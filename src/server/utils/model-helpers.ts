@@ -1,5 +1,5 @@
 import { ModelType } from '@prisma/client';
-import { startCase } from 'lodash';
+import { startCase } from 'lodash-es';
 import { ModelFileType } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -12,40 +12,39 @@ export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
   metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
 };
 
+type FileMetaKey = keyof FileMetadata;
+const preferenceWeight: Record<FileMetaKey, number> = {
+  format: 100,
+  size: 10,
+  fp: 1,
+  ownRights: 0,
+  shareDataset: 0,
+  numImages: 0,
+  numCaptions: 0,
+  selectedEpochUrl: 0,
+  trainingResults: 0,
+};
+
 export function getPrimaryFile<T extends FileFormatType>(
   files: Array<T>,
   preferences: Partial<FileFormatType> = defaultFilePreferences
 ) {
   if (!files.length) return null;
 
-  const {
-    metadata: { format: preferredFormat, fp: preferredFp, size: preferredSize } = {
-      ...defaultFilePreferences.metadata,
-    },
-  } = preferences;
+  const preferredMetadata = { ...defaultFilePreferences.metadata, ...preferences.metadata };
 
   const getScore = (file: FileFormatType) => {
-    const { format, size, fp } = file.metadata;
+    let score = 1000;
+    for (const [key, value] of Object.entries(file.metadata)) {
+      const weight = preferenceWeight[key as FileMetaKey];
+      if (value === preferredMetadata[key as FileMetaKey]) score += weight;
+      else score -= weight;
+    }
 
-    if (size === preferredSize && format === preferredFormat && fp === preferredFp) return 5;
-    else if (size === preferredSize && format === preferredFormat) return 4;
-    else if (format === preferredFormat) return 3;
-    else if (size === preferredSize) return 2;
-    else if (fp === preferredFp) return 1;
-    else if (
-      size === defaultFilePreferences.metadata.size &&
-      format === defaultFilePreferences.metadata.format &&
-      fp === defaultFilePreferences.metadata.fp
-    )
-      return 0;
-    else if (
-      size === defaultFilePreferences.metadata.size &&
-      format === defaultFilePreferences.metadata.format
-    )
-      return -1;
-    else if (size === defaultFilePreferences.metadata.size) return -2;
-    else if (format === defaultFilePreferences.metadata.format) return -3;
-    else return -4;
+    // Give priority to model files
+    if (file.type === 'Model' || file.type === 'Pruned Model') score += 1000;
+
+    return score;
   };
 
   return files

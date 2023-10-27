@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DeleteAnswer } from '~/components/Questions/DeleteAnswer';
-import { IconDotsVertical, IconTrash, IconEdit, IconMessageCircle } from '@tabler/icons';
+import { IconDotsVertical, IconTrash, IconEdit, IconMessageCircle } from '@tabler/icons-react';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ReviewReactions } from '@prisma/client';
 import { AnswerVotes } from '~/components/Questions/AnswerVotes';
@@ -34,7 +34,7 @@ export function AnswerDetail({
 
   const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
     { entityId: answer.id, entityType: 'answer' },
-    { initialData: answer.thread?._count.comments }
+    { initialData: answer.thread?._count.comments ?? 0 }
   );
 
   if (editing)
@@ -121,8 +121,7 @@ export function AnswerDetail({
             <QuestionAnswerComments
               entityId={answer.id}
               entityType="answer"
-              initialData={answer.thread?.comments}
-              initialCount={answer.thread?._count.comments}
+              initialCount={answer.thread?._count.comments ?? 0}
               userId={answer.user.id}
             />
           </Card.Section>

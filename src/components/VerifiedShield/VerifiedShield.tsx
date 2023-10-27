@@ -1,6 +1,6 @@
 import { ButtonProps, Button, Popover, Text, DefaultMantineColor, Group } from '@mantine/core';
 import { ScanResultCode } from '@prisma/client';
-import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons';
+import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
 
@@ -80,6 +80,7 @@ export function VerifiedShield({ file, ...props }: Props) {
             component="a"
             href="https://github.com/civitai/civitai/wiki/Model-Safety-Checks"
             target="_blank"
+            rel="nofollow noreferrer"
             size="xs"
             color="dimmed"
             td="underline"

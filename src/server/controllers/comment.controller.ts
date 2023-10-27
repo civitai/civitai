@@ -8,7 +8,6 @@ import {
   GetAllCommentsSchema,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { ToggleReactionInput } from '~/server/schema/review.schema';
 import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import {
   createOrUpdateComment,
@@ -16,7 +15,7 @@ import {
   getCommentById,
   getCommentReactions,
   getComments,
-  getUserReactionByCommentId,
+  toggleHideComment,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
@@ -81,59 +80,64 @@ export const upsertCommentHandler = async ({
     const { ownerId, locked } = ctx;
     const comment = await createOrUpdateComment({ ...input, ownerId, locked });
 
-    return comment;
+    if (!input.commentId) {
+      await ctx.track.comment({
+        type: 'Model',
+        entityId: comment.modelId,
+        nsfw: comment.nsfw,
+      });
+      await ctx.track.commentEvent({ type: 'Create', commentId: comment.id });
+
+      return comment;
+    } else {
+      await ctx.track.commentEvent({ type: 'Update', commentId: comment.id });
+
+      // Explicitly check for boolean value to track hide/unhide events
+      if (input.hidden === true)
+        await ctx.track.commentEvent({ type: 'Hide', commentId: comment.id });
+      else if (input.hidden === false)
+        await ctx.track.commentEvent({ type: 'Unhide', commentId: comment.id });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput }) => {
+export const toggleHideCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    await deleteCommentById({ ...input });
+    await toggleHideComment({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator ?? false,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const deleteUserCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const deleted = await deleteCommentById({ ...input });
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });
 
     // return deleted;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
-  }
-};
-
-export const toggleReactionHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: ToggleReactionInput;
-}) => {
-  const { user } = ctx;
-  const { id, reaction } = input;
-
-  const commentReaction = await getUserReactionByCommentId({
-    reaction,
-    commentId: id,
-    userId: user.id,
-  });
-
-  try {
-    const comment = await updateCommentById({
-      id,
-      data: {
-        reactions: {
-          create: commentReaction ? undefined : { reaction, userId: user.id },
-          deleteMany: commentReaction ? { reaction, userId: user.id } : undefined,
-        },
-      },
-    });
-
-    if (!comment) {
-      throw throwNotFoundError(`No comment with id ${id}`);
-    }
-
-    return comment;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
   }
 };
 

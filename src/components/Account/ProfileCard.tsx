@@ -10,38 +10,35 @@ import {
   Stack,
   Text,
   Title,
-  ThemeIcon,
   HoverCard,
   ScrollArea,
   LoadingOverlay,
-  Tooltip,
   Box,
   Popover,
 } from '@mantine/core';
-import { IconInfoCircle, IconRosette } from '@tabler/icons';
+import { IconInfoCircle, IconRosette } from '@tabler/icons-react';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { usernameSchema } from '~/server/schema/user.schema';
+import { usernameInputSchema } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
   id: z.number(),
-  username: usernameSchema,
+  username: usernameInputSchema,
   image: z.string().nullable(),
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),
+  leaderboardShowcase: z.string().nullable(),
 });
 
 export function ProfileCard() {
@@ -56,14 +53,15 @@ export function ProfileCard() {
     { equipped: true },
     { enabled: !!currentUser }
   );
+  const { data: leaderboards = [], isLoading: loadingLeaderboards } =
+    trpc.leaderboard.getLeaderboards.useQuery();
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
     async onSuccess(user, { badgeId, nameplateId }) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       // await utils.model.getAll.invalidate();
-      await queryUtils.review.getAll.invalidate();
       await queryUtils.comment.getAll.invalidate();
-      await reloadSession();
+      currentUser?.refresh();
 
       if (user)
         form.reset({
@@ -103,9 +101,32 @@ export function ProfileCard() {
   const selectedBadge = badges.find((badge) => badge.id === formUser.badgeId);
   const selectedNameplate = nameplates.find((nameplate) => nameplate.id === formUser.nameplateId);
 
+  const leaderboardOptions = leaderboards
+    .filter((board) => board.public)
+    .map(({ title, id }) => ({
+      label: titleCase(title),
+      value: id,
+    }));
+
   return (
     <Card withBorder>
-      <Form form={form} onSubmit={(data) => mutate({ ...data })}>
+      <Form
+        form={form}
+        onSubmit={(data) => {
+          const { id, username, nameplateId, badgeId, image, leaderboardShowcase } = data;
+          mutate({
+            id,
+            username,
+            nameplateId,
+            image,
+            badgeId,
+            leaderboardShowcase:
+              leaderboardShowcase !== currentUser?.leaderboardShowcase
+                ? leaderboardShowcase
+                : undefined,
+          });
+        }}
+      >
         <Stack>
           <Title order={2}>Profile</Title>
           {error && (
@@ -208,7 +229,7 @@ export function ProfileCard() {
                 </Group>
                 <Group spacing="xs" align="stretch" noWrap>
                   {selectedBadge?.data.url ? (
-                    <EdgeImage src={selectedBadge.data.url} width={96} />
+                    <EdgeMedia src={selectedBadge.data.url} width={96} />
                   ) : (
                     <Paper
                       withBorder
@@ -225,6 +246,7 @@ export function ProfileCard() {
                   )}
                   <Paper
                     component={ScrollArea}
+                    type="auto"
                     p="xs"
                     sx={{
                       position: 'relative',
@@ -254,9 +276,9 @@ export function ProfileCard() {
                                 onClick={() =>
                                   form.setValue('badgeId', cosmetic.id, { shouldDirty: true })
                                 }
-                                sx={{ height: '100%' }}
+                                sx={{ height: 64, width: 64 }}
                               >
-                                <EdgeImage src={cosmetic.data.url as string} width={64} />
+                                <EdgeMedia src={cosmetic.data.url as string} width={64} />
                               </Button>
                             </HoverCard.Target>
                             <HoverCard.Dropdown>
@@ -287,6 +309,18 @@ export function ProfileCard() {
                   </Paper>
                 </Group>
               </Stack>
+            </Grid.Col>
+            <Grid.Col span={12}>
+              <InputSelect
+                label="Showcase Leaderboard"
+                placeholder="Select a leaderboard"
+                description="Choose which leaderboard badge to display on your profile card"
+                name="leaderboardShowcase"
+                data={leaderboardOptions}
+                disabled={loadingLeaderboards}
+                searchable
+                clearable
+              />
             </Grid.Col>
             <Grid.Col span={12}>
               <Button

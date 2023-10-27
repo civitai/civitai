@@ -165,7 +165,9 @@ type ConversionResult = {
 
 const querySchema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
-  tasks: z.array(z.enum(ScannerTasks)).optional(),
+  tasks: z
+    .preprocess((val) => (Array.isArray(val) ? val : [val]), z.array(z.enum(ScannerTasks)))
+    .optional(),
 });
 
 function processImport(importStr: string) {

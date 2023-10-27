@@ -1,47 +1,62 @@
-import { ActionIcon, AspectRatio, createStyles } from '@mantine/core';
-import { useMemo } from 'react';
+import {
+  ActionIcon,
+  Alert,
+  AspectRatio,
+  Badge,
+  Box,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  createStyles,
+} from '@mantine/core';
+import { ImageIngestionStatus } from '@prisma/client';
+import { IconInfoCircle } from '@tabler/icons-react';
+import { useCallback, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
+import { useImageIngestionContext } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { IconInfoCircle } from '@tabler/icons';
-import { useRouter } from 'next/router';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
-export function ImagesCard({
-  data: image,
-  width: cardWidth,
-}: {
-  data: ImagesInfiniteModel;
-  width: number;
-}) {
-  const router = useRouter();
-  const { classes } = useStyles();
-  const { modelId, postId, username, modelVersionId } = useImagesInfiniteContext();
+export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
+  const { classes, cx } = useStyles();
+  const filters = useImagesInfiniteContext();
 
-  const height = useMemo(() => {
-    if (!image.width || !image.height) return 300;
-    const width = cardWidth > 0 ? cardWidth : 300;
-    const aspectRatio = image.width / image.height;
-    const imageHeight = Math.floor(width / aspectRatio);
-    return Math.min(imageHeight, 600);
-  }, [cardWidth, image.width, image.height]);
+  const ingestionData = useImageIngestionContext(
+    useCallback(
+      (state) => state.images[image.id] ?? { ingestion: ImageIngestionStatus.Scanned },
+      [image.id]
+    )
+  );
+  const pending = useImageIngestionContext(
+    useCallback((state) => state.pending[image.id] ?? { attempts: 0, success: true }, [image.id])
+  );
+  const isBlocked = ingestionData.ingestion === ImageIngestionStatus.Blocked;
+  const isLoading = pending.attempts < 5 && !pending.success;
+  const loadingFailed = !isLoading && !ingestionData;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
     return image.tags.filter((x) => x.type === 'Moderation');
   }, [image.tags]);
 
-  const showVotes = tags && Array.isArray(tags) && !!tags.length;
+  const showVotes =
+    tags &&
+    Array.isArray(tags) &&
+    !!tags.length &&
+    ingestionData.ingestion === ImageIngestionStatus.Scanned;
 
   return (
-    <InView triggerOnce>
+    <InView rootMargin="600px">
       {({ inView, ref }) => (
         <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
           {inView && (
@@ -52,33 +67,20 @@ export function ImagesCard({
                   <ImageGuard.Content>
                     {({ safe }) => (
                       <>
-                        <ImageGuard.Report />
-                        <ImageGuard.ToggleImage
-                          sx={(theme) => ({
-                            backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                            color: 'white',
-                            backdropFilter: 'blur(7px)',
-                            boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                          })}
-                        />
-                        <RoutedContextLink
-                          modal="imageDetailModal"
-                          imageId={image.id}
-                          modelId={modelId}
-                          postId={postId}
-                          username={username}
-                          modelVersionId={modelVersionId}
-                          {...router.query}
-                        >
+                        {!isBlocked && <ImageGuard.Report context="image" position="top-right" />}
+                        <ImageGuard.ToggleImage position="top-left" />
+                        <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                               <MediaHash {...image} />
                             </AspectRatio>
                           ) : (
-                            <EdgeImage
+                            <EdgeMedia
                               src={image.url}
+                              className={cx({ [classes.blocked]: isBlocked })}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
+                              type={image.type}
                               width={450}
                               placeholder="empty"
                               style={{ width: '100%' }}
@@ -89,44 +91,84 @@ export function ImagesCard({
                           <div className={classes.footer}>
                             <VotableTags entityType="image" entityId={image.id} tags={tags} />
                           </div>
-                        ) : (
-                          <>
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
-                              readonly={!safe}
-                              withinPortal
-                              className={classes.reactions}
-                            />
-                            {!image.hideMeta && image.meta && (
-                              <ImageMetaPopover
-                                meta={image.meta as any}
-                                generationProcess={image.generationProcess ?? undefined}
-                              >
-                                <ActionIcon
-                                  className={classes.info}
-                                  variant="transparent"
-                                  size="lg"
+                        ) : ingestionData.ingestion !== ImageIngestionStatus.Blocked ? (
+                          isLoading ? (
+                            <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
+                              <Stack spacing={4}>
+                                <Group spacing={8} noWrap>
+                                  <Loader size={20} />
+                                  <Badge size="xs" color="yellow">
+                                    Analyzing
+                                  </Badge>
+                                </Group>
+                                <Text size="sm" inline>
+                                  This image will be available to the community once processing is
+                                  done.
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : loadingFailed ? (
+                            <Alert className={classes.info} variant="filled" color="yellow">
+                              There are no tags associated with this image yet. Tags will be
+                              assigned to this image soon.
+                            </Alert>
+                          ) : (
+                            <Group className={classes.info} spacing={4} position="apart" noWrap>
+                              <Reactions
+                                entityId={image.id}
+                                entityType="image"
+                                reactions={image.reactions}
+                                metrics={{
+                                  likeCount: image.stats?.likeCountAllTime,
+                                  dislikeCount: image.stats?.dislikeCountAllTime,
+                                  heartCount: image.stats?.heartCountAllTime,
+                                  laughCount: image.stats?.laughCountAllTime,
+                                  cryCount: image.stats?.cryCountAllTime,
+                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                }}
+                                targetUserId={image.user.id}
+                                readonly={!safe}
+                                className={classes.reactions}
+                              />
+                              {!image.hideMeta && image.meta && (
+                                <ImageMetaPopover
+                                  meta={image.meta}
+                                  generationProcess={image.generationProcess ?? undefined}
+                                  imageId={image.id}
                                 >
-                                  <IconInfoCircle
-                                    color="white"
-                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                    opacity={0.8}
-                                    strokeWidth={2.5}
-                                    size={26}
-                                  />
-                                </ActionIcon>
-                              </ImageMetaPopover>
-                            )}
-                          </>
+                                  <ActionIcon variant="transparent" size="lg">
+                                    <IconInfoCircle
+                                      color="white"
+                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                      opacity={0.8}
+                                      strokeWidth={2.5}
+                                      size={26}
+                                    />
+                                  </ActionIcon>
+                                </ImageMetaPopover>
+                              )}
+                            </Group>
+                          )
+                        ) : (
+                          <Alert
+                            color="red"
+                            variant="filled"
+                            radius={0}
+                            className={classes.info}
+                            title={
+                              <Group spacing={4}>
+                                <IconInfoCircle />
+                                <Text inline>TOS Violation</Text>
+                              </Group>
+                            }
+                          >
+                            <Stack align="flex-end" spacing={0}>
+                              <Text size="sm" inline>
+                                The image you uploaded was determined to violate our TOS and will be
+                                completely removed from our service.
+                              </Text>
+                            </Stack>
+                          </Alert>
                         )}
                       </>
                     )}
@@ -169,9 +211,6 @@ const useStyles = createStyles((theme) => ({
     padding: theme.spacing.xs,
   },
   reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
     borderRadius: theme.radius.sm,
     background: theme.fn.rgba(
       theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
@@ -183,7 +222,10 @@ const useStyles = createStyles((theme) => ({
   },
   info: {
     position: 'absolute',
-    bottom: 5,
-    right: 5,
+    bottom: 0,
+    left: 0,
+    width: '100%',
+    padding: 5,
   },
+  blocked: { opacity: 0.3 },
 }));

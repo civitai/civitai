@@ -1,10 +1,20 @@
 import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { SessionUser } from 'next-auth';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { playfab } from '~/server/playfab/client';
+import {
+  DeleteExplorationPromptInput,
+  GetModelVersionByModelTypeProps,
+  ModelVersionMeta,
+  ModelVersionUpsertInput,
+  PublishVersionInput,
+  UpsertExplorationPromptInput,
+} from '~/server/schema/model-version.schema';
+import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -86,53 +96,177 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
 };
 
-export const upsertModelVersion = async ({ id, modelId, ...data }: ModelVersionUpsertInput) => {
-  if (!id) {
-    // if it's a new version, we set it at the top of the list
-    // and increment the index of all other versions
-    const existingVersions = await dbRead.modelVersion.findMany({ where: { modelId } });
-
-    const currentVersionIndex = existingVersions.length > 0 ? existingVersions[0].index ?? -1 : -1;
-    const newVersionIndex = currentVersionIndex + 1;
-
-    const updatedVersions = existingVersions.map((version) => {
-      const parsedIndex = Number(version.index);
-
-      if (parsedIndex === 0) {
-        return { ...version, index: newVersionIndex };
-      } else if (parsedIndex >= newVersionIndex) {
-        return { ...version, index: parsedIndex + 1 };
-      } else {
-        return version;
-      }
+export const upsertModelVersion = async ({
+  monetization,
+  ...data
+}: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
+  meta?: Prisma.ModelVersionCreateInput['meta'];
+  trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
+}) => {
+  if (!data.id) {
+    const existingVersions = await dbRead.modelVersion.findMany({
+      where: { modelId: data.modelId },
+      select: { id: true },
+      orderBy: { index: 'asc' },
     });
 
     const [version] = await dbWrite.$transaction([
-      // create the new version
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          monetization:
+            monetization && monetization.type
+              ? {
+                  create: {
+                    type: monetization.type,
+                    unitAmount: monetization.unitAmount,
+                    currency: constants.defaultCurrency,
+                    sponsorshipSettings: monetization.sponsorshipSettings
+                      ? {
+                          create: {
+                            type: monetization.sponsorshipSettings?.type,
+                            currency: constants.defaultCurrency,
+                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                          },
+                        }
+                      : undefined,
+                  },
+                }
+              : undefined,
           index: 0,
-          modelId,
         },
       }),
-      // update the index of all other versions
-      ...updatedVersions.map(({ id, index }) =>
-        dbWrite.modelVersion.update({
-          where: { id },
-          data: { index: index as number },
-        })
+      ...existingVersions.map(({ id }, index) =>
+        dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
+    return version;
+  } else {
+    const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
+      where: { id: data.id },
+      select: {
+        id: true,
+        monetization: {
+          select: {
+            id: true,
+            type: true,
+            unitAmount: true,
+            sponsorshipSettings: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const version = await dbWrite.modelVersion.update({
+      where: { id: data.id },
+      data: {
+        ...data,
+        monetization:
+          existingVersion.monetization?.id && !monetization
+            ? { delete: true }
+            : monetization && monetization.type
+            ? {
+                upsert: {
+                  create: {
+                    type: monetization.type,
+                    unitAmount: monetization.unitAmount,
+                    currency: constants.defaultCurrency,
+                    sponsorshipSettings: monetization.sponsorshipSettings
+                      ? {
+                          create: {
+                            type: monetization.sponsorshipSettings?.type,
+                            currency: constants.defaultCurrency,
+                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                          },
+                        }
+                      : undefined,
+                  },
+                  update: {
+                    type: monetization.type,
+                    unitAmount: monetization.unitAmount,
+                    currency: constants.defaultCurrency,
+                    sponsorshipSettings:
+                      existingVersion.monetization?.sponsorshipSettings &&
+                      !monetization.sponsorshipSettings
+                        ? { delete: true }
+                        : monetization.sponsorshipSettings
+                        ? {
+                            upsert: {
+                              create: {
+                                type: monetization.sponsorshipSettings?.type,
+                                currency: constants.defaultCurrency,
+                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                              },
+                              update: {
+                                type: monetization.sponsorshipSettings?.type,
+                                currency: constants.defaultCurrency,
+                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                              },
+                            },
+                          }
+                        : undefined,
+                  },
+                },
+              }
+            : undefined,
+      },
+    });
 
     return version;
   }
 
-  // Otherwise, we just update the version
-  return dbWrite.modelVersion.update({
-    where: { id },
-    data,
-  });
+  // if (!id) {
+  //   // if it's a new version, we set it at the top of the list
+  //   // and increment the index of all other versions
+  //   const existingVersions = await dbRead.modelVersion.findMany({ where: { modelId } });
+
+  //   const currentVersionIndex = existingVersions.length > 0 ? existingVersions[0].index ?? -1 : -1;
+  //   const newVersionIndex = currentVersionIndex + 1;
+
+  //   const updatedVersions = existingVersions.map((version) => {
+  //     const parsedIndex = Number(version.index);
+
+  //     if (parsedIndex === 0) {
+  //       return { ...version, index: newVersionIndex };
+  //     } else if (parsedIndex >= newVersionIndex) {
+  //       return { ...version, index: parsedIndex + 1 };
+  //     } else {
+  //       return version;
+  //     }
+  //   });
+
+  //   const [version] = await dbWrite.$transaction([
+  //     // create the new version
+  //     dbWrite.modelVersion.create({
+  //       data: {
+  //         ...data,
+  //         index: 0,
+  //         modelId,
+  //       },
+  //     }),
+  //     // update the index of all other versions
+  //     ...updatedVersions.map(({ id, index }) =>
+  //       dbWrite.modelVersion.update({
+  //         where: { id },
+  //         data: { index: index as number },
+  //       })
+  //     ),
+  //   ]);
+
+  //   return version;
+  // }
+
+  // // Otherwise, we just update the version
+  // const version = await dbWrite.modelVersion.update({
+  //   where: { id },
+  //   data,
+  // });
+
+  // return version;
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
@@ -146,30 +280,173 @@ export const updateModelVersionById = ({
   return dbWrite.modelVersion.update({ where: { id }, data });
 };
 
-export const publishModelVersionById = async ({ id }: GetByIdInput) => {
-  const publishedAt = new Date();
+export const publishModelVersionById = async ({
+  id,
+  publishedAt,
+  meta,
+}: PublishVersionInput & { meta?: ModelVersionMeta }) => {
+  let status: ModelStatus = ModelStatus.Published;
+  if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
+  else publishedAt = new Date();
+
   const version = await dbWrite.modelVersion.update({
     where: { id },
     data: {
-      status: ModelStatus.Published,
+      status,
       publishedAt,
-      model: { update: { lastVersionAt: publishedAt } },
-      posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt } } },
+      meta,
+      model:
+        status !== ModelStatus.Scheduled ? { update: { lastVersionAt: publishedAt } } : undefined,
+      posts:
+        status !== ModelStatus.Scheduled
+          ? { updateMany: { where: { publishedAt: null }, data: { publishedAt } } }
+          : undefined,
     },
     select: {
       id: true,
       modelId: true,
-      model: { select: { userId: true, id: true, type: true } },
+      model: { select: { userId: true, id: true, type: true, nsfw: true } },
     },
   });
-  if (!version) throw throwNotFoundError(`No model version with id ${id}`);
 
-  const { model } = version;
-  await playfab.trackEvent(model.userId, {
-    eventName: 'user_update_model',
-    modelId: model.id,
-    type: model.type,
-  });
+  // const { model } = version;
+  // await playfab.trackEvent(model.userId, {
+  //   eventName: 'user_update_model',
+  //   modelId: model.id,
+  //   type: model.type,
+  // });
 
   return version;
+};
+
+export const unpublishModelVersionById = async ({
+  id,
+  reason,
+  customMessage,
+  meta,
+  user,
+}: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  const version = await dbWrite.$transaction(
+    async (tx) => {
+      const updatedVersion = await tx.modelVersion.update({
+        where: { id },
+        data: {
+          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          publishedAt: null,
+          meta: {
+            ...meta,
+            ...(reason
+              ? {
+                  unpublishedReason: reason,
+                  customMessage,
+                }
+              : {}),
+            unpublishedAt: new Date().toISOString(),
+            unpublishedBy: user.id,
+          },
+        },
+        select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
+      });
+
+      await tx.post.updateMany({
+        where: {
+          modelVersionId: updatedVersion.id,
+          userId: updatedVersion.model.userId,
+          publishedAt: { not: null },
+        },
+        data: { publishedAt: null },
+      });
+
+      return updatedVersion;
+    },
+    { timeout: 10000 }
+  );
+
+  return version;
+};
+
+export const getExplorationPromptsById = async ({ id }: GetByIdInput) => {
+  try {
+    const prompts = await dbRead.modelVersionExploration.findMany({
+      where: { modelVersionId: id },
+      select: { name: true, prompt: true, index: true, modelVersionId: true },
+    });
+
+    return prompts;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const upsertExplorationPrompt = async ({
+  id: modelVersionId,
+  name,
+  index,
+  prompt,
+}: UpsertExplorationPromptInput) => {
+  try {
+    const explorationPrompt = await dbWrite.modelVersionExploration.upsert({
+      where: { modelVersionId_name: { modelVersionId, name } },
+      create: { modelVersionId, name, prompt, index: index ?? 0 },
+      update: { index, prompt },
+    });
+    if (!explorationPrompt)
+      throw throwNotFoundError(`No prompt with name ${name} belongs to version ${modelVersionId}`);
+
+    return explorationPrompt;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const deleteExplorationPrompt = async ({
+  name,
+  id: modelVersionId,
+}: DeleteExplorationPromptInput) => {
+  try {
+    const deleted = await dbWrite.modelVersionExploration.delete({
+      where: { modelVersionId_name: { modelVersionId, name } },
+    });
+    if (!deleted)
+      throw throwNotFoundError(`No prompt with name ${name} belongs to version ${modelVersionId}`);
+
+    return deleted;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+const baseModelSetsArray = Object.values(baseModelSets);
+export const getModelVersionsByModelType = async ({
+  type,
+  query,
+  baseModel,
+  take,
+}: GetModelVersionByModelTypeProps) => {
+  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
+  if (baseModel) {
+    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
+    if (baseModelSet)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+  }
+  if (query) {
+    const pgQuery = '%' + query + '%';
+    sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
+  }
+
+  const results = await dbRead.$queryRaw<Array<{ id: number; name: string; modelName: string }>>`
+    SELECT
+      mv.id,
+      mv.name,
+      m.name "modelName"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE ${Prisma.join(sqlAnd, ' AND ')}
+    ORDER BY m.name
+    LIMIT ${take}
+  `;
+
+  return results;
 };

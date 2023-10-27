@@ -1,8 +1,8 @@
-import { TagType } from '@prisma/client';
+import { NsfwLevel, TagType } from '@prisma/client';
 import { z } from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
 
-export const taggableEntitySchema = z.enum(['model', 'image', 'tag']);
+export const taggableEntitySchema = z.enum(['model', 'image', 'tag', 'article']);
 export type TaggableEntityType = z.infer<typeof taggableEntitySchema>;
 
 export const tagVotableEntitySchema = z.enum(['model', 'image']);
@@ -11,16 +11,37 @@ export type VotableTagModel = {
   id: number;
   name: string;
   type: TagType;
+  nsfw: NsfwLevel;
   score: number;
   upVotes: number;
   downVotes: number;
   automated?: boolean;
   vote?: number;
   needsReview?: boolean;
+  concrete?: boolean;
+  lastUpvote?: Date | null;
 };
 
-const tagNameOverrides = {
+const tagNameOverrides: Record<string, string> = {
   ...moderationDisplayNames,
+  '1girl': 'woman',
+  '2girls': 'women',
+  '3girls': 'women',
+  '4girls': 'women',
+  '5girls': 'women',
+  '6+girls': 'women',
+  'multiple girls': 'women',
+  '1boy': 'man',
+  '2boys': 'men',
+  '3boys': 'men',
+  '4boys': 'men',
+  '5boys': 'men',
+  '6+boys': 'men',
+  'multiple boys': 'men',
+  pussy: 'vagina',
+  ass: 'butt',
+  'ass focus': 'butt focus',
+  'huge ass': 'huge butt',
 };
 export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;

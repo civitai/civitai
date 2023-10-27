@@ -1,24 +1,30 @@
 import {
+  ActionIcon,
+  Alert,
   Badge,
   Card,
-  createStyles,
+  CopyButton,
   Group,
   Rating,
   Skeleton,
   Stack,
   Text,
-  Alert,
-  CopyButton,
+  createStyles,
+  Divider,
 } from '@mantine/core';
-import { IconDownload, IconMessageCircle2, IconHeart, IconStar } from '@tabler/icons';
+import { useSessionStorage } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
+import { IconDownload, IconHeart, IconMessageCircle2, IconStar, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
+import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { StarRating } from '~/components/StartRating/StarRating';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { cloneElement, useMemo } from 'react';
 
 const useStyles = createStyles(() => ({
   statBadge: {
@@ -27,9 +33,18 @@ const useStyles = createStyles(() => ({
   },
 }));
 
+const LIMIT = 3;
 export function ImageResources({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
+  const queryUtils = trpc.useContext();
+
+  const [selectedResource, setSelectedResource] = useState<number | null>(null);
+  const [showAll, setShowAll] = useSessionStorage<boolean>({
+    key: 'showAllImageResources',
+    defaultValue: false,
+  });
+
   const { data, isLoading } = trpc.image.getResources.useQuery({ id: imageId });
 
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
@@ -62,6 +77,41 @@ export function ImageResources({ imageId }: { imageId: number }) {
     return resources;
   }, [data, favoriteModels]);
 
+  const { mutate, isLoading: removingResource } = trpc.image.removeResource.useMutation();
+  const handleRemoveResource = (resourceId: number) => {
+    setSelectedResource(resourceId);
+    openConfirmModal({
+      centered: true,
+      title: 'Remove Resource',
+      children:
+        'Are you sure you want to remove this resource from this image? This action is destructive and cannot be reverted.',
+      labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () =>
+        mutate(
+          { id: resourceId },
+          {
+            async onSuccess() {
+              showSuccessNotification({
+                title: 'Successfully removed resource',
+                message: 'The resource was removed from the image',
+              });
+              await queryUtils.image.getResources.invalidate({ id: imageId });
+            },
+            onError(error) {
+              showErrorNotification({
+                title: 'Unable to remove resource',
+                error: new Error(error.message),
+              });
+            },
+            onSettled() {
+              setSelectedResource(null);
+            },
+          }
+        ),
+    });
+  };
+
   return (
     <Stack spacing={4}>
       {isLoading ? (
@@ -69,101 +119,139 @@ export function ImageResources({ imageId }: { imageId: number }) {
           <Skeleton height={16} radius="md" />
           <Skeleton height={16} radius="md" />
         </Stack>
-      ) : !!resources.length ? (
-        resources.map(({ key, isFavorite, isAvailable, ...resource }) => {
-          return (
-            <Wrapper resource={resource} key={key}>
-              <Card
-                p={8}
-                sx={{ backgroundColor: theme.colors.dark[7], opacity: isAvailable ? 1 : 0.3 }}
-                withBorder
-              >
-                <Stack spacing="xs">
-                  <Group spacing={4} position="apart" noWrap>
-                    <Text size="sm" weight={500} lineClamp={1}>
-                      {resource.modelName ?? resource.name}
-                    </Text>
-                    {!isAvailable && (
-                      <Badge radius="sm" size="sm" color="yellow">
-                        Unavailable
-                      </Badge>
-                    )}
-                    {resource.modelType && (
-                      <Badge radius="sm" size="sm">
-                        {getDisplayName(resource.modelType)}
-                      </Badge>
-                    )}
-                    {!isAvailable && resource.hash && (
-                      <CopyButton value={resource.hash}>
-                        {({ copy, copied }) => (
-                          <Badge onClick={copy} radius="sm" size="sm" sx={{ cursor: 'pointer' }}>
-                            {copied ? 'Copied...' : resource.hash}
+      ) : !resources.length ? (
+        <Alert>There are no resources associated with this image</Alert>
+      ) : (
+        (showAll ? resources : resources.slice(0, LIMIT)).map(
+          ({ key, isFavorite, isAvailable, ...resource }) => {
+            const removing = selectedResource === resource.id && removingResource;
+
+            return (
+              <Wrapper resource={resource} key={key}>
+                <Card
+                  p={8}
+                  sx={{
+                    backgroundColor: theme.colors.dark[7],
+                    opacity: removing ? 0.3 : isAvailable ? 1 : 0.3,
+                  }}
+                  withBorder
+                >
+                  <Stack spacing="xs">
+                    <Group spacing={4} position="apart" noWrap>
+                      <Text size="sm" weight={500} lineClamp={1}>
+                        {resource.modelName ?? resource.name}
+                      </Text>
+                      {!isAvailable && (
+                        <Badge radius="sm" size="sm" color="yellow">
+                          Unavailable
+                        </Badge>
+                      )}
+                      <Group spacing={4} noWrap>
+                        {resource.modelType && (
+                          <Badge radius="sm" size="sm">
+                            {getDisplayName(resource.modelType)}
                           </Badge>
                         )}
-                      </CopyButton>
-                    )}
-                  </Group>
-                  {isAvailable && (
-                    <Group spacing={0} position="apart">
-                      <IconBadge
-                        className={classes.statBadge}
-                        sx={{ userSelect: 'none' }}
-                        icon={
-                          <Rating
+                        {!isAvailable && resource.hash && (
+                          <CopyButton value={resource.hash}>
+                            {({ copy, copied }) => (
+                              <Badge
+                                onClick={copy}
+                                radius="sm"
+                                size="sm"
+                                sx={{ cursor: 'pointer' }}
+                              >
+                                {copied ? 'Copied...' : resource.hash}
+                              </Badge>
+                            )}
+                          </CopyButton>
+                        )}
+                        {currentUser?.isModerator && (
+                          <ActionIcon
                             size="xs"
-                            value={resource.modelRating ?? 0}
-                            readOnly
-                            fractions={4}
-                            emptySymbol={
-                              <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                            }
-                          />
-                        }
-                      >
-                        <Text
-                          size="xs"
-                          color={(resource.modelRatingCount ?? 0) > 0 ? undefined : 'dimmed'}
-                        >
-                          {abbreviateNumber(resource.modelRatingCount ?? 0)}
-                        </Text>
-                      </IconBadge>
-                      <Group spacing={4}>
-                        <IconBadge
-                          className={classes.statBadge}
-                          icon={
-                            <IconHeart
-                              size={14}
-                              style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                              color={isFavorite ? theme.colors.red[6] : undefined}
-                            />
-                          }
-                          color={isFavorite ? 'red' : 'gray'}
-                        >
-                          <Text size="xs">
-                            {abbreviateNumber(resource.modelFavoriteCount ?? 0)}
-                          </Text>
-                        </IconBadge>
-                        <IconBadge
-                          className={classes.statBadge}
-                          icon={<IconMessageCircle2 size={14} />}
-                        >
-                          <Text size="xs">{abbreviateNumber(resource.modelCommentCount ?? 0)}</Text>
-                        </IconBadge>
-                        <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-                          <Text size={12}>
-                            {abbreviateNumber(resource.modelDownloadCount ?? 0)}
-                          </Text>
-                        </IconBadge>
+                            color="red"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              e.nativeEvent.stopImmediatePropagation();
+
+                              handleRemoveResource(resource.id);
+                            }}
+                            disabled={removing}
+                          >
+                            <IconX size={14} stroke={1.5} />
+                          </ActionIcon>
+                        )}
                       </Group>
                     </Group>
-                  )}
-                </Stack>
-              </Card>
-            </Wrapper>
-          );
-        })
-      ) : (
-        <Alert>There are no resources associated with this image</Alert>
+                    {isAvailable && (
+                      <Group spacing={0} position="apart">
+                        <IconBadge
+                          className={classes.statBadge}
+                          sx={{ userSelect: 'none' }}
+                          icon={<StarRating size={14} value={resource.modelRating ?? 0} />}
+                        >
+                          <Text
+                            size="xs"
+                            color={(resource.modelRatingCount ?? 0) > 0 ? undefined : 'dimmed'}
+                          >
+                            {abbreviateNumber(resource.modelRatingCount ?? 0)}
+                          </Text>
+                        </IconBadge>
+                        <Group spacing={4}>
+                          <IconBadge
+                            className={classes.statBadge}
+                            icon={
+                              <IconHeart
+                                size={14}
+                                style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                                color={isFavorite ? theme.colors.red[6] : undefined}
+                              />
+                            }
+                            color={isFavorite ? 'red' : 'gray'}
+                          >
+                            <Text size="xs">
+                              {abbreviateNumber(resource.modelFavoriteCount ?? 0)}
+                            </Text>
+                          </IconBadge>
+                          <IconBadge
+                            className={classes.statBadge}
+                            icon={<IconMessageCircle2 size={14} />}
+                          >
+                            <Text size="xs">
+                              {abbreviateNumber(resource.modelCommentCount ?? 0)}
+                            </Text>
+                          </IconBadge>
+                          <IconBadge
+                            className={classes.statBadge}
+                            icon={<IconDownload size={14} />}
+                          >
+                            <Text size={12}>
+                              {abbreviateNumber(resource.modelDownloadCount ?? 0)}
+                            </Text>
+                          </IconBadge>
+                        </Group>
+                      </Group>
+                    )}
+                  </Stack>
+                </Card>
+              </Wrapper>
+            );
+          }
+        )
+      )}
+      {resources.length > LIMIT && (
+        <Divider
+          label={
+            <Group spacing="xs" align="center">
+              <Text variant="link" sx={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
+                {!showAll ? 'Show more' : 'Show less'}
+              </Text>
+            </Group>
+          }
+          labelPosition="center"
+          variant="dashed"
+        />
       )}
     </Stack>
   );

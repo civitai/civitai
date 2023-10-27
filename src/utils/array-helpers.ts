@@ -1,4 +1,4 @@
-import { uniqBy } from 'lodash';
+import { uniqBy } from 'lodash-es';
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 
@@ -29,4 +29,13 @@ export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
     if (a > b) return 1;
     return 0;
   });
+}
+
+export function indexOfOr<T>(array: T[], value: T, or: number) {
+  const index = array.indexOf(value);
+  return index === -1 ? or : index;
+}
+
+export function shuffle<T>(array: T[]) {
+  return array.sort(() => Math.random() - 0.5);
 }

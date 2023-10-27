@@ -2,12 +2,13 @@ import { Text, Box, Group, Badge, SelectItemProps, BadgeProps } from '@mantine/c
 import { useForm } from '@mantine/form';
 import { useHotkeys, useDebouncedState } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
-import { IconSearch } from '@tabler/icons';
+import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useEffect, useMemo, forwardRef } from 'react';
 
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { useModelFilters } from '~/hooks/useModelFilters';
+import { useModelQueryParams } from '~/components/Model/model.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -21,12 +22,10 @@ const limit = 5;
 
 export function ListSearch({ onSearch }: Props) {
   const router = useRouter();
-  const {
-    filters: { tag, query, username },
-    setFilters,
-  } = useModelFilters();
+  const { tag, query, username, set } = useModelQueryParams();
   const searchRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useDebouncedState('', 300);
+  const features = useFeatureFlags();
 
   const form = useForm({
     initialValues: { query: '' },
@@ -51,7 +50,7 @@ export function ListSearch({ onSearch }: Props) {
   const parseUserQuery = (query: string) =>
     query.startsWith('@') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
-  const { data: users } = trpc.user.getAll.useQuery(
+  const { data: users, isFetching: fetchingUsers } = trpc.user.getAll.useQuery(
     { query: parseUserQuery(value), limit: 10 },
     { enabled: !!value.length && canQueryUsers }
   );
@@ -60,13 +59,13 @@ export function ListSearch({ onSearch }: Props) {
   const parseTagQuery = (query: string) =>
     query.startsWith('#') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
-  const { data: tags } = trpc.tag.getAll.useQuery(
+  const { data: tags, isFetching: fetchingTags } = trpc.tag.getAll.useQuery(
     { query: parseTagQuery(value), limit, entityType: [TagTarget.Model], withModels: true },
     { enabled: !!value.length && canQueryTags }
   );
 
   const canQueryModels = !value.startsWith('#') && !value.startsWith('@');
-  const { data: models } = trpc.model.getAllPagedSimple.useQuery(
+  const { data: models, isFetching: fetchingModels } = trpc.model.getAllPagedSimple.useQuery(
     { query: parseTagQuery(value), limit },
     { enabled: !!value.length && canQueryModels }
   );
@@ -92,11 +91,14 @@ export function ListSearch({ onSearch }: Props) {
   };
 
   const handleSetQuery = (query: string) => {
-    setFilters((state) => ({ ...state, tag: undefined, query, username: undefined }));
+    set(
+      { tag: undefined, query, username: undefined, view: 'feed' },
+      features.alternateHome ? '/models' : '/'
+    );
   };
 
   const handleClear = () => {
-    setFilters((state) => ({ ...state, tag: undefined, query: undefined, username: undefined }));
+    set({ tag: undefined, query: undefined, username: undefined });
   };
 
   const autocompleteData = useMemo(
@@ -117,6 +119,8 @@ export function ListSearch({ onSearch }: Props) {
         .concat(tags?.items.map((tag) => ({ value: tag.name, group: 'Tags' })) ?? []),
     [models?.items, queryingUsers, tags?.items, users]
   );
+
+  const searching = fetchingModels || fetchingTags || fetchingUsers;
 
   return (
     <form
@@ -147,6 +151,7 @@ export function ListSearch({ onSearch }: Props) {
           else if (group === 'Users') handleSetUser(value);
           else if (group === 'Tags') handleSetTag(value);
         }}
+        nothingFound={searching ? 'Searching...' : 'Nothing found. Try changing your query'}
         filter={(value) => {
           if (value.startsWith('@')) {
             const parsed = parseUserQuery(value.toLowerCase().trim());
@@ -159,7 +164,7 @@ export function ListSearch({ onSearch }: Props) {
 
           return true;
         }}
-        clearable
+        clearable={value.length > 0}
       />
     </form>
   );

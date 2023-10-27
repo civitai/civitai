@@ -1,14 +1,18 @@
 import { Menu, Loader } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconTrash, IconBan, IconLock, IconPencil } from '@tabler/icons';
+import { IconTrash, IconBan, IconLock, IconPencil, IconRadar2 } from '@tabler/icons-react';
 import { ToggleLockComments } from '~/components/CommentsV2';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useRouter } from 'next/router';
 import { NextLink } from '@mantine/next';
+import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 
 /*
 TODO.gallery
@@ -16,7 +20,7 @@ TODO.gallery
 */
 
 export function ImageDetailContextMenu({ children }: { children: React.ReactElement }) {
-  const { image, isMod } = useImageDetailContext();
+  const { image, isMod, isOwner } = useImageDetailContext();
   const [opened, setOpened] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -51,41 +55,59 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
     <Menu opened={opened} onChange={setOpened} closeOnClickOutside={!loading}>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
-        {image.postId && (
-          <Menu.Item
-            component={NextLink}
-            icon={<IconPencil size={14} stroke={1.5} />}
-            href={`/posts/${image.postId}/edit`}
-          >
-            Edit Image Post
-          </Menu.Item>
-        )}
-        <DeleteImage imageId={image.id} onSuccess={handleDeleteSuccess}>
-          {({ onClick, isLoading }) => (
-            <Menu.Item
-              color="red"
-              icon={isLoading ? <Loader size={14} /> : <IconTrash size={14} stroke={1.5} />}
-              onClick={() => handleClick(onClick)}
-              disabled={isLoading}
-              closeMenuOnClick={false}
-            >
-              Delete
-            </Menu.Item>
-          )}
-        </DeleteImage>
-        {isMod && (
-          <TosViolationButton onSuccess={handleTosViolationSuccess}>
-            {({ onClick, isLoading }) => (
+        {(isMod || isOwner) && (
+          <>
+            <DeleteImage imageId={image.id} onSuccess={handleDeleteSuccess}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  color="red"
+                  icon={isLoading ? <Loader size={14} /> : <IconTrash size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Delete
+                </Menu.Item>
+              )}
+            </DeleteImage>
+            {image.postId && (
               <Menu.Item
-                icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
-                onClick={() => handleClick(onClick)}
-                disabled={isLoading}
-                closeMenuOnClick={false}
+                component={NextLink}
+                icon={<IconPencil size={14} stroke={1.5} />}
+                href={`/posts/${image.postId}/edit`}
               >
-                Remove as TOS Violation
+                Edit Image Post
               </Menu.Item>
             )}
-          </TosViolationButton>
+          </>
+        )}
+        {isMod && (
+          <>
+            <TosViolationButton onSuccess={handleTosViolationSuccess}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Remove as TOS Violation
+                </Menu.Item>
+              )}
+            </TosViolationButton>
+            <RescanImageButton>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  icon={isLoading ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Rescan Image
+                </Menu.Item>
+              )}
+            </RescanImageButton>
+          </>
         )}
         {isMod && image && (
           <ToggleLockComments entityId={image.id} entityType="image" onSuccess={handleClose}>
@@ -102,6 +124,21 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
               );
             }}
           </ToggleLockComments>
+        )}
+        {!isOwner && (
+          <>
+            <HideImageButton key="hide-image-button" as="menu-item" imageId={image.id} />
+            <ReportMenuItem
+              label="Report Image"
+              loginReason="report-content"
+              onReport={() =>
+                openContext('report', {
+                  entityType: ReportEntity.Image,
+                  entityId: image.id,
+                })
+              }
+            />
+          </>
         )}
       </Menu.Dropdown>
     </Menu>
@@ -127,7 +164,7 @@ function TosViolationButton({ children, onSuccess }: ButtonCallbackProps) {
     openConfirmModal({
       modalId: 'confirm-tos-violation',
       title: 'Report ToS Violation',
-      children: `Are you sure you want to report this image for a Terms of Service violation? Once marked, it won't show up for other people`,
+      children: `Are you sure you want to remove this image as a Terms of Service violation? The uploader will be notified.`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: isLoading },
@@ -137,6 +174,29 @@ function TosViolationButton({ children, onSuccess }: ButtonCallbackProps) {
   };
 
   return children({ onClick: handleTosViolation, isLoading });
+}
+
+function RescanImageButton({ children, onSuccess }: ButtonCallbackProps) {
+  const { image } = useImageDetailContext();
+
+  const { mutate, isLoading } = trpc.image.rescan.useMutation({
+    async onSuccess() {
+      closeModal('confirm-tos-violation');
+      onSuccess?.();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not rescan image, please try again',
+      });
+    },
+  });
+  const handle = () => {
+    if (!image) return;
+    mutate({ id: image.id });
+  };
+
+  return children({ onClick: handle, isLoading });
 }
 
 type ButtonCallbackProps = {

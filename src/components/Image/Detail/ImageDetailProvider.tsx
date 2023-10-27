@@ -1,19 +1,19 @@
 import { useMemo, useRef, useEffect, useContext, createContext } from 'react';
-import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { useImageFilters } from '~/providers/FiltersProvider';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
-import { removeEmpty } from '~/utils/object-helpers';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { CollectionMode, ReviewReactions } from '@prisma/client';
+import { ImageGetById, ImageGetInfinite } from '~/types/router';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 
 type ImageDetailState = {
-  images: ImageV2Model[];
-  image?: ImageV2Model;
+  images: ImageGetInfinite;
+  image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
   connect?: ImageGuardConnect;
@@ -50,6 +50,8 @@ export function ImageDetailProvider({
     limit?: number;
     prioritizedUserIds?: number[];
     tags?: number[];
+    reactions?: ReviewReactions[];
+    collectionId?: number;
   } & Record<string, unknown>;
 }) {
   const router = useRouter();
@@ -57,15 +59,27 @@ export function ImageDetailProvider({
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId, modelId, modelVersionId, username } = filters;
-
+  const { postId, modelId, modelVersionId, username, reactions, collectionId } = filters;
   // #region [data fetching]
-  const { images, isLoading: imagesLoading } = useQueryImages(filters);
+  const shouldFetchMany = Object.keys(filters).length > 0;
+  const { images = [], isInitialLoading: imagesLoading } = useQueryImages(
+    // TODO: Hacky way to prevent sending the username when filtering by reactions
+    { ...filters, username: !!reactions?.length ? undefined : username },
+    {
+      enabled: shouldFetchMany,
+    }
+  );
 
-  // TODO.Briant - return to this
+  const { data: collectionData, isLoading: isLoadingCollection } = trpc.collection.getById.useQuery(
+    { id: collectionId as number },
+    { enabled: !!collectionId }
+  );
+
+  const collection = collectionData?.collection;
+
   const shouldFetchImage =
-    !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
-  const { data: prefetchedImage, isLoading: imageLoading } = trpc.image.get.useQuery(
+    !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
+  const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }
   );
@@ -176,6 +190,7 @@ export function ImageDetailProvider({
     : modelId
     ? { entityType: 'model', entityId: modelId }
     : undefined;
+  const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
     <ImageDetailContext.Provider
@@ -196,7 +211,9 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      {children}
+      <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+        {children}
+      </ReactionSettingsProvider>
     </ImageDetailContext.Provider>
   );
 }

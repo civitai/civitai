@@ -11,11 +11,24 @@ export const modelWebhooks = createWebhookProcessor({
   'new-model': {
     displayName: 'New Models',
     getData: async ({ lastSent, prisma }) => {
+      const now = new Date();
       const models = await prisma.model.findMany({
         where: {
-          publishedAt: {
-            gt: lastSent,
-          },
+          OR: [
+            {
+              publishedAt: {
+                gt: lastSent,
+                lte: now,
+              },
+              status: 'Published',
+            },
+            {
+              publishedAt: {
+                lt: lastSent,
+              },
+              status: 'Scheduled',
+            },
+          ],
           deletedAt: null,
         },
         select: getAllModelsWithVersionsSelect,
@@ -47,7 +60,7 @@ export const modelWebhooks = createWebhookProcessor({
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.metadata.format,
+                  meta: file.metadata,
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
@@ -66,10 +79,6 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
-      console.log(
-        lastSent,
-        results.map((x) => x.name)
-      );
       return results;
     },
   },
@@ -115,7 +124,7 @@ export const modelWebhooks = createWebhookProcessor({
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.metadata.format,
+                  meta: file.metadata,
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
@@ -134,7 +143,6 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
-      console.log(results.map((x) => x.name));
       return results;
     },
   },

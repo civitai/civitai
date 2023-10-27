@@ -5,7 +5,8 @@ import { Partner } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { isMaintenanceMode } from '~/env/other';
-import { Session } from 'next-auth';
+import { Session, SessionUser } from 'next-auth';
+import { AxiomAPIRequest, withAxiom } from 'next-axiom';
 
 export function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse) {
   if (isMaintenanceMode) {
@@ -21,24 +22,26 @@ export function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse)
 
 export function TokenSecuredEndpoint(
   token: string,
-  handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
-  return async (req: NextApiRequest, res: NextApiResponse) => {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (req.query.token !== token) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
 
     await handler(req, res);
-  };
+  });
 }
 
-export function JobEndpoint(handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>) {
+export function JobEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
   return TokenSecuredEndpoint(env.JOB_TOKEN, handler);
 }
 
 export function WebhookEndpoint(
-  handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return TokenSecuredEndpoint(env.WEBHOOK_TOKEN, handler);
 }
@@ -68,24 +71,24 @@ const addPublicCacheHeaders = (req: NextApiRequest, res: NextApiResponse) => {
 };
 
 export function PublicEndpoint(
-  handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
-  return async (req: NextApiRequest, res: NextApiResponse) => {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
     addPublicCacheHeaders(req, res);
     if (shouldStop) return;
     await handler(req, res);
-  };
+  });
 }
 
 export function AuthedEndpoint(
-  handler: (req: NextApiRequest, res: NextApiResponse, user: Session['user']) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
-  return async (req: NextApiRequest, res: NextApiResponse) => {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
@@ -97,18 +100,18 @@ export function AuthedEndpoint(
     const session = await getServerAuthSession({ req, res });
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
     await handler(req, res, session.user);
-  };
+  });
 }
 
 export function MixedAuthEndpoint(
   handler: (
-    req: NextApiRequest,
+    req: AxiomAPIRequest,
     res: NextApiResponse,
     user: Session['user'] | undefined
-  ) => Promise<void>,
+  ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
-  return async (req: NextApiRequest, res: NextApiResponse) => {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
     if (!req.method || !allowedMethods.includes(req.method))
@@ -120,14 +123,14 @@ export function MixedAuthEndpoint(
     if (shouldStop) return;
 
     await handler(req, res, session?.user);
-  };
+  });
 }
 
 export function PartnerEndpoint(
-  handler: (req: NextApiRequest, res: NextApiResponse, partner: Partner) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse, partner: Partner) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
-  return async (req: NextApiRequest, res: NextApiResponse) => {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
     if (!req.method || !allowedMethods.includes(req.method))
@@ -140,14 +143,14 @@ export function PartnerEndpoint(
     if (!partner) return res.status(401).json({ error: 'Unauthorized', message: 'Bad token' });
 
     await handler(req, res, partner);
-  };
+  });
 }
 
 export function ModEndpoint(
-  handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
-  return async (req: NextApiRequest, res: NextApiResponse) => {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
@@ -156,5 +159,5 @@ export function ModEndpoint(
     if (!isModerator || bannedAt) return res.status(401).json({ error: 'Unauthorized' });
 
     await handler(req, res);
-  };
+  });
 }

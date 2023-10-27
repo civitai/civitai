@@ -1,7 +1,8 @@
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
+import { toJson } from '~/utils/json-helpers';
 
 function getUrlDomain(url: string) {
   // convert url string into a URL object and extract just the domain, avoiding subdomains
@@ -14,12 +15,17 @@ export function splitUppercase(value: string) {
     .trim()
     .split(/([A-Z][a-z]+|[0-9]+)/)
     .map((word) => word.trim())
+    .filter(Boolean)
     .join(' ');
 }
 
 const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
+  scheduler: 'Sampler',
+  TextualInversion: 'Embedding',
+  MotionModule: 'Motion',
+  BenefactorsOnly: 'Supporters Only',
 };
 export function getDisplayName(value: string) {
   return nameOverrides[value] ?? splitUppercase(value);
@@ -123,4 +129,18 @@ export function hashify(str: string) {
     hash |= 0; // Convert to 32bit integer
   }
   return hash;
+}
+
+export function hashifyObject(obj: any) {
+  if (!obj) return '';
+  const str = toJson(obj);
+  return hashify(str);
+}
+
+export function trimNonAlphanumeric(str: string | null | undefined) {
+  return str?.replace(/^[^\w]+|[^\w]+$/g, '');
+}
+
+export function removeAccents(input: string): string {
+  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }

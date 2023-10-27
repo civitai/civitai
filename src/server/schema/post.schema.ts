@@ -1,18 +1,23 @@
+import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
+import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { constants } from '~/server/common/constants';
-import { MetricTimeframe } from '@prisma/client';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).default(constants.postFilterDefaults.browsingMode),
   period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
+  draftOnly: z.boolean().optional(),
 });
 
+const postInclude = z.enum(['cosmetics']);
+export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
 export const postsQuerySchema = postsFilterSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(50),
@@ -27,11 +32,19 @@ export const postsQuerySchema = postsFilterSchema.extend({
     .transform((data) => postgresSlugify(data))
     .nullish(),
   modelVersionId: z.number().optional(),
+  ids: z.array(z.number()).optional(),
+  collectionId: z.number().optional(),
+  include: z.array(postInclude).default(['cosmetics']).optional(),
+  followed: z.boolean().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().optional(),
+  title: z.string().trim().optional(),
+  tag: z.number().optional(),
+  publishedAt: z.date().optional(),
+  collectionId: z.number().optional(),
 });
 
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
@@ -41,12 +54,34 @@ export const postUpdateSchema = z.object({
   title: z.string().optional(),
   detail: z.string().optional(),
   publishedAt: z.date().optional(),
+  collectionId: z.number().nullish(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
 export const removePostTagSchema = z.object({
   tagId: z.number(),
   id: z.number(),
+});
+
+export type GetPostsByCategoryInput = z.infer<typeof getPostsByCategorySchema>;
+export const getPostsByCategorySchema = z.object({
+  cursor: z.number().optional(),
+  limit: z.number().min(1).max(30).optional(),
+  postLimit: z.number().min(1).max(30).optional(),
+  sort: z.nativeEnum(PostSort).optional(),
+  period: z.nativeEnum(MetricTimeframe).optional(),
+  periodMode: periodModeSchema,
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
+  tags: z.number().array().optional(),
+  username: z
+    .string()
+    .transform((data) => postgresSlugify(data))
+    .nullish(),
+  modelVersionId: z.number().optional(),
+  modelId: z.number().optional(),
 });
 
 export type AddPostTagInput = z.infer<typeof addPostTagSchema>;
@@ -65,16 +100,18 @@ export const addPostImageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
-  mimeType: z.string(),
+  mimeType: z.string().optional(),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
     if (value && !Object.keys(value).length) return null;
     return value;
   }, imageMetaSchema.nullish()),
+  type: z.nativeEnum(MediaType).default(MediaType.image),
+  metadata: z.object({}).passthrough().optional(),
 });
 
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
@@ -86,7 +123,7 @@ export const updatePostImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   // resources: z.array(imageResourceUpsertSchema),
 });
 

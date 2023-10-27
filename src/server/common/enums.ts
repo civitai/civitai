@@ -1,6 +1,7 @@
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',
+  TrainingImagesTemp = 'training-images-temp',
   Model = 'model',
   Default = 'default',
 }
@@ -12,6 +13,8 @@ export enum ModelSort {
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
+  MostCollected = 'Most Collected',
+  MostTipped = 'Most Tipped',
   Newest = 'Newest',
 }
 
@@ -41,12 +44,20 @@ export enum QuestionStatus {
 export enum ImageSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
+  MostCollected = 'Most Collected',
+  MostTipped = 'Most Tipped',
   Newest = 'Newest',
+  Random = 'Random',
+}
+
+export enum ImageSortHidden {
+  Random = ImageSort.Random,
 }
 
 export enum PostSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
+  MostCollected = 'Most Collected',
   Newest = 'Newest',
 }
 
@@ -71,15 +82,85 @@ export enum TagSort {
   MostModels = 'Most Models',
   MostImages = 'Most Images',
   MostPosts = 'Most Posts',
+  MostArticles = 'Most Articles',
 }
 
 export enum ImageScanType {
   Moderation,
   Label,
   FaceDetection,
+  WD14,
 }
 
 export enum CommentV2Sort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+}
+
+export enum ArticleSort {
+  MostBookmarks = 'Most Bookmarks',
+  MostReactions = 'Most Reactions',
+  MostComments = 'Most Comments',
+  MostCollected = 'Most Collected',
+  MostTipped = 'Most Tipped',
+  Newest = 'Newest',
+}
+
+export enum ModelType {
+  Checkpoint = 'Checkpoint',
+  TextualInversion = 'TextualInversion',
+  MotionModule = 'MotionModule',
+  Hypernetwork = 'Hypernetwork',
+  AestheticGradient = 'AestheticGradient',
+  LORA = 'LORA',
+  LoCon = 'LoCon',
+  Controlnet = 'Controlnet',
+  Upscaler = 'Upscaler',
+  VAE = 'VAE',
+  Poses = 'Poses',
+  Wildcards = 'Wildcards',
+  Other = 'Other',
+}
+
+export enum CheckpointType {
+  Trained = 'Trained',
+  Merge = 'Merge',
+}
+
+export enum CollectionSort {
+  MostContributors = 'Most Followers',
+  Newest = 'Newest',
+}
+
+export enum SignalMessages {
+  BuzzUpdate = 'buzz:update',
+  ImageGenStatusUpdate = 'image-gen:status-update',
+  TrainingUpdate = 'training:update',
+}
+
+export enum BountySort {
+  EndingSoon = 'Ending Soon',
+  HighestBounty = 'Highest Bounty',
+  MostLiked = 'Most Liked',
+  MostDiscussed = 'Most Discussed',
+  MostContributors = 'Most Contributors',
+  MostTracked = 'Most Tracked',
+  MostEntries = 'Most Entries',
+  Newest = 'Newest',
+}
+
+export enum BountyBenefactorSort {
+  HighestAmount = 'Highest Amount',
+  Newest = 'Newest',
+}
+
+export enum BountyStatus {
+  Open = 'Open',
+  Expired = 'Expired',
+  Awarded = 'Awarded',
+}
+
+export enum CollectionReviewSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
 }

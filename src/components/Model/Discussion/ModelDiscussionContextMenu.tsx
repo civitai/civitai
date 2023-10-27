@@ -1,5 +1,11 @@
 import { GroupProps, Group, ActionIcon, Menu, Stack, Text, Button, Box } from '@mantine/core';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
+import {
+  IconDotsVertical,
+  IconTrash,
+  IconEdit,
+  IconFlag,
+  IconArrowBackUp,
+} from '@tabler/icons-react';
 import { useCommentsContext } from '~/components/CommentsV2';
 import { useCommentV2Context } from '~/components/CommentsV2/Comment/CommentProvider';
 import { DeleteComment } from '~/components/CommentsV2/Comment/DeleteComment';

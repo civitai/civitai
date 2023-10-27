@@ -1,15 +1,15 @@
 import { Alert, Button, Card, Center, Divider, Group, Loader, Stack, Title } from '@mantine/core';
 import { LinkType } from '@prisma/client';
-import { useSession } from 'next-auth/react';
 import React, { useState } from 'react';
 
 import { SocialLink } from '~/components/Account/SocialLink';
 import { SocialLinkModal } from '~/components/Account/SocialLinkModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 
 export function SocialProfileCard() {
-  const { data: session } = useSession();
+  const user = useCurrentUser();
 
   const [selectedLink, setSelectedLink] = useState<{
     id?: number;
@@ -19,8 +19,9 @@ export function SocialProfileCard() {
 
   // const utils = trpc.useContext();
   const { data, isLoading } = trpc.userLink.getAll.useQuery(
-    { userId: session?.user?.id },
+    { userId: user?.id },
     {
+      enabled: !!user,
       select: (data) => {
         return {
           social: data?.filter((x) => x.type === LinkType.Social),
@@ -29,6 +30,8 @@ export function SocialProfileCard() {
       },
     }
   );
+
+  if (!user) return null;
 
   const renderLinks = (type: LinkType) => {
     const links = type === LinkType.Social ? data?.social : data?.sponsorship;

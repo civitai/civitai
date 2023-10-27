@@ -1,4 +1,4 @@
-import React, { ChangeEvent, ReactElement, useRef, useState, forwardRef } from 'react';
+import React, { ChangeEvent, forwardRef, ReactElement, useRef, useState } from 'react';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -9,7 +9,7 @@ type FileInputProps = {
 };
 
 // eslint-disable-next-line react/display-name
-const FileInput = forwardRef<HTMLInputElement, FileInputProps>(
+const CivFileInput = forwardRef<HTMLInputElement, FileInputProps>(
   ({ onChange, ...restOfProps }, forwardedRef) => {
     const handleChange = (event: ChangeEvent<HTMLInputElement>): void => {
       const files = Array.from(event.target?.files ?? []);
@@ -27,8 +27,9 @@ type TrackedFile = {
   size: number;
   speed: number;
   timeRemaining: number;
-  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+  status: UploadStatus;
   abort: () => void;
+  name: string;
 };
 
 type UseS3UploadOptions = {
@@ -37,9 +38,11 @@ type UseS3UploadOptions = {
 };
 
 type UploadResult = {
-  url: string;
+  url: string | null;
   bucket: string;
   key: string;
+  name?: string;
+  size?: number;
 };
 
 type RequestOptions = {
@@ -71,7 +74,7 @@ type UseS3UploadTools = {
 
 type UseS3Upload = (options?: UseS3UploadOptions) => UseS3UploadTools;
 
-type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
+type UploadStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
 
 const pendingTrackedFile = {
   progress: 0,
@@ -81,6 +84,7 @@ const pendingTrackedFile = {
   timeRemaining: 0,
   status: 'pending',
   abort: () => undefined,
+  name: '',
 };
 
 export const useS3Upload: UseS3Upload = (options = {}) => {
@@ -170,6 +174,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             speed,
             timeRemaining,
             status: 'uploading',
+            name: file.name,
           });
         }
       };
@@ -254,16 +259,23 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       }
 
       // Complete the multipart upload
-      await completeUpload();
-      await updateFile({ status: 'success' });
+      const resp = await completeUpload();
+      // this can happen with a 0-byte file, among other things
+      if (!resp.ok) {
+        updateFile({ status: 'error', file: undefined });
+        await abortUpload();
+        return { url: null, bucket, key };
+      }
+
+      updateFile({ status: 'success' });
 
       const url = urls[0].url.split('?')[0];
-      return { url, bucket, key };
+      return { url, bucket, key, name: file.name, size: file.size };
     }
   };
 
   return {
-    FileInput: (props: any) => <FileInput {...props} ref={ref} style={{ display: 'none' }} />, //eslint-disable-line
+    FileInput: (props: any) => <CivFileInput {...props} ref={ref} style={{ display: 'none' }} />, //eslint-disable-line
     openFileDialog,
     uploadToS3,
     files,

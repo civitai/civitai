@@ -17,7 +17,7 @@ type HiddenTags = { moderatedTags: number[]; hiddenTags: number[] };
 async function getHiddenTags(userId: number) {
   log(`fetching hidden tags for user: ${userId}`);
   const tags = await dbWrite.tagEngagement.findMany({
-    where: { userId, type: { in: [TagEngagementType.Hide, TagEngagementType.Allow] } },
+    where: { userId, type: TagEngagementType.Hide },
     select: { tag: { select: { id: true } }, type: true },
   });
   const { showNsfw } =
@@ -27,7 +27,9 @@ async function getHiddenTags(userId: number) {
     })) ?? {};
 
   const moderationTags = await getModerationTags();
-  const moderatedTags = new Set(moderationTags.map((x) => x.id));
+  const moderatedTags = new Set(
+    moderationTags.filter((x) => !showNsfw || x.nsfw === 'Blocked').map((x) => x.id)
+  );
   const hiddenTags = [];
 
   // If NSFW is disabled, also add additional civitai hidden tags
@@ -40,19 +42,15 @@ async function getHiddenTags(userId: number) {
   }
 
   for (const { tag, type } of tags) {
-    if (type === TagEngagementType.Hide) {
-      hiddenTags.push(tag.id);
-    } else if (showNsfw && type === TagEngagementType.Allow) {
-      moderatedTags.delete(tag.id);
-    }
+    if (type === TagEngagementType.Hide) hiddenTags.push(tag.id);
   }
 
   // Add hidden tags of hidden tags
-  // const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
-  //   where: { fromTagId: { in: [...moderatedTags] } },
-  //   select: { toTagId: true },
-  // });
-  // hiddenTags.push(...hiddenTagsOfHiddenTags.map((x) => x.toTagId));
+  const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
+    where: { fromTagId: { in: [...moderatedTags] } },
+    select: { toTagId: true },
+  });
+  hiddenTags.push(...hiddenTagsOfHiddenTags.map((x) => x.toTagId));
 
   log(`fetched hidden tags for user: ${userId}`);
   return {
@@ -184,7 +182,15 @@ async function getHiddenImages(userId: number) {
     select: { imageId: true },
   });
 
-  const hiddenImages = [...new Set(votedHideImages?.map((x) => x.imageId) ?? [])];
+  const selectedHideImages = await dbWrite.imageEngagement.findMany({
+    where: { userId, type: UserEngagementType.Hide },
+    select: { imageId: true },
+  });
+
+  const hiddenImages = [
+    ...selectedHideImages.map((x) => x.imageId),
+    ...new Set(votedHideImages?.map((x) => x.imageId) ?? []),
+  ];
   return hiddenImages;
 }
 

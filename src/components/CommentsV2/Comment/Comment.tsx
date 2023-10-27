@@ -1,11 +1,29 @@
-import { GroupProps, Group, ActionIcon, Menu, Stack, Text, Button, Box } from '@mantine/core';
-import { useState } from 'react';
+import {
+  GroupProps,
+  Group,
+  ActionIcon,
+  Menu,
+  Stack,
+  Text,
+  Button,
+  Box,
+  createStyles,
+} from '@mantine/core';
+import { useEffect, useState } from 'react';
 import { useCommentsContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
+import {
+  IconDotsVertical,
+  IconTrash,
+  IconEdit,
+  IconFlag,
+  IconArrowBackUp,
+  IconEye,
+  IconEyeOff,
+} from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -17,6 +35,7 @@ import { CommentReactions } from './CommentReactions';
 import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
+import { useMutateComment } from '../commentv2.utils';
 
 type Store = {
   id?: number;
@@ -29,28 +48,49 @@ const useStore = create<Store>((set) => ({
 
 type CommentProps = Omit<GroupProps, 'children'> & {
   comment: InfiniteCommentResults['comments'][0];
+  resourceOwnerId?: number;
 };
 
-export function Comment({ comment, ...groupProps }: CommentProps) {
+export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProps) {
   return (
-    <CommentProvider comment={comment}>
+    <CommentProvider comment={comment} resourceOwnerId={resourceOwnerId}>
       <CommentContent comment={comment} {...groupProps} />
     </CommentProvider>
   );
 }
 
 export function CommentContent({ comment, ...groupProps }: CommentProps) {
-  const { entityId, entityType } = useCommentsContext();
-  const { canDelete, canEdit, canReply, badge, canReport } = useCommentV2Context();
+  const { entityId, entityType, highlighted } = useCommentsContext();
+  const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
+
+  const { classes, cx } = useStyles();
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
+  const { toggleHide } = useMutateComment();
+
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
 
+  const isHighlighted = highlighted === comment.id;
+  useEffect(() => {
+    if (!isHighlighted) return;
+    const elem = document.getElementById(`comment-${comment.id}`);
+    if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  }, [isHighlighted, comment.id]);
+
   return (
-    <Group align="flex-start" noWrap {...groupProps} spacing="sm">
+    <Group
+      id={`comment-${comment.id}`}
+      align="flex-start"
+      noWrap
+      {...groupProps}
+      spacing="sm"
+      className={cx(groupProps.className, {
+        [classes.highlightedComment]: isHighlighted,
+      })}
+    >
       <UserAvatar user={comment.user} size="md" linkToProfile />
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
@@ -99,6 +139,20 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
                     </Menu.Item>
                   )}
                 </>
+              )}
+              {canHide && (
+                <Menu.Item
+                  icon={
+                    comment.hidden ? (
+                      <IconEye size={14} stroke={1.5} />
+                    ) : (
+                      <IconEyeOff size={14} stroke={1.5} />
+                    )
+                  }
+                  onClick={() => toggleHide({ id: comment.id, entityType, entityId })}
+                >
+                  {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+                </Menu.Item>
               )}
               {canReport && (
                 <LoginRedirect reason="report-model">
@@ -158,3 +212,12 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
     </Group>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  highlightedComment: {
+    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
+    margin: `-${theme.spacing.xs}px`,
+    padding: `${theme.spacing.xs}px`,
+    borderRadius: theme.radius.sm,
+  },
+}));

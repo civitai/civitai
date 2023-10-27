@@ -10,7 +10,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 const schema = z.object({ query: z.string().optional() });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller(publicApiContext);
+  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
   try {
     const query = await schema.parseAsync(req.query);
     const users = await apiCaller.user.getAll({ ...query, limit: 5 });

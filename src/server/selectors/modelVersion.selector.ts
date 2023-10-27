@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { modelFileSelect } from './modelFile.selector';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
@@ -7,34 +8,29 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   createdAt: true,
   updatedAt: true,
   trainedWords: true,
+  trainingStatus: true,
+  trainingDetails: true,
   baseModel: true,
+  baseModelType: true,
   earlyAccessTimeFrame: true,
   description: true,
-  files: {
+  vaeId: true,
+  rank: {
     select: {
-      name: true,
-      id: true,
-      sizeKB: true,
-      type: true,
-      metadata: true,
-      pickleScanResult: true,
-      pickleScanMessage: true,
-      virusScanResult: true,
-      scannedAt: true,
-      hashes: {
-        select: {
-          type: true,
-          hash: true,
-        },
-      },
+      downloadCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
     },
+  },
+  files: {
+    select: modelFileSelect,
   },
 });
 
 export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   ...getModelVersionDetailsSelect,
   model: {
-    select: { name: true, type: true, nsfw: true, poi: true },
+    select: { name: true, type: true, nsfw: true, poi: true, mode: true },
   },
 });
 const modelVersionApi = Prisma.validator<Prisma.ModelVersionArgs>()({

@@ -1,76 +1,103 @@
-import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
+import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
+import { MetricTimeframe } from '@prisma/client';
+import { IconCloudOff } from '@tabler/icons-react';
+import { debounce, isEqual } from 'lodash-es';
+import { useEffect, useMemo } from 'react';
+import { useInView } from 'react-intersection-observer';
+
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
-import { trpc } from '~/utils/trpc';
-import { createContext, useMemo, useContext } from 'react';
-import { usePostFilters } from '~/providers/FiltersProvider';
-import { useRouter } from 'next/router';
-import { Alert, Center, Loader } from '@mantine/core';
-import { QS } from '~/utils/qs';
+import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
+import { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
   modelVersionId?: number; // not hooked up to service/schema yet
-  username?: string;
-};
-const PostsInfiniteContext = createContext<PostsInfiniteState | null>(null);
-export const usePostsInfiniteState = () => {
-  const context = useContext(PostsInfiniteContext);
-  if (!context) throw new Error('ImagesInfiniteContext not in tree');
-  return context;
+  tags?: number[];
+  username?: string | null;
+  period?: MetricTimeframe;
+  sort?: PostSort;
+  collectionId?: number;
+  draftOnly?: boolean;
+  followed?: boolean;
 };
 
-type PostsInfiniteProps = PostsInfiniteState & { columnWidth?: number };
+type PostsInfiniteProps = {
+  filters?: PostsInfiniteState;
+  showEof?: boolean;
+};
 
 export default function PostsInfinite({
-  columnWidth = 300,
-  username,
-  modelId,
-  modelVersionId,
+  filters: filterOverrides = {},
+  showEof = false,
 }: PostsInfiniteProps) {
-  const router = useRouter();
-  const postId = router.query.post ? Number(router.query.post) : undefined;
-  const globalFilters = usePostFilters();
-  const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, username, modelId, modelVersionId }),
-    [globalFilters, username, modelId, modelVersionId]
-  );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.post.getInfinite.useInfiniteQuery(
-      { ...filters, tags: filters.tags ?? undefined },
-      {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-        trpc: { context: { skipBatch: true } },
-        keepPreviousData: true,
-      }
-    );
+  const { ref, inView } = useInView();
+  const postFilters = usePostFilters();
+  const filters = removeEmpty({ ...postFilters, ...filterOverrides });
+  showEof = showEof && filters.period !== MetricTimeframe.AllTime;
+  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const posts = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
+    debouncedFilters,
+    { keepPreviousData: true }
+  );
+  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
+
+  // #region [infinite data fetching]
+  useEffect(() => {
+    if (inView && !isFetching) debouncedFetchNextPage();
+  }, [debouncedFetchNextPage, inView, isFetching]);
+  // #endregion
+
+  //#region [useEffect] cancel debounced filters
+  useEffect(() => {
+    if (isEqual(filters, debouncedFilters)) cancel();
+  }, [cancel, debouncedFilters, filters]);
+  //#endregion
 
   return (
-    <PostsInfiniteContext.Provider value={{ modelId, modelVersionId, username }}>
+    <>
       {isLoading ? (
         <Center p="xl">
           <Loader />
         </Center>
       ) : !!posts.length ? (
-        <MasonryGrid2
-          data={posts}
-          hasNextPage={hasNextPage}
-          isRefetching={isRefetching}
-          isFetchingNextPage={isFetchingNextPage}
-          fetchNextPage={fetchNextPage}
-          columnWidth={columnWidth}
-          render={PostsCard}
-          filters={filters}
-          scrollToIndex={(data) => data.findIndex((x) => x.id === postId)}
-        />
+        <div style={{ position: 'relative' }}>
+          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          <MasonryColumns
+            data={posts}
+            imageDimensions={(data) => {
+              const width = data?.image.width ?? 450;
+              const height = data?.image.height ?? 450;
+              return { width, height };
+            }}
+            maxItemHeight={600}
+            render={PostsCard}
+            itemId={(data) => data.id}
+          />
+          {hasNextPage && !isLoading && !isRefetching && (
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
+            </Center>
+          )}
+          {!hasNextPage && showEof && <EndOfFeed />}
+        </div>
       ) : (
-        <Center>
-          <Alert>There are no posts to display</Alert>
-        </Center>
+        <Stack align="center" py="lg">
+          <ThemeIcon size={128} radius={100}>
+            <IconCloudOff size={80} />
+          </ThemeIcon>
+          <Text size={32} align="center">
+            No results found
+          </Text>
+          <Text align="center">
+            {"Try adjusting your search or filters to find what you're looking for"}
+          </Text>
+        </Stack>
       )}
-    </PostsInfiniteContext.Provider>
+    </>
   );
 }

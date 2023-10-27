@@ -1,6 +1,10 @@
-import { isFutureDate } from '~/utils/date-helpers';
+import { chunk } from 'lodash-es';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
@@ -9,6 +13,13 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { playfab } from '~/server/playfab/client';
+import { Currency } from '@prisma/client';
+import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
+import { MetadataParam } from '@stripe/stripe-js';
+import { constants } from '~/server/common/constants';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
+import { TransactionType } from '../schema/buzz.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -127,7 +138,7 @@ export const createSubscribeSession = async ({
     customer: customerId,
   });
 
-  if (subscriptions.length > 0) {
+  if (subscriptions.filter((x) => x.status !== 'canceled').length > 0) {
     const { url } = await createManageSubscriptionSession({ customerId });
     await invalidateSession(user.id);
     return { sessionId: null, url };
@@ -183,6 +194,7 @@ export const createDonateSession = async ({
     cancel_url: returnUrl,
     line_items: [{ price: env.STRIPE_DONATE_ID, quantity: 1 }],
     mode: 'payment',
+    submit_type: 'donate',
     success_url: `${baseUrl}/payment/success?type=donation&cid=${customerId.slice(-8)}`,
   });
 
@@ -200,10 +212,53 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const createBuzzSession = async ({
+  customerId,
+  user,
+  returnUrl,
+  priceId,
+  customAmount,
+}: Schema.CreateBuzzSessionInput & { customerId?: string; user: Schema.CreateCustomerInput }) => {
+  const stripe = await getServerStripe();
+
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  const price = await dbRead.price.findUnique({
+    where: { id: priceId },
+    select: { productId: true, currency: true, type: true },
+  });
+  if (!price)
+    throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
+
+  const session = await stripe.checkout.sessions.create({
+    customer: customerId,
+    cancel_url: returnUrl,
+    line_items: [
+      customAmount
+        ? {
+            price_data: {
+              unit_amount: customAmount * 100,
+              currency: price.currency,
+              product: price.productId,
+            },
+            quantity: 1,
+          }
+        : { price: priceId, quantity: 1 },
+    ],
+    mode: price.type === 'recurring' ? 'subscription' : 'payment',
+    success_url: returnUrl,
+  });
+
+  return { sessionId: session.id, url: session.url };
+};
+
 export const upsertSubscription = async (
   subscription: Stripe.Subscription,
   customerId: string,
-  eventDate: Date
+  eventDate: Date,
+  eventType: string
 ) => {
   const user = await dbWrite.user.findFirst({
     where: { customerId: customerId },
@@ -216,7 +271,14 @@ export const upsertSubscription = async (
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
-  if (user.subscription?.updatedAt && user.subscription.updatedAt >= eventDate) {
+
+  const userHasSubscription = !!user.subscriptionId;
+  const startingNewSubscription = userHasSubscription && user.subscriptionId !== subscription.id;
+  const isCreatingSubscription = eventType === 'customer.subscription.created';
+  if (startingNewSubscription) {
+    log('Subscription id changed, deleting old subscription');
+    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+  } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
     return;
   }
@@ -240,7 +302,9 @@ export const upsertSubscription = async (
   };
 
   await dbWrite.$transaction([
-    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    isCreatingSubscription
+      ? dbWrite.customerSubscription.create({ data })
+      : dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
 
@@ -324,19 +388,35 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
     expand: ['line_items'],
   });
 
-  const purchases = line_items?.data.map((data) => ({
-    customerId,
-    priceId: data.price?.id,
-    productId: data.price?.product as string | undefined,
-    status: payment_status,
-  }));
+  const purchases =
+    line_items?.data.map((data) => ({
+      customerId,
+      priceId: data.price?.id,
+      productId: data.price?.product as string | undefined,
+      status: payment_status,
+    })) ?? [];
 
-  if (purchases) {
+  if (purchases.length > 0) {
     await dbWrite.purchase.createMany({ data: purchases });
   }
 };
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
+  // Check if user exists and has a customerId
+  // Use write db to avoid replication lag between webhook requests
+  const user = await dbWrite.user.findUnique({
+    where: { email: invoice.customer_email as string },
+    select: { id: true, customerId: true },
+  });
+  if (user && !user.customerId) {
+    // Since we're handling an invoice, we assume that the user
+    // is already created in stripe. We just update in our records
+    await dbWrite.user.update({
+      where: { id: user.id },
+      data: { customerId: invoice.customer as string },
+    });
+  }
+
   const purchases = invoice.lines.data.map((data) => ({
     customerId: invoice.customer as string,
     priceId: data.price?.id,
@@ -345,6 +425,19 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   }));
 
   await dbWrite.purchase.createMany({ data: purchases });
+
+  // Don't check for subscription active because there is a chance it hasn't been updated yet
+  if (invoice.subscription && user) {
+    await createBuzzTransaction({
+      fromAccountId: 0,
+      toAccountId: user.id,
+      type: TransactionType.Reward,
+      externalTransactionId: invoice.id,
+      amount: 5000, // Hardcoded for now cause we only have one subscription option
+      description: 'Membership bonus',
+      details: { invoiceId: invoice.id },
+    }).catch(handleLogError);
+  }
 };
 
 export const cancelSubscription = async ({
@@ -366,4 +459,143 @@ export const cancelSubscription = async ({
   if (!subscriptionId) throw new Error('No subscription found');
   const stripe = await getServerStripe();
   await stripe.subscriptions.del(subscriptionId);
+};
+
+export const getBuzzPackages = async () => {
+  const [buzzProduct] = await dbRead.product.findMany({
+    where: { active: true, metadata: { path: ['tier'], equals: 'buzz' } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      defaultPriceId: true,
+      prices: {
+        where: { active: true },
+        orderBy: { unitAmount: { sort: 'asc', nulls: 'last' } },
+        select: {
+          id: true,
+          description: true,
+          unitAmount: true,
+          currency: true,
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  return buzzProduct.prices.map(({ metadata, description, ...price }) => {
+    const meta = Schema.buzzPriceMetadataSchema.safeParse(metadata);
+
+    return {
+      ...price,
+      name: description,
+      buzzAmount: meta.success ? meta.data.buzzAmount : null,
+      description: meta.success ? meta.data.bonusDescription : null,
+    };
+  });
+};
+
+export const getPaymentIntent = async ({
+  unitAmount,
+  currency = Currency.USD,
+  metadata,
+  paymentMethodTypes,
+  customerId,
+  user,
+}: PaymentIntentCreationSchema & { user: { id: number; email: string }; customerId?: string }) => {
+  // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  if (unitAmount < constants.buzz.minChargeAmount) {
+    throw throwBadRequestError(
+      `Minimum purchase amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount / 100)}`
+    );
+  }
+  if (unitAmount > constants.buzz.maxChargeAmount) {
+    throw throwBadRequestError(
+      `Maximum purchase amount is $${formatPriceForDisplay(constants.buzz.maxChargeAmount / 100)}`
+    );
+  }
+
+  const stripe = await getServerStripe();
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: unitAmount,
+    currency,
+    automatic_payment_methods: !paymentMethodTypes
+      ? {
+          enabled: true,
+        }
+      : undefined,
+    customer: customerId,
+    metadata: metadata as MetadataParam,
+    payment_method_types: paymentMethodTypes || undefined,
+  });
+
+  return {
+    clientSecret: paymentIntent.client_secret,
+  };
+};
+
+export const getPaymentIntentsForBuzz = async ({
+  userId,
+  startingAt,
+  endingAt,
+}: Schema.GetPaymentIntentsForBuzzSchema) => {
+  let customer: string | undefined;
+  if (userId) {
+    const user = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { customerId: true },
+    });
+    if (!user) throw new Error(`No user with id ${userId}`);
+
+    customer = user.customerId ?? undefined; // undefined is required for the stripe api
+  }
+
+  // Converting to unix timestamps because that's what the stripe api expects
+  const unixStartingAt = startingAt ? Math.floor(startingAt.getTime() / 1000) : undefined;
+  const unixEndingAt = endingAt ? Math.floor(endingAt.getTime() / 1000) : undefined;
+
+  const stripe = await getServerStripe();
+  const paymentIntents = await stripe.paymentIntents.list({
+    customer,
+    limit: 100, // max limit is 100
+    created:
+      unixStartingAt || unixEndingAt ? { gte: unixStartingAt, lte: unixEndingAt } : undefined,
+  });
+
+  const filteredPayments = paymentIntents.data.filter(
+    (intent) =>
+      intent.status === 'succeeded' &&
+      intent.metadata.type === 'buzzPurchase' &&
+      !intent.metadata.transactionId
+  );
+  const batches = chunk(filteredPayments, 10);
+
+  const processedPurchases: Array<{ transactionId: string }> = [];
+  for (const batch of batches) {
+    const processed = await Promise.all(
+      batch.map((intent) => {
+        const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
+
+        return completeStripeBuzzTransaction({
+          amount: metadata.buzzAmount ?? intent.amount * 10,
+          stripePaymentIntentId: intent.id,
+          details: {
+            userId,
+            unitAmount: intent.amount,
+            buzzAmount: intent.amount * 10,
+            type: 'buzzPurchase',
+            ...intent.metadata,
+          },
+          userId: metadata.userId ?? userId,
+        });
+      })
+    );
+    processedPurchases.concat(processed);
+  }
+
+  return processedPurchases;
 };

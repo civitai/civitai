@@ -1,5 +1,5 @@
 import { Button, ButtonProps, Tooltip } from '@mantine/core';
-import { IconPlayerPlay } from '@tabler/icons';
+import { IconPlayerPlay } from '@tabler/icons-react';
 import { openContext } from '~/providers/CustomModalsProvider';
 
 export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {

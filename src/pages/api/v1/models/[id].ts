@@ -1,4 +1,4 @@
-import { ModelHashType } from '@prisma/client';
+import { ModelHashType, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -29,18 +29,19 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   const baseUrl = getBaseUrl();
 
-  const apiCaller = appRouter.createCaller({ ...publicApiContext });
+  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
   try {
     const { modelVersions, tagsOnModels, user, ...model } =
       await apiCaller.model.getByIdWithVersions({ id });
 
     res.status(200).json({
       ...model,
+      mode: model.mode == null ? undefined : model.mode,
       creator: {
         username: user.username,
         image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
       },
-      tags: tagsOnModels.map((tag) => tag.tag),
+      tags: tagsOnModels.map((tag) => tag.tag.name),
       modelVersions: modelVersions
         .map(({ images, files, ...version }) => {
           const castedFiles = files as Array<
@@ -49,28 +50,39 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           const primaryFile = getPrimaryFile(castedFiles);
           if (!primaryFile) return null;
 
+          const includeDownloadUrl = model.mode !== ModelModifier.Archived;
+          const includeImages = model.mode !== ModelModifier.TakenDown;
+
           return {
             ...version,
-            files: castedFiles.map(({ hashes, ...file }) => ({
-              ...file,
-              name: getDownloadFilename({ model, modelVersion: version, file }),
-              hashes: hashesAsObject(hashes),
-              downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                versionId: version.id,
-                type: file.type,
-                format: file.metadata.format,
-                primary: primaryFile.id === file.id,
-              })}`,
-              primary: primaryFile.id === file.id ? true : undefined,
-            })),
-            images: images.map(({ url, id, ...image }) => ({
-              url: getEdgeUrl(url, { width: 450, name: id.toString() }),
-              ...image,
-            })),
-            downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-              versionId: version.id,
-              primary: true,
-            })}`,
+            files: includeDownloadUrl
+              ? castedFiles.map(({ hashes, ...file }) => ({
+                  ...file,
+                  name: getDownloadFilename({ model, modelVersion: version, file }),
+                  hashes: hashesAsObject(hashes),
+                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    type: file.type,
+                    meta: file.metadata,
+                    primary: primaryFile.id === file.id,
+                  })}`,
+                  primary: primaryFile.id === file.id ? true : undefined,
+                  url: undefined,
+                  visibility: undefined,
+                }))
+              : [],
+            images: includeImages
+              ? images.map(({ url, id, ...image }) => ({
+                  url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+                  ...image,
+                }))
+              : [],
+            downloadUrl: includeDownloadUrl
+              ? `${baseUrl}${createModelFileDownloadUrl({
+                  versionId: version.id,
+                  primary: true,
+                })}`
+              : undefined,
           };
         })
         .filter((x) => x),
@@ -79,9 +91,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (error instanceof TRPCError) {
       const apiError = error as TRPCError;
       const status = getHTTPStatusCodeFromError(apiError);
-      const parsedError = JSON.parse(apiError.message);
 
-      res.status(status).json(parsedError);
+      res.status(status).json(apiError.message);
     } else {
       res.status(500).json({ message: 'An unexpected error occurred', error });
     }

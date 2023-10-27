@@ -1,4 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+import { FileWithPath } from '@mantine/dropzone';
+import { ImageAnalysisInput } from '~/server/schema/image.schema';
+import { TrainingResults } from '~/server/schema/model-file.schema';
+
 export {};
 
 declare global {
@@ -31,7 +36,6 @@ declare global {
     height?: number | null;
     width?: number | null;
     hash?: string;
-    nsfw?: boolean;
     tags?: Array<{ id: number; name: string; isCategory: boolean }>;
     // navigation properties
     uuid?: string;
@@ -54,16 +58,16 @@ declare global {
     speed: number;
     timeRemaining: number;
     name: string;
-    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
     abort: () => void;
     uuid: string;
     meta?: Record<string, unknown>;
     id?: number;
   };
 
-  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Other';
+  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Diffusers' | 'Other';
   type ModelFileSize = 'full' | 'pruned';
-  type ModelFileFp = 'fp32' | 'fp16';
+  type ModelFileFp = 'fp32' | 'fp16' | 'bf16';
   type ImageFormat = 'optimized' | 'metadata';
 
   type UserFilePreferences = {
@@ -77,5 +81,21 @@ declare global {
     format?: ModelFileFormat;
     size?: ModelFileSize;
     fp?: ModelFileFp;
+    ownRights?: boolean;
+    shareDataset?: boolean;
+    numImages?: number;
+    numCaptions?: number;
+    selectedEpochUrl?: string;
+    trainingResults?: TrainingResults;
   };
+
+  type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };
+
+  type UploadResult = { url: string; id: string };
+
+  type ImageUploadResponse = { id: string; uploadURL: string } | { error: string };
+
+  interface Window {
+    logSignal: (target: string) => void;
+  }
 }

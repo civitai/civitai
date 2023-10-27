@@ -1,3 +1,4 @@
+import { OnboardingStep } from '@prisma/client';
 import type { DefaultSession } from 'next-auth';
 
 interface ExtendedUser {
@@ -5,6 +6,8 @@ interface ExtendedUser {
   showNsfw: boolean;
   blurNsfw: boolean;
   username: string;
+  // feedbackToken?: string;
+  image?: string;
   email?: string;
   createdAt?: Date;
   tos?: boolean;
@@ -15,8 +18,13 @@ interface ExtendedUser {
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean;
-  onboarded?: boolean;
+  onboardingSteps?: OnboardingStep[];
+  permissions?: string[];
   filePreferences?: UserFilePreferences;
+  leaderboardShowcase?: string;
+  referral?: {
+    id: number;
+  };
 }
 
 declare module 'next-auth' {

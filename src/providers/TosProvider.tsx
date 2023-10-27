@@ -21,12 +21,11 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
     (!session?.user?.tos ||
       !session.user.email ||
       !session.user.username ||
-      !session.user.onboarded);
+      !!session.user.onboardingSteps?.length);
 
   return (
     <>
-      {children}
-      {opened && (
+      {opened ? (
         <Modal
           opened
           onClose={() => undefined}
@@ -37,6 +36,8 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
         >
           <DynamicOnboardingModal />
         </Modal>
+      ) : (
+        children
       )}
     </>
   );

@@ -8,13 +8,22 @@ import duration from 'dayjs/plugin/duration';
 import isBetween from 'dayjs/plugin/isBetween';
 import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import utc from 'dayjs/plugin/utc';
 import type { NextPage } from 'next';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
-import { getSession, SessionProvider } from 'next-auth/react';
-import { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { SessionProvider, getSession } from 'next-auth/react';
+import React, {
+  ReactElement,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -26,20 +35,29 @@ import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import type { FeatureFlags } from '~/server/services/feature-flags.service';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { FreezeProvider, RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
-import { FiltersProvider, FiltersInput, parseFiltersCookie } from '~/providers/FiltersProvider';
 import PlausibleProvider from 'next-plausible';
+import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
+import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
+import Router from 'next/router';
+import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
+import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
+import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
+import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
 dayjs.extend(minMax);
 dayjs.extend(relativeTime);
+dayjs.extend(utc);
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -51,8 +69,8 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: CookiesContext;
-  filters: FiltersInput;
-  flags: FeatureFlags;
+  filters: CookiesState;
+  flags: FeatureAccess;
   isMaintenanceMode: boolean | undefined;
 }>;
 
@@ -89,9 +107,36 @@ function MyApp(props: CustomAppProps) {
   }, [colorScheme]);
 
   const getLayout = useMemo(
-    () => Component.getLayout ?? ((page: any) => <AppLayout>{page}</AppLayout>),
+    () => Component.getLayout ?? ((page: React.ReactElement) => <AppLayout>{page}</AppLayout>),
     [Component.getLayout]
   );
+
+  // fixes an issue where clicking the browser back button will cause the scroll position to change before the it should
+  // https://github.com/vercel/next.js/issues/3303#issuecomment-507255105
+  const pageHeightRef = useRef<number[]>([]);
+  useEffect(() => {
+    const cachedPageHeight = pageHeightRef.current;
+    const html = document.querySelector('html');
+    if (!html) return;
+
+    const handleChangeStart = () => {
+      cachedPageHeight.push(document.documentElement.offsetHeight);
+    };
+    const handleChangeComplete = () => (html.style.height = 'initial');
+
+    Router.events.on('routeChangeStart', handleChangeStart);
+    Router.events.on('routeChangeComplete', handleChangeComplete);
+    Router.beforePopState(() => {
+      html.style.height = `${cachedPageHeight.pop()}px`;
+      return true;
+    });
+
+    return () => {
+      Router.events.off('routeChangeStart', handleChangeStart);
+      Router.events.off('routeChangeComplete', handleChangeComplete);
+      Router.beforePopState(() => true);
+    };
+  }, []);
 
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
@@ -99,25 +144,35 @@ function MyApp(props: CustomAppProps) {
     <>
       <ClientHistoryStore />
       <RegisterCatchNavigation />
-      <SessionProvider session={session}>
-        <CookiesProvider value={cookies}>
-          <FiltersProvider value={filters}>
-            <FeatureFlagsProvider flags={flags}>
-              {/* <ImageProcessingProvider> */}
-              <CivitaiLinkProvider>
-                <CustomModalsProvider>
-                  <NotificationsProvider>
-                    <FreezeProvider>
-                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                    </FreezeProvider>
-                    <RoutedContextProvider2 />
-                  </NotificationsProvider>
-                </CustomModalsProvider>
-              </CivitaiLinkProvider>
-              {/* </ImageProcessingProvider> */}
-            </FeatureFlagsProvider>
-          </FiltersProvider>
-        </CookiesProvider>
+      <RouterTransition />
+      <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
+        <FeatureFlagsProvider flags={flags}>
+          <SignalProvider>
+            <CivitaiSessionProvider>
+              <CivitaiPosthogProvider>
+                <CookiesProvider value={cookies}>
+                  <ReferralsProvider>
+                    <FiltersProvider value={filters}>
+                      <HiddenPreferencesProvider>
+                        <CivitaiLinkProvider>
+                          <CustomModalsProvider>
+                            <NotificationsProvider zIndex={9999}>
+                              <FreezeProvider>
+                                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                              </FreezeProvider>
+                              <GenerationPanel />
+                              <RoutedContextProvider2 />
+                            </NotificationsProvider>
+                          </CustomModalsProvider>
+                        </CivitaiLinkProvider>
+                      </HiddenPreferencesProvider>
+                    </FiltersProvider>
+                  </ReferralsProvider>
+                </CookiesProvider>
+              </CivitaiPosthogProvider>
+            </CivitaiSessionProvider>
+          </SignalProvider>
+        </FeatureFlagsProvider>
       </SessionProvider>
     </>
   );
@@ -164,6 +219,32 @@ function MyApp(props: CustomAppProps) {
                 },
               },
             },
+            colors: {
+              accent: [
+                '#F4F0EA',
+                '#E8DBCA',
+                '#E2C8A9',
+                '#E3B785',
+                '#EBA95C',
+                '#FC9C2D',
+                '#E48C27',
+                '#C37E2D',
+                '#A27036',
+                '#88643B',
+              ],
+              success: [
+                '#9EC3B8',
+                '#84BCAC',
+                '#69BAA2',
+                '#4CBD9C',
+                '#32BE95',
+                '#1EBD8E',
+                '#299C7A',
+                '#2F826A',
+                '#326D5C',
+                '#325D51',
+              ],
+            },
           }}
           withGlobalStyles
           withNormalizeCSS
@@ -184,14 +265,14 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
-  // if (isClient) return initialProps;
+  const url = appContext.ctx?.req?.url;
+  const isClient = !url || url?.startsWith('/_next/data');
 
   const { pageProps, ...appProps } = initialProps;
-  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
+  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
-  const filters = parseFiltersCookie(cookies);
+  const filters = parseFilterCookies(cookies);
 
   if (isMaintenanceMode) {
     return {
@@ -205,8 +286,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...appProps,
     };
   } else {
-    const session = !isClient ? await getSession(appContext.ctx) : undefined;
+    const hasAuthCookie =
+      !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+    const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
     const flags = getFeatureFlags({ user: session?.user });
+    // Pass this via the request so we can use it in SSR
+    if (session) {
+      (appContext.ctx.req as any)['session'] = session;
+      (appContext.ctx.req as any)['flags'] = flags;
+    }
     return {
       pageProps: {
         ...pageProps,

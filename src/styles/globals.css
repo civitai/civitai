@@ -6,6 +6,16 @@ body {
     Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
 }
 
+/* Don't zoom text input on iOS */
+@media only screen and (hover: none) and (pointer: coarse) {
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    font-size: 16px !important;
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;

@@ -13,12 +13,12 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { isDefined } from '~/utils/type-guards';
-import { Center, createStyles, Paper } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { Button, Center, createStyles, Paper } from '@mantine/core';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { CSS } from '@dnd-kit/utilities';
-import { IconArrowsMaximize } from '@tabler/icons';
+import { IconArrowsMaximize, IconCheck } from '@tabler/icons-react';
 import { PostEditImage } from '~/server/controllers/post.controller';
 
 export function ReorderImages() {
@@ -31,30 +31,44 @@ export function ReorderImages() {
 
   const items = images
     .map((x) => {
-      if (x.type === 'image') return x.data;
+      if (x.discriminator === 'image') return x.data;
     })
     .filter(isDefined);
   const activeItem = items.find((x) => x.id === activeId);
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
-      onDragStart={handleDragStart}
-      onDragCancel={handleDragCancel}
-    >
-      <SortableContext items={items.map((x) => x.id)}>
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
-          {items.map((image) => (
-            <SortableImage key={image.id} image={image} sortableId={image.id} activeId={activeId} />
-          ))}
-        </div>
-      </SortableContext>
-      <DragOverlay adjustScale>
-        {activeItem && <SortableImage sortableId="selected" image={activeItem} />}
-      </DragOverlay>
-    </DndContext>
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+        onDragStart={handleDragStart}
+        onDragCancel={handleDragCancel}
+      >
+        <SortableContext items={items.map((x) => x.id)}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
+            {items.map((image) => (
+              <SortableImage
+                key={image.id}
+                image={image}
+                sortableId={image.id}
+                activeId={activeId}
+              />
+            ))}
+          </div>
+        </SortableContext>
+        <DragOverlay adjustScale>
+          {activeItem && <SortableImage sortableId="selected" image={activeItem} />}
+        </DragOverlay>
+      </DndContext>
+      <ReorderImagesButton>
+        {({ onClick, isLoading }) => (
+          <Button onClick={onClick} loading={isLoading} leftIcon={<IconCheck />}>
+            Done Rearranging
+          </Button>
+        )}
+      </ReorderImagesButton>
+    </>
   );
 
   function handleDragEnd(event: DragEndEvent) {
@@ -107,7 +121,12 @@ function SortableImage({
       className={cx(classes.root, { [classes.hidden]: activeId === sortableId && isDragging })}
       style={style}
     >
-      <EdgeImage src={image.previewUrl ?? image.url} width={450} className={classes.image} />
+      <EdgeMedia
+        src={image.previewUrl ?? image.url}
+        type={image.type}
+        width={450}
+        className={classes.image}
+      />
       <Center className={classes.draggable} {...listeners} {...attributes}>
         <Paper className={classes.draggableIcon} p="xl" radius={100}>
           <IconArrowsMaximize
@@ -205,7 +224,7 @@ export function ReorderImagesButton({
         id,
         imageIds: images
           .map((x) => {
-            if (x.type === 'image') return x.data.id;
+            if (x.discriminator === 'image') return x.data.id;
           })
           .filter(isDefined),
       });
@@ -216,6 +235,6 @@ export function ReorderImagesButton({
     onClick,
     isLoading,
     isReordering,
-    canReorder: !images.filter((x) => x.type === 'upload').length,
+    canReorder: !images.filter((x) => x.discriminator === 'upload').length,
   });
 }

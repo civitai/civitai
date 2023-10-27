@@ -8,6 +8,7 @@ type CommentV2State = {
   canDelete?: boolean;
   canEdit?: boolean;
   canReply?: boolean;
+  canHide?: boolean;
   badge?: CommentV2BadgeProps;
   comment: InfiniteCommentV2Model;
 };
@@ -22,9 +23,11 @@ export const useCommentV2Context = () => {
 export function CommentProvider({
   comment,
   children,
+  resourceOwnerId: resourcerOwnerId,
 }: {
   comment: InfiniteCommentV2Model;
   children: React.ReactNode;
+  resourceOwnerId?: number;
 }) {
   const { isLocked, isMuted, badges } = useCommentsContext();
   const currentUser = useCurrentUser();
@@ -33,11 +36,21 @@ export function CommentProvider({
 
   const canDelete = isOwner || currentUser?.isModerator;
   const canEdit = (!isLocked && !isMuted) || isMod;
-  const canReply = (currentUser && !isOwner && !isLocked && !isMuted) ?? undefined;
+  const canReply =
+    (currentUser && !isOwner && !isLocked && !isMuted && !comment.hidden) ?? undefined;
+  const canHide = currentUser?.id === resourcerOwnerId || isMod;
   const badge = badges?.find((x) => x.userId === comment.user.id);
   return (
     <CommentV2Context.Provider
-      value={{ canReport: !currentUser || !isOwner, canDelete, canEdit, canReply, badge, comment }}
+      value={{
+        canReport: !currentUser || !isOwner,
+        canDelete,
+        canEdit,
+        canReply,
+        canHide,
+        badge,
+        comment,
+      }}
     >
       {children}
     </CommentV2Context.Provider>

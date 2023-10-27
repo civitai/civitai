@@ -2,6 +2,7 @@ import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ session }) => {
     if (!session) {
       return {
@@ -24,5 +25,3 @@ export const getServerSideProps = createServerSideProps({
 export default function ModelNew() {
   return <ModelWizard />;
 }
-
-ModelNew.getLayout = (page: React.ReactElement) => <>{page}</>;

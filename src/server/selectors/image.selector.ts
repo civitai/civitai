@@ -4,7 +4,6 @@ import { SessionUser } from 'next-auth';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isTag } from '~/server/schema/tag.schema';
-import { getNeedsReview } from '~/utils/image-metadata';
 
 import { getReactionsSelectV2 } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';
@@ -24,6 +23,9 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   needsReview: true,
   scannedAt: true,
   postId: true,
+  type: true,
+  metadata: true,
+  createdAt: true,
   tags: {
     select: {
       tag: { select: { ...simpleTagSelect, type: true } },
@@ -40,36 +42,6 @@ export { imageSelectWithoutName };
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
-export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
-  Prisma.validator<Prisma.ImageSelect>()({
-    ...imageSelect,
-    createdAt: true,
-    needsReview: true,
-    user: { select: userWithCosmeticsSelect },
-    connections: {
-      select: {
-        index: true,
-        modelId: true,
-        reviewId: true,
-      },
-    },
-    stats: {
-      select: {
-        cryCountAllTime: true,
-        dislikeCountAllTime: true,
-        heartCountAllTime: true,
-        laughCountAllTime: true,
-        likeCountAllTime: true,
-        commentCountAllTime: true,
-      },
-    },
-    reactions: {
-      where: { userId: user?.id },
-      take: !user?.id ? 0 : undefined,
-      select: getReactionsSelectV2,
-    },
-  });
-
 export const prepareCreateImage = (image: ImageUploadProps) => {
   let name = image.name;
   if (!name && image.mimeType === 'image/gif') name = image.url + '.gif';
@@ -77,7 +49,7 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
   const payload: Omit<Prisma.ImageCreateInput, 'user'> = {
     ...image,
     name,
-    needsReview: getNeedsReview(image),
+    // needsReview: getNeedsReview(image),
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
     generationProcess: image.meta
       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
@@ -126,3 +98,31 @@ export const prepareUpdateImage = (image: ImageUploadProps) => {
   };
   return payload;
 };
+
+export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHelperSelect>()({
+  id: true,
+  reviewId: true,
+  reviewRating: true,
+  reviewDetails: true,
+  reviewCreatedAt: true,
+  name: true,
+  hash: true,
+  modelVersionId: true,
+  modelVersionName: true,
+  modelVersionCreatedAt: true,
+  modelId: true,
+  modelName: true,
+  modelRating: true,
+  modelRatingCount: true,
+  modelDownloadCount: true,
+  modelCommentCount: true,
+  modelFavoriteCount: true,
+  modelType: true,
+});
+
+const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultArgs>()({
+  select: imageResourceHelperSelect,
+});
+export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
+  typeof imageResourceHelper
+>;

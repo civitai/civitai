@@ -1,12 +1,12 @@
 import { Alert, Group, Stack, ThemeIcon, Text } from '@mantine/core';
-import { IconMail } from '@tabler/icons';
+import { IconMail } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useState } from 'react';
 import { z } from 'zod';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { Form, InputText, useForm } from '~/libs/form';
 
-const schema = z.object({ email: z.string().email() });
+const schema = z.object({ email: z.string().trim().toLowerCase().email() });
 export const EmailLogin = () => {
   const [submitted, setSubmitted] = useState(false);
   const form = useForm({ schema });

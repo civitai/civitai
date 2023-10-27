@@ -1,9 +1,13 @@
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
+import { BrowsingMode } from '~/server/common/enums';
 import {
-  createModelHandler,
+  changeModelModifierHandler,
+  declineReviewHandler,
   deleteModelHandler,
+  findResourcesToAssociateHandler,
+  getAssociatedResourcesCardDataHandler,
   getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
@@ -14,30 +18,48 @@ import {
   getModelVersionsHandler,
   getModelWithVersionsHandler,
   getMyDraftModelsHandler,
+  getMyTrainingModelsHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
   requestReviewHandler,
   restoreModelHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
-  updateModelHandler,
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
+import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
+  changeModelModifierSchema,
+  declineReviewSchema,
   deleteModelSchema,
+  findResourcesToAssociateSchema,
   GetAllModelsOutput,
   getAllModelsSchema,
+  getAssociatedResourcesSchema,
   getDownloadSchema,
+  getModelsByCategorySchema,
+  getModelsWithCategoriesSchema,
+  getModelVersionsSchema,
   ModelInput,
-  modelSchema,
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
+  setAssociatedResourcesSchema,
+  setModelsCategorySchema,
   toggleModelLockSchema,
   unpublishModelSchema,
 } from '~/server/schema/model.schema';
+import {
+  getAllModelsWithCategories,
+  getAssociatedResourcesSimple,
+  getModelsByCategory,
+  getSimpleModelWithVersions,
+  setAssociatedResources,
+  setModelsCategory,
+} from '~/server/services/model.service';
+import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import {
   guardedProcedure,
   middleware,
@@ -46,11 +68,8 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
-import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
-import { BrowsingMode } from '~/server/common/enums';
-import { getSimpleModelWithVersions } from '~/server/services/model.service';
+import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -58,20 +77,17 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const { id } = input as { id: number };
 
   const userId = ctx.user.id;
-  let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbRead.model.findUnique({ where: { id } }))?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && !!id) {
+    const ownerId = (await dbRead.model.findUnique({ where: { id }, select: { userId: true } }))
+      ?.userId;
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
 
   return next({
     ctx: {
       // infers the `user` as non-nullable
       user: ctx.user,
-      ownerId,
     },
   });
 });
@@ -98,9 +114,9 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
 });
 
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  if (ctx.browsingMode !== BrowsingMode.All) {
-    const _input = input as GetAllModelsOutput;
-    _input.browsingMode = ctx.browsingMode;
+  const _input = input as GetAllModelsOutput;
+  _input.browsingMode ??= ctx.browsingMode;
+  if (_input.browsingMode !== BrowsingMode.All) {
     const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
     _input.excludedImageTagIds = [
       ...hidden.tags.moderatedTags,
@@ -111,7 +127,7 @@ const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
     _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
     _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
     _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];
-    if (ctx.browsingMode === BrowsingMode.SFW) {
+    if (_input.browsingMode === BrowsingMode.SFW) {
       const systemHidden = await getHiddenTagsForUser({ userId: -1 });
       _input.excludedImageTagIds = [
         ...systemHidden.moderatedTags,
@@ -131,22 +147,24 @@ export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
-    .use(applyUserPreferences)
+    // .use(applyUserPreferences)
+    .use(edgeCacheIt({ ttl: 60, tags: (input) => ['models'] }))
     .query(getModelsInfiniteHandler),
-  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
+  getAllPagedSimple: publicProcedure
+    .input(getAllModelsSchema)
+    .use(cacheIt({ ttl: 60 }))
+    .query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
+    .use(applyUserPreferences)
     .query(getModelsWithVersionsHandler),
   getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
-  getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
+  getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
-  add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
+  getMyTrainingModels: protectedProcedure
+    .input(getAllQuerySchema)
+    .query(getMyTrainingModelsHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
-  update: protectedProcedure
-    .input(modelSchema.extend({ id: z.number() }))
-    .use(isOwnerOrModerator)
-    .use(checkFilesExistence)
-    .mutation(updateModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)
     .use(isOwnerOrModerator)
@@ -176,9 +194,38 @@ export const modelRouter = router({
     .mutation(toggleModelLockHandler),
   getSimple: publicProcedure
     .input(getByIdSchema)
-    .query(({ input }) => getSimpleModelWithVersions(input)),
+    .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),
   requestReview: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(requestReviewHandler),
+  declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
+  changeMode: protectedProcedure
+    .input(changeModelModifierSchema)
+    .use(isOwnerOrModerator)
+    .mutation(changeModelModifierHandler),
+  getByCategory: publicProcedure
+    .input(getModelsByCategorySchema)
+    .use(applyUserPreferences)
+    .use(cacheIt())
+    .query(({ input, ctx }) => getModelsByCategory({ ...input, user: ctx.user })),
+  getWithCategoriesSimple: publicProcedure
+    .input(getModelsWithCategoriesSchema)
+    .query(({ input }) => getAllModelsWithCategories(input)),
+  setCategory: protectedProcedure
+    .input(setModelsCategorySchema)
+    .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
+  findResourcesToAssociate: publicProcedure
+    .input(findResourcesToAssociateSchema)
+    .query(findResourcesToAssociateHandler),
+  getAssociatedResourcesCardData: publicProcedure
+    .input(getAssociatedResourcesSchema)
+    .use(applyUserPreferences)
+    .query(getAssociatedResourcesCardDataHandler),
+  getAssociatedResourcesSimple: publicProcedure
+    .input(getAssociatedResourcesSchema)
+    .query(({ input }) => getAssociatedResourcesSimple(input)),
+  setAssociatedResources: protectedProcedure
+    .input(setAssociatedResourcesSchema)
+    .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
 });

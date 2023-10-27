@@ -14,7 +14,8 @@ import {
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { IconLock } from '@tabler/icons';
+import { IconLock } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
@@ -25,17 +26,12 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
-import {
-  CommentGetById,
-  CommentGetCommentsById,
-  ReviewGetById,
-  ReviewGetCommentsById,
-} from '~/types/router';
+import { CommentGetById, CommentGetCommentsById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function CommentSection({ comments, modelId, review, parent, highlights }: Props) {
+export function CommentSection({ comments, modelId, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const theme = useMantineTheme();
@@ -45,27 +41,18 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
 
   const editorRef = useRef<EditorCommandsRef | null>(null);
 
-  const reviewId = review?.id;
   const parentId = parent?.id;
   const form = useForm({
     schema: commentUpsertInput,
     shouldUnregister: false,
-    defaultValues: { modelId, reviewId, parentId },
+    defaultValues: { modelId, parentId },
   });
 
   const [showCommentActions, setShowCommentActions] = useState(false);
 
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onMutate() {
-      await queryUtils.review.getCommentsCount.cancel();
       await queryUtils.comment.getCommentsCount.cancel();
-
-      if (reviewId) {
-        const prevCount = queryUtils.review.getCommentsCount.getData({ id: reviewId }) ?? 0;
-        queryUtils.review.getCommentsCount.setData({ id: reviewId }, (old = 0) => old + 1);
-
-        return { prevCount };
-      }
 
       if (parentId) {
         const prevCount = queryUtils.comment.getCommentsCount.getData({ id: parentId }) ?? 0;
@@ -77,15 +64,12 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
       return {};
     },
     async onSuccess() {
-      await queryUtils.review.getCommentsById.invalidate();
       await queryUtils.comment.getCommentsById.invalidate();
 
       setShowCommentActions(false);
       form.reset();
     },
     onError(error, _variables, context) {
-      if (reviewId)
-        queryUtils.review.getCommentsCount.setData({ id: reviewId }, context?.prevCount);
       if (parentId)
         queryUtils.comment.getCommentsCount.setData({ id: parentId }, context?.prevCount);
 
@@ -97,7 +81,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
   });
 
   const isMuted = currentUser?.muted ?? false;
-  const mainComment = review ?? parent;
+  const mainComment = parent;
   const commentCount = comments.length;
   const suggestedMentions = removeDuplicates(
     [...comments, mainComment]
@@ -131,15 +115,11 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                       <Text size="xs" color={theme.colors.gray[4]}>
                         You must be logged in to add a comment
                       </Text>
-                      <Button
-                        component={NextLink}
-                        href={`/login?returnUrl=${router.asPath}`}
-                        size="xs"
-                        onClick={() => closeAllModals()}
-                        compact
-                      >
-                        Log In
-                      </Button>
+                      <Link href={`/login?returnUrl=${router.asPath}`}>
+                        <Button size="xs" onClick={() => closeAllModals()} compact>
+                          Log In
+                        </Button>
+                      </Link>
                     </Stack>
                   </Overlay>
                 ) : null}
@@ -155,7 +135,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                   innerRef={editorRef}
                   onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                   hideToolbar
-                  withLinkValidation
+                  // withLinkValidation
                 />
               </Box>
               {showCommentActions ? (
@@ -214,9 +194,8 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
 }
 
 type Props = {
-  comments: ReviewGetCommentsById | CommentGetCommentsById;
+  comments: CommentGetCommentsById;
   modelId: number;
-  review?: ReviewGetById;
   parent?: CommentGetById;
   highlights?: number[];
 };

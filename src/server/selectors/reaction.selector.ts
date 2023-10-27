@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
-export const getReactionsSelect = Prisma.validator<Prisma.ReviewReactionSelect>()({
+export const getReactionsSelect = Prisma.validator<Prisma.CommentReactionSelect>()({
   id: true,
   reaction: true,
   user: {
@@ -9,12 +9,12 @@ export const getReactionsSelect = Prisma.validator<Prisma.ReviewReactionSelect>(
   },
 });
 
-export const getReactionsSelectV2 = Prisma.validator<Prisma.ReviewReactionSelect>()({
+export const getReactionsSelectV2 = Prisma.validator<Prisma.CommentReactionSelect>()({
   userId: true,
   reaction: true,
 });
 
-export type ReactionDetails = Prisma.ReviewReactionGetPayload<typeof getReactions>;
-const getReactions = Prisma.validator<Prisma.ReviewReactionArgs>()({
+export type ReactionDetails = Prisma.CommentReactionGetPayload<typeof getReactions>;
+const getReactions = Prisma.validator<Prisma.CommentReactionArgs>()({
   select: getReactionsSelect,
 });

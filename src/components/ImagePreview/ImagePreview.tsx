@@ -16,21 +16,25 @@ import {
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
-import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons';
+import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { getClampedSize } from '~/utils/blurhash';
 import { CSSProperties, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { ImageGetInfinite } from '~/types/router';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId' | 'postId'>;
-  edgeImageProps?: Omit<EdgeImageProps, 'src'>;
+  image: Pick<
+    ImageGetInfinite[number],
+    'id' | 'url' | 'name' | 'width' | 'height' | 'hash' | 'meta' | 'generationProcess' | 'type'
+  >;
+  edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
   radius?: MantineNumberSize;
@@ -38,17 +42,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: {
-    id,
-    url,
-    name,
-    width,
-    height,
-    hash,
-    meta,
-    generationProcess,
-    needsReview: initialNeedsReview,
-  },
+  image: { id, url, name, type, width, height, hash, meta, generationProcess },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -61,20 +55,21 @@ export function ImagePreview({
   ...props
 }: ImagePreviewProps) {
   const { classes, cx } = useStyles({ radius });
-  const user = useCurrentUser();
-  const [needsReview, setNeedsReview] = useState(initialNeedsReview);
+  // const user = useCurrentUser();
+  // const [needsReview, setNeedsReview] = useState(initialNeedsReview);
 
   // TODO Briant: Perhaps move this to a moderation provider or store?
-  const moderateImagesMutation = trpc.image.moderate.useMutation();
-  const handleModerate = async (accept: boolean) => {
-    if (!user?.isModerator) return;
-    moderateImagesMutation.mutate({
-      ids: [id],
-      needsReview: accept ? false : undefined,
-      delete: !accept ? true : undefined,
-    });
-    setNeedsReview(false);
-  };
+  // const moderateImagesMutation = trpc.image.moderate.useMutation();
+  // const handleModerate = async (accept: boolean) => {
+  //   if (!user?.isModerator) return;
+  //   moderateImagesMutation.mutate({
+  //     ids: [id],
+  //     needsReview: accept ? null : undefined,
+  //     delete: !accept ? true : undefined,
+  //     reviewType: 'minor',
+  //   });
+  //   setNeedsReview(null);
+  // };
 
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
 
@@ -92,10 +87,7 @@ export function ImagePreview({
   );
 
   const Meta = !nsfw && withMeta && meta && (
-    <ImageMetaPopover
-      meta={meta as ImageMetaProps}
-      generationProcess={generationProcess ?? 'txt2img'}
-    >
+    <ImageMetaPopover meta={meta} generationProcess={generationProcess ?? 'txt2img'} imageId={id}>
       <ActionIcon variant="transparent" size="lg">
         <IconInfoCircle
           color="white"
@@ -152,6 +144,7 @@ export function ImagePreview({
   // }
 
   const edgeImageStyle: CSSProperties = {
+    ...edgeImageProps.style,
     maxHeight: '100%',
     maxWidth: '100%',
   };
@@ -162,10 +155,11 @@ export function ImagePreview({
       <MediaHash hash={hash} width={width} height={height} />
     </Center>
   ) : (
-    <EdgeImage
+    <EdgeMedia
       src={url}
       name={name ?? id.toString()}
       alt={name ?? undefined}
+      type={type}
       {...edgeImageProps}
       onClick={onClick}
       style={edgeImageStyle}

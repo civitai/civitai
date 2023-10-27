@@ -1,10 +1,11 @@
 import { Anchor, Center, Container, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { z } from 'zod';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Files } from '~/components/Resource/Files';
+import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
@@ -27,7 +28,13 @@ export default createRoutedContext({
     if (!isLoading && modelVersion && !isOwner) closeRoutedContext();
 
     return (
-      <Modal opened={context.opened} onClose={context.close} withCloseButton={false} fullScreen>
+      <Modal
+        opened={context.opened}
+        onClose={context.close}
+        withCloseButton={false}
+        closeOnEscape={false}
+        fullScreen
+      >
         <Container size="sm">
           {isLoading ? (
             <Center>
@@ -44,7 +51,9 @@ export default createRoutedContext({
                 </Anchor>
               </Link>
               <Title order={1}>Manage Files</Title>
-              <Files model={modelVersion?.model} version={modelVersion} />
+              <FilesProvider model={modelVersion?.model} version={modelVersion}>
+                <Files />
+              </FilesProvider>
             </Stack>
           ) : (
             <NotFound />

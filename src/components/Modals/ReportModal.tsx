@@ -11,12 +11,12 @@ import {
 } from '@mantine/core';
 
 import { showNotification, hideNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
-import { IconArrowLeft } from '@tabler/icons';
+import { NsfwLevel, ReportReason } from '@prisma/client';
+import { IconArrowLeft } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
-import { ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
+import { ArticleNsfwForm, ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -43,16 +43,33 @@ const reports = [
     availableFor: [ReportEntity.Image],
   },
   {
+    reason: ReportReason.NSFW,
+    label: 'Mature Content',
+    Element: ArticleNsfwForm,
+    availableFor: [
+      ReportEntity.Article,
+      ReportEntity.Post,
+      ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
+    ],
+  },
+  {
     reason: ReportReason.TOSViolation,
     label: 'TOS Violation',
     Element: TosViolationForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Review,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
+      ReportEntity.Article,
+      ReportEntity.Post,
+      ReportEntity.User,
+      ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
     ],
   },
   {
@@ -61,11 +78,16 @@ const reports = [
     Element: AdminAttentionForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Review,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
+      ReportEntity.Article,
+      ReportEntity.Post,
+      ReportEntity.User,
+      ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
     ],
   },
   {
@@ -78,7 +100,7 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model],
+    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry],
   },
 ];
 
@@ -128,7 +150,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
       },
       async onSuccess(_, variables) {
         showSuccessNotification({
-          title: 'Model reported',
+          title: 'Resource reported',
           message: 'Your request has been received',
         });
         context.close();
@@ -149,10 +171,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               );
               await queryUtils.model.getAll.invalidate();
               break;
-            case ReportEntity.Review:
-              await queryUtils.review.getDetail.invalidate({ id: variables.id });
-              await queryUtils.review.getAll.invalidate();
-              break;
             case ReportEntity.Comment:
               // Nothing changes here so nothing to invalidate...
               // await queryUtils.comment.getById.invalidate({ id: variables.id });
@@ -163,30 +181,41 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               break;
             case ReportEntity.Image:
               if (variables.reason === ReportReason.NSFW) {
-                await queryUtils.image.getGalleryImagesInfinite.invalidate();
-                await queryUtils.image.getGalleryImages.invalidate();
+                // await queryUtils.image.getGalleryImagesInfinite.invalidate();
+                // await queryUtils.image.getGalleryImages.invalidate();
                 await queryUtils.tag.getVotableTags.invalidate({ id: variables.id, type: 'image' });
               }
-
-              // review invalidate
-              if (reviewId) {
-                queryUtils.review.getDetail.setData(
-                  { id: reviewId },
-                  produce((old) => {
-                    if (old) {
-                      if (variables.reason === ReportReason.NSFW) {
-                        const index = old.images.findIndex((x) => x.id === variables.id);
-                        if (index > -1) old.images[index].nsfw = true;
-                      }
-                    }
-                  })
-                );
-              }
-              await queryUtils.review.getAll.invalidate();
               // model invalidate
               if (modelId) {
                 await queryUtils.model.getAll.invalidate();
               }
+              break;
+            case ReportEntity.Article:
+              queryUtils.article.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    }
+                  }
+                })
+              );
+              await queryUtils.article.getInfinite.invalidate();
+              await queryUtils.article.getByCategory.invalidate();
+              break;
+            case ReportEntity.Bounty:
+              queryUtils.bounty.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    }
+                  }
+                })
+              );
+              await queryUtils.bounty.getInfinite.invalidate();
               break;
             default:
               break;

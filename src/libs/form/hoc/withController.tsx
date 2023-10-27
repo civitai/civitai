@@ -39,6 +39,7 @@ export function withController<
 
           const handleChange = (...values: any) => { //eslint-disable-line
             props.onChange?.(...values);
+            // @ts-ignore
             field.onChange(...values);
           };
 
@@ -50,9 +51,9 @@ export function withController<
           const mapped = {
             onChange: handleChange,
             error:
-              fieldState.error && Array.isArray(fieldState.error)
+              (fieldState.error && Array.isArray(fieldState.error)
                 ? fieldState.error[0]?.message
-                : fieldState.error?.message,
+                : fieldState.error?.message) ?? props.error,
             value: field.value ?? '',
             onBlur: handleBlur,
             placeholder:

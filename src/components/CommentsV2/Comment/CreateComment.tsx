@@ -6,7 +6,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
-import { IconLock } from '@tabler/icons';
+import { IconLock } from '@tabler/icons-react';
 
 type CreateCommentProps = {
   onCancel?: () => void;
@@ -28,6 +28,7 @@ export function CreateComment({ onCancel, autoFocus, replyTo }: CreateCommentPro
               variant="link"
               component={NextLink}
               href={`/login?returnUrl=${router.asPath}`}
+              rel="nofollow"
               inline
             >
               sign in

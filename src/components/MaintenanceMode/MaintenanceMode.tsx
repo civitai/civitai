@@ -1,5 +1,5 @@
 import { Center, Stack, Text, ThemeIcon, Image } from '@mantine/core';
-import { IconHourglass } from '@tabler/icons';
+import { IconHourglass } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 
 export const MaintenanceMode = () => {
@@ -8,6 +8,7 @@ export const MaintenanceMode = () => {
       <Meta
         title="We'll be right back | Civitai"
         description="We're adjusting a few things, be back in a few minutes..."
+        deIndex="noindex, nofollow"
       />
       <Center p="xl" sx={{ height: '100vh' }}>
         <Stack align="center">

@@ -7,6 +7,7 @@ import { UsersGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 
 type Options = { defaultSuggestions?: Array<{ id: number; label: string }> };
+const results: Record<string, { id: number; label: string }[]> = {};
 
 export function getSuggestions(options?: Options) {
   const { defaultSuggestions = [] } = options || {};
@@ -15,12 +16,17 @@ export function getSuggestions(options?: Options) {
       if (query.length <= 1) return defaultSuggestions;
 
       const queryString = QS.stringify({ query });
+      if (results[queryString]) return results[queryString];
       try {
         const response = await fetch(`/api/v1/users?${queryString}`);
         const { items } = (await response.json()) as { items: UsersGetAll };
-        if (!items) return defaultSuggestions;
-
-        return items.map(({ id, username }) => ({ id, label: username }));
+        if (!items) {
+          results[queryString] = [];
+          return defaultSuggestions;
+        }
+        const mapped = items.map(({ id, username }) => ({ id, label: username }));
+        results[queryString] = mapped;
+        return mapped;
       } catch (error) {
         console.error(error);
         return [];

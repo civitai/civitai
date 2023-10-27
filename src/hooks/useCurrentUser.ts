@@ -1,11 +1,14 @@
-import { useSession } from 'next-auth/react';
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { postgresSlugify } from '~/utils/string-helpers';
 
-export function useCurrentUser() {
-  const { data } = useSession();
-  if (!data || !data.user) return null;
+export const useCurrentUser = () => useCivitaiSessionContext();
 
-  return {
-    ...data.user,
-    isMember: data.user.tier != null,
-  };
-}
+export const useIsSameUser = (username?: string | string[]) => {
+  const currentUser = useCurrentUser();
+  if (!username || !currentUser) return false;
+  return (
+    !!currentUser &&
+    postgresSlugify(currentUser.username) ===
+      postgresSlugify(typeof username === 'string' ? username : username[0])
+  );
+};

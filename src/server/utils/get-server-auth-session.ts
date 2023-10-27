@@ -1,9 +1,6 @@
-import { NextApiRequest } from 'next';
-// Wrapper for unstable_getServerSession https://next-auth.js.org/configuration/nextjs
-
 import type { GetServerSidePropsContext } from 'next';
 import { getServerSession } from 'next-auth/next';
-import { createAuthOptions } from '~/pages/api/auth/[...nextauth]';
+import { authOptions } from '~/pages/api/auth/[...nextauth]';
 import { getSessionFromBearerToken } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Session } from 'next-auth';
@@ -29,5 +26,5 @@ export const getServerAuthSession = async ({
     if (!req.context?.session) req.context.session = await getSessionFromBearerToken(token);
     return req.context.session as Session | null;
   }
-  return getServerSession(req, res, createAuthOptions(req as NextApiRequest));
+  return getServerSession(req, res, authOptions);
 };

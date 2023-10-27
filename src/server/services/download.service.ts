@@ -4,50 +4,62 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySelect>({
+type DownloadHistoryRaw = {
+  downloadAt: Date;
+  modelId: number;
+  name: string;
+  version: string;
+  modelVersionId: number;
+};
+export const getUserDownloads = async ({
   limit = DEFAULT_PAGE_SIZE,
-  cursor,
   userId,
-  select,
-  count = false,
+  cursor,
 }: Partial<GetUserDownloadsSchema> & {
   userId: number;
-  select: TSelect;
-  count?: boolean;
 }) => {
-  const where: Prisma.DownloadHistoryWhereInput = {
-    userId,
-  };
-  const downloadHistoryQuery = dbRead.downloadHistory.findMany({
-    take: limit,
-    cursor: cursor ? { id: cursor } : undefined,
-    where,
-    select,
-    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-  });
+  const AND = [Prisma.sql`dh."userId" = ${userId}`, Prisma.sql`dh.hidden = false`];
+  if (cursor) AND.push(Prisma.sql`dh."downloadAt" < ${cursor}`);
 
-  if (count) {
-    const [items, count] = await dbRead.$transaction([
-      downloadHistoryQuery,
-      dbRead.downloadHistory.count({ where }),
-    ]);
+  const downloadHistory = await dbRead.$queryRaw<DownloadHistoryRaw[]>`
+    SELECT
+      dh."downloadAt",
+      m.id as "modelId",
+      m."name" as "name",
+      mv."name" as "version",
+      dh."modelVersionId"
+    FROM "DownloadHistory" dh
+    JOIN "ModelVersion" mv ON mv.id = dh."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY dh."downloadAt" DESC
+    LIMIT ${limit}
+  `;
 
-    return { items, count };
-  }
-
-  const items = await downloadHistoryQuery;
+  const items = downloadHistory.map((dh) => ({
+    downloadAt: dh.downloadAt,
+    modelVersion: {
+      id: dh.modelVersionId,
+      name: dh.version,
+      model: {
+        id: dh.modelId,
+        name: dh.name,
+      },
+    },
+  }));
 
   return { items };
 };
 
 export const updateUserActivityById = ({
-  id,
+  modelVersionId,
   userId,
   data,
   all = false,
-}: HideDownloadInput & { data: Prisma.UserActivityUpdateInput }) => {
-  return dbWrite.userActivity.updateMany({
-    where: { id: !all ? id : undefined, userId, hide: { equals: false } },
+}: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput }) => {
+  console.log(data);
+  return dbWrite.downloadHistory.updateMany({
+    where: { modelVersionId: !all ? modelVersionId : undefined, userId, hidden: { equals: false } },
     data,
   });
 };

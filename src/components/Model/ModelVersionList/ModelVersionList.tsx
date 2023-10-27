@@ -1,28 +1,34 @@
 import {
-  ScrollArea,
-  Group,
-  Button,
-  ThemeIcon,
-  Menu,
-  Box,
   ActionIcon,
+  Box,
+  Button,
+  Group,
+  Menu,
+  ScrollArea,
+  ThemeIcon,
   createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
-  IconDotsVertical,
-  IconTrash,
-  IconEdit,
-  IconPhotoEdit,
+  IconBan,
+  IconBrush,
   IconChevronLeft,
   IconChevronRight,
+  IconClock,
+  IconDotsVertical,
+  IconEdit,
   IconFileSettings,
-} from '@tabler/icons';
+  IconPhotoEdit,
+  IconTrash,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
-import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { useEffect, useRef, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ModelById } from '~/types/router';
 
 const useStyles = createStyles((theme) => ({
@@ -80,6 +86,13 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+type State = {
+  scrollPosition: { x: number; y: number };
+  atStart: boolean;
+  atEnd: boolean;
+  largerThanViewport: boolean;
+};
+
 export function ModelVersionList({
   versions,
   selected,
@@ -89,29 +102,51 @@ export function ModelVersionList({
 }: Props) {
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
+  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
-
-  const largerThanViewport =
-    viewportRef.current && viewportRef.current.scrollWidth > viewportRef.current.offsetWidth;
-  const atStart = scrollPosition.x === 0;
-  const atEnd =
-    viewportRef.current &&
-    scrollPosition.x >= viewportRef.current.scrollWidth - viewportRef.current.offsetWidth - 1;
+  const [state, setState] = useState<State>({
+    scrollPosition: { x: 0, y: 0 },
+    atStart: true,
+    atEnd: false,
+    largerThanViewport: false,
+  });
 
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
+
+  useEffect(() => {
+    if (viewportRef.current) {
+      const newValue = viewportRef.current.scrollWidth > viewportRef.current.offsetWidth;
+
+      if (newValue !== state.largerThanViewport)
+        setState((state) => ({ ...state, largerThanViewport: newValue }));
+    }
+  }, [state.largerThanViewport]);
 
   return (
     <ScrollArea
       className={classes.scrollContainer}
       classNames={classes}
       viewportRef={viewportRef}
-      onScrollPositionChange={setScrollPosition}
+      onScrollPositionChange={(scrollPosition) =>
+        setState((state) => ({
+          ...state,
+          scrollPosition,
+          largerThanViewport:
+            !!viewportRef.current &&
+            viewportRef.current.scrollWidth > viewportRef.current.offsetWidth,
+          atStart: scrollPosition.x === 0,
+          atEnd:
+            !!viewportRef.current &&
+            scrollPosition.x >=
+              viewportRef.current.scrollWidth - viewportRef.current.offsetWidth - 1,
+        }))
+      }
       type="never"
     >
-      <Box className={cx(classes.leftArrow, atStart && classes.hidden)}>
+      <Box className={cx(classes.leftArrow, state.atStart && classes.hidden)}>
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"
@@ -126,6 +161,9 @@ export function ModelVersionList({
           const active = selected === version.id;
           const missingFiles = !version.files.length;
           const missingPosts = !version.posts.length;
+          const published = version.status === 'Published';
+          const scheduled = version.status === 'Scheduled';
+          const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
 
           const versionButton = (
             <Button
@@ -149,7 +187,7 @@ export function ModelVersionList({
                 return onVersionClick(version);
               }}
               leftIcon={
-                showExtraIcons && (missingFiles || missingPosts) ? (
+                showExtraIcons && (hasProblem || scheduled) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -157,13 +195,27 @@ export function ModelVersionList({
                     size="sm"
                     sx={{ backgroundColor: 'transparent' }}
                   >
-                    <IconAlertTriangle size={14} />
+                    {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
                   </ThemeIcon>
                 ) : undefined
               }
               compact
             >
-              {version.name}
+              <Group spacing={8} noWrap>
+                {features.imageGeneration && version.canGenerate && (
+                  <ThemeIcon
+                    title="This version is available for image generation"
+                    color="cyan"
+                    variant="light"
+                    radius="xl"
+                    size="sm"
+                    sx={{ backgroundColor: 'transparent' }}
+                  >
+                    <IconBrush size={16} stroke={2.5} />
+                  </ThemeIcon>
+                )}
+                {version.name}
+              </Group>
             </Button>
           );
 
@@ -199,6 +251,20 @@ export function ModelVersionList({
                       }}
                     >
                       Delete version
+                    </Menu.Item>
+                  )}
+                  {currentUser?.isModerator && published && (
+                    <Menu.Item
+                      color="yellow"
+                      icon={<IconBan size={14} stroke={1.5} />}
+                      onClick={() =>
+                        openContext('unpublishModel', {
+                          modelId: version.modelId,
+                          versionId: version.id,
+                        })
+                      }
+                    >
+                      Unpublish as Violation
                     </Menu.Item>
                   )}
                   <Menu.Item
@@ -241,7 +307,12 @@ export function ModelVersionList({
           );
         })}
       </Group>
-      <Box className={cx(classes.rightArrow, (atEnd || !largerThanViewport) && classes.hidden)}>
+      <Box
+        className={cx(
+          classes.rightArrow,
+          (state.atEnd || !state.largerThanViewport) && classes.hidden
+        )}
+      >
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"

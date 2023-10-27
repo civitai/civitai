@@ -7,6 +7,7 @@ import {
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
+  toggleHideCommentHandler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
@@ -22,6 +23,7 @@ import {
 } from '~/server/trpc';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { toggleHideCommentSchema } from '~/server/schema/commentv2.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -29,20 +31,16 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const { id } = input as { id: number };
 
   const userId = ctx.user.id;
-  let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbRead.commentV2.findUnique({ where: { id } }))?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && !!id) {
+    const ownerId = (await dbRead.commentV2.findUnique({ where: { id } }))?.userId ?? 0;
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
 
   return next({
     ctx: {
       // infers the `user` as non-nullable
       user: ctx.user,
-      ownerId,
     },
   });
 });
@@ -75,4 +73,5 @@ export const commentv2Router = router({
     .input(commentConnectorSchema)
     .use(isModerator)
     .mutation(toggleLockThreadDetailsHandler),
+  toggleHide: protectedProcedure.input(toggleHideCommentSchema).mutation(toggleHideCommentHandler),
 });

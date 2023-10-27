@@ -43,7 +43,7 @@ export const getUserResourceReview = async ({
 };
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
-  return await dbWrite.resourceReview.findMany({
+  return await dbRead.resourceReview.findMany({
     where: { modelVersionId: { in: resourceIds } },
     select: {
       id: true,
@@ -126,6 +126,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
     },
     { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 }
   );
+
   return transformed;
 };
 
@@ -157,7 +158,7 @@ export const updateResourceReview = ({ id, rating, details }: UpdateResourceRevi
   return dbWrite.resourceReview.update({
     where: { id },
     data: { rating, details },
-    select: { id: true },
+    select: { id: true, modelId: true, modelVersionId: true, rating: true, nsfw: true },
   });
 };
 
@@ -184,9 +185,16 @@ export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
   const item = await dbRead.resourceReview.findUnique({ where: { id }, select: { exclude: true } });
   if (!item) throw throwNotFoundError();
 
-  await dbWrite.resourceReview.update({
+  return await dbWrite.resourceReview.update({
     where: { id },
     data: { exclude: !item.exclude },
-    select: { id: true },
+    select: {
+      id: true,
+      modelId: true,
+      modelVersionId: true,
+      rating: true,
+      nsfw: true,
+      exclude: true,
+    },
   });
 };

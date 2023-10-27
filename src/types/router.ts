@@ -1,4 +1,4 @@
-import { inferRouterOutputs, inferRouterInputs } from '@trpc/server';
+import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
 
 export type RouterOutput = inferRouterOutputs<AppRouter>;
@@ -9,18 +9,17 @@ export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
+export type MyTrainingModelGetAll = ModelRouter['getMyTrainingModels'];
+export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
+export type ModelGetByCategory = ModelRouter['getByCategory']['items'][number];
+export type ModelGetByCategoryModel = ModelGetByCategory['items'][number];
+export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
 
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];
 
-type ReviewRouter = RouterOutput['review'];
-export type ReviewGetAll = ReviewRouter['getAll'];
-export type ReviewGetAllItem = ReviewGetAll['reviews'][number];
-export type ReviewGetById = ReviewRouter['getDetail'];
-export type ReviewGetCommentsById = ReviewRouter['getCommentsById'];
-export type ReviewGetReactions = ReviewRouter['getReactions'];
-
 type CommentRouter = RouterOutput['comment'];
+export type CommentGetReactions = CommentRouter['getReactions'];
 export type CommentGetAll = CommentRouter['getAll'];
 export type CommentGetAllItem = CommentGetAll['comments'][number];
 export type CommentGetById = CommentRouter['getById'];
@@ -41,8 +40,10 @@ export type UsersGetAll = UserRouter['getAll'];
 export type UsersGetCosmetics = UserRouter['getCosmetics'];
 
 type ImageRouter = RouterOutput['image'];
-export type ImageGetGalleryInfinite = ImageRouter['getGalleryImagesInfinite']['items'];
 export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
+export type ImageGetById = ImageRouter['get'];
+export type ImageGetByCategoryModel = ImageRouter['getImagesByCategory']['items'][number];
+export type ImageGetByCategoryImageModel = ImageGetByCategoryModel['items'][number];
 
 type TagRouter = RouterOutput['tag'];
 export type TagGetAll = TagRouter['getAll']['items'];
@@ -53,3 +54,36 @@ export type ResourceReviewInfiniteModel = ResourceReviewRouter['getInfinite']['i
 export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals'];
 export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
+
+type PostRouter = RouterOutput['post'];
+export type PostGetByCategoryModel = PostRouter['getPostsByCategory']['items'][number];
+export type PostGetByCategoryPostModel = PostGetByCategoryModel['items'][number];
+
+type ArticleRouter = RouterOutput['article'];
+export type ArticleGetAll = ArticleRouter['getInfinite'];
+export type ArticleGetById = ArticleRouter['getById'];
+export type ArticleGetByCategoryModel = ArticleRouter['getByCategory']['items'][number];
+export type ArticleGetByCategoryArticleModel = ArticleGetByCategoryModel['items'][number];
+
+type LeaderboardRouter = RouterOutput['leaderboard'];
+export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
+
+type HomeBlockRouter = RouterOutput['homeBlock'];
+export type HomeBlockGetAll = HomeBlockRouter['getHomeBlocks'];
+export type HomeBlockGetById = HomeBlockRouter['getHomeBlock'];
+
+type CollectionRouter = RouterOutput['collection'];
+export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
+export type CollectionByIdModel = CollectionRouter['getById']['collection'];
+export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
+
+type TrainingRouter = RouterOutput['training'];
+export type TrainingModelData = TrainingRouter['getModelBasic'];
+
+type BountyRouter = RouterOutput['bounty'];
+export type BountyGetAll = BountyRouter['getInfinite']['items'];
+export type BountyGetById = BountyRouter['getById'];
+export type BountyGetEntries = BountyRouter['getEntries'];
+
+type BountyEntryRouter = RouterOutput['bountyEntry'];
+export type BountyEntryGetById = BountyEntryRouter['getById'];

@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
-import { IconPlus, IconX } from '@tabler/icons';
+import { IconPlus, IconX } from '@tabler/icons-react';
 import { useMemo } from 'react';
 
 import { trpc } from '~/utils/trpc';
@@ -22,22 +22,29 @@ type TagProps = {
 };
 
 type TagsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
+  target: TagTarget[];
   value?: TagProps[];
   onChange?: (value: TagProps[]) => void;
-  target: TagTarget[];
+  filter?: (tag: TagProps) => boolean;
 };
 // !important - output must remain in the format {id, name}[]
-export function TagsInput({ value = [], onChange, target, ...props }: TagsInputProps) {
+export function TagsInput({ value = [], onChange, target, filter, ...props }: TagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
   const { classes } = useStyles();
   const [search, setSearch] = useDebouncedState<string>('', 300);
   const [adding, { open, close }] = useDisclosure(false);
+  const trimmedSearch = search.trim().toLowerCase();
 
   const { data, isFetching } = trpc.tag.getAll.useQuery({
-    limit: 10,
+    limit: 20,
     entityType: target,
-    query: search.trim().toLowerCase(),
+    categories: false,
+    query: trimmedSearch,
   });
+  const filteredItems = useMemo(
+    () => (filter ? data?.items?.filter(filter) ?? [] : data?.items ?? []),
+    [data?.items, filter]
+  );
 
   const handleAddTag = (item: { id?: number; value: string }) => {
     const updated = [...value, { id: item.id, name: item.value }];
@@ -52,11 +59,14 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
   };
 
   const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
-  const isNewTag = search && !selectedTags.includes(search.trim().toLowerCase());
+  const isNewTag =
+    !!trimmedSearch &&
+    !selectedTags.includes(trimmedSearch) &&
+    (filter?.({ name: trimmedSearch }) ?? true);
 
   return (
     <Input.Wrapper {...props}>
-      <Group mt={5}>
+      <Group mt={5} spacing={8}>
         {value.map((tag, index) => (
           <Badge
             key={tag.id ?? index}
@@ -70,7 +80,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
                 variant="transparent"
                 onClick={() => handleRemoveTag(index)}
               >
-                <IconX />
+                <IconX size={12} />
               </ActionIcon>
             }
           >
@@ -79,7 +89,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
         ))}
         <Badge
           // size="lg"
-          radius="xs"
+          // radius="xs"
           className={classes.badge}
           classNames={{ inner: classes.inner }}
           onClick={!adding ? open : undefined}
@@ -95,7 +105,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
           leftSection={
             adding && (
               <Center>
-                <IconPlus />
+                <IconPlus size={14} />
               </Center>
             )
           }
@@ -105,8 +115,8 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
               variant="unstyled"
               classNames={{ dropdown: classes.dropdown }}
               data={
-                data?.items
-                  ?.filter((tag) => !selectedTags.includes(tag.name))
+                filteredItems
+                  .filter((tag) => !selectedTags.includes(tag.name))
                   .map((tag) => ({
                     id: tag.id,
                     value: tag.name,
@@ -119,9 +129,8 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
                   'Enter',
                   () => {
                     if (!isNewTag) return;
-                    const exisiting =
-                      data && data.items.find((tag) => tag.name === search.trim().toLowerCase());
-                    handleAddTag({ id: exisiting?.id, value: exisiting?.name ?? search });
+                    const existing = filteredItems.find((tag) => tag.name === trimmedSearch);
+                    handleAddTag({ id: existing?.id, value: existing?.name ?? search });
                   },
                 ],
               ])}
@@ -149,7 +158,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
               autoFocus
             />
           ) : (
-            <IconPlus />
+            <IconPlus size={16} />
           )}
         </Badge>
       </Group>

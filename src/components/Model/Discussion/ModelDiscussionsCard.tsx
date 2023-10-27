@@ -13,7 +13,6 @@ import {
 } from '@mantine/core';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -22,7 +21,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReviewReactions } from '@prisma/client';
-import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons';
+import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons-react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

@@ -17,7 +17,20 @@ BEGIN
 
 		UNION
 
-		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), mf.hash, false as detected
+    SELECT
+		  id,
+		  (civitai_resource->>'modelVersionId')::int as model_version_id,
+		  civitai_resource->>'type' as name,
+			null as hash,
+		  true as detected
+		FROM
+		  "Image" i,
+			jsonb_array_elements(meta->'civitaiResources') AS civitai_resource
+		WHERE jsonb_typeof(meta->'civitaiResources') = 'array' AND i.id = image_id
+
+    UNION
+
+		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), LOWER(mf.hash) "hash", false as detected
 		FROM "Image" i
 		JOIN "Post" p ON i."postId" = p.id
 		JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
@@ -37,11 +50,14 @@ BEGIN
 		  irh.name,
 		  irh.hash,
 		  irh.detected,
-			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY mf.id) row_number
+			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), mf.id) row_number
 		FROM image_resource_hashes irh
 		LEFT JOIN "ModelFileHash" mfh ON LOWER(mfh.hash) = LOWER(irh.hash)
 		LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
+		LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+		LEFT JOIN "Model" m ON m.id = mv."modelId"
 		WHERE irh.name != 'vae'
+		  AND (m.id IS NULL OR m.status != 'Deleted')
 	)
 	INSERT INTO "ImageResource"("imageId", "modelVersionId", name, hash, detected)
 	SELECT
@@ -51,7 +67,7 @@ BEGIN
 	  hash,
 	  detected
 	FROM image_resource_id iri
-	WHERE row_number = 1
+	WHERE (row_number = 1 OR iri.hash IS NULL)
 		AND NOT EXISTS (
 		  SELECT 1 FROM "ImageResource" ir
 		  WHERE "imageId" = iri.id

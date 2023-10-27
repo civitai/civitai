@@ -1,6 +1,6 @@
 import { Anchor } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconAlertCircle } from '@tabler/icons';
+import { IconAlertCircle } from '@tabler/icons-react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -9,13 +9,13 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
-  const isLoCon = modelType === ModelType.LoCon;
   const isWildcards = modelType === ModelType.Wildcards;
+  const isMotion = modelType === ModelType.MotionModule;
   if (files) {
     for (const file of files) {
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
         hasNegativeEmbed = true;
-      else if (modelType === ModelType.Checkpoint && file.type === 'Config') hasConfig = true;
+      else if (file.type === 'Config') hasConfig = true;
       else if (modelType === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
     }
   }
@@ -35,11 +35,15 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
           to work.
         </AlertWithIcon>
       )}
-      {isLoCon && (
+      {isMotion && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a LyCORIS (LoCon/LoHA) model, and requires an{' '}
+          This is a Motion Module for{' '}
+          <Anchor href="https://github.com/guoyww/AnimateDiff/" rel="nofollow" target="_blank">
+            AnimateDiff
+          </Anchor>
+          , it requires an{' '}
           <Anchor
-            href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon"
+            href="https://github.com/continue-revolution/sd-webui-animatediff"
             rel="nofollow"
             target="_blank"
           >
@@ -78,7 +82,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
       )}
       {hasVAE && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This checkpoint includes a{' '}
+          This checkpoint recommends a{' '}
           <Anchor
             href={createModelFileDownloadUrl({
               versionId,
@@ -87,7 +91,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
           >
             VAE
           </Anchor>
-          , download and place it along side the checkpoint.
+          , download and place it in the VAE folder.
         </AlertWithIcon>
       )}
     </>

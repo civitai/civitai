@@ -1,4 +1,4 @@
-import { debounce } from 'lodash';
+import { debounce } from 'lodash-es';
 import { trpc } from '~/utils/trpc';
 
 type ToggleableContent = 'tag' | 'user';
@@ -10,11 +10,10 @@ export async function invalidateModeratedContent(
   const changedTag = changes.includes('tag');
   const changedUser = changes.includes('user');
 
-  await queryUtils.model.invalidate();
+  // await queryUtils.model.invalidate();
   if (changedTag) await queryUtils.tag.invalidate();
   await queryUtils.post.invalidate();
   await queryUtils.image.invalidate();
-  await queryUtils.review.invalidate();
 }
 
 export const invalidateModeratedContentDebounced = debounce(invalidateModeratedContent, 1000);

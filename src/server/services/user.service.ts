@@ -1,5 +1,17 @@
-import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { ModelEngagementType, Prisma, TagEngagementType } from '@prisma/client';
+import {
+  ToggleUserArticleEngagementsInput,
+  UserByReferralCodeSchema,
+} from './../schema/user.schema';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  ArticleEngagementType,
+  BountyEngagementType,
+  ModelEngagementType,
+  OnboardingStep,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+  TagEngagementType,
+} from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -9,6 +21,7 @@ import {
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
   ToggleBlockedTagSchema,
+  ToggleUserBountyEngagementsInput,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
@@ -19,20 +32,35 @@ import {
 } from '~/server/services/user-cache.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
+import blockedUsernames from '~/utils/blocklist-username.json';
+import { getSystemPermissions } from '~/server/services/system-cache';
+import {
+  articlesSearchIndex,
+  collectionsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+  usersSearchIndex,
+} from '~/server/search-index';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userMetrics } from '~/server/metrics';
+import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
+import { handleLogError } from '~/server/utils/errorHandling';
+// import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
-// const xprisma = prisma.$extends({
-//   result: {
-//     user
-//   }
-// })
-
-export const getUserCreator = async (where: { username?: string; id?: number }) => {
-  if (!where.username && !where.id) {
-    throw new Error('Must provide username or id');
-  }
-
+export const getUserCreator = async ({
+  leaderboardId,
+  ...where
+}: {
+  username?: string;
+  id?: number;
+  leaderboardId?: string;
+}) => {
   return dbRead.user.findFirst({
-    where: { id: { not: -1 }, ...where, deletedAt: null },
+    where: {
+      ...where,
+      deletedAt: null,
+      AND: [{ id: { not: -1 } }, { username: { not: 'civitai' } }],
+    },
     select: {
       id: true,
       image: true,
@@ -55,7 +83,14 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
           followerCountAllTime: true,
         },
       },
-      rank: { select: { leaderboardRank: true } },
+      rank: {
+        select: {
+          leaderboardRank: true,
+          leaderboardId: true,
+          leaderboardTitle: true,
+          leaderboardCosmetic: true,
+        },
+      },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
@@ -86,7 +121,7 @@ export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
     SELECT id, username
     FROM "User"
     WHERE
-      ${ids && ids.length > 0 ? Prisma.sql`id IN ${Prisma.join(ids)}` : Prisma.sql`TRUE`}
+      ${ids && ids.length > 0 ? Prisma.sql`id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND "deletedAt" IS NULL
@@ -116,6 +151,16 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
+export const isUsernamePermitted = (username: string) => {
+  const lower = username.toLowerCase();
+  const isPermitted = !(
+    blockedUsernames.partial.some((x) => lower.includes(x)) ||
+    blockedUsernames.exact.some((x) => lower === x)
+  );
+
+  return isPermitted;
+};
+
 export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpdateInput }) => {
   return dbWrite.user.update({ where: { id }, data });
 };
@@ -127,24 +172,37 @@ export const acceptTOS = ({ id }: { id: number }) => {
   });
 };
 
-export const completeOnboarding = ({ id }: { id: number }) => {
+// export const completeOnboarding = async ({ id }: { id: number }) => {
+//   return dbWrite.user.update({
+//     where: { id },
+//     data: { onboarded: true },
+//   });
+// };
+
+export const updateOnboardingSteps = async ({
+  id,
+  steps,
+}: {
+  id: number;
+  steps: OnboardingStep[];
+}) => {
   return dbWrite.user.update({
     where: { id },
-    data: { onboarded: true },
+    data: { onboardingSteps: steps },
   });
 };
 
 export const getUserEngagedModels = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: { engagedModels: { select: { modelId: true, type: true } } },
+  return dbRead.modelEngagement.findMany({
+    where: { userId: id },
+    select: { modelId: true, type: true },
   });
 };
 
 export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
+  return dbRead.modelVersionEngagement.findMany({
+    where: { userId: id },
+    select: { modelVersionId: true, type: true },
   });
 };
 
@@ -237,16 +295,17 @@ export const toggleModelEngagement = async ({
         data: { type, createdAt: new Date() },
       });
 
-    return;
+    return engagement.type !== type;
   }
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
   if (type === 'Hide') {
     await refreshHiddenModelsForUser({ userId });
-    await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
-  } else if (type === 'Favorite')
-    await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
-  return;
+    // await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
+  } else if (type === 'Favorite') {
+    // await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
+  }
+  return true;
 };
 
 export const toggleModelFavorite = async ({
@@ -283,12 +342,12 @@ export const toggleFollowUser = async ({
         data: { type: 'Follow' },
       });
 
-    return;
+    return false;
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
   await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
-  return;
+  return true;
 };
 
 export const toggleHideUser = async ({
@@ -314,13 +373,13 @@ export const toggleHideUser = async ({
         data: { type: 'Hide' },
       });
 
-    return;
+    return false;
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
   await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   await refreshHiddenUsersForUser({ userId });
-  return;
+  return true;
 };
 
 export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
@@ -343,6 +402,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
       data: { deletedAt: new Date(), email: null, username: null },
     }),
   ]);
+
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
   await invalidateSession(id);
 
   // Cancel their subscription
@@ -360,6 +422,7 @@ export const toggleBlockedTag = async ({
     select: { type: true },
   });
 
+  let isHidden = false;
   if (matchedTag) {
     if (matchedTag.type === 'Hide')
       await dbWrite.tagEngagement.delete({
@@ -372,8 +435,10 @@ export const toggleBlockedTag = async ({
       });
   } else {
     await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
+    isHidden = true;
   }
   await refreshAllHiddenForUser({ userId });
+  return isHidden;
 };
 
 export const updateAccountScope = async ({
@@ -408,6 +473,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     where,
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
+      referral: { select: { id: true } },
     },
   });
 
@@ -415,23 +481,64 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   const { subscription, ...rest } = user;
   const tier: string | undefined =
-    subscription && subscription.status === 'active'
+    subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
 
-  return { ...rest, tier };
+  const permissions: string[] = [];
+  const systemPermissions = await getSystemPermissions();
+  for (const [key, value] of Object.entries(systemPermissions)) {
+    if (value.includes(user.id)) permissions.push(key);
+  }
+
+  // let feedbackToken: string | undefined;
+  // if (!!user.username && !!user.email)
+  //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
+
+  return {
+    ...rest,
+    tier,
+    permissions,
+    // feedbackToken,
+  };
 };
 
-export const removeAllContent = ({ id }: { id: number }) => {
-  return dbWrite.$transaction([
+export const removeAllContent = async ({ id }: { id: number }) => {
+  const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
+  const images = await dbRead.image.findMany({ where: { userId: id }, select: { id: true } });
+  const articles = await dbRead.article.findMany({ where: { userId: id }, select: { id: true } });
+  const collections = await dbRead.collection.findMany({
+    where: { userId: id },
+    select: { id: true },
+  });
+
+  const res = await dbWrite.$transaction([
     dbWrite.model.deleteMany({ where: { userId: id } }),
     dbWrite.comment.deleteMany({ where: { userId: id } }),
     dbWrite.commentV2.deleteMany({ where: { userId: id } }),
-    dbWrite.review.deleteMany({ where: { userId: id } }),
     dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
     dbWrite.post.deleteMany({ where: { userId: id } }),
     dbWrite.image.deleteMany({ where: { userId: id } }),
+    dbWrite.article.deleteMany({ where: { userId: id } }),
   ]);
+
+  await modelsSearchIndex.queueUpdate(
+    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesSearchIndex.queueUpdate(
+    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await articlesSearchIndex.queueUpdate(
+    articles.map((a) => ({ id: a.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await collectionsSearchIndex.queueUpdate(
+    collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  await userMetrics.queueUpdate(id);
+
+  return res;
 };
 
 export const getUserCosmetics = ({
@@ -459,4 +566,294 @@ export const getUserCosmetics = ({
       },
     },
   });
+};
+
+export const getCosmeticsForUsers = async (userIds: number[]) => {
+  const users = [...new Set(userIds)];
+  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+    where: { userId: { in: users }, equippedAt: { not: null } },
+    select: {
+      userId: true,
+      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
+    },
+  });
+  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+    acc[userId] = acc[userId] ?? [];
+    acc[userId].push(cosmetic);
+    return acc;
+  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+
+  return userCosmetics;
+};
+
+// #region [article engagement]
+export const getUserArticleEngagements = async ({ userId }: { userId: number }) => {
+  const engagements = await dbRead.articleEngagement.findMany({
+    where: { userId },
+    select: { articleId: true, type: true },
+  });
+  return engagements.reduce<Partial<Record<ArticleEngagementType, number[]>>>(
+    (acc, { articleId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), articleId] }),
+    {}
+  );
+};
+
+export const updateLeaderboardRank = async (userId?: number) => {
+  await dbWrite.$transaction([
+    dbWrite.$executeRaw`
+      UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null, "leaderboardCosmetic" = null
+      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+    `,
+    dbWrite.$executeRaw`
+      WITH user_positions AS (
+        SELECT
+          lr."userId",
+          lr."leaderboardId",
+          l."title",
+          lr.position,
+          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
+        FROM "User" u
+        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+        WHERE lr.date = current_date
+          AND (
+            u."leaderboardShowcase" IS NULL
+            OR lr."leaderboardId" = u."leaderboardShowcase"
+          )
+      ), lowest_position AS (
+        SELECT
+          up."userId",
+          up.position,
+          up."leaderboardId",
+          up."title" "leaderboardTitle",
+          (
+            SELECT data->>'url'
+            FROM "Cosmetic" c
+            WHERE c."leaderboardId" = up."leaderboardId"
+              AND up.position <= c."leaderboardPosition"
+            ORDER BY c."leaderboardPosition"
+            LIMIT 1
+          ) as "leaderboardCosmetic"
+        FROM user_positions up
+        WHERE row_num = 1
+      )
+      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+      SELECT
+      "userId",
+      position,
+      "leaderboardId",
+      "leaderboardTitle",
+      "leaderboardCosmetic"
+      FROM lowest_position
+      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      ON CONFLICT ("userId") DO UPDATE SET
+        "leaderboardId" = excluded."leaderboardId",
+        "leaderboardRank" = excluded."leaderboardRank",
+        "leaderboardTitle" = excluded."leaderboardTitle",
+        "leaderboardCosmetic" = excluded."leaderboardCosmetic";
+    `,
+  ]);
+};
+
+export const toggleBan = async ({ id }: { id: number }) => {
+  const user = await getUserById({ id, select: { bannedAt: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const updatedUser = await updateUserById({
+    id,
+    data: { bannedAt: user.bannedAt ? null : new Date() },
+  });
+  await invalidateSession(id);
+
+  // Unpublish their models
+  await dbWrite.model.updateMany({
+    where: { userId: id },
+    data: { publishedAt: null, status: 'Unpublished' },
+  });
+
+  // Cancel their subscription
+  await cancelSubscription({ userId: id });
+
+  return updatedUser;
+};
+
+export const toggleUserArticleEngagement = async ({
+  type,
+  articleId,
+  userId,
+}: ToggleUserArticleEngagementsInput & { userId: number }) => {
+  const articleEngagements = await dbRead.articleEngagement.findMany({
+    where: { userId, articleId },
+    select: { type: true },
+  });
+
+  const exists = !!articleEngagements.find((x) => x.type === type);
+  const toDelete: ArticleEngagementType[] = [];
+
+  // if the engagement exists, we only need to remove the existing engagmement
+  if (exists) toDelete.push(type);
+  // if the engagement doesn't exist, we need to remove mutually exclusive items
+  else if (articleEngagements.length) {
+    if (
+      type === ArticleEngagementType.Favorite &&
+      !!articleEngagements.find((x) => x.type === ArticleEngagementType.Hide)
+    )
+      toDelete.push(ArticleEngagementType.Hide);
+    else if (
+      type === ArticleEngagementType.Hide &&
+      !!articleEngagements.find((x) => x.type === ArticleEngagementType.Favorite)
+    )
+      toDelete.push(ArticleEngagementType.Favorite);
+  }
+
+  // we may need to delete items regardless of whether the current engagement exists
+  if (toDelete.length) {
+    await dbWrite.articleEngagement.deleteMany({
+      where: { userId, articleId, type: { in: toDelete } },
+    });
+  }
+
+  if (!exists) {
+    await dbWrite.articleEngagement.create({ data: { userId, articleId, type } });
+  }
+
+  return !exists;
+};
+// #endregion
+
+//#region [bounty engagement]
+export const getUserBountyEngagements = async ({ userId }: { userId: number }) => {
+  const engagements = await dbRead.bountyEngagement.findMany({
+    where: { userId },
+    select: { bountyId: true, type: true },
+  });
+
+  return engagements.reduce<Partial<Record<BountyEngagementType, number[]>>>(
+    (acc, { bountyId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), bountyId] }),
+    {}
+  );
+};
+
+export const toggleUserBountyEngagement = async ({
+  type,
+  bountyId,
+  userId,
+}: ToggleUserBountyEngagementsInput & { userId: number }) => {
+  const engagement = await dbRead.bountyEngagement.findUnique({
+    where: { type_bountyId_userId: { userId, bountyId, type } },
+    select: { type: true },
+  });
+
+  if (!engagement) {
+    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } });
+    return true;
+  } else {
+    await dbWrite.bountyEngagement.delete({
+      where: { type_bountyId_userId: { userId, bountyId, type } },
+    });
+    return false;
+  }
+};
+//#endregion
+
+// #region [user referrals]
+export const userByReferralCode = async ({ userReferralCode }: UserByReferralCodeSchema) => {
+  const referralCode = await dbRead.userReferralCode.findFirst({
+    where: { code: userReferralCode, deletedAt: null },
+    select: {
+      userId: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+    },
+  });
+
+  if (!referralCode) {
+    throw throwBadRequestError('Referral code is not valid');
+  }
+
+  return referralCode.user;
+};
+// #endregion
+
+export const createUserReferral = async ({
+  id,
+  userReferralCode,
+  source,
+}: {
+  id: number;
+  userReferralCode?: string;
+  source?: string;
+}) => {
+  const user = await dbRead.user.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
+  });
+
+  if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
+    return;
+  }
+
+  const applyRewards = async ({
+    refereeId,
+    referrerId,
+  }: {
+    refereeId: number;
+    referrerId: number;
+  }) => {
+    await refereeCreatedReward.apply({
+      refereeId,
+      referrerId,
+    });
+    await userReferredReward.apply({
+      refereeId,
+      referrerId,
+    });
+  };
+
+  if (userReferralCode || source) {
+    // Confirm userReferralCode is valid:
+    const referralCode = !!userReferralCode
+      ? await dbRead.userReferralCode.findFirst({
+          where: { code: userReferralCode, deletedAt: null },
+        })
+      : null;
+
+    if (!referralCode && !source) {
+      return;
+    }
+
+    if (user.referral && referralCode) {
+      // Allow to update a referral with a user-referral-code:
+      await dbWrite.userReferral.update({
+        where: {
+          id: user.referral.id,
+        },
+        data: {
+          userReferralCodeId: referralCode.id,
+        },
+      });
+
+      await applyRewards({
+        refereeId: id,
+        referrerId: referralCode.userId,
+      }).catch(handleLogError);
+    } else if (!user.referral) {
+      // Create new referral:
+      await dbWrite.userReferral.create({
+        data: {
+          userId: id,
+          source,
+          userReferralCodeId: referralCode?.id ?? undefined,
+        },
+      });
+
+      if (referralCode?.id) {
+        await applyRewards({
+          refereeId: id,
+          referrerId: referralCode.userId,
+        }).catch(handleLogError);
+      }
+    }
+  }
 };

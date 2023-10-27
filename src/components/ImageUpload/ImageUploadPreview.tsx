@@ -12,11 +12,12 @@ import {
   Code,
   Stack,
 } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
-import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons';
+import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
+import { MediaType } from '@prisma/client';
 
 //TODO - handle what to display when there is an error
 type Props = {
@@ -57,11 +58,17 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
         style={{ ...style, ...props.style }}
       >
         {!ready && image.previewUrl ? (
-          <EdgeImage src={image.previewUrl} height={410} className={classes.image} />
+          <EdgeMedia
+            src={image.previewUrl}
+            type={MediaType.image}
+            width={450}
+            className={classes.image}
+          />
         ) : image.url && image.url != image.previewUrl ? (
-          <EdgeImage
+          <EdgeMedia
             src={image.url}
-            height={410}
+            type={MediaType.image}
+            width={450}
             className={classes.image}
             onLoad={() => {
               image.onLoad?.();
@@ -111,16 +118,18 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
           </>
         )}
 
-        <Center className={classes.draggable} {...listeners} {...attributes}>
-          <Paper className={classes.draggableIcon} p="xl" radius={100}>
-            <IconArrowsMaximize
-              size={48}
-              stroke={1.5}
-              style={{ transform: 'rotate(45deg)' }}
-              color="white"
-            />
-          </Paper>
-        </Center>
+        {!isDisabled && (
+          <Center className={classes.draggable} {...listeners} {...attributes}>
+            <Paper className={classes.draggableIcon} p="xl" radius={100}>
+              <IconArrowsMaximize
+                size={48}
+                stroke={1.5}
+                style={{ transform: 'rotate(45deg)' }}
+                color="white"
+              />
+            </Paper>
+          </Center>
+        )}
         {children}
       </Paper>
     );

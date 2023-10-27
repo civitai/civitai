@@ -20,13 +20,23 @@ export function createContextModal<T extends Record<string, unknown>>({
   Element,
   ...modalProps
 }: CreateContextModalProps<T>) {
-  const openModal = (innerProps: T) => {
-    if (!location.href.includes('#')) history.pushState(history.state, '', `${location.href}#`);
+  const openModal = (
+    innerProps: T,
+    overrideModalProps?: Omit<ModalProps, 'opened' | 'onClose'>
+  ) => {
+    // TODO.briant - fix the scrolling this was causing...
+    // if (!location.href.includes('#')) {
+    //   const newUrl = ` ${location.href}#`;
+    //   history.pushState({ ...history.state, as: newUrl, url: newUrl }, '', `${location.href}#`);
+    // }
     openContextModal({
       modal: name,
       ...modalProps,
+      ...overrideModalProps,
       onClose: () => {
-        if (location.href.includes('#')) history.back();
+        // TODO.briant - fix the scrolling this was causing...
+        // history.scrollRestoration = 'manual';
+        // if (location.href.includes('#')) history.back();
         modalProps.onClose?.();
       },
       innerProps,

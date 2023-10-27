@@ -1,6 +1,6 @@
 import { Text, Tooltip } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconQuestionCircle } from '@tabler/icons';
+import { IconInfoSquareRounded } from '@tabler/icons-react';
 
 const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Checkpoint]: '#fine-tuned-model-checkpoints-dreambooth-models',
@@ -12,6 +12,7 @@ const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Controlnet]: '#controlnet',
   [ModelType.Poses]: '#poses',
   [ModelType.Wildcards]: '#wildcards',
+  [ModelType.MotionModule]: '#motion-module',
 };
 
 export const HowToUseModel = ({ type }: ModelFileAlertProps) => {
@@ -28,7 +29,7 @@ export const HowToUseModel = ({ type }: ModelFileAlertProps) => {
         color="dimmed"
         sx={{ lineHeight: 1 }}
       >
-        <IconQuestionCircle size={20} />
+        <IconInfoSquareRounded size={20} />
       </Text>
     </Tooltip>
   );

@@ -5,18 +5,23 @@ import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export enum ReportEntity {
   Model = 'model',
-  Review = 'review',
   Comment = 'comment',
   CommentV2 = 'commentV2',
   Image = 'image',
   ResourceReview = 'resourceReview',
+  Article = 'article',
+  Post = 'post',
+  User = 'reportedUser',
+  Collection = 'collection',
+  Bounty = 'bounty',
+  BountyEntry = 'bountyEntry',
 }
 
 // #region [report reason detail schemas]
 const baseDetailSchema = z.object({ comment: z.string().optional() });
 
 export const reportNsfwDetailsSchema = baseDetailSchema.extend({
-  tags: z.string().array().min(1, 'Please select at least one reason'),
+  tags: z.string().array().optional(),
 });
 
 export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
@@ -85,6 +90,12 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
 export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
 export const setReportStatusSchema = z.object({
   id: z.number(),
+  status: z.nativeEnum(ReportStatus),
+});
+
+export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
+export const bulkUpdateReportStatusSchema = z.object({
+  ids: z.number().array(),
   status: z.nativeEnum(ReportStatus),
 });
 

@@ -1,9 +1,11 @@
+import { articleWebhooks } from '~/server/webhooks/article.webhooks';
 import { modelWebhooks } from '~/server/webhooks/model.webooks';
 import { moderatorWebhooks } from '~/server/webhooks/moderator.webhooks';
 
 export const webhookProcessors = {
   ...modelWebhooks,
   ...moderatorWebhooks,
+  ...articleWebhooks,
 };
 
 export function getWebhookTypes() {

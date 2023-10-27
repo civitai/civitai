@@ -6,57 +6,84 @@ import {
   Burger,
   Button,
   createStyles,
+  Divider,
   Grid,
   Group,
+  GroupProps,
   Header,
+  MantineSize,
   Menu,
   Paper,
   ScrollArea,
   Switch,
+  Text,
   Transition,
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { Currency } from '@prisma/client';
 import {
-  IconAlbum,
+  IconBarbell,
+  IconBookmark,
   IconCircleDashed,
   IconCrown,
-  IconFile,
   IconHeart,
   IconHistory,
+  IconInfoSquareRounded,
   IconLogout,
+  IconMoneybag,
   IconMoonStars,
   IconPalette,
-  IconPhoto,
+  IconPhotoUp,
+  IconPlaylistAdd,
   IconPlus,
-  IconQuestionCircle,
+  IconProgressBolt,
+  IconSearch,
   IconSettings,
   IconSun,
   IconUpload,
+  IconUser,
   IconUserCircle,
   IconUsers,
-} from '@tabler/icons';
+  IconWriting,
+} from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import {
+  Fragment,
+  ReactElement,
+  ReactNode,
+  RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
-
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
+import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
+import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { LoginRedirectReason } from '~/utils/login-helpers';
-import { UploadTracker } from '~/components/Resource/UploadTracker';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
-import { ModerationNav } from '~/components/Moderation/ModerationNav';
+import { deleteCookies } from '~/utils/cookies-helpers';
+import { LoginRedirectReason } from '~/utils/login-helpers';
+import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
+import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
+import { UserBuzz } from '../User/UserBuzz';
 
 const HEADER_HEIGHT = 70;
 
@@ -101,7 +128,13 @@ const useStyles = createStyles((theme) => ({
   },
 
   search: {
-    [theme.fn.smallerThan('xs')]: {
+    [theme.fn.smallerThan('md')]: {
+      display: 'none',
+    },
+  },
+
+  searchArea: {
+    [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -146,7 +179,7 @@ const useStyles = createStyles((theme) => ({
 
   user: {
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black,
-    borderRadius: theme.radius.sm,
+    borderRadius: theme.radius.xl,
     transition: 'background-color 100ms ease',
 
     '&:hover': {
@@ -161,73 +194,160 @@ const useStyles = createStyles((theme) => ({
   userActive: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
   },
+
+  mobileSearchWrapper: {
+    height: '100%',
+  },
+
+  dNone: {
+    display: 'none',
+  },
 }));
 
 type MenuLink = {
-  label: React.ReactNode;
+  label: ReactNode;
   href: string;
   redirectReason?: LoginRedirectReason;
   visible?: boolean;
+  as?: string;
+  rel?: string;
 };
 
-export function AppHeader() {
+function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
+  if (isMobile) {
+    return (
+      <AutocompleteSearch
+        variant="filled"
+        onClear={onSearchDone}
+        onSubmit={onSearchDone}
+        rightSection={null}
+        ref={ref}
+      />
+    );
+  }
+
+  return <AutocompleteSearch />;
+}
+
+export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent }: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const router = useRouter();
+  const features = useFeatureFlags();
+  const isMobile = useIsMobile();
 
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const ref = useClickOutside(() => closeBurger());
+  const searchRef = useRef<HTMLInputElement>(null);
+  const { url: homeUrl } = useHomeSelection();
 
   const isMuted = currentUser?.muted ?? false;
-  const features = useFeatureFlags();
 
-  const links: MenuLink[] = useMemo(
+  const mainActions = useMemo<MenuLink[]>(
     () => [
       {
         href: '/models/create',
         visible: !isMuted,
-        loginRedirect: 'upload-model',
+        redirectReason: 'upload-model',
         label: (
           <Group align="center" spacing="xs">
-            <IconUpload stroke={1.5} />
+            <IconUpload stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Upload a model
           </Group>
         ),
+        rel: 'nofollow',
       },
+      {
+        href: '/models/train',
+        visible: !isMuted && features.imageTraining,
+        redirectReason: 'train-model',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <Text span inline>
+              Train a model
+            </Text>
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/posts/create',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Post images
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/articles/create',
+        visible: !isMuted,
+        redirectReason: 'create-article',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconWriting stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Write an article
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/bounties/create',
+        visible: !isMuted && features.bounties,
+        redirectReason: 'create-bounty',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <Text>Create a bounty</Text>
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+    ],
+    [features.bounties, features.imageTraining, isMuted, theme]
+  );
+  const links = useMemo<MenuLink[]>(
+    () => [
       {
         href: `/user/${currentUser?.username}`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconFile stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your models
+            <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your profile
           </Group>
         ),
       },
       {
-        href: `/user/${currentUser?.username}/posts`,
+        href: `/user/${currentUser?.username}/models?section=training`,
+        visible: !!currentUser && features.imageTrainingResults,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Training
+          </Group>
+        ),
+      },
+      {
+        href: `/collections`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your posts
+            <IconPlaylistAdd stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            My collections
           </Group>
         ),
       },
       {
-        href: `/user/${currentUser?.username}/images`,
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconPhoto stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your images
-          </Group>
-        ),
-      },
-      {
-        href: '/?favorites=true',
+        href: `${features.alternateHome ? '/models' : '/'}?favorites=true`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -237,25 +357,56 @@ export function AppHeader() {
         ),
       },
       {
-        href: '/?hidden=true',
+        href: '/articles?favorites=true&view=feed',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBookmark stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            Bookmarked articles
+          </Group>
+        ),
+      },
+      {
+        href: '/bounties?engagement=favorite',
+        as: '/bounties',
+        visible: !!currentUser && features.bounties,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My bounties
+          </Group>
+        ),
+      },
+      {
+        href: '/user/buzz-dashboard',
+        visible: !!currentUser && features.buzz,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconProgressBolt stroke={1.5} color={theme.colors.yellow[7]} />
+            Buzz dashboard
+          </Group>
+        ),
+      },
+      {
+        href: '',
+        label: <Divider my={4} />,
+      },
+      {
+        href: '/leaderboard/overall',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
+            Leaderboard
+          </Group>
+        ),
+      },
+      {
+        href: `${features.alternateHome ? '/models' : '/'}?hidden=true`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
             <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Hidden models
-          </Group>
-        ),
-      },
-      {
-        href: '/questions',
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconQuestionCircle stroke={1.5} />
-            Questions{' '}
-            <Badge color="yellow" size="xs">
-              Beta
-            </Badge>
           </Group>
         ),
       },
@@ -275,7 +426,7 @@ export function AppHeader() {
         label: (
           <Group align="center" spacing="xs">
             <IconHistory stroke={1.5} />
-            Download History
+            Download history
           </Group>
         ),
       },
@@ -288,35 +439,52 @@ export function AppHeader() {
             Sign In/Sign up
           </Group>
         ),
+        rel: 'nofollow',
       },
       {
-        href: '/leaderboard',
+        href: '/questions',
+        visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconCrown stroke={1.5} />
-            Leaderboard
+            <IconInfoSquareRounded stroke={1.5} />
+            Questions{' '}
+            <Badge color="yellow" size="xs">
+              Beta
+            </Badge>
           </Group>
         ),
       },
     ],
-    [currentUser, isMuted, router.asPath, theme]
+    [
+      currentUser,
+      features.imageTrainingResults,
+      features.alternateHome,
+      features.bounties,
+      features.buzz,
+      router.asPath,
+      theme,
+    ]
   );
 
   const burgerMenuItems = useMemo(
     () =>
-      links
+      mainActions
+        .concat([{ href: '', label: <Divider /> }, ...links])
         .filter(({ visible }) => visible !== false)
-        .map((link) => {
-          const item = (
-            <Link key={link.href} href={link.href} passHref>
+        .map((link, index) => {
+          const item = link.href ? (
+            <Link key={link.href} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
                 onClick={() => closeBurger()}
+                rel={link.rel}
               >
                 {link.label}
               </Anchor>
             </Link>
+          ) : (
+            <Fragment key={`separator-${index}`}>{link.label}</Fragment>
           );
 
           return link.redirectReason ? (
@@ -327,76 +495,223 @@ export function AppHeader() {
             item
           );
         }),
-    [classes, closeBurger, cx, links, router.asPath]
+    [classes, closeBurger, cx, links, mainActions, router.asPath]
   );
   const userMenuItems = useMemo(
     () =>
       links
-        .filter(({ href, visible }) => visible !== false && href !== '/models/create')
-        .map((link) => (
-          <Menu.Item key={link.href} component={NextLink} href={link.href}>
-            {link.label}
-          </Menu.Item>
-        )),
+        .filter(({ visible }) => visible !== false)
+        .map((link, index) =>
+          link.href ? (
+            <Menu.Item
+              key={link.href}
+              component={NextLink}
+              href={link.href}
+              as={link.as}
+              rel={link.rel}
+            >
+              {link.label}
+            </Menu.Item>
+          ) : (
+            <Fragment key={`separator-${index}`}>{link.label}</Fragment>
+          )
+        ),
     [links]
   );
+  const [showSearch, setShowSearch] = useState(false);
+  const onSearchDone = () => setShowSearch(false);
+
+  const handleCloseMenu = () => {
+    closeBurger();
+    setUserMenuOpened(false);
+  };
+
+  useEffect(() => {
+    if (showSearch && searchRef.current) {
+      searchRef.current.focus(); // Automatically focus input on mount
+    }
+  }, [showSearch]);
+
+  const BuzzMenuItem = useCallback(
+    ({
+      textSize = 'md',
+      withAbbreviation = true,
+      ...groupProps
+    }: GroupProps & {
+      textSize?: MantineSize;
+      withAbbreviation?: boolean;
+    }) => {
+      if (!features.buzz) return null;
+      if (!currentUser) return null;
+
+      return (
+        <Link href="/user/buzz-dashboard">
+          <Group
+            p="sm"
+            position="apart"
+            mx={-4}
+            mt={-4}
+            mb={4}
+            sx={(theme) => ({
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
+              cursor: 'pointer',
+            })}
+            onClick={handleCloseMenu}
+            noWrap
+            {...groupProps}
+          >
+            <Group spacing={4} noWrap>
+              <UserBuzz
+                iconSize={16}
+                user={currentUser}
+                textSize={textSize}
+                withAbbreviation={withAbbreviation}
+                withTooltip={withAbbreviation}
+              />
+            </Group>
+            <Button
+              variant="white"
+              radius="xl"
+              size="xs"
+              px={12}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openBuyBuzzModal({}, { fullScreen: isMobile });
+              }}
+              compact
+            >
+              Buy Buzz
+            </Button>
+          </Group>
+        </Link>
+      );
+    },
+    [currentUser, features.buzz, isMobile]
+  );
+
+  const handleSignOut = async () => {
+    // Removes referral cookies on sign out
+    deleteCookies(['ref_code', 'ref_source']);
+    await signOut();
+  };
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed>
-      <Grid className={classes.header} m={0} gutter="xs" align="center">
+    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
+      <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
+        {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
+      </Box>
+
+      <Grid
+        className={cx(classes.header, { [classes.dNone]: showSearch })}
+        m={0}
+        gutter="xs"
+        align="center"
+      >
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
-            <Link href="/" passHref>
+            <Link href={homeUrl ?? '/'} passHref>
               <Anchor variant="text" onClick={() => closeBurger()}>
                 <Logo />
               </Anchor>
             </Link>
             {!isMuted && (
-              <LoginRedirect reason="upload-model" returnUrl="/models/create">
-                <Button
-                  className={classes.links}
-                  component={NextLink}
-                  href="/models/create"
-                  variant="filled"
-                  size="xs"
-                  pl={5}
-                >
-                  <IconPlus size={16} />
-                  Upload a model
-                </Button>
-              </LoginRedirect>
+              <Menu position="bottom-start" withArrow>
+                <Menu.Target>
+                  <ActionIcon
+                    className={classes.links}
+                    size={30}
+                    variant="filled"
+                    color="green"
+                    radius={10}
+                    sx={(theme) => ({
+                      backgroundColor: '#529C4F',
+                      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+                    })}
+                  >
+                    <IconPlus size={25} stroke={2.5} />
+                  </ActionIcon>
+                  {/* <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
+                    <IconPlus size={16} /> New
+                  </Button> */}
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {mainActions
+                    .filter(({ visible }) => visible !== false)
+                    .map((link, index) => {
+                      const menuItem = (
+                        <Menu.Item
+                          key={!link.redirectReason ? index : undefined}
+                          component={NextLink}
+                          href={link.href}
+                          as={link.as}
+                          rel={link.rel}
+                        >
+                          {link.label}
+                        </Menu.Item>
+                      );
+
+                      return link.redirectReason ? (
+                        <LoginRedirect
+                          key={index}
+                          reason={link.redirectReason}
+                          returnUrl={link.href}
+                        >
+                          {menuItem}
+                        </LoginRedirect>
+                      ) : (
+                        menuItem
+                      );
+                    })}
+                </Menu.Dropdown>
+              </Menu>
             )}
             <SupportButton />
           </Group>
         </Grid.Col>
-        <Grid.Col span={6} md={5}>
-          <ListSearch onSearch={() => closeBurger()} />
+        <Grid.Col
+          span={6}
+          md={5}
+          className={features.enhancedSearch ? classes.searchArea : undefined}
+        >
+          {features.enhancedSearch ? (
+            <>{renderSearchComponent({ onSearchDone, isMobile: false })}</>
+          ) : (
+            <ListSearch onSearch={() => closeBurger()} />
+          )}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
-          <Group spacing="xs" align="center">
+          <Group spacing="md" align="center" noWrap>
+            <Group spacing="sm" noWrap>
+              {currentUser && (
+                <>
+                  <UploadTracker />
+                  <CivitaiLinkPopover />
+                </>
+              )}
+              {currentUser?.showNsfw && <BrowsingModeIcon />}
+              {currentUser && <NotificationBell />}
+              {currentUser?.isModerator && <ModerationNav />}
+            </Group>
             {!currentUser ? (
               <Button
                 component={NextLink}
                 href={`/login?returnUrl=${router.asPath}`}
+                rel="nofollow"
                 variant="default"
               >
                 Sign In
               </Button>
-            ) : null}
-            {currentUser && (
-              <>
-                <UploadTracker />
-                <CivitaiLinkPopover />
-              </>
+            ) : (
+              <Divider orientation="vertical" />
             )}
-            {currentUser?.showNsfw && <BrowsingModeIcon />}
-            {currentUser && <NotificationBell />}
-            {currentUser?.isModerator && <ModerationNav />}
             <Menu
               width={260}
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
+              // radius="lg"
               onClose={() => setUserMenuOpened(false)}
             >
               <Menu.Target>
@@ -404,11 +719,16 @@ export function AppHeader() {
                   className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
                   onClick={() => setUserMenuOpened(true)}
                 >
-                  <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
+                  <Group spacing={8} noWrap>
+                    <UserAvatar user={currentUser} size="md" />
+                    {features.buzz && <UserBuzz user={currentUser} pr="sm" />}
+                  </Group>
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
+                <BuzzMenuItem withAbbreviation={false} />
                 {userMenuItems}
+                <Divider my={4} />
                 <Menu.Item
                   closeMenuOnClick={false}
                   icon={<IconPalette stroke={1.5} />}
@@ -435,7 +755,7 @@ export function AppHeader() {
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                      onClick={() => signOut()}
+                      onClick={handleSignOut}
                     >
                       Logout
                     </Menu.Item>
@@ -447,6 +767,11 @@ export function AppHeader() {
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
+            {features.enhancedSearch && (
+              <ActionIcon onClick={() => setShowSearch(true)}>
+                <IconSearch />
+              </ActionIcon>
+            )}
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             <Burger
@@ -465,6 +790,7 @@ export function AppHeader() {
                 >
                   {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
                   <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                    <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                     {burgerMenuItems}
                   </ScrollArea.Autosize>
                   {currentUser && (
@@ -492,19 +818,14 @@ export function AppHeader() {
                         {currentUser?.showNsfw && (
                           <BlurToggle iconProps={{ stroke: 1.5 }}>
                             {({ icon, toggle }) => (
-                              <ActionIcon variant="default" size="lg" onClick={toggle}>
+                              <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
                                 {icon}
                               </ActionIcon>
                             )}
                           </BlurToggle>
                         )}
-                        <Link href="/user/account" passHref>
-                          <ActionIcon
-                            variant="default"
-                            component="a"
-                            size="lg"
-                            onClick={closeBurger}
-                          >
+                        <Link href="/user/account">
+                          <ActionIcon variant="default" size="lg" onClick={closeBurger}>
                             <IconSettings stroke={1.5} />
                           </ActionIcon>
                         </Link>
@@ -526,3 +847,10 @@ export function AppHeader() {
     </Header>
   );
 }
+
+type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement };
+export type RenderSearchComponentProps = {
+  onSearchDone: () => void;
+  isMobile: boolean;
+  ref?: RefObject<HTMLInputElement>;
+};

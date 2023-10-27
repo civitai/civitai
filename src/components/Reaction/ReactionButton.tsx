@@ -3,8 +3,8 @@ import { cloneElement, useCallback, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { devtools } from 'zustand/middleware';
 import { trpc } from '~/utils/trpc';
+import { devtools } from 'zustand/middleware';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -56,10 +56,12 @@ export type ReactionButtonProps = ToggleReactionInput & {
     hasReacted,
     count,
     reaction,
+    canClick,
   }: {
     hasReacted: boolean;
     count: number;
     reaction: ReviewReactions;
+    canClick: boolean;
   }) => React.ReactElement;
   readonly?: boolean;
 };
@@ -94,17 +96,24 @@ export function ReactionButton({
     e.preventDefault();
     e.stopPropagation();
     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-    mutate({
-      entityId,
-      entityType,
-      reaction,
-    });
+    mutate(
+      {
+        entityId,
+        entityType,
+        reaction,
+      }
+      // {
+      //   onError(error) {
+      //     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
+      //   },
+      // }
+    );
   };
 
   if (noEmpty && count < 1) return null;
 
-  const canClick = currentUser && !readonly;
-  const child = children({ hasReacted, count, reaction });
+  const canClick = !!currentUser && !readonly;
+  const child = children({ hasReacted, count, reaction, canClick });
 
   return canClick ? cloneElement(child, { onClick: handleClick }) : child;
 }

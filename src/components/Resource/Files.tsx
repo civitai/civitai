@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Button,
   Card,
+  Divider,
   Group,
   Progress,
   Select,
@@ -9,49 +10,37 @@ import {
   Text,
   Tooltip,
   useMantineTheme,
-  Divider,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { useViewportSize } from '@mantine/hooks';
-import { ModelType } from '@prisma/client';
+import { openConfirmModal } from '@mantine/modals';
 import {
+  IconAlertTriangle,
   IconBan,
   IconCircleCheck,
   IconCloudUpload,
   IconFileUpload,
   IconRefresh,
   IconTrash,
-  IconUpload,
   IconX,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 
+import { FileFromContextProps, useFilesContext } from '~/components/Resource/FilesProvider';
 import { constants, ModelFileType } from '~/server/common/constants';
-import { ModelUpsertInput } from '~/server/schema/model.schema';
+// import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelVersionById } from '~/types/router';
+// import { ModelVersionById } from '~/types/router';
+import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import {
-  FileFromContextProps,
-  FilesProvider,
-  useFilesContext,
-} from '~/components/Resource/FilesProvider';
-
-export function Files({ model, version }: Props) {
-  return (
-    <FilesProvider model={model} version={version}>
-      <FilesComponent model={model} version={version} />
-    </FilesProvider>
-  );
-}
 
 // TODO.Briant - compare file extension when checking for duplicate files
-function FilesComponent({ model }: Props) {
+export function Files() {
   const theme = useMantineTheme();
 
   const { files, onDrop, startUpload, hasPending, fileExtensions, maxFiles } = useFilesContext();
@@ -71,9 +60,30 @@ function FilesComponent({ model }: Props) {
 
   return (
     <Stack>
-      <Dropzone accept={{ 'mime/type': fileExtensions }} onDrop={onDrop} maxFiles={maxFiles}>
+      <Dropzone
+        accept={{ 'mime/type': fileExtensions }}
+        onDrop={(droppedFiles) => {
+          if (files.length + droppedFiles.length > maxFiles) return;
+
+          onDrop(droppedFiles);
+        }}
+        maxFiles={maxFiles}
+        onReject={(files) => {
+          const errors = removeDuplicates(
+            files.flatMap((file) => file.errors),
+            'code'
+          )
+            .map((error) => error.message)
+            .join('\n');
+
+          showErrorNotification({ error: new Error(errors) });
+        }}
+        sx={(theme) => ({
+          '&[data-reject]': { background: theme.colors.dark[5], borderColor: theme.colors.dark[4] },
+        })}
+      >
         <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
-          <Dropzone.Accept>
+          {/* <Dropzone.Accept>
             <IconUpload
               size={50}
               stroke={1.5}
@@ -89,8 +99,9 @@ function FilesComponent({ model }: Props) {
           </Dropzone.Reject>
           <Dropzone.Idle>
             <IconFileUpload size={50} stroke={1.5} />
-          </Dropzone.Idle>
+          </Dropzone.Idle> */}
 
+          <IconFileUpload size={50} stroke={1.5} />
           <Stack spacing={8}>
             <Text size="xl" inline>
               Drop your files here or click to select
@@ -102,7 +113,15 @@ function FilesComponent({ model }: Props) {
         </Group>
       </Dropzone>
       {files.length > 0 ? (
-        <Button onClick={startUpload} size="lg" disabled={!hasPending} fullWidth>
+        <Button
+          onClick={async () => {
+            // Do nothing on thrown error
+            await startUpload().catch(() => ({}));
+          }}
+          size="lg"
+          disabled={!hasPending}
+          fullWidth
+        >
           Start Upload
         </Button>
       ) : null}
@@ -119,20 +138,23 @@ function FilesComponent({ model }: Props) {
   );
 }
 
-type Props = {
-  model?: Partial<ModelUpsertInput>;
-  version?: Partial<ModelVersionById>;
-  onStartUploadClick?: VoidFunction;
-};
+// type Props = {
+//   model?: Partial<ModelUpsertInput>;
+//   version?: Partial<ModelVersionById>;
+//   onStartUploadClick?: VoidFunction;
+// };
 
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
   const queryUtils = trpc.useContext();
+  const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
 
-  const failedUpload = status === 'error' || status === 'aborted';
+  // File card benefits from knowing if a tracked file exist.
+  const trackedFiles = useS3UploadStore((state) => state.items);
+  const trackedFile = trackedFiles.find((x) => x.meta?.uuid === versionFile.uuid);
 
   const deleteFileMutation = trpc.modelFile.delete.useMutation({
-    async onSuccess(response, request) {
+    async onSuccess() {
       await queryUtils.modelVersion.getById.invalidate({ id: versionFile.versionId });
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
       removeFile(versionFile.uuid);
@@ -159,7 +181,8 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
           >
             {versionFile.name}
           </Text>
-          {!versionFile.isUploading && (
+          {/* Checking for tracked files here is a safeguard for failed uploads that ended up in the air.*/}
+          {(!versionFile.isUploading || !trackedFile) && (
             <Tooltip label="Remove file" position="left">
               <ActionIcon
                 color="red"
@@ -243,13 +266,20 @@ function TrackedFileStatus({
   const theme = useMantineTheme();
   const clear = useS3UploadStore((state) => state.clear);
   const abort = useS3UploadStore((state) => state.abort);
-  const { retry, removeFile } = useFilesContext();
+  const { retry, removeFile, updateFile } = useFilesContext();
 
   const { uuid, status, progress, timeRemaining, speed } = trackedFile;
 
-  const handleRemoveFile = () => {
-    clear((x) => x.uuid === trackedFile.uuid);
-    removeFile(versionFileUuid);
+  const handleRemoveFile = async () => {
+    try {
+      await clear((x) => x.uuid === trackedFile.uuid);
+      removeFile(versionFileUuid);
+    } catch (e) {
+      showErrorNotification({
+        title: 'There was an error while removing the file',
+        error: e as Error,
+      });
+    }
   };
 
   switch (status) {
@@ -270,7 +300,13 @@ function TrackedFileStatus({
                 sx={{ flex: 1 }}
               />
               <Tooltip label="Cancel upload" position="left">
-                <ActionIcon color="red" onClick={() => abort(uuid)}>
+                <ActionIcon
+                  color="red"
+                  onClick={() => {
+                    abort(uuid);
+                    updateFile(versionFileUuid, { status: 'aborted' });
+                  }}
+                >
                   <IconX />
                 </ActionIcon>
               </Tooltip>
@@ -357,7 +393,7 @@ function FileEditForm({
 
   const handleSave = () => {
     const valid = validationCheck();
-    if (valid) {
+    if (valid && versionFile.id) {
       mutate({
         id: versionFile.id,
         type: versionFile.type ?? undefined,
@@ -379,12 +415,12 @@ function FileEditForm({
       case 'safetensors':
         return ['Model', 'VAE'].includes(value);
       case 'pt':
-        return ['Model', 'Negative', 'Text Encoder', 'VAE'].includes(value);
+        return ['Model', 'Negative', 'VAE'].includes(value);
       case 'zip':
-        return ['Training Data', 'Archive'].includes(value);
+        return ['Training Data', 'Archive', 'Model'].includes(value);
       case 'yml':
       case 'yaml':
-        return ['Config'].includes(value);
+        return ['Config', 'Text Encoder'].includes(value);
       case 'bin':
         return ['Model', 'Negative'].includes(value);
       default:
@@ -438,12 +474,12 @@ function FileEditForm({
           />
 
           <Select
-            label="Floating Point"
-            placeholder="fp16 or fp32"
+            label="Precision"
+            placeholder="fp16, fp32, bf16"
             data={constants.modelFileFp}
             error={error?.fp?._errors[0]}
             value={versionFile.fp ?? null}
-            onChange={(value: 'fp16' | 'fp32' | null) => {
+            onChange={(value: 'fp16' | 'fp32' | 'bf16' | null) => {
               updateFile(versionFile.uuid, { fp: value });
             }}
             withAsterisk
@@ -464,3 +500,52 @@ function FileEditForm({
     </Stack>
   );
 }
+
+export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
+  const { startUpload, files, hasPending } = useFilesContext();
+
+  return (
+    <Group mt="xl" position="right">
+      <Button variant="default" onClick={onBackClick}>
+        Back
+      </Button>
+      <Button
+        onClick={async () => {
+          const allFailed = files.every(
+            (file) => file.status === 'aborted' || file.status === 'error'
+          );
+          const showConfirmModal = !files.length || allFailed;
+
+          if (showConfirmModal) {
+            return openConfirmModal({
+              title: (
+                <Group spacing="xs">
+                  <IconAlertTriangle color="gold" />
+                  <Text size="lg">Missing files</Text>
+                </Group>
+              ),
+              children:
+                'You have not uploaded any files. You can continue without files, but you will not be able to publish your model. Are you sure you want to continue?',
+              labels: { cancel: 'Cancel', confirm: 'Continue' },
+              onConfirm: onNextClick,
+            });
+          }
+
+          if (hasPending) {
+            try {
+              await startUpload();
+            } catch (error) {
+              // Avoid going to next step when thrown error
+              return;
+            }
+          }
+          return onNextClick();
+        }}
+      >
+        Next
+      </Button>
+    </Group>
+  );
+}
+
+type ActionProps = { onBackClick: () => void; onNextClick: () => void };

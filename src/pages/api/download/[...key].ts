@@ -2,7 +2,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { UserActivityType } from '@prisma/client';
 import requestIp from 'request-ip';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
@@ -23,28 +22,6 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     if (req.headers['content-type'] === 'application/json')
       return res.status(401).json({ error: 'Unauthorized' });
     else return res.redirect(`/login?returnUrl=/api/download/${key}`);
-  }
-
-  // Track download
-  try {
-    await dbWrite.userActivity.create({
-      data: {
-        userId,
-        activity: UserActivityType.OtherDownload,
-        details: {
-          key,
-          // Just so we can catch exploits
-          ...(!userId
-            ? {
-                ip,
-                userAgent: req.headers['user-agent'],
-              }
-            : {}), // You'll notice we don't include this for authed users...
-        },
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({ error: 'Invalid database operation', cause: error });
   }
 
   const { url } = await getDownloadUrl(key);

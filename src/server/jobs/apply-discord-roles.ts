@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { discord, DiscordRole } from '~/server/integrations/discord';
 import { env } from '~/env/server.mjs';
 import dayjs from 'dayjs';
@@ -12,18 +12,18 @@ const applyDiscordActivityRoles = createJob(
   async () => {
     const discordRoles = await discord.getAllRoles();
 
-    const enthusiastRole = discordRoles.find((r) => r.name === 'Entusiast');
+    const enthusiastRole = discordRoles.find((r) => r.name === 'Enthusiast');
     if (enthusiastRole) {
       const existingEntusiasts = await getAccountsInRole(enthusiastRole);
 
       const enthusiastCutoff = dayjs().subtract(ENTHUSIAST_ROLE_CUTOFF, 'day').toDate();
       const enthusiasts =
         (
-          (await dbRead.$queryRaw`
+          await dbWrite.$queryRaw<{ providerAccountId: string }[]>`
         SELECT DISTINCT a."providerAccountId"
         FROM "Image" i
         JOIN "Account" a ON a."userId" = i."userId" AND a.provider = 'discord'
-        WHERE i."createdAt" > ${enthusiastCutoff}`) as { providerAccountId: string }[]
+        WHERE i."createdAt" > ${enthusiastCutoff}`
         )?.map((x) => x.providerAccountId) ?? [];
 
       const newEntusiasts = enthusiasts.filter((u) => !existingEntusiasts.includes(u));
@@ -40,7 +40,7 @@ const applyDiscordActivityRoles = createJob(
       const creatorCutoff = dayjs().subtract(CREATOR_ROLE_CUTOFF, 'day').toDate();
       const creator = new Set(
         (
-          await dbRead.model.findMany({
+          await dbWrite.model.findMany({
             where: {
               OR: [
                 { publishedAt: { gte: creatorCutoff } },
@@ -75,70 +75,66 @@ const applyDiscordActivityRoles = createJob(
   }
 );
 
-const applyDiscordLeadboardRoles = createJob(
-  'apply-discord-leaderboard-roles',
-  '3 */1 * * *',
-  async () => {
-    const discordRoles = await discord.getAllRoles();
+export const applyDiscordLeaderboardRoles = async () => {
+  const discordRoles = await discord.getAllRoles();
 
-    const top10Role = discordRoles.find((r) => r.name === 'Top 10');
-    const top100Role = discordRoles.find((r) => r.name === 'Top 100');
-    if (!top100Role || !top10Role) return;
+  const top10Role = discordRoles.find((r) => r.name === 'Top 10');
+  const top100Role = discordRoles.find((r) => r.name === 'Top 100');
+  if (!top100Role || !top10Role) return;
 
-    const existingTop100 = await getAccountsInRole(top100Role);
-    const existingTop10 = await getAccountsInRole(top10Role);
+  const existingTop100 = await getAccountsInRole(top100Role);
+  const existingTop10 = await getAccountsInRole(top10Role);
 
-    // Get the top 100 users with a discord account
-    const top100 =
-      (
-        await dbRead.user.findMany({
-          where: {
-            rank: { leaderboardRank: { lte: 100 } },
-            accounts: {
-              some: { provider: 'discord' },
+  // Get the top 100 users with a discord account
+  const top100 =
+    (
+      await dbWrite.user.findMany({
+        where: {
+          rank: { leaderboardRank: { lte: 100 } },
+          accounts: {
+            some: { provider: 'discord' },
+          },
+        },
+        select: {
+          rank: {
+            select: {
+              leaderboardRank: true,
             },
           },
-          select: {
-            rank: {
-              select: {
-                leaderboardRank: true,
-              },
-            },
-            accounts: {
-              select: { providerAccountId: true },
-              where: { provider: 'discord' },
-            },
+          accounts: {
+            select: { providerAccountId: true },
+            where: { provider: 'discord' },
           },
-        })
-      )?.map((s) => ({
-        rank: s.rank?.leaderboardRank,
-        providerAccountId: s.accounts[0].providerAccountId,
-      })) ?? [];
+        },
+      })
+    )?.map((s) => ({
+      rank: s.rank?.leaderboardRank,
+      providerAccountId: s.accounts[0].providerAccountId,
+    })) ?? [];
 
-    // Get the new users in the top 100 and the users that are no longer in the top 100
-    const newTop100 = top100
-      .filter((u) => !existingTop100.includes(u.providerAccountId))
-      .map((u) => u.providerAccountId);
-    await addRoleToAccounts(top100Role, newTop100);
+  // Get the new users in the top 100 and the users that are no longer in the top 100
+  const newTop100 = top100
+    .filter((u) => !existingTop100.includes(u.providerAccountId))
+    .map((u) => u.providerAccountId);
+  await addRoleToAccounts(top100Role, newTop100);
 
-    const removedTop100 = existingTop100.filter(
-      (u) => !top100.map((u) => u.providerAccountId).includes(u)
-    );
-    await removeRoleFromAccounts(top100Role, removedTop100);
+  const removedTop100 = existingTop100.filter(
+    (u) => !top100.map((u) => u.providerAccountId).includes(u)
+  );
+  await removeRoleFromAccounts(top100Role, removedTop100);
 
-    // Get the new users in the top 10 and the users that are no longer in the top 10
-    const newTop10 = top100
-      .filter((u) => u.rank && u.rank <= 10)
-      .filter((u) => !existingTop10.includes(u.providerAccountId))
-      .map((u) => u.providerAccountId);
-    await addRoleToAccounts(top10Role, newTop10);
+  // Get the new users in the top 10 and the users that are no longer in the top 10
+  const newTop10 = top100
+    .filter((u) => u.rank && u.rank <= 10)
+    .filter((u) => !existingTop10.includes(u.providerAccountId))
+    .map((u) => u.providerAccountId);
+  await addRoleToAccounts(top10Role, newTop10);
 
-    const removedTop10 = existingTop10.filter(
-      (u) => !top100.map((u) => u.providerAccountId).includes(u)
-    );
-    await removeRoleFromAccounts(top10Role, removedTop10);
-  }
-);
+  const removedTop10 = existingTop10.filter(
+    (u) => !top100.map((u) => u.providerAccountId).includes(u)
+  );
+  await removeRoleFromAccounts(top10Role, removedTop10);
+};
 
 const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * *', async () => {
   const discordRoles = await discord.getAllRoles();
@@ -152,9 +148,9 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
     // Add the supporter role to any new supporters
     const supporters =
       (
-        await dbRead.customerSubscription.findMany({
+        await dbWrite.customerSubscription.findMany({
           where: {
-            status: 'active',
+            status: { in: ['active', 'trialing'] },
             user: {
               accounts: {
                 some: { provider: 'discord' },
@@ -192,7 +188,7 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
     const donatorCutoff = dayjs().subtract(1, 'month').toDate();
     const donators = new Set(
       (
-        await dbRead.purchase.findMany({
+        await dbWrite.purchase.findMany({
           where: {
             createdAt: { gt: donatorCutoff },
             priceId: env.STRIPE_DONATE_ID,
@@ -224,28 +220,16 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
   }
 });
 
-export const applyDiscordRoles = [
-  applyDiscordActivityRoles,
-  applyDiscordPaidRoles,
-  applyDiscordLeadboardRoles,
-];
+export const applyDiscordRoles = [applyDiscordActivityRoles, applyDiscordPaidRoles];
 
 // #region [utilities]
 const getAccountsInRole = async (role: DiscordRole) => {
   const accounts =
     (
-      await dbRead.account.findMany({
-        where: {
-          provider: 'discord',
-          metadata: {
-            path: ['roles'],
-            array_contains: role.name,
-          },
-        },
-        select: {
-          providerAccountId: true,
-        },
-      })
+      await dbWrite.$queryRawUnsafe<{ providerAccountId: string }[]>(`
+        SELECT "providerAccountId"
+        FROM "Account"
+        WHERE provider = 'discord' AND metadata->'roles' @> '["${role.name}"]'`)
     )?.map((x) => x.providerAccountId) ?? [];
   return accounts;
 };

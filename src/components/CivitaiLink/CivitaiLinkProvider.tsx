@@ -14,7 +14,7 @@ import { showNotification } from '@mantine/notifications';
 import { v4 as uuid } from 'uuid';
 import { immer } from 'zustand/middleware/immer';
 import { create } from 'zustand';
-import isEqual from 'lodash/isEqual';
+import { isEqual } from 'lodash-es';
 import {
   WorkerOutgoingMessage,
   WorkerIncomingMessage,
@@ -77,7 +77,7 @@ type CivitaiLinkStore = {
 };
 export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
   immer((set) => ({
-    ids: [],
+    ids: [] as string[],
     activities: {},
     activityProgress: null,
     setActivities: (activities: Response[]) =>

@@ -1,7 +1,16 @@
 import dayjs from 'dayjs';
 
-export function formatDate(value: Date, format = 'MMM DD, YYYY') {
+export function formatDate(value: dayjs.ConfigType, format = 'MMM DD, YYYY', utc = false) {
+  if (utc) return dayjs.utc(value).format(format);
   return dayjs(value).format(format);
+}
+
+export function formatDateMin(value: Date) {
+  if (dayjs().isSame(value, 'day')) return dayjs(value).format('h:mma');
+  if (dayjs().isSame(value, 'week')) return dayjs(value).format('dddd h:mma');
+  if (dayjs().isSame(value, 'month')) return dayjs(value).format('MMM D h:mma');
+  if (dayjs().isSame(value, 'year')) return dayjs(value).format('MMM D h:mma');
+  return dayjs(value).format('MMM D, YYYY h:mma');
 }
 
 // Deprecated: Use DaysFromNow component instead
@@ -34,4 +43,22 @@ export function maxDate(...dates: Date[]) {
 export function isBetweenToday(value: Date) {
   const today = dayjs();
   return dayjs(value).isBetween(today.startOf('day'), today.clone().endOf('day'), null, '[]');
+}
+
+export const aDayAgo = dayjs().subtract(1, 'day').toDate();
+
+export function stripTime(value: Date) {
+  return value.toISOString().substring(0, 10);
+}
+
+export function toUtc(value: dayjs.ConfigType) {
+  return dayjs.utc(value).toDate();
+}
+
+export function startOfDay(value: dayjs.ConfigType) {
+  return dayjs(value).startOf('day').toDate();
+}
+
+export function endOfDay(value: dayjs.ConfigType) {
+  return dayjs(value).endOf('day').toDate();
 }

@@ -23,7 +23,7 @@ type FieldArrayProps<
 export function FieldArray<
   TFieldValues extends FieldValues,
   TFieldArrayName extends FieldArrayPath<TFieldValues>
->({ name, keyName, render }: FieldArrayProps<TFieldValues, TFieldArrayName>) {
+>({ name, keyName = 'id', render }: FieldArrayProps<TFieldValues, TFieldArrayName>) {
   const { control } = useFormContext<TFieldValues>();
   const { fields, append, prepend, remove, swap, move, insert, update, replace } = useFieldArray<
     TFieldValues,

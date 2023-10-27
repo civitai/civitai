@@ -1,9 +1,16 @@
-import { BrowsingMode, ImageSort } from './../common/enums';
-import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
+import {
+  ImageGenerationProcess,
+  MediaType,
+  MetricTimeframe,
+  NsfwLevel,
+  ReviewReactions,
+} from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { tagSchema } from '~/server/schema/tag.schema';
+import { periodModeSchema } from '~/server/schema/base.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
+import { postgresSlugify } from '~/utils/string-helpers';
+import { BrowsingMode, ImageSort } from './../common/enums';
 
 const stringToNumber = z.preprocess(
   (value) => (value ? Number(value) : undefined),
@@ -12,6 +19,25 @@ const stringToNumber = z.preprocess(
 
 const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 
+// TODO: update accordingly once new entities follow this pattern
+export const ImageEntityType = {
+  Bounty: 'Bounty',
+  BountyEntry: 'BountyEntry',
+} as const;
+export type ImageEntityType = (typeof ImageEntityType)[keyof typeof ImageEntityType];
+
+export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
+export const comfyMetaSchema = z
+  .object({
+    prompt: z.object({}).passthrough(),
+    workflow: z
+      .object({
+        nodes: z.object({}).passthrough().array().optional(),
+      })
+      .passthrough(),
+  })
+  .partial();
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -19,14 +45,23 @@ export const imageGenerationSchema = z.object({
   steps: stringToNumber,
   sampler: undefinedString,
   seed: stringToNumber,
+  'Clip skip': z.coerce.number().optional(),
+  clipSkip: z.coerce.number().optional(),
+  // resources: z
+  //   .object({
+  //     name: z.string().optional(),
+  //     type: z.string().optional(),
+  //     weight: z.number().optional(),
+  //     hash: z.string().optional(),
+  //   })
+  //   .passthrough()
+  //   .array()
+  //   .optional(),
+  hashes: z.record(z.string()).optional(),
+  comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
 });
 
-export const imageMetaSchema = imageGenerationSchema
-  .extend({
-    hashes: z.record(z.string()),
-  })
-  .partial()
-  .passthrough();
+export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({
@@ -79,14 +114,16 @@ export const imageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
-  needsReview: z.boolean().optional(),
+  needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
-  postId: z.number().optional(),
+  postId: z.number().nullish(),
   resources: z.array(imageResourceUpsertSchema).optional(),
+  type: z.nativeEnum(MediaType).default(MediaType.image),
+  metadata: z.object({}).passthrough().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
@@ -101,15 +138,16 @@ export const imageUpdateSchema = z.object({
     .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
     .optional(),
   nsfw: z.boolean().optional(),
-  needsReview: z.boolean().optional(),
+  needsReview: z.string().nullish(),
 });
 export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
-  nsfw: z.boolean().optional(),
-  needsReview: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
+  needsReview: z.string().nullish(),
   delete: z.boolean().optional(),
+  reviewType: z.enum(['minor', 'poi', 'reported']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
@@ -123,37 +161,6 @@ export const getReviewImagesSchema = z.object({
   reviewId: z.number(),
 });
 
-export type GetGalleryImageInput = z.infer<typeof getGalleryImageSchema>;
-export const getGalleryImageSchema = z.object({
-  limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
-  cursor: z.union([z.bigint(), z.number()]).optional(),
-  modelId: z.number().optional(),
-  reviewId: z.number().optional(),
-  modelVersionId: z.number().optional(),
-  userId: z.number().optional(),
-  infinite: z.boolean().default(true),
-  period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-  sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  tags: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  singleImageModel: z.boolean().optional(),
-  singleImageAlbum: z.boolean().optional(),
-  isFeatured: z.boolean().optional(),
-  types: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  needsReview: z.boolean().optional(),
-  tagReview: z.boolean().optional(),
-});
-
-export const getImageConnectionsSchema = z.object({
-  id: z.number(),
-  modelId: z.number().nullish(),
-  reviewId: z.number().nullish(),
-});
-export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;
-
 export type UpdateImageInput = z.infer<typeof updateImageSchema>;
 export const updateImageSchema = z.object({
   id: z.number(),
@@ -163,7 +170,7 @@ export const updateImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
 
@@ -171,13 +178,13 @@ export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
-  name: z.string().optional().nullable(),
-  width: z.number().optional().nullable(),
-  mimeType: z.string().optional().nullable(),
+  type: z.nativeEnum(MediaType).optional(),
+  height: z.coerce.number().nullish(),
+  width: z.coerce.number().nullish(),
 });
 
 // #region [new schemas]
-const imageInclude = z.enum(['tags', 'count', 'cosmetics']);
+const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report', 'meta']);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z
@@ -186,8 +193,10 @@ export const getInfiniteImagesSchema = z
     cursor: z.union([z.bigint(), z.number()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
+    collectionId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
+    imageId: z.number().optional(),
     reviewId: z.number().optional(),
     username: usernameSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),
@@ -195,28 +204,70 @@ export const getInfiniteImagesSchema = z
     prioritizedUserIds: z.array(z.number()).optional(),
     excludedImageIds: z.array(z.number()).optional(),
     period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    periodMode: periodModeSchema,
     sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
     tags: z.array(z.number()).optional(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
     withTags: z.boolean().optional(),
     browsingMode: z.nativeEnum(BrowsingMode).optional(),
-    needsReview: z.boolean().optional(),
+    needsReview: z.string().nullish(),
     tagReview: z.boolean().optional(),
+    reportReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
+    excludeCrossPosts: z.boolean().optional(),
+    reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
+    ids: z.array(z.number()).optional(),
+    includeBaseModel: z.boolean().optional(),
+    types: z.array(z.nativeEnum(MediaType)).optional(),
+    withMeta: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+    followed: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
       if (!value.include) value.include = [];
       value.include.push('tags');
     }
+    if (value.withMeta) {
+      if (!value.include) value.include = [];
+      value.include.push('meta');
+    }
     return value;
   });
+
+export type GetImagesByCategoryInput = z.infer<typeof getImagesByCategorySchema>;
+export const getImagesByCategorySchema = z.object({
+  cursor: z.number().optional(),
+  limit: z.number().min(1).max(30).optional(),
+  imageLimit: z.number().min(1).max(30).optional(),
+  sort: z.nativeEnum(ImageSort).optional(),
+  period: z.nativeEnum(MetricTimeframe).optional(),
+  periodMode: periodModeSchema,
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
+  tags: z.number().array().optional(),
+  username: z
+    .string()
+    .transform((data) => postgresSlugify(data))
+    .nullish(),
+  modelVersionId: z.number().optional(),
+  modelId: z.number().optional(),
+});
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
+  withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
   // browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion
+
+export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema>;
+export const removeImageResourceSchema = z.object({
+  imageId: z.number(),
+  resourceId: z.number(),
+});

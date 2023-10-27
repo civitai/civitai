@@ -1,36 +1,28 @@
-import {
-  ActionIcon,
-  Card,
-  Group,
-  MantineSize,
-  Rating,
-  Stack,
-  Text,
-  useMantineTheme,
-} from '@mantine/core';
-import { IconDownload, IconHeart, IconUpload, IconUsers, IconStar } from '@tabler/icons';
+import { ActionIcon, Card, Group, Stack } from '@mantine/core';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
+import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 
-const iconBadgeSize: MantineSize = 'sm';
-
-export function CreatorCard({ user }: Props) {
-  const theme = useMantineTheme();
-
+export function CreatorCard({
+  user,
+  tipBuzzEntityType,
+  tipBuzzEntityId,
+  withActions = true,
+}: Props) {
   const { data: creator } = trpc.user.getCreator.useQuery(
     { id: user.id },
     {
       placeholderData: {
         ...user,
+        rank: null,
         stats: {
           downloadCountAllTime: 0,
           favoriteCountAllTime: 0,
@@ -45,92 +37,46 @@ export function CreatorCard({ user }: Props) {
   const { models: uploads } = creator?._count ?? { models: 0 };
   const stats = creator?.stats;
 
-  if (!creator) return null;
+  if (!creator || user.id === -1) return null;
 
   return (
     <Card p="xs" withBorder>
       <Card.Section py="xs" inheritPadding>
         <Stack spacing="xs">
-          <Group align="center" position="apart">
+          <Group align="center" position="apart" noWrap>
             <UserAvatar
               size="sm"
+              avatarProps={{ size: 32 }}
               user={creator}
               subText={`Joined ${formatDate(creator.createdAt)}`}
               withUsername
               linkToProfile
             />
-            <Group spacing="xs">
-              <RankBadge size="md" rank={creator.rank?.leaderboardRank} />
-              <FollowUserButton userId={creator.id} size="xs" compact />
-            </Group>
-          </Group>
-          {stats && (
-            <Group position="apart" spacing={0} noWrap>
-              <IconBadge
-                sx={{ userSelect: 'none' }}
-                size={iconBadgeSize}
-                icon={
-                  <Rating
-                    size="xs"
-                    value={stats.ratingAllTime}
-                    readOnly
-                    emptySymbol={
-                      theme.colorScheme === 'dark' ? (
-                        <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                      ) : undefined
-                    }
-                  />
-                }
-                variant={
-                  theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0 ? 'filled' : 'light'
-                }
-              >
-                <Text size="xs" color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}>
-                  {abbreviateNumber(stats.ratingCountAllTime)}
-                </Text>
-              </IconBadge>
-              <Group spacing={4} noWrap>
-                <IconBadge
-                  icon={<IconUpload size={14} />}
-                  href={`/user/${creator.username}`}
-                  color="gray"
-                  size={iconBadgeSize}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  sx={(theme) => ({
-                    [theme.fn.smallerThan('xs')]: {
-                      display: 'none',
-                    },
-                  })}
-                >
-                  <Text size="xs">{abbreviateNumber(uploads)}</Text>
-                </IconBadge>
-                <IconBadge
-                  icon={<IconUsers size={14} />}
-                  href={`/user/${creator.username}/followers`}
-                  color="gray"
-                  size={iconBadgeSize}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.followerCountAllTime)}</Text>
-                </IconBadge>
-                <IconBadge
-                  icon={<IconHeart size={14} />}
-                  color="gray"
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size={iconBadgeSize}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
-                </IconBadge>
-                <IconBadge
-                  icon={<IconDownload size={14} />}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size={iconBadgeSize}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                </IconBadge>
+            {withActions && (
+              <Group spacing={8} noWrap>
+                <TipBuzzButton
+                  toUserId={creator.id}
+                  size="xs"
+                  compact
+                  entityId={tipBuzzEntityId}
+                  entityType={tipBuzzEntityType}
+                />
+                <FollowUserButton userId={creator.id} size="xs" compact />
               </Group>
-            </Group>
-          )}
+            )}
+          </Group>
+          <Group spacing={8}>
+            <RankBadge size="md" rank={creator.rank} />
+            {stats && (
+              <UserStatBadges
+                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
+                uploads={uploads}
+                followers={stats.followerCountAllTime}
+                favorite={stats.favoriteCountAllTime}
+                downloads={stats.downloadCountAllTime}
+              />
+            )}
+          </Group>
         </Stack>
       </Card.Section>
       {creator.links && creator.links.length > 0 ? (
@@ -149,8 +95,8 @@ export function CreatorCard({ user }: Props) {
                 component="a"
                 href={link.url}
                 target="_blank"
-                rel="noopener noreferrer"
-                size="md"
+                rel="nofollow noreferrer"
+                size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />
               </ActionIcon>
@@ -164,4 +110,7 @@ export function CreatorCard({ user }: Props) {
 
 type Props = {
   user: UserWithCosmetics;
+  tipBuzzEntityId?: number;
+  tipBuzzEntityType?: string;
+  withActions?: boolean;
 };

@@ -1,60 +1,97 @@
 import { Alert, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
-import { CheckpointType, CommercialUse, ModelType, TagTarget } from '@prisma/client';
 import {
-  IconCurrencyDollarOff,
-  IconPhoto,
+  CheckpointType,
+  CommercialUse,
+  ModelType,
+  ModelUploadType,
+  TagTarget,
+} from '@prisma/client';
+import {
   IconBrush,
-  IconShoppingCart,
+  IconCurrencyDollarOff,
   IconExclamationMark,
-} from '@tabler/icons';
+  IconPhoto,
+  IconShoppingCart,
+  IconWorldUpload,
+} from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
 import {
-  useForm,
   Form,
-  InputText,
-  InputSelect,
-  InputSegmentedControl,
-  InputRTE,
-  InputTags,
   InputCheckbox,
+  InputRTE,
+  InputSegmentedControl,
+  InputSelect,
+  InputTags,
+  InputText,
+  useForm,
 } from '~/libs/form';
+import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
-import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { parseNumericString } from '~/utils/query-string-helpers';
+import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const schema = modelUpsertSchema.refine(
-  (data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true),
-  {
+const schema = modelUpsertSchema
+  .extend({
+    category: z.number().optional(),
+  })
+  .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
-  }
-);
+  })
+  .refine((data) => !(data.nsfw && data.poi), {
+    message: 'Mature content depicting actual people is not permitted.',
+  });
+const querySchema = z.object({
+  category: z.preprocess(parseNumericString, z.number().optional()),
+});
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
-  const defaultValues: ModelUpsertInput = {
+  const router = useRouter();
+  const result = querySchema.safeParse(router.query);
+
+  const defaultCategory = result.success ? result.data.category : undefined;
+  const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? null,
-    tagsOnModels: model?.tagsOnModels ?? [],
+    tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: model?.type ?? 'Checkpoint',
     checkpointType: model?.checkpointType,
+    uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
+    category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
   };
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useContext();
 
-  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
+  const [type, allowDerivatives, allowCommercialUse] = form.watch([
+    'type',
+    'allowDerivatives',
+    'allowCommercialUse',
+  ]);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
+
+  const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
+    categories: true,
+    entityType: ['Model'],
+    unlisted: false,
+    sort: TagSort.MostModels,
+    limit: 100,
+  });
+  const categories =
+    data?.items.map((tag) => ({ label: titleCase(tag.name), value: tag.id })) ?? [];
 
   const handleModelTypeChange = (value: ModelType) => {
     form.setValue('checkpointType', null);
@@ -77,15 +114,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
     },
   });
-  const handleSubmit = (data: z.infer<typeof schema>) => {
-    if (isDirty) upsertModelMutation.mutate(data);
-    else onSubmit(defaultValues);
+  const handleSubmit = ({ category, tagsOnModels = [], ...rest }: z.infer<typeof schema>) => {
+    if (isDirty) {
+      const selectedCategory = data?.items.find((cat) => cat.id === category);
+      const tags =
+        tagsOnModels && selectedCategory ? tagsOnModels.concat([selectedCategory]) : tagsOnModels;
+      upsertModelMutation.mutate({ ...rest, tagsOnModels: tags });
+    } else onSubmit(defaultValues);
   };
 
   useEffect(() => {
-    if (model) form.reset(model);
+    if (model)
+      form.reset({
+        ...model,
+        tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
+        category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model]);
+  }, [defaultCategory, model]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -104,6 +150,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                     value: type,
                   }))}
                   onChange={handleModelTypeChange}
+                  disabled={model?.uploadType === ModelUploadType.Trained}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (
@@ -138,17 +185,37 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               </Group>
               {errors.checkpointType && <Input.Error>{errors.checkpointType.message}</Input.Error>}
             </Stack>
+            <InputSelect
+              name="category"
+              label="Category"
+              nothingFound="Nothing found"
+              data={categories}
+              loading={loadingCategories}
+              searchable
+              withAsterisk
+            />
             <InputTags
               name="tagsOnModels"
               label="Tags"
               description="Search or create tags for your model"
               target={[TagTarget.Model]}
+              filter={(tag) =>
+                data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
+              }
             />
             <InputRTE
               name="description"
               label="About your model"
               description="Tell us what your model does"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
+              includeControls={[
+                'heading',
+                'formatting',
+                'list',
+                'link',
+                'media',
+                'mentions',
+                'colors',
+              ]}
               editorSize="xl"
             />
           </Stack>
@@ -174,9 +241,15 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 </Grid.Col>
                 <Grid.Col xs={12} sm={6}>
                   <Stack spacing="xs">
-                    <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
-                      Commercial Use
-                    </Text>
+                    <Stack spacing={4}>
+                      <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
+                        Commercial Use
+                      </Text>
+                      <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                        Select the most permissive option that applies to your model. Options are
+                        listed from least to most permissive.
+                      </Text>
+                    </Stack>
                     <InputSegmentedControl
                       name="allowCommercialUse"
                       orientation="vertical"
@@ -210,10 +283,18 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                           ),
                         },
                         {
+                          value: CommercialUse.RentCivit,
+                          label: (
+                            <Group>
+                              <IconBrush size={16} /> Use on Civitai generation service
+                            </Group>
+                          ),
+                        },
+                        {
                           value: CommercialUse.Rent,
                           label: (
                             <Group>
-                              <IconBrush size={16} /> Use on generation services
+                              <IconWorldUpload size={16} /> Use on other generation services
                             </Group>
                           ),
                         },

@@ -1,41 +1,69 @@
-import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
-
-import { Context } from '~/server/createContext';
 import {
+  CosmeticType,
+  ModelEngagementType,
+  ModelVersionEngagementType,
+  OnboardingStep,
+} from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { orderBy } from 'lodash';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
+import { Context } from '~/server/createContext';
+import { dbWrite } from '~/server/db/client';
+import { redis } from '~/server/redis/client';
+import * as rewards from '~/server/rewards';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import {
+  BatchBlockTagsSchema,
+  CompleteOnboardingStepInput,
+  DeleteUserInput,
+  GetAllUsersInput,
+  GetByUsernameSchema,
+  GetUserByUsernameSchema,
+  GetUserCosmeticsSchema,
+  GetUserTagsSchema,
+  ReportProhibitedRequestInput,
+  ToggleBlockedTagSchema,
+  ToggleFollowUserSchema,
+  ToggleModelEngagementInput,
+  ToggleUserArticleEngagementsInput,
+  ToggleUserBountyEngagementsInput,
+  UserByReferralCodeSchema,
+  UserUpdateInput,
+} from '~/server/schema/user.schema';
+import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
+import {
+  acceptTOS,
+  createUserReferral,
+  deleteUser,
   getCreators,
+  getUserById,
   getUserByUsername,
+  getUserCosmetics,
   getUserCreator,
-  getUserEngagedModels,
   getUserEngagedModelVersions,
+  getUserEngagedModels,
   getUserTags,
   getUserUnreadNotificationsCount,
+  getUsers,
+  isUsernamePermitted,
+  toggleBan,
   toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelHide,
   toggleModelFavorite,
-  getUserCosmetics,
-  acceptTOS,
-  completeOnboarding,
+  toggleModelHide,
+  toggleUserArticleEngagement,
+  toggleUserBountyEngagement,
+  updateLeaderboardRank,
+  updateOnboardingSteps,
+  updateUserById,
+  userByReferralCode,
 } from '~/server/services/user.service';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
-  GetAllUsersInput,
-  UserUpdateInput,
-  GetUserByUsernameSchema,
-  ToggleFollowUserSchema,
-  GetByUsernameSchema,
-  DeleteUserInput,
-  ToggleBlockedTagSchema,
-  GetUserTagsSchema,
-  BatchBlockTagsSchema,
-  ToggleModelEngagementInput,
-  GetUserCosmeticsSchema,
-} from '~/server/schema/user.schema';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
-import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -43,12 +71,10 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { isUUID } from '~/utils/string-helpers';
-import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
-import { dbWrite } from '~/server/db/client';
-import { cancelSubscription } from '~/server/services/stripe.service';
+import { getUserBuzzBonusAmount } from '../common/user-helpers';
+import { TransactionType } from '../schema/buzz.schema';
+import { createBuzzTransaction } from '../services/buzz.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -70,14 +96,20 @@ export const getAllUsersHandler = async ({
 };
 
 export const getUserCreatorHandler = async ({
-  input: { username, id },
+  input: { username, id, leaderboardId },
 }: {
   input: GetUserByUsernameSchema;
 }) => {
+  if (!username && !id) throw throwBadRequestError('Must provide username or id');
+
   try {
-    return await getUserCreator({ username, id });
+    const user = await getUserCreator({ username, id, leaderboardId });
+    if (!user) throw throwNotFoundError('Could not find user');
+
+    return user;
   } catch (error) {
-    throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
   }
 };
 
@@ -89,6 +121,7 @@ export const getUsernameAvailableHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    if (!isUsernamePermitted(input.username)) return false;
     const user = await getUserByUsername({ ...input, select: { id: true } });
     return !user || user.id === ctx.user.id;
   } catch (error) {
@@ -170,11 +203,48 @@ export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> 
   }
 };
 
-export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+const temp_onboardingOrder: OnboardingStep[] = [OnboardingStep.Moderation, OnboardingStep.Buzz];
+export const completeOnboardingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CompleteOnboardingStepInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const { id } = ctx.user;
-    await completeOnboarding({ id });
+    const user = await dbWrite.user.findUnique({
+      where: { id },
+      select: { onboardingSteps: true, email: true, username: true },
+    });
+
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    if (!user?.email) throw throwBadRequestError('User must have an email to complete onboarding');
+    if (!user?.username)
+      throw throwBadRequestError('User must have a username to complete onboarding');
+
+    if (!input.step) {
+      input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
+    }
+
+    const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);
+    const updatedUser = await updateOnboardingSteps({ id, steps });
+
+    // There are no more onboarding steps, so we can reward the user
+    if (updatedUser.onboardingSteps.length === 0) {
+      await createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: updatedUser.id,
+        amount: getUserBuzzBonusAmount(ctx.user),
+        description: 'Onboarding bonus',
+        type: TransactionType.Reward,
+        externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
+      }).catch(handleLogError);
+    }
+
+    return updatedUser;
   } catch (e) {
+    if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
 };
@@ -186,9 +256,10 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, username, source, userReferralCode, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+  if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
 
   if (data.image) {
     const valid = verifyAvatar(data.image);
@@ -205,6 +276,7 @@ export const updateUserHandler = async ({
       id,
       data: {
         ...data,
+        username,
         showNsfw,
         cosmetics: !isSettingCosmetics
           ? undefined
@@ -220,6 +292,15 @@ export const updateUserHandler = async ({
             },
       },
     });
+
+    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
+    if (userReferralCode || source) {
+      await createUserReferral({
+        id: updatedUser.id,
+        userReferralCode,
+        source,
+      });
+    }
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
@@ -245,6 +326,11 @@ export const deleteUserHandler = async ({
     const user = await deleteUser(input);
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
+    await ctx.track.userActivity({
+      targetUserId: id,
+      type: 'Account closure',
+    });
+
     return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -256,11 +342,14 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
   const { id } = ctx.user;
 
   try {
-    const user = await getUserEngagedModels({ id });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    const engagementsCache = await redis.get(`user:${id}:model-engagements`);
+    if (engagementsCache)
+      return JSON.parse(engagementsCache) as Record<ModelEngagementType, number[]>;
+
+    const engagements = await getUserEngagedModels({ id });
 
     // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = user.engagedModels.reduce<Record<ModelEngagementType, number[]>>(
+    const engagedModels = engagements.reduce<Record<ModelEngagementType, number[]>>(
       (acc, model) => {
         const { type, modelId } = model;
         if (!acc[type]) acc[type] = [];
@@ -269,6 +358,10 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
       },
       {} as Record<ModelEngagementType, number[]>
     );
+
+    await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
+      EX: 60 * 60 * 24,
+    });
 
     return engagedModels;
   } catch (error) {
@@ -285,18 +378,18 @@ export const getUserEngagedModelVersionsHandler = async ({
   const { id } = ctx.user;
 
   try {
-    const user = await getUserEngagedModelVersions({ id });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    const engagements = await getUserEngagedModelVersions({ id });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
-    const engagedModelVersions = user.engagedModelVersions.reduce<
-      Record<ModelVersionEngagementType, number[]>
-    >((acc, engagement) => {
-      const { type, modelVersionId } = engagement;
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(modelVersionId);
-      return acc;
-    }, {} as Record<ModelVersionEngagementType, number[]>);
+    const engagedModelVersions = engagements.reduce<Record<ModelVersionEngagementType, number[]>>(
+      (acc, engagement) => {
+        const { type, modelVersionId } = engagement;
+        if (!acc[type]) acc[type] = [];
+        acc[type].push(modelVersionId);
+        return acc;
+      },
+      {} as Record<ModelVersionEngagementType, number[]>
+    );
 
     return engagedModelVersions;
   } catch (error) {
@@ -414,7 +507,18 @@ export const toggleFollowUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleFollowUser({ ...input, userId });
+    const result = await toggleFollowUser({ ...input, userId });
+    if (result) {
+      ctx.track.userEngagement({
+        type: 'Follow',
+        targetUserId: input.targetUserId,
+      });
+    } else {
+      await ctx.track.userEngagement({
+        type: 'Delete',
+        targetUserId: input.targetUserId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -452,7 +556,18 @@ export const toggleHideUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleHideUser({ ...input, userId });
+    const result = await toggleHideUser({ ...input, userId });
+    if (result) {
+      await ctx.track.userEngagement({
+        type: 'Hide',
+        targetUserId: input.targetUserId,
+      });
+    } else {
+      await ctx.track.userEngagement({
+        type: 'Delete',
+        targetUserId: input.targetUserId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -467,7 +582,19 @@ export const toggleHideModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleModelHide({ ...input, userId });
+    const result = await toggleModelHide({ ...input, userId });
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Hide',
+        modelId: input.modelId,
+      });
+    } else {
+      await ctx.track.modelEngagement({
+        type: 'Delete',
+        modelId: input.modelId,
+      });
+    }
+    await redis.del(`user:${userId}:model-engagements`);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -482,7 +609,19 @@ export const toggleFavoriteModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleModelFavorite({ ...input, userId });
+    const result = await toggleModelFavorite({ ...input, userId });
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Favorite',
+        modelId: input.modelId,
+      });
+    } else {
+      await ctx.track.modelEngagement({
+        type: 'Delete',
+        modelId: input.modelId,
+      });
+    }
+    await redis.del(`user:${userId}:model-engagements`);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -581,7 +720,11 @@ export const toggleBlockedTagHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleBlockedTag({ ...input, userId });
+    const isHidden = await toggleBlockedTag({ ...input, userId });
+    ctx.track.tagEngagement({
+      type: isHidden ? 'Hide' : 'Allow',
+      tagId: input.tagId,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -638,6 +781,11 @@ export const toggleMuteHandler = async ({
   const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
   await invalidateSession(id);
 
+  await ctx.track.userActivity({
+    type: user.muted ? 'Unmuted' : 'Muted',
+    targetUserId: id,
+  });
+
   return updatedUser;
 };
 
@@ -650,24 +798,12 @@ export const toggleBanHandler = async ({
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const { id } = input;
-  const user = await getUserById({ id, select: { bannedAt: true } });
-  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  const updatedUser = await toggleBan(input);
 
-  const updatedUser = await updateUserById({
-    id,
-    data: { bannedAt: user.bannedAt ? null : new Date() },
+  await ctx.track.userActivity({
+    type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
+    targetUserId: updatedUser.id,
   });
-  await invalidateSession(id);
-
-  // Unpublish their models
-  await dbWrite.model.updateMany({
-    where: { userId: id },
-    data: { publishedAt: null, status: 'Unpublished' },
-  });
-
-  // Cancel their subscription
-  await cancelSubscription({ userId: id });
 
   return updatedUser;
 };
@@ -702,5 +838,115 @@ export const getUserCosmeticsHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const toggleArticleEngagementHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleUserArticleEngagementsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const on = await toggleUserArticleEngagement({ ...input, userId: ctx.user.id });
+    if (on) await ctx.track.articleEngagement(input);
+    return on;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleBountyEngagementHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleUserBountyEngagementsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const on = await toggleUserBountyEngagement({ ...input, userId: ctx.user.id });
+
+    // Not awaiting here to avoid slowing down the response
+    ctx.track
+      .bountyEngagement({
+        ...input,
+        type: on ? input.type : `Delete${input.type}`,
+      })
+      .catch(handleLogError);
+
+    return on;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const reportProhibitedRequestHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ReportProhibitedRequestInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  await ctx.track.prohibitedRequest(input);
+  if (ctx.user.isModerator) return false;
+
+  try {
+    const userId = ctx.user.id;
+    const countRes = await clickhouse?.query({
+      query: `
+        SELECT
+          COUNT(*) as count
+        FROM prohibitedRequests
+        WHERE userId = ${userId} AND time > subtractHours(now(), 24);
+      `,
+      format: 'JSONEachRow',
+    });
+    const count = ((await countRes?.json()) as [{ count: number }])?.[0]?.count ?? 0;
+    const limit =
+      constants.imageGeneration.requestBlocking.muted -
+      constants.imageGeneration.requestBlocking.notified;
+    if (count >= limit) {
+      await updateUserById({ id: userId, data: { muted: true } });
+      await invalidateSession(userId);
+
+      await ctx.track.userActivity({
+        type: 'Muted',
+        targetUserId: userId,
+      });
+
+      return true;
+    }
+  } catch (error) {
+    throw new TRPCError({
+      message: 'Error checking prohibited request count',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+
+  return false;
+};
+
+export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {
+  try {
+    return await userByReferralCode(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    // TODO.Optimization: This will make multiple requests to redis, we could probably do it in one and make this faster. This will get slower as we add more Active rewards.
+    const rewardDetails = await Promise.all(
+      Object.values(rewards)
+        .filter((x) => x.visible)
+        .map((x) => x.getUserRewardDetails(ctx.user.id))
+    );
+
+    // sort by `onDemand` first
+    return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);
+  } catch (error) {
+    throw throwDbError(error);
   }
 };

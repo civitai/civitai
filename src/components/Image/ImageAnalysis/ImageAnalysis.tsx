@@ -9,7 +9,7 @@ import {
   SimpleGrid,
   Divider,
 } from '@mantine/core';
-import { capitalize } from 'lodash';
+import { capitalize } from 'lodash-es';
 import React from 'react';
 
 export function ImageAnalysis({

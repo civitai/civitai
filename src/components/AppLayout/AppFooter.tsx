@@ -12,25 +12,17 @@ import {
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { useState } from 'react';
+import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-
-interface ScrollPosition {
-  x: number;
-  y: number;
-}
-
-function getScrollPosition(): ScrollPosition {
-  return typeof window !== 'undefined'
-    ? { x: window.pageXOffset, y: window.pageYOffset }
-    : { x: 0, y: 0 };
-}
+import { getScrollPosition } from '~/utils/window-helpers';
 
 const buttonProps: ButtonProps = {
   size: 'xs',
   variant: 'subtle',
   color: 'gray',
+  px: 'xs',
 };
 
 const hash = env.NEXT_PUBLIC_GIT_HASH;
@@ -90,6 +82,17 @@ export function AppFooter() {
           <Button
             component={NextLink}
             prefetch={false}
+            href="/content/careers"
+            {...buttonProps}
+            variant="subtle"
+            color="green"
+            px={mobile ? 5 : 'xs'}
+          >
+            Join Us 💼
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
             href="/content/tos"
             {...buttonProps}
             px={mobile ? 5 : 'xs'}
@@ -105,18 +108,6 @@ export function AppFooter() {
           >
             Privacy
           </Button>
-          <Button component="a" href="/github" {...buttonProps} target="_blank">
-            GitHub
-          </Button>
-          <Button component="a" href="/discord" {...buttonProps} target="_blank">
-            Discord
-          </Button>
-          <Button component="a" href="/twitter" {...buttonProps} target="_blank">
-            Twitter
-          </Button>
-          <Button component="a" href="/reddit" {...buttonProps} target="_blank">
-            Reddit
-          </Button>
           <Button
             component="a"
             href="/github/wiki/REST-API-Reference"
@@ -128,17 +119,24 @@ export function AppFooter() {
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>
+          <SocialLinks />
         </Group>
-        <Button
-          component="a"
-          href="/github/discussions/categories/ideas"
-          ml="auto"
-          variant="light"
-          color="yellow"
-          target="_blank"
-        >
-          💡 Ideas!
-        </Button>
+        <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
+          <Button component="a" href="/bugs" {...buttonProps} target="_blank" pl={4} pr="xs">
+            🪲 Bugs
+          </Button>
+          <Button
+            component="a"
+            href="/feedback"
+            variant="light"
+            color="yellow"
+            target="_blank"
+            pl={4}
+            pr="xs"
+          >
+            💡 Feature Requests
+          </Button>
+        </Group>
       </Group>
     </Footer>
   );

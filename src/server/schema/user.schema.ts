@@ -1,4 +1,9 @@
-import { TagEngagementType } from '@prisma/client';
+import {
+  TagEngagementType,
+  ArticleEngagementType,
+  BountyEngagementType,
+  OnboardingStep,
+} from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
@@ -14,20 +19,26 @@ export const userPageQuerySchema = z
   })
   .transform((props) => {
     // we're doing this to handle edge cases where a user hasn't finished onboarding and don't have a username
-    // when a user doesn't have a username, the url becomes `/users/null?id`
+    // when a user doesn't have a username, the url becomes `/user/null?id`
     const username = !props.id ? postgresSlugify(props.username) : undefined;
     return removeEmpty({ ...props, username });
   });
 
-export const usernameSchema = z
+const usernameValidationSchema = z
   .string()
-  // .min(3, 'Your username must be at least 3 characters long')
-  .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.')
+  .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.');
+
+export const usernameInputSchema = usernameValidationSchema
+  .min(3, 'Your username must be at least 3 characters long')
+  .max(25, 'Your username must be at most 25 characters long')
   .transform((v) => v.trim());
+
+export const usernameSchema = usernameValidationSchema.transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
   username: usernameSchema.optional(),
   id: z.number().optional(),
+  leaderboardId: z.string().optional(),
 });
 
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;
@@ -39,11 +50,11 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
 export const userUpdateSchema = z.object({
   id: z.number(),
-  username: usernameSchema.optional(),
+  username: usernameInputSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
   tos: z.boolean().optional(),
-  onboarded: z.boolean().optional(),
+  onboardingStep: z.nativeEnum(OnboardingStep).array().optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   badgeId: z.number().nullish(),
@@ -57,6 +68,9 @@ export const userUpdateSchema = z.object({
       imageFormat: z.enum(constants.imageFormats).optional(),
     })
     .optional(),
+  leaderboardShowcase: z.string().nullish(),
+  userReferralCode: z.string().optional(),
+  source: z.string().optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
@@ -91,4 +105,37 @@ export const deleteUserSchema = z.object({
 export type GetUserCosmeticsSchema = z.infer<typeof getUserCosmeticsSchema>;
 export const getUserCosmeticsSchema = z.object({
   equipped: z.boolean(),
+});
+
+export type GetUserArticleEngagementsInput = z.infer<typeof getUserArticleEngagementsSchema>;
+export const getUserArticleEngagementsSchema = z.object({
+  type: z.nativeEnum(ArticleEngagementType),
+});
+
+export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticleEngagementSchema>;
+export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema.extend({
+  articleId: z.number(),
+});
+
+export type GetUserBountyEngagementsInput = z.infer<typeof getUserBountyEngagementsSchema>;
+export const getUserBountyEngagementsSchema = z.object({
+  type: z.nativeEnum(BountyEngagementType),
+});
+
+export type ToggleUserBountyEngagementsInput = z.infer<typeof toggleUserBountyEngagementSchema>;
+export const toggleUserBountyEngagementSchema = getUserBountyEngagementsSchema.extend({
+  bountyId: z.number(),
+});
+
+export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
+export const reportProhibitedRequestSchema = z.object({
+  prompt: z.string(),
+});
+
+export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
+export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
+
+export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
+export const completeOnboardStepSchema = z.object({
+  step: z.nativeEnum(OnboardingStep).optional(),
 });
