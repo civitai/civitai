@@ -2,7 +2,7 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
