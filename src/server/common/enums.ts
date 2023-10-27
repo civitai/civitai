@@ -14,6 +14,7 @@ export enum ModelSort {
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
   MostCollected = 'Most Collected',
+  ImageCount = 'Most Images',
   MostTipped = 'Most Tipped',
   Newest = 'Newest',
 }
