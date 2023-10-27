@@ -136,7 +136,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const { collection } = homeBlock ?? {};
   const items = useMemo(() => {
-    const filteredItems = (collection?.items ?? []).filter((item) => {
+    const itemsToShow = ITEMS_PER_ROW * rows;
+    const usersShown = new Set();
+    const filteredItems = shuffle(collection?.items ?? []).filter((item) => {
       if (loadingPreferences || !currentUser) return true;
 
       // TODO: A lot of improvement can be done here like checking images within the model, etc.
@@ -144,7 +146,14 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         case 'model':
           return !hiddenModels.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
         case 'image':
-          return !hiddenImages.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
+          if (
+            hiddenImages.get(item.data.id) ||
+            hiddenUsers.get(item.data.user.id) ||
+            usersShown.has(item.data.user.id)
+          )
+            return false;
+          usersShown.add(item.data.user.id);
+          return true;
         case 'post':
         case 'article':
         default:
@@ -152,7 +161,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       }
     });
 
-    return shuffle(filteredItems).slice(0, ITEMS_PER_ROW * rows);
+    return filteredItems.slice(0, itemsToShow);
   }, [collection?.items, loadingPreferences, hiddenModels, hiddenImages, hiddenUsers, rows]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id}`;
