@@ -1,23 +1,13 @@
-import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { getUserById } from '~/server/services/user.service';
-import { userWithCosmeticsSelect, userWithProfileSelect } from '~/server/selectors/user.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
-import { ruleSet } from '@aws-sdk/client-s3/dist-types/endpoint/ruleset';
+import { getUserWithProfile } from '~/server/services/user-profile.service';
+import { GetUserProfileSchema } from '~/server/schema/user-profile.schema';
 
-export const getUserProfileHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: Context;
-}) => {
+export const getUserProfileHandler = async ({ input }: { input: GetUserProfileSchema }) => {
   try {
-    const user = await getUserById({
-      id: input.id,
-      select: userWithProfileSelect,
+    const user = await getUserWithProfile({
+      username: input.username,
     });
+
     return user;
   } catch (error) {
     throw throwDbError(error);

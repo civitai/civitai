@@ -80,9 +80,20 @@ import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDro
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, features }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
-    if (id || username) await ssg?.user.getCreator.prefetch({ username });
+    if (username) {
+      if (features?.profileOverhaul) {
+        return {
+          redirect: {
+            destination: `/user/${username}/profile`,
+            permanent: true,
+          },
+        };
+      } else {
+        await ssg?.user.getCreator.prefetch({ username });
+      }
+    }
 
     return {
       props: removeEmpty({
