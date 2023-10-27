@@ -19,6 +19,8 @@ import {
 } from '~/server/utils/errorHandling';
 import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
+import orchestratorCaller from '../http/orchestrator/orchestrator.caller';
+import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
@@ -36,41 +38,23 @@ type TrainingRequest = {
   fileMetadata: FileMetadata | null;
 };
 
-type moveAssetResponse = {
-  found?: boolean;
-  fileSize?: number;
-};
-
 const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
 
 export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
-  if (!env.ORCHESTRATOR_ENDPOINT) throw throwBadRequestError('Missing ORCHESTRATOR_ENDPOINT env');
-  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
-    throw throwBadRequestError('Missing ORCHESTRATOR_ACCESS_TOKEN env');
-
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
 
   const { url: destinationUri } = await getPutUrl(`model/${modelId}/${assetName}`);
 
-  const reqBody = {
-    $type: 'copyAsset',
+  const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
     jobId,
     assetName,
     destinationUri,
   };
 
-  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs?wait=true`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-    },
-    body: JSON.stringify(reqBody),
-  });
-
+  const response = await orchestratorCaller.copyAsset({ payload: reqBody });
   if (response.status === 429) {
     throw throwRateLimitError();
   }
@@ -78,9 +62,8 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
   if (!response.ok) {
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
-  const data = await response.json();
-  const result: moveAssetResponse | undefined = data.jobs?.[0]?.result;
 
+  const result = response.data?.jobs?.[0]?.result;
   if (!result || !result.found) {
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
@@ -94,23 +77,7 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
 };
 
 export const deleteAssets = async (jobId: string) => {
-  if (!env.ORCHESTRATOR_ENDPOINT) throw throwBadRequestError('Missing ORCHESTRATOR_ENDPOINT env');
-  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
-    throw throwBadRequestError('Missing ORCHESTRATOR_ACCESS_TOKEN env');
-
-  const reqBody = {
-    $type: 'clearAssets',
-    jobId,
-  };
-
-  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs?wait=true`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-    },
-    body: JSON.stringify(reqBody),
-  });
+  const response = await orchestratorCaller.clearAssets({ payload: { jobId } });
 
   if (response.status === 429) {
     throw throwRateLimitError();
@@ -120,18 +87,13 @@ export const deleteAssets = async (jobId: string) => {
     throw throwBadRequestError('Failed to delete assets');
   }
 
-  const data = await response.json();
-  return data.jobs?.[0]?.result;
+  return response.data?.jobs?.[0]?.result;
 };
 
 export const createTrainingRequest = async ({
   userId,
   modelVersionId,
 }: CreateTrainingRequestInput & { userId: number }) => {
-  if (!env.ORCHESTRATOR_ENDPOINT) throw throwBadRequestError('Missing ORCHESTRATOR_ENDPOINT env');
-  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
-    throw throwBadRequestError('Missing ORCHESTRATOR_ACCESS_TOKEN env');
-
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
@@ -217,18 +179,7 @@ export const createTrainingRequest = async ({
     },
   };
 
-  // console.log(JSON.stringify(generationRequest));
-
-  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-    },
-    body: JSON.stringify(generationRequest),
-  });
-
-  // console.log(response);
+  const response = await orchestratorCaller.imageResourceTraining({ payload: generationRequest });
 
   if (!response.ok) {
     await withRetries(async () =>
@@ -241,11 +192,12 @@ export const createTrainingRequest = async ({
   }
 
   if (!response.ok) {
-    const message = await response.json();
-    throw throwBadRequestError(message);
+    throw throwBadRequestError(
+      'We are not able to process your request at this time. Please try again later'
+    );
   }
-  // const data: Generation.Api.RequestProps = await response.json();
-  const data = await response.json();
+
+  const data = response.data;
   const fileMetadata = modelVersion.fileMetadata || {};
 
   await dbWrite.modelFile.update({
@@ -255,7 +207,7 @@ export const createTrainingRequest = async ({
         ...fileMetadata,
         trainingResults: {
           ...(fileMetadata.trainingResults || {}),
-          jobId: data.jobs?.[0]?.jobId as string,
+          jobId: data?.jobs?.[0]?.jobId,
           transactionId,
           history: (fileMetadata.trainingResults?.history || []).concat([
             {

@@ -9,9 +9,15 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
+/**
+ * NOTE: This is still a WIP. We are currently working on a new design for the
+ * image generation page. This is a temporary page until we have the new design
+ */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, features, ctx }) => {
+    // Temporary until we have the new designs available
+    if (!session?.user?.isModerator) return { notFound: true };
     if (!session)
       return {
         redirect: {
