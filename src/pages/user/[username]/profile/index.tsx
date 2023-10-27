@@ -1,6 +1,5 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { removeEmpty } from '~/utils/object-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SidebarLayout } from '~/components/Profile/SidebarLayout';
 import { trpc } from '~/utils/trpc';
@@ -19,13 +18,11 @@ import {
 } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { IconLocation, IconMapPin, IconRss } from '@tabler/icons-react';
+import { IconMapPin, IconRss } from '@tabler/icons-react';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { UserStats } from '~/components/Profile/UserStats';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -76,7 +73,7 @@ export function UserProfileOverview({ username }: { username: string }) {
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === 'Badge' && !!c.data?.url)
+            .filter((c) => c.type === 'Badge' && !!c.data)
             .slice(0, 4),
     [user]
   );
@@ -168,7 +165,6 @@ export function UserProfileOverview({ username }: { username: string }) {
             <TipBuzzButton
               toUserId={user.id}
               size="md"
-              grow
               variant="light"
               color="yellow.7"
               label="Tip buzz"
@@ -183,11 +179,20 @@ export function UserProfileOverview({ username }: { username: string }) {
                   Awards
                 </Text>
                 <Group spacing="xs">
-                  {awards.map((award) => (
-                    <Tooltip key={award.id} label={award.name} withinPortal>
-                      <EdgeMedia src={award.data.url as string} width={64} />
-                    </Tooltip>
-                  ))}
+                  {awards.map((award) => {
+                    const data = (award.data ?? {}) as { url?: string };
+                    const url = (data.url ?? '') as string;
+
+                    if (!url) {
+                      return null;
+                    }
+
+                    return (
+                      <Tooltip key={award.id} label={award.name} withinPortal>
+                        <EdgeMedia src={url} width={56} />
+                      </Tooltip>
+                    );
+                  })}
                 </Group>
                 <Divider my="sm" />
               </Stack>
