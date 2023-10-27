@@ -1124,6 +1124,7 @@ model ImageMetric {
   collectedCount    Int             @default(0)
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
+  viewCount         Int             @default(0)
 
   @@id([imageId, timeframe])
 }
