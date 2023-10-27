@@ -27,7 +27,7 @@ import { useMemo } from 'react';
 
 export function ProfileSidebar({ username }: { username: string }) {
   const currentUser = useCurrentUser();
-  const { isLoading, data: user } = trpc.userProfile.get.useQuery({
+  const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
 
@@ -42,7 +42,7 @@ export function ProfileSidebar({ username }: { username: string }) {
     [user]
   );
 
-  if (isLoading) {
+  if (!user) {
     return null;
   }
 

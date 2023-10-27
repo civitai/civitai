@@ -82,6 +82,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
   profile: {
     select: {
       bio: true,
+      coverImageId: true,
       coverImage: {
         select: imageSelect,
       },

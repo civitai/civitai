@@ -7,10 +7,13 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
 import {
   ActionIcon,
+  AspectRatio,
   Avatar,
   Center,
+  Container,
   Divider,
   Group,
+  Indicator,
   Loader,
   Stack,
   Text,
@@ -18,7 +21,7 @@ import {
 } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { IconMapPin, IconRss } from '@tabler/icons-react';
+import { IconInfoCircle, IconMapPin, IconRss } from '@tabler/icons-react';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
@@ -29,6 +32,14 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMemo } from 'react';
 import { formatDate } from '~/utils/date-helpers';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
+import { Carousel } from '@mantine/carousel';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { ImageSort } from '~/server/common/enums';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -79,13 +90,61 @@ export function UserProfileOverview({ username }: { username: string }) {
     return <NotFound />;
   }
 
+  const { profile } = user;
+
+  console.log(profile);
+
   return (
     <>
       <SidebarLayout.Root>
         <SidebarLayout.Sidebar>
           <ProfileSidebar username={username} />
         </SidebarLayout.Sidebar>
-        <SidebarLayout.Content>My profiles</SidebarLayout.Content>
+        <SidebarLayout.Content>
+          <Container size="xl">
+            <Stack>
+              {profile?.coverImage && (
+                <ImageGuard
+                  images={[profile.coverImage]}
+                  nsfw={profile.coverImage.nsfw}
+                  connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
+                  render={(image) => {
+                    return (
+                      <ImageGuard.Content>
+                        {({ safe }) => (
+                          <AspectRatio
+                            ratio={17 / 5}
+                            sx={(theme) => ({
+                              width: '100%',
+                              borderRadius: theme.radius.md,
+                              overflow: 'hidden',
+                            })}
+                          >
+                            <div style={{ width: '100%', position: 'relative' }}>
+                              <ImageGuard.ToggleConnect position="top-left" />
+                              <ImageGuard.Report />
+
+                              {!safe ? (
+                                <MediaHash {...image} />
+                              ) : (
+                                <ImagePreview
+                                  image={image}
+                                  edgeImageProps={{ width: 816 }}
+                                  radius="md"
+                                  style={{ width: '100%' }}
+                                />
+                              )}
+                            </div>
+                          </AspectRatio>
+                        )}
+                      </ImageGuard.Content>
+                    );
+                  }}
+                />
+              )}
+            </Stack>
+          </Container>
+        </SidebarLayout.Content>
       </SidebarLayout.Root>
     </>
   );
