@@ -41,7 +41,44 @@ const userWithCosmetics = Prisma.validator<Prisma.UserArgs>()({
 export type UserWithCosmetics = Prisma.UserGetPayload<typeof userWithCosmetics>;
 
 export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
-  ...userWithCosmeticsSelect,
+  ...simpleUserSelect,
+  createdAt: true,
+  cosmetics: {
+    select: {
+      cosmetic: {
+        select: {
+          id: true,
+          data: true,
+          type: true,
+          source: true,
+          name: true,
+        },
+      },
+    },
+  },
+  links: {
+    select: {
+      url: true,
+      type: true,
+    },
+  },
+  rank: {
+    select: {
+      leaderboardRank: true,
+      leaderboardId: true,
+      leaderboardTitle: true,
+      leaderboardCosmetic: true,
+    },
+  },
+  stats: {
+    select: {
+      ratingAllTime: true,
+      ratingCountAllTime: true,
+      downloadCountAllTime: true,
+      favoriteCountAllTime: true,
+      followerCountAllTime: true,
+    },
+  },
   profile: {
     select: {
       bio: true,

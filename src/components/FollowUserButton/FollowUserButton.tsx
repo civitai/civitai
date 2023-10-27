@@ -59,7 +59,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
     onToggleFollow?.();
   };
 
-  if (userId === currentUser?.id) return null;
+  // if (userId === currentUser?.id) return null;
 
   return (
     <LoginRedirect reason="follow-user">
