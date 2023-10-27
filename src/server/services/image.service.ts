@@ -418,6 +418,7 @@ type GetAllImagesRaw = {
   heartCount: number;
   commentCount: number;
   tippedAmountCount: number;
+  viewCount: number;
   reactions?: ReviewReactions[];
   cursorId?: bigint;
   type: MediaType;
@@ -793,6 +794,7 @@ export const getAllImages = async ({
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
+      COALESCE(im."viewCount", 0) "viewCount",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -914,6 +916,7 @@ export const getAllImages = async ({
       heartCount,
       commentCount,
       tippedAmountCount,
+      viewCount,
       ...i
     }) => ({
       ...i,
@@ -932,6 +935,7 @@ export const getAllImages = async ({
         heartCountAllTime: heartCount,
         commentCountAllTime: commentCount,
         tippedAmountCountAllTime: tippedAmountCount,
+        viewCountAllTime: viewCount,
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
@@ -990,6 +994,7 @@ export const getImage = async ({
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
+      COALESCE(im."viewCount", 0) "viewCount",
       u.id "userId",
       u.username,
       u.image "userImage",
@@ -1026,6 +1031,7 @@ export const getImage = async ({
       heartCount,
       commentCount,
       tippedAmountCount,
+      viewCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -1060,6 +1066,7 @@ export const getImage = async ({
       heartCountAllTime: heartCount,
       commentCountAllTime: commentCount,
       tippedAmountCountAllTime: tippedAmountCount,
+      viewCountAllTime: viewCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };

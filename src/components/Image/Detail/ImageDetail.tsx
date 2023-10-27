@@ -44,6 +44,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { env } from '~/env/client.mjs';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -235,20 +236,33 @@ export function ImageDetail() {
                   />
                   <Paper p="sm" radius={0}>
                     <Stack spacing={8}>
-                      <Reactions
-                        entityId={image.id}
-                        entityType="image"
-                        reactions={image.reactions}
-                        metrics={{
-                          likeCount: image.stats?.likeCountAllTime,
-                          dislikeCount: image.stats?.dislikeCountAllTime,
-                          heartCount: image.stats?.heartCountAllTime,
-                          laughCount: image.stats?.laughCountAllTime,
-                          cryCount: image.stats?.cryCountAllTime,
-                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                        }}
-                        targetUserId={image.user.id}
-                      />
+                      <Group position="apart">
+                        <Reactions
+                          entityId={image.id}
+                          entityType="image"
+                          reactions={image.reactions}
+                          metrics={{
+                            likeCount: image.stats?.likeCountAllTime,
+                            dislikeCount: image.stats?.dislikeCountAllTime,
+                            heartCount: image.stats?.heartCountAllTime,
+                            laughCount: image.stats?.laughCountAllTime,
+                            cryCount: image.stats?.cryCountAllTime,
+                            tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                          }}
+                          targetUserId={image.user.id}
+                        />
+                        <Stack spacing={2}>
+                          <Text size="sm" align="center" weight={500} lh={1.1}>
+                            {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                          </Text>
+                          <Group spacing={4}>
+                            <IconEye size={14} stroke={1.5} />
+                            <Text color="dimmed" size="xs" inline>
+                              total views
+                            </Text>
+                          </Group>
+                        </Stack>
+                      </Group>
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Stack>
                   </Paper>

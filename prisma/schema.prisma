@@ -2856,6 +2856,11 @@ model ImageStat {
   tippedAmountCountMonth   Int   @default(0)
   tippedAmountCountYear    Int   @default(0)
   tippedAmountCountAllTime Int   @default(0)
+  viewCountDay             Int   @default(0)
+  viewCountWeek            Int   @default(0)
+  viewCountMonth           Int   @default(0)
+  viewCountYear            Int   @default(0)
+  viewCountAllTime         Int   @default(0)
 }
 
 /// @view
