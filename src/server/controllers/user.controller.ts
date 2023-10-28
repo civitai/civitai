@@ -76,6 +76,7 @@ import { isUUID } from '~/utils/string-helpers';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
+import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 
 export const getAllUsersHandler = async ({
   input,
@@ -512,15 +513,20 @@ export const toggleFollowUserHandler = async ({
     const { id: userId } = ctx.user;
     const result = await toggleFollowUser({ ...input, userId });
     if (result) {
-      ctx.track.userEngagement({
-        type: 'Follow',
-        targetUserId: input.targetUserId,
-      });
+      await firstDailyFollowReward.apply({ followingId: input.targetUserId, userId });
+      ctx.track
+        .userEngagement({
+          type: 'Follow',
+          targetUserId: input.targetUserId,
+        })
+        .catch(handleLogError);
     } else {
-      await ctx.track.userEngagement({
-        type: 'Delete',
-        targetUserId: input.targetUserId,
-      });
+      ctx.track
+        .userEngagement({
+          type: 'Delete',
+          targetUserId: input.targetUserId,
+        })
+        .catch(handleLogError);
     }
   } catch (error) {
     throw throwDbError(error);
