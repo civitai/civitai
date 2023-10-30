@@ -303,6 +303,7 @@ export const updateUserHandler = async ({
         id: updatedUser.id,
         userReferralCode,
         source,
+        ip: ctx.ip,
       });
     }
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
