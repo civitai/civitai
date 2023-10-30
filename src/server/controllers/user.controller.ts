@@ -5,7 +5,7 @@ import {
   OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { orderBy } from 'lodash';
+import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
@@ -68,6 +68,7 @@ import {
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
+  withRetries,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
@@ -75,6 +76,7 @@ import { isUUID } from '~/utils/string-helpers';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
+import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 
 export const getAllUsersHandler = async ({
   input,
@@ -232,14 +234,16 @@ export const completeOnboardingHandler = async ({
 
     // There are no more onboarding steps, so we can reward the user
     if (updatedUser.onboardingSteps.length === 0) {
-      await createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: updatedUser.id,
-        amount: getUserBuzzBonusAmount(ctx.user),
-        description: 'Onboarding bonus',
-        type: TransactionType.Reward,
-        externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
-      }).catch(handleLogError);
+      await withRetries(() =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: updatedUser.id,
+          amount: getUserBuzzBonusAmount(ctx.user),
+          description: 'Onboarding bonus',
+          type: TransactionType.Reward,
+          externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
+        })
+      ).catch(handleLogError);
     }
 
     return updatedUser;
@@ -299,6 +303,7 @@ export const updateUserHandler = async ({
         id: updatedUser.id,
         userReferralCode,
         source,
+        ip: ctx.ip,
       });
     }
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
@@ -509,15 +514,20 @@ export const toggleFollowUserHandler = async ({
     const { id: userId } = ctx.user;
     const result = await toggleFollowUser({ ...input, userId });
     if (result) {
-      ctx.track.userEngagement({
-        type: 'Follow',
-        targetUserId: input.targetUserId,
-      });
+      await firstDailyFollowReward.apply({ followingId: input.targetUserId, userId });
+      ctx.track
+        .userEngagement({
+          type: 'Follow',
+          targetUserId: input.targetUserId,
+        })
+        .catch(handleLogError);
     } else {
-      await ctx.track.userEngagement({
-        type: 'Delete',
-        targetUserId: input.targetUserId,
-      });
+      ctx.track
+        .userEngagement({
+          type: 'Delete',
+          targetUserId: input.targetUserId,
+        })
+        .catch(handleLogError);
     }
   } catch (error) {
     throw throwDbError(error);

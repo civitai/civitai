@@ -312,6 +312,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     orderBy = { rank: { [`collectedCount${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostTipped)
     orderBy = { rank: { [`tippedAmountCount${period}Rank`]: 'asc' } };
+  else if (sort === ModelSort.ImageCount)
+    orderBy = { rank: { [`imageCount${period}Rank`]: 'asc' } };
 
   const items = await dbRead.model.findMany({
     take,

@@ -102,6 +102,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     steps: version?.steps ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
+    requireAuth: version?.requireAuth ?? false,
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -459,6 +460,21 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               </Stack>
             </Stack>
           )}
+          <Stack spacing={4}>
+            <Divider label="Additional options" />
+            <InputSwitch
+              name="requireAuth"
+              label="Require users to be logged in to download this asset"
+              description={
+                <>
+                  This limits a bots ability to download the files associated with this resource.
+                  <br />
+                  This will also require third-party applications to utilize a user API key to
+                  download the asset files.
+                </>
+              }
+            />
+          </Stack>
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading })}
       </Form>

@@ -13,7 +13,7 @@ import { hashifyObject, slugit } from '~/utils/string-helpers';
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
     const _input = input as TInput;
-    let browsingMode = ctx.user ? _input.browsingMode : undefined;
+    let browsingMode = _input.browsingMode;
     if (!browsingMode) browsingMode = ctx.browsingMode;
 
     if (browsingMode !== BrowsingMode.All) {

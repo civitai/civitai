@@ -818,7 +818,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                         {currentUser?.showNsfw && (
                           <BlurToggle iconProps={{ stroke: 1.5 }}>
                             {({ icon, toggle }) => (
-                              <ActionIcon variant="default" size="lg" onClick={toggle}>
+                              <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
                                 {icon}
                               </ActionIcon>
                             )}

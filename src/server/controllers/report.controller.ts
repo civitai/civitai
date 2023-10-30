@@ -17,8 +17,10 @@ import {
   getReportById,
   getReports,
   updateReportById,
+  getReportByIds,
 } from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { reportAcceptedReward } from '~/server/rewards';
 
 export async function createReportHandler({
   input,
@@ -82,6 +84,16 @@ export async function setReportStatusHandler({
       activity: 'review',
     });
 
+    // If we're actioning a report, we need to reward all users who reported it
+    if (input.status === ReportStatus.Actioned) {
+      const userIds = [updatedReport.userId, ...updatedReport.alsoReportedBy];
+      await Promise.all(
+        userIds.map((userId) =>
+          reportAcceptedReward.apply({ userId, reportId: updatedReport.id }, ctx.ip)
+        )
+      );
+    }
+
     // await ctx.track.report({
     //   type: 'StatusChange',
     //   entityId: input.id,
@@ -126,6 +138,26 @@ export async function bulkUpdateReportStatusHandler({
         })
       )
     );
+
+    // If we're actioning reports, we need to reward the users who reported them
+    if (status === ReportStatus.Actioned) {
+      const actionedReports = await getReportByIds({
+        ids,
+        select: { id: true, userId: true, alsoReportedBy: true },
+      });
+      const prepReports = actionedReports.map((report) => ({
+        id: report.id,
+        userIds: [report.userId, ...report.alsoReportedBy],
+      }));
+
+      for (const report of prepReports) {
+        await Promise.all(
+          report.userIds.map((userId) =>
+            reportAcceptedReward.apply({ userId, reportId: report.id }, ctx.ip)
+          )
+        );
+      }
+    }
 
     return count;
   } catch (e) {

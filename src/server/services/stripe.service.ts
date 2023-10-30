@@ -4,6 +4,7 @@ import {
   handleLogError,
   throwBadRequestError,
   throwNotFoundError,
+  withRetries,
 } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -428,15 +429,17 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
 
   // Don't check for subscription active because there is a chance it hasn't been updated yet
   if (invoice.subscription && user) {
-    await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: user.id,
-      type: TransactionType.Reward,
-      externalTransactionId: invoice.id,
-      amount: 5000, // Hardcoded for now cause we only have one subscription option
-      description: 'Membership bonus',
-      details: { invoiceId: invoice.id },
-    }).catch(handleLogError);
+    await withRetries(() =>
+      createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: user.id,
+        type: TransactionType.Reward,
+        externalTransactionId: invoice.id,
+        amount: 5000, // Hardcoded for now cause we only have one subscription option
+        description: 'Membership bonus',
+        details: { invoiceId: invoice.id },
+      })
+    ).catch(handleLogError);
   }
 };
 

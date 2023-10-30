@@ -56,7 +56,7 @@ export const useQueryImages = (
   filters ??= {};
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { browsingMode, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

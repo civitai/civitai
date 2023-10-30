@@ -780,10 +780,12 @@ export const createUserReferral = async ({
   id,
   userReferralCode,
   source,
+  ip,
 }: {
   id: number;
   userReferralCode?: string;
   source?: string;
+  ip?: string;
 }) => {
   const user = await dbRead.user.findUniqueOrThrow({
     where: { id },
@@ -801,14 +803,8 @@ export const createUserReferral = async ({
     refereeId: number;
     referrerId: number;
   }) => {
-    await refereeCreatedReward.apply({
-      refereeId,
-      referrerId,
-    });
-    await userReferredReward.apply({
-      refereeId,
-      referrerId,
-    });
+    await refereeCreatedReward.apply({ refereeId, referrerId }, ip);
+    await userReferredReward.apply({ refereeId, referrerId }, ip);
   };
 
   if (userReferralCode || source) {
@@ -826,12 +822,8 @@ export const createUserReferral = async ({
     if (user.referral && referralCode) {
       // Allow to update a referral with a user-referral-code:
       await dbWrite.userReferral.update({
-        where: {
-          id: user.referral.id,
-        },
-        data: {
-          userReferralCodeId: referralCode.id,
-        },
+        where: { id: user.referral.id },
+        data: { userReferralCodeId: referralCode.id },
       });
 
       await applyRewards({

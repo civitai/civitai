@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useMemo } from 'react';
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { useInView } from 'react-intersection-observer';
@@ -31,6 +31,7 @@ type ImagesInfiniteState = {
   types?: MediaType[];
   withMeta?: boolean;
   followed?: boolean;
+  browsingMode?: BrowsingMode;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {

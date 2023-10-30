@@ -21,6 +21,7 @@ export const homeBlockMetaSchema = z
     collection: z.object({
       id: z.number(),
       limit: z.number().default(8),
+      rows: z.number().default(2),
     }),
     leaderboards: z.array(
       z.object({

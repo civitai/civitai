@@ -128,7 +128,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   targetSelectorRoot: {
-    width: '100px',
+    width: '110px',
 
     [theme.fn.smallerThan('md')]: {
       display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
@@ -184,6 +184,7 @@ const targetData = [
   { value: 'images', label: 'Images' },
   { value: 'articles', label: 'Articles' },
   { value: 'users', label: 'Users' },
+  { value: 'collections', label: 'Collections' },
   { value: 'bounties', label: 'Bounties' },
 ] as const;
 type TargetIndex = (typeof targetData)[number]['value'];
@@ -408,6 +409,7 @@ const AutocompleteSearchContent = forwardRef<
               input: classes.targetSelectorInput,
               rightSection: classes.targetSelectorRightSection,
             }}
+            maxDropdownHeight={280}
             defaultValue={targetData[0].value}
             // Ensure we disable search targets if they are not enabled
             data={targetData

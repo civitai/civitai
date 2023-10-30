@@ -15,6 +15,7 @@ import React from 'react';
 import { useState, useMemo } from 'react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
+import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderationCategories, ModerationCategory } from '~/libs/moderation';
@@ -130,6 +131,25 @@ export function ModerationCard({
         </Group>
       ) : (
         <>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Group position="apart">
+              <Stack spacing={0}>
+                <Text weight={500}>Blur Mature Content</Text>
+                <Text size="xs" weight={500} color="dimmed">
+                  Blur images and videos that are marked as mature
+                </Text>
+              </Stack>
+              <BlurToggle>
+                {({ blurred, toggle, isLoading: blurLoading }) => (
+                  <SkeletonSwitch
+                    loading={blurLoading}
+                    checked={blurred}
+                    onChange={(e) => toggle(e.target.checked)}
+                  />
+                )}
+              </BlurToggle>
+            </Group>
+          </Card.Section>
           {moderationCategories
             .filter((x) => !x.hidden)
             .map((category) => {

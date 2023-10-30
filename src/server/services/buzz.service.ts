@@ -155,18 +155,15 @@ export async function createBuzzTransaction({
   });
 
   if (!response.ok) {
-    const cause: { reason: string } = JSON.parse(await response.text());
-
     switch (response.status) {
       case 400:
-        throw throwBadRequestError(cause.reason, cause);
+        throw throwBadRequestError('Invalid transaction');
       case 409:
-        throw throwBadRequestError('There is a conflict with the transaction', cause);
+        throw throwBadRequestError('There is a conflict with the transaction');
       default:
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'An unexpected error ocurred, please try again later',
-          cause,
         });
     }
   }
@@ -245,16 +242,15 @@ export async function createBuzzTransactionMany(
     body,
   });
   if (!response.ok) {
-    const cause: { reason: string } = JSON.parse(await response.text());
-
     switch (response.status) {
       case 400:
-        throw throwBadRequestError(cause.reason, cause);
+        throw throwBadRequestError('Invalid transaction');
+      case 409:
+        throw throwBadRequestError('There is a conflict with the transaction');
       default:
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'An unexpected error ocurred, please try again later',
-          cause,
         });
     }
   }
@@ -307,16 +303,15 @@ export async function completeStripeBuzzTransaction({
     });
 
     if (!response.ok) {
-      const cause: { reason: string } = JSON.parse(await response.text());
-
       switch (response.status) {
         case 400:
-          throw throwBadRequestError(cause.reason, cause);
+          throw throwBadRequestError('Invalid transaction');
+        case 409:
+          throw throwBadRequestError('There is a conflict with the transaction');
         default:
           throw new TRPCError({
             code: 'INTERNAL_SERVER_ERROR',
             message: 'An unexpected error ocurred, please try again later',
-            cause,
           });
       }
     }
@@ -362,20 +357,16 @@ export async function refundTransaction(
   });
 
   // TODO.buzz make this reusable
-  //  also, i'm not sure this error handling is working, I saw a strange HTML error with this
   if (!response.ok) {
-    const err = await response.json();
-
     switch (response.status) {
       case 400:
-        throw throwBadRequestError(err);
+        throw throwBadRequestError('Invalid transaction');
       case 409:
-        throw throwBadRequestError('There is a conflict with the transaction', err);
+        throw throwBadRequestError('There is a conflict with the transaction');
       default:
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'An unexpected error ocurred, please try again later',
-          cause: err,
         });
     }
   }

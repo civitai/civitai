@@ -20,14 +20,14 @@ export const deleteOldTrainingData = createJob(
       {
         mf_id: number;
         history: NonNullable<FileMetadata['trainingResults']>['history'];
-        jobId: NonNullable<FileMetadata['trainingResults']>['jobId'];
+        job_id: NonNullable<FileMetadata['trainingResults']>['jobId'];
         visibility: ModelFileVisibility;
         url: string;
       }[]
     >`
       SELECT mf.id                                         as mf_id,
              mf.metadata -> 'trainingResults' -> 'history' as history,
-             mf.metadata -> 'trainingResults' -> 'jobId'   as jobId,
+             mf.metadata -> 'trainingResults' -> 'jobId'   as job_id,
              mf.visibility,
              mf.url
       FROM "ModelVersion" mv
@@ -56,18 +56,18 @@ export const deleteOldTrainingData = createJob(
 
     let goodJobs = 0;
     let errorJobs = 0;
-    for (const { mf_id, history, jobId, visibility, url } of oldTraining) {
+    for (const { mf_id, history, job_id, visibility, url } of oldTraining) {
       let hasError = false;
 
-      if (!!jobId) {
+      if (!!job_id) {
         try {
-          const result = await deleteAssets(jobId);
+          const result = await deleteAssets(job_id);
           if (!result || !result.total) {
             hasError = true;
             logJob({
               message: `Delete assets result blank`,
               data: {
-                jobId: jobId,
+                jobId: job_id,
                 modelFileId: mf_id,
                 result: result,
               },
@@ -80,7 +80,7 @@ export const deleteOldTrainingData = createJob(
             data: {
               error: (e as Error)?.message,
               cause: (e as Error)?.cause,
-              jobId: jobId,
+              jobId: job_id,
               modelFileId: mf_id,
             },
           });
@@ -99,7 +99,7 @@ export const deleteOldTrainingData = createJob(
                   logJob({
                     message: `Delete assets result blank`,
                     data: {
-                      jobId: jobId,
+                      jobId: histJobId,
                       modelFileId: mf_id,
                       result: result,
                     },
@@ -113,7 +113,7 @@ export const deleteOldTrainingData = createJob(
                   data: {
                     error: (e as Error)?.message,
                     cause: (e as Error)?.cause,
-                    jobId: jobId,
+                    jobId: histJobId,
                     modelFileId: mf_id,
                   },
                 });
@@ -134,7 +134,7 @@ export const deleteOldTrainingData = createJob(
             data: {
               error: (e as Error)?.message,
               cause: (e as Error)?.cause,
-              jobId: jobId,
+              jobId: job_id,
               modelFileId: mf_id,
               key,
               bucket,

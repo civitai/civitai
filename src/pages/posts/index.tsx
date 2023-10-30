@@ -36,7 +36,7 @@ export default function PostsPage() {
   const storedView = useFiltersContext((state) => state.posts.view);
   const { query } = usePostQueryParams();
 
-  const view = query.view ?? storedView;
+  const view = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS ? query.view ?? storedView : 'feed';
   return (
     <>
       <Meta
