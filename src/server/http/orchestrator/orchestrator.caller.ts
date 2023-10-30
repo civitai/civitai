@@ -28,15 +28,29 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
-  public copyAsset({ payload }: { payload: Orchestrator.Training.CopyAssetJobPayload }) {
+  public copyAsset({
+    payload,
+    queryParams,
+  }: {
+    payload: Orchestrator.Training.CopyAssetJobPayload;
+    queryParams?: Orchestrator.JobQueryParams;
+  }) {
     return this.post<Orchestrator.Training.CopyAssetJobResponse>('/v1/consumer/jobs', {
       payload: { ...payload, $type: 'copyAsset' },
+      queryParams,
     });
   }
 
-  public clearAssets({ payload }: { payload: Orchestrator.Training.ClearAssetsJobPayload }) {
+  public clearAssets({
+    payload,
+    queryParams,
+  }: {
+    payload: Orchestrator.Training.ClearAssetsJobPayload;
+    queryParams?: Orchestrator.JobQueryParams;
+  }) {
     return this.post<Orchestrator.Training.ClearAssetsJobResponse>('/v1/consumer/jobs', {
       payload: { ...payload, $type: 'clearAssets' },
+      queryParams,
     });
   }
 

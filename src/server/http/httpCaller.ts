@@ -1,3 +1,5 @@
+import { QS } from '~/utils/qs';
+
 export abstract class HttpCaller {
   private baseUrl: string;
   private baseHeaders: MixedObject;
@@ -15,17 +17,20 @@ export abstract class HttpCaller {
     };
   }
 
-  public async get<TResponse = unknown>(endpoint: string) {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, { headers: this.baseHeaders });
+  public async get<TResponse = unknown>(endpoint: string, opts?: { queryParams?: MixedObject }) {
+    const url = QS.stringifyUrl({ url: `${this.baseUrl}${endpoint}`, query: opts?.queryParams });
+    const response = await fetch(url, { headers: this.baseHeaders });
+
     return this.prepareResponse<TResponse>(response);
   }
 
-  public async post<TResponse = any, TPayload = unknown>(
+  public async post<TResponse = unknown, TPayload = unknown>(
     endpoint: string,
-    opts: { payload: TPayload; headers?: MixedObject }
+    opts: { payload: TPayload; headers?: MixedObject; queryParams?: MixedObject }
   ) {
-    const { payload, headers } = opts;
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    const { payload, headers, queryParams } = opts;
+    const url = QS.stringifyUrl({ url: `${this.baseUrl}${endpoint}`, query: queryParams });
+    const response = await fetch(url, {
       method: 'POST',
       body: JSON.stringify(payload),
       headers: {
@@ -38,12 +43,13 @@ export abstract class HttpCaller {
     return this.prepareResponse<TResponse>(response);
   }
 
-  public async put<TResponse = any, TPayload = unknown>(
+  public async put<TResponse = unknown, TPayload = unknown>(
     endpoint: string,
-    opts: { payload: TPayload; headers?: MixedObject }
+    opts: { payload: TPayload; headers?: MixedObject; queryParams?: MixedObject }
   ) {
-    const { payload, headers } = opts;
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    const { payload, headers, queryParams } = opts;
+    const url = QS.stringifyUrl({ url: `${this.baseUrl}${endpoint}`, query: queryParams });
+    const response = await fetch(url, {
       method: 'PUT',
       body: JSON.stringify(payload),
       headers: {

@@ -4,6 +4,7 @@ import { trainingDetailsParams } from '~/server/schema/model-version.schema';
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
   export type JobResponse<TJob = Job> = { token: string; jobs: TJob[] };
+  export type JobQueryParams = { wait?: boolean };
 
   export namespace Training {
     export type CopyAssetJob = Orchestrator.Job<{ found?: boolean; fileSize?: number }>;

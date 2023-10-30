@@ -54,7 +54,10 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
     destinationUri,
   };
 
-  const response = await orchestratorCaller.copyAsset({ payload: reqBody });
+  const response = await orchestratorCaller.copyAsset({
+    payload: reqBody,
+    queryParams: { wait: true },
+  });
   if (response.status === 429) {
     throw throwRateLimitError();
   }
@@ -77,7 +80,10 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
 };
 
 export const deleteAssets = async (jobId: string) => {
-  const response = await orchestratorCaller.clearAssets({ payload: { jobId } });
+  const response = await orchestratorCaller.clearAssets({
+    payload: { jobId },
+    queryParams: { wait: true },
+  });
 
   if (response.status === 429) {
     throw throwRateLimitError();
@@ -164,8 +170,7 @@ export const createTrainingRequest = async ({
     // externalTransactionId: `training|mvId:${modelVersionId}`,
   });
 
-  const generationRequest = {
-    $type: 'imageResourceTraining',
+  const generationRequest: Orchestrator.Training.ImageResourceTrainingJobPayload = {
     // priority: 10,
     callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/resource-training?token=${env.WEBHOOK_TOKEN}`,
     properties: { userId, transactionId, modelFileId: modelVersion.fileId },
