@@ -12,6 +12,7 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
+import { handleLongTrainings } from '~/server/jobs/handle-long-trainings';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { Job } from '~/server/jobs/job';
@@ -21,8 +22,8 @@ import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
-import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
+import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
@@ -60,6 +61,7 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
+  handleLongTrainings,
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
