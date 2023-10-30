@@ -215,7 +215,7 @@ const onFetchItemsToIndex = async ({
     },
     where: {
       status: ModelStatus.Published,
-      OR: whereOr,
+      OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
     },
   });
 
