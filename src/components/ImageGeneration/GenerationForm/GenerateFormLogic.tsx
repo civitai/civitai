@@ -90,6 +90,18 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
+      if (!formData.model)
+        formData.model = {
+          id: 128713,
+          index: 0,
+          name: '8',
+          trainedWords: [],
+          modelId: 4384,
+          modelName: 'DreamShaper',
+          modelType: 'Checkpoint',
+          baseModel: 'SD 1.5',
+          strength: 1,
+        };
       for (const item of keys) {
         const key = item as keyof typeof formData;
         if (staticKeys.includes(key)) continue; // don't overwrite nsfw
