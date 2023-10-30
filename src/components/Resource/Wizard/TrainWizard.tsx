@@ -1,6 +1,8 @@
 import { Container, Stack, Stepper, Title } from '@mantine/core';
+import { IconExclamationCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { TrainingFormBasic } from '~/components/Resource/Forms/Training/TrainingBasicInfo';
@@ -65,6 +67,19 @@ export default function TrainWizard() {
         <NotFound />
       ) : (
         <Stack pb="xl">
+          <AlertWithIcon
+            icon={<IconExclamationCircle size={16} />}
+            iconColor="yellow"
+            color="yellow"
+            size="md"
+            iconSize="md"
+          >
+            Due to high load, LoRA Trainings are not always successful, they may fail or get stuck
+            in processing. Not to worry though, If your LoRA training fails your buzz will be
+            refunded within 24 hours. If your training has been processing for more than 24 hours it
+            will be auto failed and a refund will be issued to you. If your training fails its
+            recommended that you try again.
+          </AlertWithIcon>
           <Title mb="sm" order={2}>
             Train a Model
           </Title>
