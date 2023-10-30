@@ -1,32 +1,12 @@
-import { Button, ButtonProps, Card, Center } from '@mantine/core';
+import { Button, ButtonProps, Card } from '@mantine/core';
 import { IconMessageChatbot, IconX } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { env } from '~/env/client.mjs';
-import { NoContent } from '../NoContent/NoContent';
 
 const WIDTH = 320;
 const HEIGHT = 500;
-const URL = `https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`;
-
-async function checkPageExists(url: string) {
-  return fetch(url, { method: 'HEAD' })
-    .then((res) => res.ok)
-    .catch(() => false);
-}
-
 export function AssistantButton({ ...props }: ButtonProps) {
   const [opened, setOpened] = useState(false);
-  const [loaded, setLoaded] = useState(true);
-
-  useEffect(() => {
-    async function loadIFrameData() {
-      const result = await checkPageExists(URL);
-      setLoaded(result);
-    }
-
-    loadIFrameData();
-  }, [opened]);
-
   if (!env.NEXT_PUBLIC_GPTT_UUID) return null;
 
   return (
@@ -48,21 +28,12 @@ export function AssistantButton({ ...props }: ButtonProps) {
         }}
         p={0}
       >
-        {loaded ? (
-          <iframe
-            src={URL}
-            width={WIDTH + 1}
-            height={HEIGHT}
-            style={{ margin: -1, background: 'transparent' }}
-          />
-        ) : (
-          <Center p="md" h="100%">
-            <NoContent
-              iconSize={64}
-              message="CivBot is not available at the moment. Please try again later"
-            />
-          </Center>
-        )}
+        <iframe
+          src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`}
+          width={WIDTH + 1}
+          height={HEIGHT}
+          style={{ margin: -1, background: 'transparent' }}
+        />
       </Card>
       <Button
         px="xs"
