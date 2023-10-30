@@ -18,6 +18,7 @@ import {
   Stack,
   Text,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
@@ -40,6 +41,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -74,6 +76,7 @@ export const getServerSideProps = createServerSideProps({
 
 export function UserProfileOverview({ username }: { username: string }) {
   const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
@@ -101,26 +104,31 @@ export function UserProfileOverview({ username }: { username: string }) {
           <ProfileSidebar username={username} />
         </SidebarLayout.Sidebar>
         <SidebarLayout.Content>
-          <Container size="xl">
-            <Stack>
+          <Center>
+            <Container size="xl" w="100%">
               {profile?.coverImage && (
-                <ImageGuard
-                  images={[profile.coverImage]}
-                  nsfw={profile.coverImage.nsfw}
-                  connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
-                  render={(image) => {
-                    return (
-                      <ImageGuard.Content>
-                        {({ safe }) => (
-                          <AspectRatio
-                            ratio={17 / 5}
-                            sx={(theme) => ({
-                              width: '100%',
-                              borderRadius: theme.radius.md,
-                              overflow: 'hidden',
-                            })}
-                          >
-                            <div style={{ width: '100%', position: 'relative' }}>
+                <div
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    overflow: 'hidden',
+                    height: 0,
+                    paddingBottom: '29.412%',
+                    background: 'red',
+                    borderRadius: theme.radius.md,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <ImageGuard
+                    images={[profile.coverImage]}
+                    connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
+                    render={(image) => {
+                      return (
+                        <ImageGuard.Content>
+                          {({ safe }) => (
+                            <div style={{ width: '100%' }}>
                               <ImageGuard.ToggleConnect position="top-left" />
                               <ImageGuard.Report />
 
@@ -135,15 +143,18 @@ export function UserProfileOverview({ username }: { username: string }) {
                                 />
                               )}
                             </div>
-                          </AspectRatio>
-                        )}
-                      </ImageGuard.Content>
-                    );
-                  }}
-                />
+                          )}
+                        </ImageGuard.Content>
+                      );
+                    }}
+                  />
+                </div>
               )}
-            </Stack>
-          </Container>
+              <Stack mt="md">
+                <PopularModelsSection user={user} />
+              </Stack>
+            </Container>
+          </Center>
         </SidebarLayout.Content>
       </SidebarLayout.Root>
     </>
