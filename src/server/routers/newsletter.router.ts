@@ -6,5 +6,7 @@ export const newsletterRouter = router({
   getSubscription: protectedProcedure.query(({ ctx }) => getSubscription(ctx.user.email)),
   updateSubscription: protectedProcedure
     .input(updateSubscriptionSchema)
-    .mutation(({ input, ctx }) => updateSubscription({ email: ctx.user.email, ...input })),
+    .mutation(({ input, ctx }) =>
+      updateSubscription({ email: ctx.user.email, username: ctx.user.username, ...input })
+    ),
 });
