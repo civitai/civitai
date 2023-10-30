@@ -6,7 +6,7 @@ import { NoContent } from '../NoContent/NoContent';
 
 const WIDTH = 320;
 const HEIGHT = 500;
-const URL = `http://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`;
+const URL = `https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`;
 
 async function checkPageExists(url: string) {
   return fetch(url, { method: 'HEAD' })
