@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useContext, createContext } from 'react';
+import { useMemo, useRef, useEffect, useContext, createContext, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
@@ -59,12 +59,13 @@ export function ImageDetailProvider({
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId, modelId, modelVersionId, username, reactions, collectionId } = filters;
+  const [postId, setPostId] = useState(filters.postId);
+  const { modelId, modelVersionId, username, reactions, collectionId } = filters;
   // #region [data fetching]
-  const shouldFetchMany = Object.keys(filters).length > 0;
+  const shouldFetchMany = Object.keys(filters).length > 0 || !!postId;
   const { images = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
-    { ...filters, username: !!reactions?.length ? undefined : username },
+    { ...filters, username: !!reactions?.length ? undefined : username, postId },
     {
       enabled: shouldFetchMany,
     }
@@ -83,6 +84,10 @@ export function ImageDetailProvider({
     { id: imageId },
     { enabled: shouldFetchImage }
   );
+
+  useEffect(() => {
+    setPostId(prefetchedImage?.postId);
+  }, [prefetchedImage]);
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
