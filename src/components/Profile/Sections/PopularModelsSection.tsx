@@ -30,7 +30,7 @@ export const PopularModelsSection = ({ user }: { user: { id: number; username: s
 
   return (
     <div ref={ref}>
-      {!inView || isLoading ? (
+      {isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Most popular models" icon={<IconTrendingUp />}>

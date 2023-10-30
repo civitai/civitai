@@ -2,7 +2,7 @@ import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React from 'react';
 
-type AspectRatio = 'portrait' | 'landscape' | 'square';
+type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> = {
   portrait: {
     ratio: 7 / 9,
@@ -10,6 +10,10 @@ const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> 
   },
   landscape: {
     ratio: 9 / 7,
+    height: 300,
+  },
+  flat: {
+    ratio: 15 / 7,
     height: 300,
   },
   square: {

@@ -11,37 +11,19 @@ import {
   Avatar,
   Center,
   Container,
-  Divider,
-  Group,
-  Indicator,
   Loader,
   Stack,
-  Text,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { IconInfoCircle, IconMapPin, IconRss } from '@tabler/icons-react';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { UserStats } from '~/components/Profile/UserStats';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useMemo } from 'react';
-import { formatDate } from '~/utils/date-helpers';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
-import { Carousel } from '@mantine/carousel';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ImageSort } from '~/server/common/enums';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
+import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
+import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
+import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -89,13 +71,11 @@ export function UserProfileOverview({ username }: { username: string }) {
     );
   }
 
-  if (!user) {
+  if (!user || !user.username) {
     return <NotFound />;
   }
 
   const { profile } = user;
-
-  console.log(profile);
 
   return (
     <>
@@ -152,6 +132,9 @@ export function UserProfileOverview({ username }: { username: string }) {
               )}
               <Stack mt="md">
                 <PopularModelsSection user={user} />
+                <PopularArticlesSection user={user} />
+                <MyModelsSection user={user} />
+                <MyImagesSection user={user} />
               </Stack>
             </Container>
           </Center>

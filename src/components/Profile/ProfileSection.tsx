@@ -7,8 +7,20 @@ type Props = {
   children?: React.ReactNode;
 };
 
-export const useProfileSectionStyles = createStyles<string, { count?: number }>(
-  (theme, { count = 4 } = {}) => {
+export const useProfileSectionStyles = createStyles<
+  string,
+  {
+    count?: number;
+    rowCount?: number;
+    columnCount?: number | string;
+    widthGrid?: string;
+    widthCarousel?: string;
+  }
+>(
+  (
+    theme,
+    { count = 4, rowCount = 2, columnCount, widthGrid = '380px', widthCarousel = '280px' } = {}
+  ) => {
     return {
       scrollGrid: {
         display: 'grid',
@@ -16,7 +28,7 @@ export const useProfileSectionStyles = createStyles<string, { count?: number }>(
         gridAutoRows: 0,
         overflow: 'hidden',
         gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count}, 280px)`,
+        gridTemplateColumns: `repeat(${count}, ${widthCarousel})`,
         gridTemplateRows: 'auto',
         scrollSnapType: 'x mandatory',
         overflowX: 'auto',
@@ -38,9 +50,9 @@ export const useProfileSectionStyles = createStyles<string, { count?: number }>(
       },
       grid: {
         display: 'grid',
-        gridTemplateColumns: `repeat(auto-fit, minmax(320px, 1fr))`,
+        gridTemplateColumns: `repeat(${columnCount ?? 'auto-fill'}, minmax(${widthGrid}, 1fr))`,
         columnGap: theme.spacing.md,
-        gridTemplateRows: `repeat(2, auto)`,
+        gridTemplateRows: `repeat(${rowCount ?? '2'}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
         marginTop: -theme.spacing.md,
@@ -49,17 +61,9 @@ export const useProfileSectionStyles = createStyles<string, { count?: number }>(
           marginTop: theme.spacing.md,
         },
 
-        [theme.fn.smallerThan('md')]: {
-          gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
-          gridTemplateRows: `repeat(2, auto)`,
-          scrollSnapType: 'x mandatory',
-          overflowX: 'auto',
-        },
-
         [theme.fn.smallerThan('sm')]: {
           gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count}, 280px)`,
+          gridTemplateColumns: `repeat(${count}, ${widthCarousel})`,
           gridTemplateRows: 'auto',
           scrollSnapType: 'x mandatory',
           overflowX: 'auto',

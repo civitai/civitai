@@ -33,7 +33,13 @@ const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[
   'period',
 ];
 
-export function ModelFiltersDropdown() {
+export function ModelFiltersDropdown({
+  filters: dumbFilters,
+  setFilters: dumbSetFilters,
+}: {
+  filters?: Partial<ModelFilterSchema>;
+  setFilters?: (filters: Partial<ModelFilterSchema>) => void;
+}) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isSameUser = useIsSameUser(router.query.username);
@@ -41,10 +47,14 @@ export function ModelFiltersDropdown() {
   const flags = useFeatureFlags();
   const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
 
-  const { filters, setFilters } = useFiltersContext((state) => ({
+  const { filters: smartFilters, setFilters: smartSetFilters } = useFiltersContext((state) => ({
     filters: state.models,
     setFilters: state.setModelFilters,
   }));
+
+  const filters = dumbFilters ?? smartFilters;
+  const setFilters = dumbSetFilters ?? smartSetFilters;
+
   const showCheckpointType = !filters.types?.length || filters.types.includes('Checkpoint');
 
   const filterLength =
@@ -93,6 +103,7 @@ export function ModelFiltersDropdown() {
         acc[key] = queryFilters[key];
         return acc;
       }, {} as any);
+
       const updatedQueryFilters = keys.reduce((acc, key) => {
         acc[key] = undefined;
         return acc;
