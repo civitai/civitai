@@ -93,7 +93,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       if (!formData.model)
         formData.model = {
           id: 128713,
-          index: 0,
           name: '8',
           trainedWords: [],
           modelId: 4384,

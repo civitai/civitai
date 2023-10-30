@@ -1,7 +1,8 @@
 import { Drawer, Center, Loader, Text, Stack } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
-import { useState, useTransition } from 'react';
+import { useRouter } from 'next/router';
+import { useEffect, useState, useTransition } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -81,11 +82,14 @@ export const generationPanel = {
 export function GenerationPanel() {
   const debouncer = useDebouncer(300);
   const mobile = useIsMobile({ breakpoint: 'md' });
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const opened = useGenerationStore((state) => state.opened);
   const onClose = useGenerationStore((state) => state.close);
   const [showContent, setShowContent] = useState(false);
+
+  useEffect(() => onClose(), [router, onClose]);
 
   useDidUpdate(() => {
     startTransition(() => {
@@ -103,7 +107,7 @@ export function GenerationPanel() {
       withCloseButton={false}
       zIndex={constants.imageGeneration.drawerZIndex}
       styles={(theme) => ({
-        drawer: { [theme.fn.smallerThan('md')]: { position: 'absolute', height: 'auto' } },
+        body: { height: '100%' },
       })}
     >
       {showContent && <GenerationTabs />}

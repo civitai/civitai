@@ -26,6 +26,7 @@ import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/B
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -304,15 +305,17 @@ export function GenerateFormView({
                     />
                   </Stack>
                 </Card>
-                <Button
-                  type="submit"
-                  size="lg"
-                  loading={isSubmitting || loading}
-                  className={classes.generateButtonButton}
-                  disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
-                >
-                  Generate
-                </Button>
+                <LoginRedirect reason="image-gen" returnUrl="/generate">
+                  <Button
+                    type="submit"
+                    size="lg"
+                    loading={isSubmitting || loading}
+                    className={classes.generateButtonButton}
+                    disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
+                  >
+                    Generate
+                  </Button>
+                </LoginRedirect>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
                   onClick={() => form.reset()}

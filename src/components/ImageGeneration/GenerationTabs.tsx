@@ -8,9 +8,11 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function GenerationTabs({}) {
   const { classes } = useStyles();
+  const currentUser = useCurrentUser();
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
@@ -37,34 +39,38 @@ export default function GenerationTabs({}) {
         <Feed {...result} />
       </Tabs.Panel>
 
-      <Tabs.List grow>
-        <Tabs.Tab value="generate" icon={<IconBrush size={16} />} data-autofocus>
-          Generate
-        </Tabs.Tab>
-        <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>
-          Queue{' '}
-          {pendingProcessingCount > 0 && (
-            <Badge color="red" variant="filled" size="xs">
-              {pendingProcessingCount}
-            </Badge>
-          )}
-        </Tabs.Tab>
-        <Tabs.Tab value="feed" icon={<IconSlideshow size={16} />}>
-          Feed
-        </Tabs.Tab>
-      </Tabs.List>
+      {currentUser && (
+        <Tabs.List grow>
+          <Tabs.Tab value="generate" icon={<IconBrush size={16} />} data-autofocus>
+            Generate
+          </Tabs.Tab>
+          <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>
+            Queue{' '}
+            {pendingProcessingCount > 0 && (
+              <Badge color="red" variant="filled" size="xs">
+                {pendingProcessingCount}
+              </Badge>
+            )}
+          </Tabs.Tab>
+          <Tabs.Tab value="feed" icon={<IconSlideshow size={16} />}>
+            Feed
+          </Tabs.Tab>
+        </Tabs.List>
+      )}
     </Tabs>
   );
 }
 
 const useStyles = createStyles((theme) => ({
+  root: {
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+  },
   panel: {
     padding: theme.spacing.md,
-    height: 'calc(100vh - 54px)',
-
-    [theme.fn.smallerThan('md')]: {
-      height: 'calc(90vh - 54px - var(--mantine-header-height))',
-    },
+    flex: 1,
+    overflowY: 'auto',
   },
   tabsList: {
     gap: 0,
