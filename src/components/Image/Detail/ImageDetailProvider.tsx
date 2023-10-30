@@ -86,7 +86,6 @@ export function ImageDetailProvider({
   );
 
   useEffect(() => {
-    console.log(prefetchedImage?.postId);
     setPostId(prefetchedImage?.postId);
   }, [prefetchedImage]);
 
