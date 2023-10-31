@@ -1,9 +1,9 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { useDeferredValue, useMemo } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput, GetModelsByCategoryInput } from '~/server/schema/model.schema';
@@ -16,6 +16,7 @@ import { constants } from '~/server/common/constants';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
+import { modelFilterSchema } from '~/providers/CookiesProvider';
 
 const modelQueryParamSchema = z
   .object({
@@ -71,6 +72,19 @@ export const useModelQueryParams2 = () => useZodRouteParams(modelQueryParamSchem
 export const useModelFilters = () => {
   const storeFilters = useFiltersContext((state) => state.models);
   return removeEmpty(storeFilters);
+};
+
+export const useDumbModelFilters = (defaultFilters?: Partial<Omit<GetAllModelsInput, 'page'>>) => {
+  const [filters, setFilters] = useState<Partial<Omit<GetAllModelsInput, 'page'>>>(
+    defaultFilters ?? {}
+  );
+  const filtersUpdated = filters !== defaultFilters;
+
+  return {
+    filters,
+    setFilters,
+    filtersUpdated,
+  };
 };
 
 export type UseQueryModelReturn = ReturnType<typeof useQueryModels>['models'];

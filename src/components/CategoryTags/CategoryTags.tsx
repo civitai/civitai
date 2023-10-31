@@ -94,7 +94,6 @@ export function DumbCategoryTags({
   onChange: (data: { tag?: string }) => void;
 }) {
   const { classes, cx, theme } = useStyles();
-
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 

@@ -5,28 +5,32 @@ import {
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
 import { IconApiApp } from '@tabler/icons-react';
-import React, { useMemo, useState } from 'react';
-import { useQueryModels } from '~/components/Model/model.utils';
+import React, { useMemo } from 'react';
+import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { Button, Group } from '@mantine/core';
+import { Button, Center, Group, Loader, Stack } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { DumbCategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
+import { MetricTimeframe } from '@prisma/client';
 
 const MAX_MODELS_DISPLAY = 12;
-const INITIAL_FILTER: Partial<Omit<GetAllModelsInput, 'page'> & ModelFilterSchema> = {
-  period: 'AllTime',
-  sort: ModelSort.Newest,
-};
 export const MyModelsSection = ({ user }: { user: { id: number; username: string } }) => {
   const { ref, inView } = useInView();
-  const [filters, setFilters] = useState<Partial<Omit<GetAllModelsInput, 'page'>>>(INITIAL_FILTER);
+
+  const { filters, setFilters, filtersUpdated } = useDumbModelFilters({
+    period: 'AllTime',
+    sort: ModelSort.Newest,
+  });
   const { period, sort } = filters;
-  const { models: _models, isLoading } = useQueryModels(
+  const {
+    models: _models,
+    isLoading,
+    isRefetching,
+  } = useQueryModels(
     {
       ...filters,
       username: user.username,
@@ -42,10 +46,12 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
     rowCount: 3,
   });
 
-  if (inView && !isLoading && !models.length && filters === INITIAL_FILTER) {
-    // No point in showing this without models
+  if (inView && !isLoading && !models.length && !filtersUpdated) {
+    // User has no models whatsoever. Don't return anything at all.
     return null;
   }
+
+  console.log(sort, filters);
 
   return (
     <div ref={ref}>
@@ -75,22 +81,31 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
             onChange={(data) => setFilters((f) => ({ ...f, tag: data.tag }))}
             tag={filters.tag}
           />
-          <div className={classes.grid}>
-            {models.map((model) => (
-              <ModelCard data={model} key={model.id} />
-            ))}
-          </div>
-          {_models.length > MAX_MODELS_DISPLAY && (
-            <Button
-              href={`/user/${user.username}/profile/models`}
-              component={NextLink}
-              rel="nofollow"
-              size="md"
-              display="inline-block"
-              mr="auto"
-            >
-              View all models
-            </Button>
+
+          {isRefetching ? (
+            <Center>
+              <Loader />
+            </Center>
+          ) : (
+            <Stack>
+              <div className={classes.grid}>
+                {models.map((model) => (
+                  <ModelCard data={model} key={model.id} />
+                ))}
+              </div>
+              {_models.length > MAX_MODELS_DISPLAY && (
+                <Button
+                  href={`/user/${user.username}/profile/models`}
+                  component={NextLink}
+                  rel="nofollow"
+                  size="md"
+                  display="inline-block"
+                  mr="auto"
+                >
+                  View all models
+                </Button>
+              )}
+            </Stack>
           )}
         </ProfileSection>
       )}
