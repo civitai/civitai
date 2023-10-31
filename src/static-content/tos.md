@@ -53,6 +53,27 @@ If you believe your content has been removed unfairly, you can submit an appeal 
 
 For additional information about how content is moderated, please review our [Content Moderation Policy](/content/moderation).
 
+## Onsite Image Generation
+
+### Application of Content Rules
+All content rules outlined in the previous section apply equally to images generated onsite. This includes, but is not limited to, restrictions on mature content as it applies to depictions of real individuals or minors, illegal or violent activities, and disrespectful or offensive content.
+
+### Prohibited Image Generation Attempts
+Attempts to generate images that violate our content rules are strictly prohibited.
+
+### Moderation and Enforcement
+Our moderation team actively monitors onsite image generation activities. Content that violates our rules, or attempts to circumvent our content restrictions, will result in appropriate actions, which may include content removal, flagging of the account, suspension of access to the image generation feature, or a ban from the platform.
+
+### Reporting and Accountability
+Users are encouraged to report any inappropriate image generation attempts or results they come across. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation.
+
+Users found to be repeatedly attempting to generate content that violates our rules may face additional consequences, including potential suspension or termination of their Civitai account.
+
+### Transparency and Appeals
+Decisions made by our moderation team concerning onsite image generation are subject to the same transparency and appeal processes as other content on Civitai.
+
+Users can request an explanation or appeal a moderation decision by following the established appeal process outlined in our Content Rules.
+
 ## Intellectual Property
 By uploading a file or other content or by making a review, you represent and warrant to us that (1) doing so does not violate or infringe anyone else's rights; and (2) you created the file or other content you are uploading, or otherwise have sufficient intellectual property rights to upload the material consistent with these terms. With regard to any file or content you upload to the public portions of our site, you grant Civitai a non-exclusive, royalty-free, perpetual, irrevocable worldwide license (with sublicense and assignment rights) to use, to display online and in any present or future media, to create derivative works of, to allow downloads of, and/or distribute any such file or content. To the extent that you delete any such file or content from the public portions of our site, the license you grant to Civitai pursuant to the preceding sentence will automatically terminate, but will not be revoked with respect to any file or content Civitai has already copied and sublicensed or designated for sublicense. Also, of course, anything you post to a public portion of our site may be used by the public pursuant to the following paragraph even after you delete it.
 
