@@ -172,6 +172,7 @@ export const constants = {
       notified: 8,
       muted: 16,
     },
+    maxConcurrentRequests: 10,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,

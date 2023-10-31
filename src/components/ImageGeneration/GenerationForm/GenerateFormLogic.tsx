@@ -16,7 +16,6 @@ import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { TransactionType } from '~/server/schema/buzz.schema';
 import { calculateGenerationBill } from '~/server/common/generation';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {

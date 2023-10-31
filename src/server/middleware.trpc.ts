@@ -94,8 +94,8 @@ export function cacheIt<TInput extends object>({
       return { ok: true, data, marker: 'fromCache' as any, ctx };
     }
 
-    const result = await next();
-    if (result.ok && ctx.cache?.canCache) {
+    const result = await next({ ctx });
+    if (result.ok && result.data && ctx.cache?.canCache) {
       await redis.set(cacheKey, toJson(result.data), {
         EX: ttl,
       });

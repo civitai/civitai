@@ -33,7 +33,7 @@ export const getServerSideProps = createServerSideProps({
 export default function GeneratePage() {
   const currentUser = useCurrentUser();
 
-  const result = useGetGenerationRequests({});
+  const result = useGetGenerationRequests();
 
   if (currentUser?.muted)
     return (
@@ -49,13 +49,13 @@ export default function GeneratePage() {
 
   return (
     <Container size="lg">
-      <Grid gutter={48}>
-        <Grid.Col span={5} maw={400}>
+      <Grid gutter="xl" m={0}>
+        <Grid.Col span={5}>
           <IsClient>
             <GenerateFormLogic />
           </IsClient>
         </Grid.Col>
-        <Grid.Col span={7} sx={{ maxWidth: 'unset', flexGrow: 1 }}>
+        <Grid.Col span={7} sx={{ flexGrow: 1 }}>
           <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray">
             <Tabs.List>
               <Tabs.Tab value="queue">Queue</Tabs.Tab>

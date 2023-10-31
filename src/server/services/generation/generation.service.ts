@@ -472,7 +472,7 @@ export async function getGenerationStatusMessage() {
       select: { value: true },
     })) ?? {};
 
-  return value ? (value as string) : undefined;
+  return value ? (value as string) : null;
 }
 
 export const getGenerationData = async (
