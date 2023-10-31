@@ -240,3 +240,26 @@ export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
     },
   });
 };
+
+export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
+  const result = await dbRead.$queryRaw<{ rating: number; count: number }[]>`
+    SELECT
+      rr.rating,
+      COUNT(rr.id)::int count
+    FROM "ResourceReview" rr
+    JOIN "Model" m ON rr."modelId" = m.id AND m."userId" = ${userId}
+    WHERE rr."userId" != ${userId} AND NOT rr.exclude
+    GROUP BY rr.rating
+  `;
+
+  const transformed = result.reduce(
+    (acc, { rating, count }) => {
+      const key = rating.toString() as keyof RatingTotalsModel;
+      if (acc[key] !== undefined) acc[key] = count;
+      return acc;
+    },
+    { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 }
+  );
+
+  return transformed;
+};

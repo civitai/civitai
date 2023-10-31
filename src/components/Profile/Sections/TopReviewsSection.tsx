@@ -5,14 +5,16 @@ import {
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
 import { IconBrush, IconMessageChatbot, IconPhoto, IconStar, IconX } from '@tabler/icons-react';
-import React from 'react';
+import React, { Fragment, useMemo } from 'react';
 import {
   Avatar,
   Badge,
   Button,
   Grid,
   Group,
+  Loader,
   Paper,
+  Progress,
   Rating,
   Stack,
   Text,
@@ -29,10 +31,17 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
+import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 
 export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
   const theme = useMantineTheme();
   const { ref, inView } = useInView();
+  const { data: userRatingsTotal, isLoading: isLoadingTotals } =
+    trpc.resourceReview.getUserRatingsTotal.useQuery(
+      { username: user.username },
+      { enabled: inView }
+    );
   const { resourceReviews, isLoading } = useQueryResourceReview(
     {
       username: user.username,
@@ -45,7 +54,25 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
     }
   );
 
-  console.log(resourceReviews);
+  const userRatingsTotalCount = useMemo(() => {
+    if (!userRatingsTotal) {
+      return {
+        count: 0,
+        avgRating: 0,
+      };
+    }
+
+    const count = Object.values(userRatingsTotal).reduce<number>((acc, value) => acc + value, 0);
+    const avgRating =
+      Object.keys(userRatingsTotal)
+        .map((k) => Number(k) * userRatingsTotal[k])
+        .reduce<number>((acc, value) => acc + value, 0) / (count ?? 1);
+
+    return {
+      count,
+      avgRating,
+    };
+  }, [userRatingsTotal]);
 
   if (!inView && !isLoading && !resourceReviews.length) {
     // No reviews, this section makes no sense here.
@@ -59,7 +86,7 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
       ) : (
         <ProfileSection title="Top Reviews" icon={<IconStar />}>
           <Grid>
-            <Grid.Col sm={12} md={7}>
+            <Grid.Col sm={12} md={8}>
               <Stack>
                 {resourceReviews.map((review) => {
                   const reviewer = review.user;
@@ -139,7 +166,62 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
                 })}
               </Stack>
             </Grid.Col>
-            <Grid.Col xs={12} md={5}></Grid.Col>
+            <Grid.Col xs={12} md={4}>
+              {isLoadingTotals ? (
+                <Center>
+                  <Loader />
+                </Center>
+              ) : (
+                <Stack w="100%">
+                  <Stack spacing={0}>
+                    <Rating
+                      value={userRatingsTotalCount.avgRating}
+                      fractions={2}
+                      readOnly
+                      size="xl"
+                    />
+                    <Text
+                      style={{
+                        color: theme.colorScheme === 'dark' ? 'white' : 'black',
+                        fontSize: 24,
+                        fontWeight: 510,
+                      }}
+                    >
+                      {userRatingsTotalCount.avgRating.toFixed(2)} out of 5
+                    </Text>
+                    <Text size="lg" color="dimmed">
+                      {abbreviateNumber(userRatingsTotalCount.count)} Reviews
+                    </Text>
+                  </Stack>
+
+                  <Stack spacing="xs" w="100%">
+                    {Object.keys(userRatingsTotal)
+                      .reverse()
+                      .map((rating) => {
+                        const progress =
+                          (userRatingsTotal && userRatingsTotalCount.count
+                            ? userRatingsTotal[rating] / userRatingsTotalCount.count
+                            : 0) * 100;
+                        const rounded = Math.ceil(progress);
+                        return (
+                          <Group key={rating}>
+                            <Text>{rating} Star</Text>
+                            <Progress
+                              value={progress}
+                              color="yellow"
+                              size="lg"
+                              style={{ flex: 1 }}
+                            />
+                            <Text align="left" color="dimmed" w={30}>
+                              {rounded}%
+                            </Text>
+                          </Group>
+                        );
+                      })}
+                  </Stack>
+                </Stack>
+              )}
+            </Grid.Col>
           </Grid>
         </ProfileSection>
       )}
