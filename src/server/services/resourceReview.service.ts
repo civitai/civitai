@@ -62,7 +62,6 @@ export const getResourceReviewsInfinite = async ({
   modelVersionId,
   username,
   include,
-  sort,
 }: GetResourceReviewsInfiniteInput) => {
   const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
@@ -86,22 +85,7 @@ export const getResourceReviewsInfinite = async ({
 
   AND.push({ details: { not: null } });
 
-  if (sort === ReviewSort.Rating) {
-    // Rating will be sorted by rating + reactions
-    // Should do a better job at throwing relevant reviews
-    orderBy.push({
-      rating: 'desc',
-    });
-
-    orderBy.push({
-      reactions: {
-        _count: 'desc',
-      },
-    });
-  }
-  // Always use the createdAt as a last resort.
   orderBy.push({ createdAt: 'desc' });
-
   const items = await dbRead.resourceReview.findMany({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
@@ -121,12 +105,16 @@ export const getResourceReviewsInfinite = async ({
       rating: true,
       user: { select: userWithCosmeticsSelect },
       helper: { select: { imageCount: true } },
+      model: include?.includes('model')
+        ? {
+            select: { id: true, name: true },
+          }
+        : undefined,
       modelVersion: include?.includes('model')
         ? {
             select: {
               id: true,
               name: true,
-              model: { select: { id: true, name: true } },
             },
           }
         : undefined,

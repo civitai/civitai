@@ -10,6 +10,7 @@ import {
   Avatar,
   Badge,
   Button,
+  Center,
   Grid,
   Group,
   Loader,
@@ -34,7 +35,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 
-export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
+export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
   const theme = useMantineTheme();
   const { ref, inView } = useInView();
   const { data: userRatingsTotal, isLoading: isLoadingTotals } =
@@ -45,7 +46,6 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
   const { resourceReviews, isLoading } = useQueryResourceReview(
     {
       username: user.username,
-      sort: ReviewSort.Rating,
       include: ['model'],
       limit: 5,
     },
@@ -65,7 +65,7 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
     const count = Object.values(userRatingsTotal).reduce<number>((acc, value) => acc + value, 0);
     const avgRating =
       Object.keys(userRatingsTotal)
-        .map((k) => Number(k) * userRatingsTotal[k])
+        .map((k) => Number(k) * userRatingsTotal[k as keyof typeof userRatingsTotal])
         .reduce<number>((acc, value) => acc + value, 0) / (count ?? 1);
 
     return {
@@ -79,12 +79,17 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
     return null;
   }
 
+  if (!userRatingsTotal && !isLoadingTotals) {
+    // something is off, we should have totals by now
+    return null;
+  }
+
   return (
     <div ref={ref}>
       {isLoading ? (
         <ProfileSectionPreview />
       ) : (
-        <ProfileSection title="Top Reviews" icon={<IconStar />}>
+        <ProfileSection title="Recent Reviews" icon={<IconStar />}>
           <Grid>
             <Grid.Col sm={12} md={8}>
               <Stack>
@@ -134,23 +139,23 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
                             </ContentClamp>
                           )}
                           <Group spacing="xs">
-                            {review.modelVersion?.model && (
+                            {review.model && (
                               <Button
                                 px={4}
                                 py={2}
                                 component="a"
-                                href={`/models/${review.modelVersion.model.id}?modelVersionId=${review.modelVersion.id}`}
+                                href={`/models/${review.model.id}?modelVersionId=${review.modelVersion.id}`}
                                 color="blue"
                                 size="xs"
                                 style={{ height: '26px' }}
                               >
                                 <Group spacing={2}>
                                   <IconBrush size={15} />
-                                  <span>{review.modelVersion?.model.name}</span>
+                                  <span>{review.model.name}</span>
                                 </Group>
                               </Button>
                             )}
-                            {review.helper.imageCount > 0 && (
+                            {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
                               <Badge px={4} py={2} radius="sm" style={{ height: '26px' }}>
                                 <Group spacing={2}>
                                   <IconPhoto size={15} />{' '}
@@ -197,14 +202,15 @@ export const TopReviewsSection = ({ user }: ProfileSectionProps) => {
                   <Stack spacing="xs" w="100%">
                     {Object.keys(userRatingsTotal)
                       .reverse()
-                      .map((rating) => {
+                      .map((rating: string) => {
+                        const key = rating as keyof typeof userRatingsTotal;
                         const progress =
                           (userRatingsTotal && userRatingsTotalCount.count
-                            ? userRatingsTotal[rating] / userRatingsTotalCount.count
+                            ? userRatingsTotal[key] / userRatingsTotalCount.count
                             : 0) * 100;
                         const rounded = Math.ceil(progress);
                         return (
-                          <Group key={rating}>
+                          <Group key={key}>
                             <Text>{rating} Star</Text>
                             <Progress
                               value={progress}

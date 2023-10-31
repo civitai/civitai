@@ -13,7 +13,7 @@ import { PopularModelsSection } from '~/components/Profile/Sections/PopularModel
 import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
 import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
-import { TopReviewsSection } from '~/components/Profile/Sections/TopReviewsSection';
+import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -125,7 +125,7 @@ export function UserProfileOverview({ username }: { username: string }) {
                 <PopularArticlesSection user={{ id: user.id, username }} />
                 <MyModelsSection user={{ id: user.id, username }} />
                 <MyImagesSection user={{ id: user.id, username }} />
-                <TopReviewsSection user={{ id: user.id, username }} />
+                <RecentReviewsSection user={{ id: user.id, username }} />
               </Stack>
             </Container>
           </Center>

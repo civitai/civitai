@@ -26,7 +26,6 @@ export const getResourceReviewsInfiniteSchema = z.object({
   modelVersionId: z.number().optional(),
   username: z.string().optional(),
   include: z.array(z.enum(['model'])).optional(),
-  sort: z.nativeEnum(ReviewSort).optional(),
 });
 
 export type UpsertResourceReviewInput = z.infer<typeof upsertResourceReviewSchema>;
