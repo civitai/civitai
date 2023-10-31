@@ -1,33 +1,40 @@
 import {
   ProfileSection,
+  ProfileSectionNoResults,
   ProfileSectionPreview,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
-import { IconApiApp, IconPhoto, IconTrendingUp } from '@tabler/icons-react';
+import { IconPhoto } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
-import { useModelQueryParams, useQueryModels } from '~/components/Model/model.utils';
 import { ImageSort, ModelSort } from '~/server/common/enums';
-import { ModelCard } from '~/components/Cards/ModelCard';
-import { Button, Group } from '@mantine/core';
+import { Button, Group, Loader } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { MetricTimeframe } from '@prisma/client';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { useImageQueryParams, useQueryImages } from '~/components/Image/image.utils';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.utils';
+import { DumbImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { ModelCard } from '~/components/Cards/ModelCard';
 
 const MAX_IMAGES_DISPLAY = 8;
 export const MyImagesSection = ({ user }: { user: { id: number; username: string } }) => {
   const { ref, inView } = useInView();
-  const { replace, query } = useImageQueryParams();
-  const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ModelSort.Newest;
-  const { images: _images, isLoading } = useQueryImages(
+  const { filters, setFilters, filtersUpdated } = useDumbImageFilters({
+    sort: ImageSort.Newest,
+    period: MetricTimeframe.AllTime,
+    tags: [],
+  });
+
+  const { sort, period, tags } = filters;
+
+  const {
+    images: _images,
+    isLoading,
+    isRefetching,
+  } = useQueryImages(
     {
-      ...query,
+      ...filters,
       limit: MAX_IMAGES_DISPLAY + 1,
       username: user.username,
       withMeta: false,
@@ -38,12 +45,12 @@ export const MyImagesSection = ({ user }: { user: { id: number; username: string
 
   const images = useMemo(() => _images.slice(0, MAX_IMAGES_DISPLAY), [_images]);
 
-  const { classes } = useProfileSectionStyles({
+  const { classes, cx } = useProfileSectionStyles({
     count: images.length,
     rowCount: 2,
   });
 
-  if (inView && !isLoading && !images.length) {
+  if (inView && !isLoading && !images.length && !filtersUpdated) {
     // No point in showing this without images
     return null;
   }
@@ -57,18 +64,33 @@ export const MyImagesSection = ({ user }: { user: { id: number; username: string
           <Group position="apart" spacing={0}>
             <SortFilter
               type="images"
-              value={sort}
-              onChange={(x) => replace({ sort: x as ImageSort })}
+              value={sort ?? ImageSort.Newest}
+              onChange={(x) => setFilters((f) => ({ ...f, sort: x as ImageSort }))}
             />
-            <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
+            <PeriodFilter
+              type="images"
+              value={period ?? MetricTimeframe.AllTime}
+              onChange={(x) => setFilters((f) => ({ ...f, period: x }))}
+            />
           </Group>
-          <ImageCategories />
-          <div className={classes.grid}>
+          <DumbImageCategories
+            value={tags ?? []}
+            onChange={(x) => setFilters((f) => ({ ...f, tags: x }))}
+          />
+          <div
+            className={cx({
+              [classes.grid]: images.length > 0,
+              [classes.nullState]: !images.length,
+              [classes.loading]: isRefetching,
+            })}
+          >
+            {!images.length && <ProfileSectionNoResults />}
             {images.map((image) => (
               <ImageCard data={image} key={image.id} />
             ))}
+            {isRefetching && <Loader className={classes.loader} />}
           </div>
-          {_images.length > MAX_IMAGES_DISPLAY && (
+          {_images.length > MAX_IMAGES_DISPLAY && !isRefetching && (
             <Button
               href={`/user/${user.username}/profile/images`}
               component={NextLink}
