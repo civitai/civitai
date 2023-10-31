@@ -1,6 +1,7 @@
 import {
   ProfileSection,
   ProfileSectionPreview,
+  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
@@ -13,7 +14,7 @@ import { Button } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 
 const MAX_ARTICLES_DISPLAY = 4;
-export const PopularArticlesSection = ({ user }: { user: { id: number; username: string } }) => {
+export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
   const { articles: _articles, isLoading } = useQueryArticles(
     {

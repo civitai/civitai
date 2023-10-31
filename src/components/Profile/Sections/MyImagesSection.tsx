@@ -2,6 +2,7 @@ import {
   ProfileSection,
   ProfileSectionNoResults,
   ProfileSectionPreview,
+  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
@@ -18,7 +19,7 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 
 const MAX_IMAGES_DISPLAY = 8;
-export const MyImagesSection = ({ user }: { user: { id: number; username: string } }) => {
+export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
   const { filters, setFilters, filtersUpdated } = useDumbImageFilters({
     sort: ImageSort.Newest,

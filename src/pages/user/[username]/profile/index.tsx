@@ -3,18 +3,7 @@ import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SidebarLayout } from '~/components/Profile/SidebarLayout';
 import { trpc } from '~/utils/trpc';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { getInitials } from '~/utils/string-helpers';
-import {
-  ActionIcon,
-  AspectRatio,
-  Avatar,
-  Center,
-  Container,
-  Loader,
-  Stack,
-  useMantineTheme,
-} from '@mantine/core';
+import { Center, Container, Loader, Stack, useMantineTheme } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -24,6 +13,7 @@ import { PopularModelsSection } from '~/components/Profile/Sections/PopularModel
 import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
 import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
+import { TopReviewsSection } from '~/components/Profile/Sections/TopReviewsSection';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -135,6 +125,7 @@ export function UserProfileOverview({ username }: { username: string }) {
                 <PopularArticlesSection user={{ id: user.id, username }} />
                 <MyModelsSection user={{ id: user.id, username }} />
                 <MyImagesSection user={{ id: user.id, username }} />
+                <TopReviewsSection user={{ id: user.id, username }} />
               </Stack>
             </Container>
           </Center>

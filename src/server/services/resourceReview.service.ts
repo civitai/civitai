@@ -1,20 +1,21 @@
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
-  GetResourceReviewsInfiniteInput,
-  GetRatingTotalsInput,
-  UpdateResourceReviewInput,
   CreateResourceReviewInput,
+  GetRatingTotalsInput,
   GetResourceReviewPagedInput,
+  GetResourceReviewsInfiniteInput,
   GetUserResourceReviewInput,
+  UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import { resourceReviewSelect } from '~/server/selectors/resourceReview.selector';
+import { ReviewSort } from '~/server/common/enums';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
@@ -59,14 +60,46 @@ export const getResourceReviewsInfinite = async ({
   cursor,
   modelId,
   modelVersionId,
+  username,
+  include,
+  sort,
 }: GetResourceReviewsInfiniteInput) => {
   const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
 
+  if (username) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username },
+      select: { id: true },
+    });
+
+    if (!targetUser) throw new Error('User not found');
+
+    AND.push({
+      model: {
+        userId: targetUser.id,
+      },
+    });
+  }
   if (modelId) AND.push({ modelId });
   if (modelVersionId) AND.push({ modelVersionId });
+
   AND.push({ details: { not: null } });
 
+  if (sort === ReviewSort.Rating) {
+    // Rating will be sorted by rating + reactions
+    // Should do a better job at throwing relevant reviews
+    orderBy.push({
+      rating: 'desc',
+    });
+
+    orderBy.push({
+      reactions: {
+        _count: 'desc',
+      },
+    });
+  }
+  // Always use the createdAt as a last resort.
   orderBy.push({ createdAt: 'desc' });
 
   const items = await dbRead.resourceReview.findMany({
@@ -88,6 +121,15 @@ export const getResourceReviewsInfinite = async ({
       rating: true,
       user: { select: userWithCosmeticsSelect },
       helper: { select: { imageCount: true } },
+      modelVersion: include?.includes('model')
+        ? {
+            select: {
+              id: true,
+              name: true,
+              model: { select: { id: true, name: true } },
+            },
+          }
+        : undefined,
     },
   });
 

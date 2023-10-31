@@ -8,6 +8,7 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 
@@ -16,6 +17,8 @@ type Props = {
   icon: React.ReactNode;
   children?: React.ReactNode;
 };
+
+export type ProfileSectionProps = { user: { id: number; username: string } };
 
 export const useProfileSectionStyles = createStyles<
   string,
@@ -154,10 +157,11 @@ export const ProfileSectionPreview = ({
   );
 };
 export const ProfileSection = ({ children, title, icon }: Props) => {
+  const theme = useMantineTheme();
   return (
     <Stack spacing="md">
       <Group>
-        <Text size={28} weight={590}>
+        <Text size={28} weight={590} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
           {title}
         </Text>
         {icon}

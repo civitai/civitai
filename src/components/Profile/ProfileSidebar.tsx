@@ -23,7 +23,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { formatDate } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 export function ProfileSidebar({ username }: { username: string }) {
   const currentUser = useCurrentUser();
@@ -50,23 +51,7 @@ export function ProfileSidebar({ username }: { username: string }) {
 
   return (
     <Stack>
-      <Avatar
-        src={
-          user.image
-            ? getEdgeUrl(user.image, {
-                width: 88,
-                anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
-              })
-            : undefined
-        }
-        alt={`${user.username}'s Avatar` ?? undefined}
-        radius="md"
-        size={88}
-        imageProps={{ loading: 'lazy' }}
-        sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
-      >
-        {user.username ? getInitials(user.username) : null}
-      </Avatar>
+      <UserAvatar user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
         <Text weight={700} size={24}>

@@ -39,7 +39,8 @@ export function createSearchIndexUpdateProcessor({
       // Run update
       const now = new Date();
       await onIndexUpdate(ctx);
-      await setLastUpdate();
+      // Pass now to ensure items created during the run will not go unnoticed.
+      await setLastUpdate(now);
 
       // Clear update queue
       await dbWrite.searchIndexUpdateQueue.deleteMany({

@@ -2,6 +2,7 @@ import {
   ProfileSection,
   ProfileSectionNoResults,
   ProfileSectionPreview,
+  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
@@ -18,7 +19,7 @@ import { DumbCategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 
 const MAX_MODELS_DISPLAY = 12;
-export const MyModelsSection = ({ user }: { user: { id: number; username: string } }) => {
+export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
 
   const { filters, setFilters, filtersUpdated } = useDumbModelFilters({

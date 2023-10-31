@@ -1,6 +1,7 @@
 import {
   ProfileSection,
   ProfileSectionPreview,
+  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
@@ -10,7 +11,7 @@ import { useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 
-export const PopularModelsSection = ({ user }: { user: { id: number; username: string } }) => {
+export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
   const { models, isLoading } = useQueryModels(
     {

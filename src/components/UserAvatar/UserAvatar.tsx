@@ -38,6 +38,7 @@ export function UserAvatar({
   textSize,
   subTextSize,
   includeAvatar = true,
+  radius = 'xl',
 }: Props) {
   const currentUser = useCurrentUser();
 
@@ -62,7 +63,7 @@ export function UserAvatar({
                 : undefined
             }
             alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
-            radius="xl"
+            radius={radius || 'xl'}
             size={size}
             imageProps={{ loading: 'lazy' }}
             sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
@@ -141,4 +142,5 @@ type Props = {
   textSize?: MantineSize;
   subTextSize?: MantineSize;
   includeAvatar?: boolean;
+  radius?: MantineSize;
 };
