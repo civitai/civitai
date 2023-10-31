@@ -3207,23 +3207,13 @@ model UserProfile {
   bio                     String?
   message                 String?
   messageAddedAt          DateTime?
+  location                String?
+  nsfw                    Boolean   @default(false)
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
-  profileSectionsSettings Json      @default("{\"showcase\":{\"enabled\":true,\"index\":0},\"popularModels\":{\"enabled\":true,\"index\":1},\"popularImages\":{\"enabled\":true,\"index\":2},\"recent\":{\"enabled\":true,\"index\":3},\"models\":{\"enabled\":true,\"index\":4},\"images\":{\"enabled\":true,\"index\":4},\"articles\":{\"enabled\":true,\"index\":4},\"reviews\":{\"enabled\":true,\"index\":5}}")
-
-  showcaseItems UserProfileShowcaseItem[]
+  profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
+  showcaseItems           Json      @default("[]")
 
   @@id([userId])
-}
-
-model UserProfileShowcaseItem {
-  profileId  Int
-  profile    UserProfile @relation(fields: [profileId], references: [userId], onDelete: Cascade)
-  entityId   Int
-  entityType String
-  index      Int         @default(0)
-
-  @@id([entityType, entityId, profileId])
-  @@index([profileId])
 }
 
 /// @view

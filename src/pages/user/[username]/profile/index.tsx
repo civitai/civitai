@@ -84,7 +84,6 @@ export function UserProfileOverview({ username }: { username: string }) {
                     overflow: 'hidden',
                     height: 0,
                     paddingBottom: '29.412%',
-                    background: 'red',
                     borderRadius: theme.radius.md,
                     display: 'flex',
                     alignItems: 'center',

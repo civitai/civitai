@@ -27,10 +27,10 @@ import React, { useMemo } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 export function ProfileSidebar({ username }: { username: string }) {
-  const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
+  const theme = useMantineTheme();
 
   const awards = useMemo(
     () =>
@@ -54,13 +54,15 @@ export function ProfileSidebar({ username }: { username: string }) {
       <UserAvatar user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
-        <Text weight={700} size={24}>
+        <Text weight={700} size={24} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
           {user.username}
         </Text>
-        <Group spacing="sm">
-          <Text color="dimmed">Santiago, RD - TODO</Text>
-          <IconMapPin size={16} />
-        </Group>
+        {profile.location && (
+          <Group spacing="sm">
+            <Text color="dimmed">{profile.location}</Text>
+            <IconMapPin size={16} />
+          </Group>
+        )}
       </Stack>
       {profile?.bio && <ContentClamp maxHeight={48}>{profile.bio}</ContentClamp>}
       <Group spacing={4}>
