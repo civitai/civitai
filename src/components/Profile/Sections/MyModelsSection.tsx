@@ -1,5 +1,6 @@
 import {
   ProfileSection,
+  ProfileSectionNoResults,
   ProfileSectionPreview,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
@@ -15,7 +16,6 @@ import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { DumbCategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
-import { MetricTimeframe } from '@prisma/client';
 
 const MAX_MODELS_DISPLAY = 12;
 export const MyModelsSection = ({ user }: { user: { id: number; username: string } }) => {
@@ -25,7 +25,7 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
     period: 'AllTime',
     sort: ModelSort.Newest,
   });
-  const { period, sort } = filters;
+  const { period, sort, tag } = filters;
   const {
     models: _models,
     isLoading,
@@ -41,7 +41,7 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
 
   const models = useMemo(() => _models.slice(0, MAX_MODELS_DISPLAY), [_models]);
 
-  const { classes } = useProfileSectionStyles({
+  const { classes, cx } = useProfileSectionStyles({
     count: models.length,
     rowCount: 3,
   });
@@ -50,8 +50,6 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
     // User has no models whatsoever. Don't return anything at all.
     return null;
   }
-
-  console.log(sort, filters);
 
   return (
     <div ref={ref}>
@@ -79,34 +77,36 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
           </Group>
           <DumbCategoryTags
             onChange={(data) => setFilters((f) => ({ ...f, tag: data.tag }))}
-            tag={filters.tag}
+            tag={tag}
           />
 
-          {isRefetching ? (
-            <Center>
-              <Loader />
-            </Center>
-          ) : (
-            <Stack>
-              <div className={classes.grid}>
-                {models.map((model) => (
-                  <ModelCard data={model} key={model.id} />
-                ))}
-              </div>
-              {_models.length > MAX_MODELS_DISPLAY && (
-                <Button
-                  href={`/user/${user.username}/profile/models`}
-                  component={NextLink}
-                  rel="nofollow"
-                  size="md"
-                  display="inline-block"
-                  mr="auto"
-                >
-                  View all models
-                </Button>
-              )}
-            </Stack>
-          )}
+          <Stack>
+            <div
+              className={cx({
+                [classes.grid]: models.length > 0,
+                [classes.nullState]: !models.length,
+                [classes.loading]: isRefetching,
+              })}
+            >
+              {!models.length && <ProfileSectionNoResults />}
+              {models.map((model) => (
+                <ModelCard data={model} key={model.id} />
+              ))}
+              {isRefetching && <Loader className={classes.loader} />}
+            </div>
+            {!isRefetching && _models.length > MAX_MODELS_DISPLAY && (
+              <Button
+                href={`/user/${user.username}/profile/models`}
+                component={NextLink}
+                rel="nofollow"
+                size="md"
+                display="inline-block"
+                mr="auto"
+              >
+                View all models
+              </Button>
+            )}
+          </Stack>
         </ProfileSection>
       )}
     </div>

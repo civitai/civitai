@@ -16,7 +16,7 @@ import { constants } from '~/server/common/constants';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-import { modelFilterSchema } from '~/providers/CookiesProvider';
+import { isEqual } from 'lodash-es';
 
 const modelQueryParamSchema = z
   .object({
@@ -78,7 +78,7 @@ export const useDumbModelFilters = (defaultFilters?: Partial<Omit<GetAllModelsIn
   const [filters, setFilters] = useState<Partial<Omit<GetAllModelsInput, 'page'>>>(
     defaultFilters ?? {}
   );
-  const filtersUpdated = filters !== defaultFilters;
+  const filtersUpdated = !isEqual(filters, defaultFilters);
 
   return {
     filters,

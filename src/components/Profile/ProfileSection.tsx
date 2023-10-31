@@ -1,5 +1,15 @@
 import { InView } from 'react-intersection-observer';
-import { AspectRatio, createStyles, Grid, Group, Skeleton, Stack, Text } from '@mantine/core';
+import {
+  AspectRatio,
+  createStyles,
+  Grid,
+  Group,
+  Skeleton,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
+import { IconCloudOff } from '@tabler/icons-react';
 
 type Props = {
   title: string;
@@ -19,10 +29,42 @@ export const useProfileSectionStyles = createStyles<
 >(
   (
     theme,
-    { count = 4, rowCount = 2, columnCount, widthGrid = '380px', widthCarousel = '280px' } = {}
+    { count = 4, rowCount = 2, columnCount, widthGrid = '380px', widthCarousel = '280px' } = {},
+    getRef
   ) => {
+    const scrollGridRef = getRef('scrollGrid');
+    const gridRef = getRef('grid');
+    const nullStateRef = getRef('nullState');
+
     return {
+      loader: {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        zIndex: 101,
+      },
+      nullState: {
+        ref: nullStateRef,
+        position: 'relative',
+      },
+      loading: {
+        position: 'relative',
+
+        '&::after': {
+          position: 'absolute',
+          height: '100%',
+          width: '100%',
+          top: 0,
+          left: 0,
+          content: '""',
+          background: 'rgba(0,0,0, 0.3)',
+          zIndex: 100,
+          backdropFilter: 'blur(8px)',
+        },
+      },
       scrollGrid: {
+        ref: scrollGridRef,
         display: 'grid',
         columnGap: theme.spacing.md,
         gridAutoRows: 0,
@@ -49,6 +91,7 @@ export const useProfileSectionStyles = createStyles<
         },
       },
       grid: {
+        ref: gridRef,
         display: 'grid',
         gridTemplateColumns: `repeat(${columnCount ?? 'auto-fill'}, minmax(${widthGrid}, 1fr))`,
         columnGap: theme.spacing.md,
@@ -120,6 +163,22 @@ export const ProfileSection = ({ children, title, icon }: Props) => {
         {icon}
       </Group>
       {children}
+    </Stack>
+  );
+};
+
+export const ProfileSectionNoResults = () => {
+  return (
+    <Stack align="center" py="lg">
+      <ThemeIcon size={128} radius={100}>
+        <IconCloudOff size={80} />
+      </ThemeIcon>
+      <Text size={32} align="center">
+        No results found
+      </Text>
+      <Text align="center">
+        {"Try adjusting your search or filters to find what you're looking for"}
+      </Text>
     </Stack>
   );
 };
