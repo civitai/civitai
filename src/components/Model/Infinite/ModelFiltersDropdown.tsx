@@ -33,38 +33,13 @@ const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[
   'period',
 ];
 
-export function ModelFiltersDropdown({
-  filters: dumbFilters,
-  setFilters: dumbSetFilters,
-}: {
-  filters?: Partial<ModelFilterSchema>;
-  setFilters?: (filters: Partial<ModelFilterSchema>) => void;
-}) {
-  const currentUser = useCurrentUser();
-  const router = useRouter();
-  const isSameUser = useIsSameUser(router.query.username);
-  const { classes } = useStyles();
-  const flags = useFeatureFlags();
+export function ModelFiltersDropdown() {
   const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
 
-  const { filters: smartFilters, setFilters: smartSetFilters } = useFiltersContext((state) => ({
+  const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.models,
     setFilters: state.setModelFilters,
   }));
-
-  const filters = dumbFilters ?? smartFilters;
-  const setFilters = dumbSetFilters ?? smartSetFilters;
-
-  const showCheckpointType = !filters.types?.length || filters.types.includes('Checkpoint');
-
-  const filterLength =
-    (filters.types?.length ?? 0) +
-    (filters.baseModels?.length ?? 0) +
-    (filters.status?.length ?? 0) +
-    (showCheckpointType && filters.checkpointType ? 1 : 0) +
-    (filters.earlyAccess ? 1 : 0) +
-    (filters.supportsGeneration ? 1 : 0) +
-    (filters.followed ? 1 : 0);
 
   const shouldClearFilters = useMemo(
     () =>
@@ -88,12 +63,6 @@ export function ModelFiltersDropdown({
     [setFilters]
   );
 
-  const chipProps: Partial<ChipProps> = {
-    radius: 'sm',
-    size: 'sm',
-    classNames: classes,
-  };
-
   useEffect(() => {
     // TODO.filters: If we keep filters in the query string instead of local storage
     // We might be able to bypass all this logic.
@@ -114,6 +83,52 @@ export function ModelFiltersDropdown({
       setFilters(updatedFilters);
     }
   }, [shouldClearFilters, clearFilters, queryFilters, setFilters, setQueryFilters]);
+
+  return <DumbModelFiltersDropdown filters={filters} setFilters={setFilters} />;
+}
+
+export function DumbModelFiltersDropdown({
+  filters,
+  setFilters,
+}: {
+  filters: Partial<ModelFilterSchema>;
+  setFilters: (filters: Partial<ModelFilterSchema>) => void;
+}) {
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+  const isSameUser = useIsSameUser(router.query.username);
+  const { classes } = useStyles();
+  const flags = useFeatureFlags();
+  const showCheckpointType = !filters.types?.length || filters.types.includes('Checkpoint');
+
+  const filterLength =
+    (filters.types?.length ?? 0) +
+    (filters.baseModels?.length ?? 0) +
+    (filters.status?.length ?? 0) +
+    (showCheckpointType && filters.checkpointType ? 1 : 0) +
+    (filters.earlyAccess ? 1 : 0) +
+    (filters.supportsGeneration ? 1 : 0) +
+    (filters.followed ? 1 : 0);
+
+  const clearFilters = useCallback(
+    () =>
+      setFilters({
+        types: undefined,
+        baseModels: undefined,
+        status: undefined,
+        checkpointType: undefined,
+        earlyAccess: false,
+        supportsGeneration: false,
+        followed: false,
+      }),
+    [setFilters]
+  );
+
+  const chipProps: Partial<ChipProps> = {
+    radius: 'sm',
+    size: 'sm',
+    classNames: classes,
+  };
 
   return (
     <IsClient>

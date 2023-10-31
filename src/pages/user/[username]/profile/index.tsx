@@ -131,10 +131,10 @@ export function UserProfileOverview({ username }: { username: string }) {
                 </div>
               )}
               <Stack mt="md">
-                <PopularModelsSection user={user} />
-                <PopularArticlesSection user={user} />
-                <MyModelsSection user={user} />
-                <MyImagesSection user={user} />
+                <PopularModelsSection user={{ id: user.id, username }} />
+                <PopularArticlesSection user={{ id: user.id, username }} />
+                <MyModelsSection user={{ id: user.id, username }} />
+                <MyImagesSection user={{ id: user.id, username }} />
               </Stack>
             </Container>
           </Center>

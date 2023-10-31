@@ -12,20 +12,19 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { Button, Group } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { DumbCategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 
 const MAX_MODELS_DISPLAY = 12;
-const BASE_FILTER: Partial<Omit<GetAllModelsInput, 'page'> & ModelFilterSchema> = {
-  tag: undefined,
+const INITIAL_FILTER: Partial<Omit<GetAllModelsInput, 'page'> & ModelFilterSchema> = {
   period: 'AllTime',
   sort: ModelSort.Newest,
 };
 export const MyModelsSection = ({ user }: { user: { id: number; username: string } }) => {
   const { ref, inView } = useInView();
-  const [filters, setFilters] = useState<Partial<Omit<GetAllModelsInput, 'page'>>>(BASE_FILTER);
+  const [filters, setFilters] = useState<Partial<Omit<GetAllModelsInput, 'page'>>>(INITIAL_FILTER);
   const { period, sort } = filters;
   const { models: _models, isLoading } = useQueryModels(
     {
@@ -43,7 +42,7 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
     rowCount: 3,
   });
 
-  if (inView && !isLoading && !models.length && filters === BASE_FILTER) {
+  if (inView && !isLoading && !models.length && filters === INITIAL_FILTER) {
     // No point in showing this without models
     return null;
   }
@@ -66,7 +65,7 @@ export const MyModelsSection = ({ user }: { user: { id: number; username: string
                 value={period ?? 'AllTime'}
                 onChange={(x) => setFilters((f) => ({ ...f, period: x }))}
               />
-              <ModelFiltersDropdown
+              <DumbModelFiltersDropdown
                 filters={filters as ModelFilterSchema}
                 setFilters={(updatedFilters) => setFilters((f) => ({ ...f, ...updatedFilters }))}
               />
