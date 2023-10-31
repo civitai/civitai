@@ -525,15 +525,9 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   };
 };
 
-export const reorderPostImages = async ({
-  id,
-  imageIds,
-  userId,
-}: ReorderPostImagesInput & { userId: number }) => {
-  const transaction = dbWrite.$transaction(
-    imageIds.map((id, index) =>
-      dbWrite.image.updateMany({ where: { id, userId }, data: { index } })
-    )
+export const reorderPostImages = async ({ id, imageIds }: ReorderPostImagesInput) => {
+  const transaction = await dbWrite.$transaction(
+    imageIds.map((id, index) => dbWrite.image.update({ where: { id }, data: { index } }))
   );
 
   await updatePostNsfwLevel(id);
