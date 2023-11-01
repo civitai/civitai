@@ -1,4 +1,5 @@
 import { TrainingStatus } from '@prisma/client';
+import { isEmpty } from 'lodash-es';
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -123,27 +124,73 @@ const _handleJob = async (
       return;
     }
     await withRetries(async () =>
-      refundTransaction(transaction_id, 'Refund due to a long-running training job.')
+      refundTransaction(transaction_id, 'Refund due to a long-running/failed training job.')
     );
 
     return true;
   } else {
-    // if (status === 'Submitted') {
-    //   // - if it's been longer than 10 minutes with no updates, resubmit it
-    //   const jobUpdated = dayjs.utc(jobDate);
-    //   const minsDiff = dayjs.utc().diff(jobUpdated, 'minutes', true);
-    //   if (minsDiff > 10) {
-    //   }
-    // }
-    logJob({
-      message: `Alternate status for job.`,
-      data: {
-        jobId: job_id,
-        modelFileId: mf_id,
-        jobType,
-        important: true,
-      },
-    });
+    const jobUpdated = new Date(jobDate).getTime();
+    const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
+    if (status === 'Submitted') {
+      // - if it's not in the queue after 10 minutes, resubmit it
+      if (minsDiff > 10) {
+        const queueResponse = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${job_id}`, {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+          },
+        });
+        if (!queueResponse.ok) {
+          logJob({
+            message: `Could not fetch position in queue.`,
+            data: {
+              jobId: job_id,
+              modelFileId: mf_id,
+              important: true,
+            },
+          });
+          return;
+        }
+
+        const queueData: MixedObject = await queueResponse.json();
+        if (!queueData?.serviceProviders || isEmpty(queueData.serviceProviders)) {
+          logJob({
+            message: `Not in queue, needs resubmission.`,
+            data: {
+              jobId: job_id,
+              modelFileId: mf_id,
+              important: true,
+            },
+          });
+          return;
+        }
+        return true;
+      }
+    } else if (status === 'Processing') {
+      // - if it hasn't gotten an update in 20 minutes, mark failed
+      if (minsDiff > 20) {
+        await dbWrite.modelVersion.update({
+          where: { id: mv_id },
+          data: { trainingStatus: 'Failed' },
+        });
+
+        if (!transaction_id) {
+          logJob({
+            message: `No transaction ID - need to manually refund.`,
+            data: {
+              jobId: job_id,
+              modelFileId: mf_id,
+              important: true,
+            },
+          });
+          return;
+        }
+        await withRetries(async () =>
+          refundTransaction(transaction_id, 'Refund due to a long-running/failed training job.')
+        );
+        return true;
+      }
+    }
   }
 
   return true;
