@@ -212,6 +212,11 @@ export const constants = {
     maxTipAmount: 100000000,
     minTipAmount: 50,
   },
+  profile: {
+    coverImageAspectRatio: 5 / 17,
+    coverImageHeight: 240,
+    coverImageWidth: 816,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

@@ -28,16 +28,21 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   onChange?: (value: CustomFile | null) => void;
   previewWidth?: number;
   maxSize?: number;
+  aspectRatio?: number;
+  children?: React.ReactNode;
 };
 
 export function SimpleImageUpload({
   value,
   onChange,
   maxSize = constants.mediaUpload.maxImageFileSize,
+  previewWidth = 450,
+  aspectRatio,
+  children,
   ...props
 }: SimpleImageUploadProps) {
   const theme = useMantineTheme();
-  const { uploadToCF, files: imageFiles } = useCFImageUpload();
+  const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
   const [image, setImage] = useState<CustomFile | undefined>();
   const [error, setError] = useState('');
@@ -64,6 +69,7 @@ export function SimpleImageUpload({
   const handleRemove = () => {
     setImage(undefined);
     onChange?.(null);
+    resetFiles();
   };
 
   useEffect(() => {
@@ -76,6 +82,11 @@ export function SimpleImageUpload({
 
   useDidUpdate(() => {
     const [imageFile] = imageFiles;
+
+    if (!imageFile) {
+      return;
+    }
+
     if (imageFile.status === 'success') {
       const { id, url, status, ...file } = imageFile;
       onChange?.({ ...image, ...file, url: id });
@@ -100,13 +111,14 @@ export function SimpleImageUpload({
           <Tooltip label="Remove image">
             <ActionIcon
               size="sm"
-              variant="light"
+              variant={aspectRatio ? 'filled' : 'light'}
               color="red"
               onClick={handleRemove}
               sx={(theme) => ({
                 position: 'absolute',
                 top: theme.spacing.xs * 0.4,
                 right: theme.spacing.xs * 0.4,
+                zIndex: 1,
               })}
             >
               <IconTrash />
@@ -114,16 +126,42 @@ export function SimpleImageUpload({
           </Tooltip>
 
           <Box
-            sx={(theme) => ({
-              height: 'calc(100vh / 3)',
-              '& > img': {
-                height: '100%',
-                objectFit: 'cover',
-                borderRadius: theme.radius.md,
-              },
-            })}
+            sx={(theme) =>
+              aspectRatio
+                ? {
+                    position: 'relative',
+                    width: '100%',
+                    overflow: 'hidden',
+                    height: 0,
+                    // 5 / 17 aspect ratio
+                    paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
+                    borderRadius: theme.radius.md,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+
+                    '& > img': {
+                      height: 'auto',
+                      objectFit: 'cover',
+                      borderRadius: theme.radius.md,
+                    },
+                  }
+                : {
+                    height: 'calc(100vh / 3)',
+                    '& > img': {
+                      height: '100%',
+                      objectFit: 'cover',
+                      borderRadius: theme.radius.md,
+                    },
+                  }
+            }
           >
-            <EdgeMedia src={image.previewUrl ?? image.url} type={MediaType.image} width={450} />
+            <EdgeMedia
+              src={image.previewUrl ?? image.url}
+              type={MediaType.image}
+              width={previewWidth}
+              style={{ maxWidth: aspectRatio ? '100%' : undefined }}
+            />
           </Box>
         </div>
       ) : (
@@ -173,6 +211,7 @@ export function SimpleImageUpload({
           </Dropzone.Idle>
         </Dropzone>
       )}
+      {children}
     </Input.Wrapper>
   );
 }

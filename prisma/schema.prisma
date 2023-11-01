@@ -1064,7 +1064,7 @@ model Image {
   collectionItems CollectionItem[]
   collections     Collection[]
   connections     ImageConnection[]
-  profiles        UserProfile[]
+  UserProfile     UserProfile[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)

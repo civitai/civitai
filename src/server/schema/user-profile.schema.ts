@@ -47,25 +47,23 @@ export const showcaseItemSchema = z.object({
 export type PrivacySettingsSchema = z.infer<typeof privacySettingsSchema>;
 
 export const privacySettingsSchema = z.object({
-  showEmail: z.boolean().optional(),
-  showBirthday: z.boolean().optional(),
-  showGender: z.boolean().optional(),
   showLocation: z.boolean().optional(),
-  showSocials: z.boolean().optional(),
-  showLinks: z.boolean().optional(),
+  showFollowers: z.boolean().optional(),
+  showFollowing: z.boolean().optional(),
+  showRating: z.boolean().optional(),
 });
 
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;
 export const userProfileUpdateSchema = z.object({
-  showcaseItems: z.array(showcaseItemSchema),
-  profileSectionsSettings: z.array(profileSectionSchema),
-  privacySettings: privacySettingsSchema,
-  message: z.string().optional(),
-  bio: z.string().optional(),
-  location: z.string().max(100).optional(),
-  profileImage: z.string().optional(),
+  showcaseItems: z.array(showcaseItemSchema).optional(),
+  profileSectionsSettings: z.array(profileSectionSchema).optional(),
+  privacySettings: privacySettingsSchema.optional(),
+  message: z.string().nullish(),
+  bio: z.string().nullish(),
+  location: z.string().max(100).nullish(),
+  profileImage: z.string().nullish(),
   coverImage: imageSchema.nullish(),
-  coverImageId: z.number().optional(),
+  coverImageId: z.number().nullish(),
   links: z
     .array(
       z.object({

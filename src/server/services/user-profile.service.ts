@@ -1,7 +1,14 @@
 import { dbWrite } from '~/server/db/client';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
-import { GetUserProfileSchema } from '~/server/schema/user-profile.schema';
+import {
+  GetUserProfileSchema,
+  PrivacySettingsSchema,
+  ProfileSectionSchema,
+  ShowcaseItemSchema,
+} from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetadata } from '~/server/schema/media.schema';
+import { Prisma } from '@prisma/client';
 
 export const getUserWithProfile = async ({ username }: GetUserProfileSchema) => {
   // Use write to get the latest most accurate user here since we'll need to create the profile
@@ -16,24 +23,25 @@ export const getUserWithProfile = async ({ username }: GetUserProfileSchema) => 
     });
 
     const { profile } = user;
-    let coverImage = undefined;
-
-    if (!!profile?.coverImage) {
-      coverImage = {
-        ...profile.coverImage,
-        meta: profile.coverImage.meta as ImageMetaProps | null,
-        tags: profile.coverImage.tags.map((t) => t.tag),
-      };
-    }
 
     return {
       ...user,
       profile: {
         ...profile,
-        coverImage,
+        privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
+        profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
+        showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
+        coverImage: profile?.coverImage
+          ? {
+              ...profile.coverImage,
+              meta: profile.coverImage.meta as ImageMetaProps | null,
+              tags: profile.coverImage.tags.map((t) => t.tag),
+            }
+          : null,
       },
     };
   };
+
   const user = await getUser();
 
   if (!user.profile) {

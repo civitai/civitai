@@ -58,6 +58,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
   },
   links: {
     select: {
+      id: true,
       url: true,
       type: true,
     },

@@ -14,6 +14,7 @@ import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { ModalProps } from '@mantine/core';
+import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -49,6 +50,7 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
+const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
 
 const registry = {
   blockModelTags: {
@@ -102,6 +104,10 @@ const registry = {
   stripeTransaction: {
     Component: StripeTransactionModal,
     fn: openStripeTransactionModal,
+  },
+  userProfileEditModal: {
+    Component: UserProfileEditModal,
+    fn: openUserProfileEditModal,
   },
 };
 

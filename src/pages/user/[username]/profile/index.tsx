@@ -14,13 +14,12 @@ import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArt
 import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
 import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
+import { constants, profile } from '~/server/common/constants';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, ctx, features }) => {
     const { username } = userPageQuerySchema.parse(ctx.params);
-
-    console.log(features);
 
     if (username) {
       if (!features?.profileOverhaul) {
@@ -83,7 +82,8 @@ export function UserProfileOverview({ username }: { username: string }) {
                     width: '100%',
                     overflow: 'hidden',
                     height: 0,
-                    paddingBottom: '29.412%',
+                    // 5 / 17 aspect ratio
+                    paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
                     borderRadius: theme.radius.md,
                     display: 'flex',
                     alignItems: 'center',

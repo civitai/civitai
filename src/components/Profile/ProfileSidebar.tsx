@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Avatar,
+  Button,
   Divider,
   Group,
   Stack,
@@ -8,7 +9,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { IconMapPin, IconRss } from '@tabler/icons-react';
+import { IconMapPin, IconPencilMinus, IconRss } from '@tabler/icons-react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
@@ -25,11 +26,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 export function ProfileSidebar({ username }: { username: string }) {
+  const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
+  const isCurrentUser = currentUser?.id === user?.id;
   const theme = useMantineTheme();
 
   const awards = useMemo(
@@ -80,12 +84,28 @@ export function ProfileSidebar({ username }: { username: string }) {
         ))}
       </Group>
       <Group grow>
-        <FollowUserButton
-          userId={user.id}
-          leftIcon={<IconRss size={16} />}
-          size="md"
-          sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-        />
+        {isCurrentUser && (
+          <Button
+            leftIcon={<IconPencilMinus size={16} />}
+            size="md"
+            onClick={() => {
+              openUserProfileEditModal();
+            }}
+            sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+            radius="xl"
+            fullWidth
+          >
+            Edit profile
+          </Button>
+        )}
+        {!isCurrentUser && (
+          <FollowUserButton
+            userId={user.id}
+            leftIcon={<IconRss size={16} />}
+            size="md"
+            sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+          />
+        )}
       </Group>
 
       <Divider my="sm" />

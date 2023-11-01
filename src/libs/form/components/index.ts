@@ -30,6 +30,7 @@ import { TagsInput } from '~/components/Tags/TagsInput';
 import { MultiFileInputUpload } from './MultiFileInputUpload';
 import { SimpleImageUpload } from './SimpleImageUpload';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
+import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInput';
 
 export * from './Form';
 
@@ -66,6 +67,7 @@ export const InputSimpleImageUpload = withWatcher(withController(SimpleImageUplo
 export const InputTags = withWatcher(withController(TagsInput));
 export const InputTime = withWatcher(withController(TimeInput));
 export const InputNumberSlider = withWatcher(withController(NumberSlider));
+export const InputInlineSocialLinkInput = withWatcher(withController(InlineSocialLinkInput));
 
 export const InputSwitch = withWatcher(
   withController(Switch, ({ field }) => ({
