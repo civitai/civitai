@@ -198,7 +198,7 @@ const _handleJob = async (
 
 export const handleLongTrainings = createJob(
   'handle-long-trainings',
-  `'*/${minutesPerRun} * * * *`,
+  `*/${minutesPerRun} * * * *`,
   async () => {
     const oldTraining = await dbWrite.$queryRaw<
       {
