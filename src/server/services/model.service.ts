@@ -19,6 +19,7 @@ import { ModelFileType } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -45,6 +46,7 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
@@ -54,6 +56,7 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetAssociatedResourcesInput,
@@ -330,6 +333,20 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   return { items, isPrivate };
+};
+
+export const rescanModel = async ({ id }: GetByIdInput) => {
+  const modelFiles = await dbRead.modelFile.findMany({
+    where: { modelVersion: { modelId: id } },
+    select: { id: true, url: true },
+  });
+
+  const s3 = getS3Client();
+  const tasks = modelFiles.map((file) => async () => {
+    await requestScannerTasks({ file, s3, tasks: ['Hash', 'Scan'], lowPriority: true });
+  });
+
+  await limitConcurrency(tasks, 10);
 };
 
 export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
