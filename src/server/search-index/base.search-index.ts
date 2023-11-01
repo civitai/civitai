@@ -39,7 +39,9 @@ export function createSearchIndexUpdateProcessor({
       // Run update
       const now = new Date();
       await onIndexUpdate(ctx);
-      // Pass now to ensure items created during the run will not go unnoticed.
+      // Use the start time as the time of update
+      // Should  help avoid missed items during the run
+      // of the index.
       await setLastUpdate(now);
 
       // Clear update queue

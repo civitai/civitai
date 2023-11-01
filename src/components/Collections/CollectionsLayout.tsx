@@ -16,6 +16,7 @@ import { MyCollections } from '~/components/Collections/MyCollections';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const useStyle = createStyles((theme) => ({
   container: {
@@ -105,40 +106,43 @@ const MyCollectionsDrawer = () => {
 
 const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const isMobile = useIsMobile();
+  const currentUser = useCurrentUser();
   const { classes } = useStyle();
 
   return (
     <Container fluid className={classes.container}>
-      <Card className={classes.sidebar} withBorder w={220} mr="md" p="xs">
-        <Card.Section py={4} inheritPadding>
-          <Text weight={500}>My Collections</Text>
-        </Card.Section>
-        {!isMobile && (
-          <MyCollections>
-            {({ FilterBox, Collections, isLoading }) => {
-              return (
-                <>
-                  <Card.Section withBorder mb="xs">
-                    {FilterBox}
-                  </Card.Section>
-                  {isLoading && (
-                    <Center>
-                      <Loader variant="bars" />
-                    </Center>
-                  )}
-                  <Card.Section ml={0}>
-                    <ScrollArea.Autosize maxHeight="calc(80vh - var(--mantine-header-height,0))">
-                      {Collections}
-                    </ScrollArea.Autosize>
-                  </Card.Section>
-                </>
-              );
-            }}
-          </MyCollections>
-        )}
-      </Card>
+      {!!currentUser && (
+        <Card className={classes.sidebar} withBorder w={220} mr="md" p="xs">
+          <Card.Section py={4} inheritPadding>
+            <Text weight={500}>My Collections</Text>
+          </Card.Section>
+          {!isMobile && (
+            <MyCollections>
+              {({ FilterBox, Collections, isLoading }) => {
+                return (
+                  <>
+                    <Card.Section withBorder mb="xs">
+                      {FilterBox}
+                    </Card.Section>
+                    {isLoading && (
+                      <Center>
+                        <Loader variant="bars" />
+                      </Center>
+                    )}
+                    <Card.Section ml={0}>
+                      <ScrollArea.Autosize maxHeight="calc(80vh - var(--mantine-header-height,0))">
+                        {Collections}
+                      </ScrollArea.Autosize>
+                    </Card.Section>
+                  </>
+                );
+              }}
+            </MyCollections>
+          )}
+        </Card>
+      )}
       <div className={classes.content}>
-        {isMobile && <MyCollectionsDrawer />}
+        {!!currentUser && isMobile && <MyCollectionsDrawer />}
         {children}
       </div>
     </Container>

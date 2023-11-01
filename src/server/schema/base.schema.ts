@@ -5,7 +5,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 export const getByIdSchema = z.object({ id: z.number() });
 export type GetByIdInput = z.infer<typeof getByIdSchema>;
 
-const limit = z.preprocess(parseNumericString, z.number().min(1).max(200).default(20));
+const limit = z.coerce.number().min(1).max(200).default(20);
 const page = z.preprocess(parseNumericString, z.number().min(0).default(1));
 
 export type PaginationInput = z.infer<typeof paginationSchema>;

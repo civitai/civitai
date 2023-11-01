@@ -71,6 +71,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         },
         files: withFiles ? { select: modelFileSelect } : false,
         posts: withFiles ? { select: { id: true } } : false,
+        requireAuth: true,
         monetization: {
           select: {
             id: true,

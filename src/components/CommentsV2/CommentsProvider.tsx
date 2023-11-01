@@ -9,7 +9,6 @@ import { immer } from 'zustand/middleware/immer';
 import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
-import { useQueryThreadComments } from './commentv2.utils';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -79,7 +78,11 @@ export function CommentsProvider({
     }
   );
   const initialComments = useMemo(() => thread?.comments ?? [], [thread?.comments]);
-  const { count: hiddenCount } = useQueryThreadComments({ entityId, entityType, hidden: true });
+  const { data: hiddenCount = 0 } = trpc.commentv2.getCount.useQuery({
+    entityId,
+    entityType,
+    hidden: true,
+  });
 
   const highlighted = parseNumericString(router.query.highlight);
   const getLimit = (data: { id: number }[] = []) => {

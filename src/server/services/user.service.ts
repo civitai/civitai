@@ -161,8 +161,17 @@ export const isUsernamePermitted = (username: string) => {
   return isPermitted;
 };
 
-export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpdateInput }) => {
-  return dbWrite.user.update({ where: { id }, data });
+export const updateUserById = async ({
+  id,
+  data,
+}: {
+  id: number;
+  data: Prisma.UserUpdateInput;
+}) => {
+  const user = await dbWrite.user.update({ where: { id }, data });
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return user;
 };
 
 export const acceptTOS = ({ id }: { id: number }) => {
@@ -780,10 +789,12 @@ export const createUserReferral = async ({
   id,
   userReferralCode,
   source,
+  ip,
 }: {
   id: number;
   userReferralCode?: string;
   source?: string;
+  ip?: string;
 }) => {
   const user = await dbRead.user.findUniqueOrThrow({
     where: { id },
@@ -801,14 +812,8 @@ export const createUserReferral = async ({
     refereeId: number;
     referrerId: number;
   }) => {
-    await refereeCreatedReward.apply({
-      refereeId,
-      referrerId,
-    });
-    await userReferredReward.apply({
-      refereeId,
-      referrerId,
-    });
+    await refereeCreatedReward.apply({ refereeId, referrerId }, ip);
+    await userReferredReward.apply({ refereeId, referrerId }, ip);
   };
 
   if (userReferralCode || source) {
@@ -826,12 +831,8 @@ export const createUserReferral = async ({
     if (user.referral && referralCode) {
       // Allow to update a referral with a user-referral-code:
       await dbWrite.userReferral.update({
-        where: {
-          id: user.referral.id,
-        },
-        data: {
-          userReferralCodeId: referralCode.id,
-        },
+        where: { id: user.referral.id },
+        data: { userReferralCodeId: referralCode.id },
       });
 
       await applyRewards({

@@ -117,6 +117,7 @@ export const modelVersionUpsertSchema2 = z.object({
     z.number().min(0).max(5).optional()
   ),
   status: z.nativeEnum(ModelStatus).optional(),
+  requireAuth: z.boolean().optional(),
   monetization: z
     .object({
       id: z.number().nullish(),

@@ -12,9 +12,10 @@ export enum ModelSort {
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
+  MostTipped = 'Most Buzz',
   MostDiscussed = 'Most Discussed',
   MostCollected = 'Most Collected',
-  MostTipped = 'Most Tipped',
+  ImageCount = 'Most Images',
   Newest = 'Newest',
 }
 
@@ -44,9 +45,9 @@ export enum QuestionStatus {
 
 export enum ImageSort {
   MostReactions = 'Most Reactions',
+  MostTipped = 'Most Buzz',
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
-  MostTipped = 'Most Tipped',
   Newest = 'Newest',
   Random = 'Random',
 }
@@ -101,9 +102,9 @@ export enum CommentV2Sort {
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
+  MostTipped = 'Most Buzz',
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
-  MostTipped = 'Most Tipped',
   Newest = 'Newest',
 }
 

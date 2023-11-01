@@ -1,4 +1,4 @@
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { articlesSearchIndex } from '~/server/search-index';
@@ -111,7 +111,7 @@ export const articleMetrics = createMetricProcessor({
       WHERE ci."articleId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
       UNION
-      
+
       SELECT bt."entityId" as id
       FROM "BuzzTip" bt
       WHERE bt."entityId" IS NOT NULL AND bt."entityType" = 'Article'

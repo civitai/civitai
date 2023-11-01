@@ -5,6 +5,7 @@ import {
   Button,
   Group,
   HoverCard,
+  MantineSize,
   Menu,
   Popover,
   Stack,
@@ -47,6 +48,7 @@ import { useImageStore } from '~/store/images.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
+import { constants } from '~/server/common/constants';
 
 export type ImageGuardConnect = {
   entityType:
@@ -62,12 +64,37 @@ export type ImageGuardConnect = {
   entityId: string | number;
 };
 // #region [store]
+function incrementToggleCount() {
+  const toggleInstancesJson = localStorage.getItem('toggleInstances') ?? '[]';
+  const toggleInstances = JSON.parse(toggleInstancesJson);
+
+  // Add now to the list
+  toggleInstances.push(Date.now());
+  return getToggleCount(toggleInstances);
+}
+function getToggleCount(instances?: number[]) {
+  if (typeof window === 'undefined') return 0;
+  if (!instances) {
+    const toggleInstancesJson = localStorage.getItem('toggleInstances') ?? '[]';
+    instances = JSON.parse(toggleInstancesJson);
+  }
+
+  // Filter out before cutoff
+  const cutoff = Date.now() - constants.imageGuard.cutoff;
+  const filtered = instances?.filter((x: number) => x > cutoff) ?? [];
+  localStorage.setItem('toggleInstances', JSON.stringify(filtered));
+
+  return filtered.length;
+}
+
 type SfwStore = {
   showingConnections: Record<string, boolean>;
   showingImages: Record<string, boolean>;
   toggleImage: (id: number) => void;
   showImages: (ids: number[]) => void;
   toggleConnection: ({ entityType, entityId }: ImageGuardConnect) => void;
+  limitedToggleCount: number;
+  limitedToggleIncrement: () => void;
 };
 const getConnectionKey = ({ entityId, entityType }: ImageGuardConnect) =>
   `${entityId}_${entityType}`;
@@ -75,7 +102,12 @@ const useStore = create<SfwStore>()(
   immer((set) => ({
     showingConnections: {},
     showingImages: {},
-
+    limitedToggleCount: getToggleCount(),
+    limitedToggleIncrement: () => {
+      set((state) => {
+        state.limitedToggleCount = incrementToggleCount();
+      });
+    },
     toggleImage: (id) => {
       set((state) => {
         state.showingImages[id.toString()] = !state.showingImages[id.toString()];
@@ -474,6 +506,7 @@ const NsfwBadge = ({
   onClick,
   nsfwLevel,
   canToggleNsfw,
+  size = 'sm',
 }: {
   showImage: boolean;
   onClick: () => void;
@@ -482,6 +515,7 @@ const NsfwBadge = ({
   className?: string;
   nsfwLevel?: NsfwLevel;
   canToggleNsfw?: boolean;
+  size?: MantineSize;
 }) => {
   const { color, label, shade } = nsfwLevel
     ? nsfwLevelUI[nsfwLevel] ?? nsfwLevelUI[NsfwLevel.X]
@@ -492,7 +526,7 @@ const NsfwBadge = ({
       <Badge
         color="red"
         variant="filled"
-        size="sm"
+        size={size}
         px={6}
         sx={(theme) => ({
           cursor: canToggleNsfw ? 'pointer' : undefined,
@@ -551,6 +585,7 @@ ImageGuard.ToggleImage = function ToggleImage(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  size?: MantineSize;
 }) {
   const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
@@ -573,6 +608,7 @@ ImageGuard.ToggleConnect = function ToggleConnect(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  size?: MantineSize;
 }) {
   // const currentUser = useCurrentUser();
   // const { blurNsfw: toggleable } = currentUser ?? {};
@@ -604,6 +640,7 @@ ImageGuard.GroupToggleConnect = function GroupToggleConnect(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  size?: MantineSize;
 }) {
   const currentUser = useCurrentUser();
   const { connect, images } = useImageGuardContext();
@@ -640,8 +677,10 @@ function ImageGuardPopover({ children, nsfw }: { children: React.ReactElement; n
   const isAuthenticated = !!user;
   const [opened, setOpened] = useState(false);
   const router = useRouter();
-  const accountRequired = nsfw;
+  const limitedToggleCount = useStore((state) => state.limitedToggleCount);
+  const limitedToggleIncrement = useStore((state) => state.limitedToggleIncrement);
 
+  const accountRequired = nsfw && limitedToggleCount >= constants.imageGuard.noAccountLimit;
   if (accountRequired && !isAuthenticated)
     return (
       <Popover
@@ -669,7 +708,7 @@ function ImageGuardPopover({ children, nsfw }: { children: React.ReactElement; n
                 <IconLock />
               </ThemeIcon>
               <Text size="sm" weight={500} sx={{ flex: 1 }}>
-                You must be logged in to view this content
+                Login now to continue viewing mature content and unblur everything.
               </Text>
             </Group>
 
@@ -686,6 +725,7 @@ function ImageGuardPopover({ children, nsfw }: { children: React.ReactElement; n
       e.stopPropagation();
       e.preventDefault();
       e.nativeEvent.stopImmediatePropagation();
+      if (!isAuthenticated) limitedToggleIncrement();
       children.props.onClick?.();
     },
   });

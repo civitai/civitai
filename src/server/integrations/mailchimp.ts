@@ -39,7 +39,17 @@ const getSubscription = newsletterHandler(async (email: string) => {
 });
 
 const setSubscription = newsletterHandler(
-  async ({ email, subscribed, ip }: { email: string; subscribed: boolean; ip?: string }) => {
+  async ({
+    email,
+    username,
+    subscribed,
+    ip,
+  }: {
+    email: string;
+    username?: string;
+    subscribed: boolean;
+    ip?: string;
+  }) => {
     const subscription = await getSubscription(email);
     if (!subscription && !subscribed) return;
     const active = subscription?.status === 'subscribed';
@@ -49,6 +59,9 @@ const setSubscription = newsletterHandler(
       // They aren't active and they want to subscribe
       await client.lists.setListMember(env.NEWSLETTER_ID as string, createSubscriberHash(email), {
         email_address: email,
+        merge_fields: {
+          FNAME: username,
+        },
         status_if_new: 'pending',
         status: 'subscribed',
         ip_signup: ip,

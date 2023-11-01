@@ -530,6 +530,7 @@ model ModelVersion {
   baseModelType        String?
   meta                 Json                      @default("{}")
   earlyAccessTimeFrame Int                       @default(0)
+  requireAuth          Boolean                   @default(false)
   monetization         ModelVersionMonetization?
 
   metrics                 ModelVersionMetric[]
@@ -1125,6 +1126,7 @@ model ImageMetric {
   collectedCount    Int             @default(0)
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
+  viewCount         Int             @default(0)
 
   @@id([imageId, timeframe])
 }
@@ -1380,25 +1382,26 @@ enum PartnerPricingModel {
 }
 
 model Partner {
-  id               Int                 @id @default(autoincrement())
-  name             String
-  homepage         String?
-  tos              String?
-  privacy          String?
-  startupTime      Int? // Seconds
-  onDemand         Boolean
-  onDemandStrategy String? // URL Template
-  onDemandTypes    ModelType[]         @default([])
-  stepsPerSecond   Int
-  pricingModel     PartnerPricingModel
-  price            String
-  about            String?
-  createdAt        DateTime            @default(now())
-  nsfw             Boolean             @default(false)
-  poi              Boolean             @default(false)
-  personal         Boolean             @default(false)
-  token            String?             @unique
-  runStrategies    RunStrategy[]
+  id                 Int                 @id @default(autoincrement())
+  name               String
+  homepage           String?
+  tos                String?
+  privacy            String?
+  startupTime        Int? // Seconds
+  onDemand           Boolean
+  onDemandStrategy   String? // URL Template
+  onDemandTypes      ModelType[]         @default([])
+  onDemandBaseModels String[]            @default([])
+  stepsPerSecond     Int
+  pricingModel       PartnerPricingModel
+  price              String
+  about              String?
+  createdAt          DateTime            @default(now())
+  nsfw               Boolean             @default(false)
+  poi                Boolean             @default(false)
+  personal           Boolean             @default(false)
+  token              String?             @unique
+  runStrategies      RunStrategy[]
 }
 
 model KeyValue {
@@ -2855,6 +2858,11 @@ model ImageStat {
   tippedAmountCountMonth   Int   @default(0)
   tippedAmountCountYear    Int   @default(0)
   tippedAmountCountAllTime Int   @default(0)
+  viewCountDay             Int   @default(0)
+  viewCountWeek            Int   @default(0)
+  viewCountMonth           Int   @default(0)
+  viewCountYear            Int   @default(0)
+  viewCountAllTime         Int   @default(0)
 }
 
 /// @view

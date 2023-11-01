@@ -165,7 +165,7 @@ export class Tracker {
   }
 
   private async track(table: string, custom: object) {
-    if (!clickhouse) return;
+    if (!env.CLICKHOUSE_TRACKER_URL) return;
 
     if (this.session) await this.session;
 
@@ -175,10 +175,14 @@ export class Tracker {
     };
 
     // Perform the clickhouse insert in the background
-    await clickhouse.insert({
-      table: table,
-      values: [data],
-      format: 'JSONEachRow',
+    await fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }).catch(() => {
+      // ignore
     });
   }
 

@@ -2,7 +2,7 @@ import { createJob, getJobDate } from './job';
 import { dbRead } from '~/server/db/client';
 import { getS3Client } from '~/utils/s3-utils';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 
 export const tempScanFilesMissingHashes = createJob(
   'scan-files-missing-hashes',

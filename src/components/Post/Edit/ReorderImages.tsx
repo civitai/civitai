@@ -1,5 +1,5 @@
 import { useEditPostContext } from './EditPostProvider';
-import { useState, CSSProperties } from 'react';
+import { useState, CSSProperties, useEffect } from 'react';
 import {
   useSensors,
   useSensor,
@@ -15,11 +15,12 @@ import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { isDefined } from '~/utils/type-guards';
 import { Button, Center, createStyles, Paper } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useDidUpdate } from '@mantine/hooks';
+import { useDidUpdate, usePrevious } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { CSS } from '@dnd-kit/utilities';
 import { IconArrowsMaximize, IconCheck } from '@tabler/icons-react';
 import { PostEditImage } from '~/server/controllers/post.controller';
+import { isEqual } from 'lodash-es';
 
 export function ReorderImages() {
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
@@ -213,13 +214,11 @@ export function ReorderImagesButton({
   const isReordering = useEditPostContext((state) => state.reorder);
   const toggleReorder = useEditPostContext((state) => state.toggleReorder);
   const { mutate, isLoading } = trpc.post.reorderImages.useMutation();
+  const previous = usePrevious(images);
 
   const onClick = () => {
     toggleReorder();
-  };
-
-  useDidUpdate(() => {
-    if (!isReordering) {
+    if (isReordering && !!previous && !isEqual(previous, images)) {
       mutate({
         id,
         imageIds: images
@@ -229,7 +228,7 @@ export function ReorderImagesButton({
           .filter(isDefined),
       });
     }
-  }, [isReordering]);
+  };
 
   return children({
     onClick,

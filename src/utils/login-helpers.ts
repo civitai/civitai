@@ -1,7 +1,7 @@
 import { QS } from '~/utils/qs';
 
 export const loginRedirectReasons = {
-  'download-auth': 'You need to be logged in to download this model',
+  'download-auth': 'The creator of this asset requires you to be logged in to download it',
   'report-content': 'You need to be logged in to report this content',
   'report-model': 'You need to be logged in to report this model',
   'report-review': 'You need to be logged in to report this review',

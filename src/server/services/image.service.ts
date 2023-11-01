@@ -55,14 +55,15 @@ import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
-  const otherImagesWithSameUrl = await dbWrite.image.count({
+  const otherImagesWithSameUrl = await dbRead.image.findFirst({
+    select: { id: true },
     where: {
       url: url,
       id: { not: id },
     },
   });
 
-  return otherImagesWithSameUrl > 0;
+  return !!otherImagesWithSameUrl;
 };
 
 export const deleteImageById = async ({ id }: GetByIdInput) => {
@@ -73,7 +74,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     });
     if (!image) return;
 
-    if (isProd && !imageUrlInUse({ url: image.url, id }))
+    if (isProd && !(await imageUrlInUse({ url: image.url, id })))
       await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
@@ -417,6 +418,7 @@ type GetAllImagesRaw = {
   heartCount: number;
   commentCount: number;
   tippedAmountCount: number;
+  viewCount: number;
   reactions?: ReviewReactions[];
   cursorId?: bigint;
   type: MediaType;
@@ -792,6 +794,7 @@ export const getAllImages = async ({
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
+      COALESCE(im."viewCount", 0) "viewCount",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -913,6 +916,7 @@ export const getAllImages = async ({
       heartCount,
       commentCount,
       tippedAmountCount,
+      viewCount,
       ...i
     }) => ({
       ...i,
@@ -931,6 +935,7 @@ export const getAllImages = async ({
         heartCountAllTime: heartCount,
         commentCountAllTime: commentCount,
         tippedAmountCountAllTime: tippedAmountCount,
+        viewCountAllTime: viewCount,
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
@@ -989,6 +994,7 @@ export const getImage = async ({
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
+      COALESCE(im."viewCount", 0) "viewCount",
       u.id "userId",
       u.username,
       u.image "userImage",
@@ -1025,6 +1031,7 @@ export const getImage = async ({
       heartCount,
       commentCount,
       tippedAmountCount,
+      viewCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -1059,6 +1066,7 @@ export const getImage = async ({
       heartCountAllTime: heartCount,
       commentCountAllTime: commentCount,
       tippedAmountCountAllTime: tippedAmountCount,
+      viewCountAllTime: viewCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };

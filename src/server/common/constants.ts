@@ -161,6 +161,10 @@ export const constants = {
       '#fd7e14',
     ] as string[],
   },
+  imageGuard: {
+    noAccountLimit: 5,
+    cutoff: 1000 * 60 * 60 * 24,
+  },
   imageGeneration: {
     drawerZIndex: 301,
     requestBlocking: {

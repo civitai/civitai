@@ -1,10 +1,12 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { imagesSearchIndex } from '~/server/search-index';
+import dayjs from 'dayjs';
+import { chunk } from 'lodash-es';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
-  async update({ db, lastUpdate }) {
+  async update({ db, ch, lastUpdate }) {
     const recentEngagementSubquery = Prisma.sql`
     WITH recent_engagements AS
       (
@@ -27,12 +29,12 @@ export const imageMetrics = createMetricProcessor({
         WHERE ci."imageId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
         UNION
-        
+
         SELECT bt."entityId" as id
         FROM "BuzzTip" bt
         WHERE bt."entityId" IS NOT NULL AND bt."entityType" = 'Image'
           AND (bt."createdAt" > ${lastUpdate} OR bt."updatedAt" > ${lastUpdate})
-  
+
         UNION
 
         SELECT
@@ -56,7 +58,7 @@ export const imageMetrics = createMetricProcessor({
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "collectedCount", "tippedCount", "tippedAmountCount") 
+      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "collectedCount", "tippedCount", "tippedAmountCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -252,12 +254,87 @@ export const imageMetrics = createMetricProcessor({
       ) tf
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount", "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
-  `;
+    `;
+
+    // Update view counts
+    //---------------------------------------
+    const clickhouseSince = dayjs(lastUpdate).toISOString();
+    const imageViews = await ch.query({
+      query: `
+        WITH targets AS (
+          SELECT
+            entityId
+          FROM views
+          WHERE entityType = 'Image'
+          AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+        )
+        SELECT
+          imageId,
+          sumIf(views, createdDate = current_date()) day,
+          sumIf(views, createdDate >= subtractDays(current_date(), 7)) week,
+          sumIf(views, createdDate >= subtractDays(current_date(), 30)) month,
+          sumIf(views, createdDate >= subtractYears(current_date(), 1)) year,
+          sum(views) all_time
+        FROM daily_image_views
+        WHERE imageId IN (select entityId FROM targets)
+        GROUP BY imageId;
+      `,
+      format: 'JSONEachRow',
+    });
+    const viewedImages = (await imageViews?.json()) as [
+      {
+        imageId: number;
+        day: number;
+        week: number;
+        month: number;
+        year: number;
+        all_time: number;
+      }
+    ];
+    const batches = chunk(viewedImages, 1000);
+    for (const batch of batches) {
+      try {
+        const batchJson = JSON.stringify(batch);
+        await db.$executeRaw`
+          INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
+          SELECT
+            imageId,
+            timeframe,
+            views
+          FROM
+          (
+              SELECT
+                  CAST(mvs::json->>'imageId' AS INT) AS imageId,
+                  tf.timeframe,
+                  CAST(
+                    CASE
+                      WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                      WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                      WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                      WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                      WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
+                    END
+                  AS int) as views
+              FROM json_array_elements(${batchJson}::json) mvs
+              CROSS JOIN (
+                  SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+              ) tf
+          ) im
+          WHERE im.views IS NOT NULL
+          AND im.imageId IN (SELECT id FROM "Image")
+          ON CONFLICT ("imageId", timeframe) DO UPDATE
+            SET "viewCount" = EXCLUDED."viewCount";
+        `;
+      } catch (err) {
+        throw err;
+      }
+    }
+    //---------------------------------------
 
     const affectedImages: Array<{ id: number }> = await db.$queryRaw`
       ${recentEngagementSubquery}
       SELECT DISTINCT
-            i.id  
+            i.id
       FROM recent_engagements r
       JOIN "Image" i ON i.id = r.id
       WHERE r.id IS NOT NULL

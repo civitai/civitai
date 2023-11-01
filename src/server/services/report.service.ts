@@ -301,6 +301,16 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   return getPagingData({ items, count }, take, page);
 };
 
+export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
+  ids,
+  select,
+}: {
+  ids: number[];
+  select: TSelect;
+}) => {
+  return dbRead.report.findMany({ where: { id: { in: ids } }, select });
+};
+
 export const updateReportById = ({
   id,
   data,

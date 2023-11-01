@@ -1,6 +1,6 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SDResource, createMetadataProcessor } from '~/utils/metadata/base.metadata';
-import { unescape } from 'lodash';
+import { unescape } from 'lodash-es';
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;

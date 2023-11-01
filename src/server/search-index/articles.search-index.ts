@@ -117,7 +117,7 @@ const onFetchItemsToIndex = async ({
       tosViolation: false,
       // if lastUpdatedAt is not provided,
       // this should generate the entirety of the index.
-      OR: whereOr,
+      OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
     },
   });
 

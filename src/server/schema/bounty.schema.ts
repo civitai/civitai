@@ -22,6 +22,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     engagement: z.enum(['tracking', 'supporter', 'favorite', 'awarded', 'active']).optional(),
     userId: z.number().optional(),
     baseModels: z.enum(constants.baseModels).array().optional(),
+    limit: z.coerce.number().min(1).max(200).default(60),
   })
 );
 

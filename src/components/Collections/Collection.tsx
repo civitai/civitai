@@ -46,7 +46,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import { ArticleSort, BrowsingMode, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
@@ -62,6 +62,8 @@ import remarkGfm from 'remark-gfm';
 import { formatDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -70,6 +72,29 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
   const sort = isContestCollection
     ? getRandom(Object.values(ModelSort))
     : query.sort ?? ModelSort.Newest;
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
+  const filters = isContestCollection
+    ? {
+        types: undefined,
+        checkpointType: undefined,
+        baseModels: undefined,
+        browsingMode: undefined,
+        status: undefined,
+        earlyAccess: undefined,
+        view: undefined,
+        supportsGeneration: undefined,
+        followed: undefined,
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+      }
+    : {
+        ...query,
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+      };
 
   return (
     <Stack spacing="xs">
@@ -92,10 +117,8 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         )}
         <ModelsInfinite
           filters={{
-            ...query,
-            period,
-            sort,
-            collectionId: collection.id,
+            // For contest collections, we should always have a clean slate.
+            ...filters,
           }}
         />
       </IsClient>
@@ -115,7 +138,29 @@ const ImageCollection = ({
   const sort = isContestCollection ? ImageSort.Random : query.sort ?? ImageSort.Newest;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
+  const currentUser = useCurrentUser();
   const utils = trpc.useContext();
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
+  const filters = isContestCollection
+    ? {
+        generation: undefined,
+        view: undefined,
+        excludeCrossPosts: undefined,
+        types: undefined,
+        withMeta: undefined,
+        hidden: undefined,
+        followed: undefined,
+        period: MetricTimeframe.AllTime,
+        sort,
+        collectionId: collection.id,
+      }
+    : {
+        ...query,
+        period,
+        sort,
+        collectionId: collection.id,
+      };
 
   return (
     <ImageGuardReportContext.Provider
@@ -185,12 +230,13 @@ const ImageCollection = ({
           <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
             <ImagesInfinite
               filters={{
-                ...query,
-                period,
+                ...filters,
                 sort,
                 collectionId: collection.id,
                 types: undefined,
                 withMeta: undefined,
+                followed: undefined,
+                browsingMode: currentUser ? undefined : BrowsingMode.All,
               }}
             />
           </ReactionSettingsProvider>
@@ -207,6 +253,26 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
     ? getRandom(Object.values(PostSort))
     : query.sort ?? PostSort.Newest;
 
+  const filters = isContestCollection
+    ? {
+        modelId: undefined,
+        modelVersionId: undefined, // not hooked up to service/schema yet
+        tags: undefined,
+        username: undefined,
+        draftOnly: undefined,
+        followed: undefined,
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+      }
+    : {
+        ...query,
+        period,
+        sort,
+        collectionId: collection.id,
+      };
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
   return (
     <Stack spacing="xs">
       <IsClient>
@@ -230,8 +296,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
         <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
           <PostsInfinite
             filters={{
-              ...query,
-              period,
+              ...filters,
               sort,
               collectionId: collection.id,
             }}
@@ -249,6 +314,16 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const sort = isContestCollection
     ? getRandom(Object.values(ArticleSort))
     : query.sort ?? ArticleSort.Newest;
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
+  const filters = isContestCollection
+    ? { sort, period: MetricTimeframe.AllTime, followed: false, collectionId: collection.id }
+    : {
+        ...query,
+        sort,
+        period,
+        collectionId: collection.id,
+      };
 
   return (
     <Stack spacing="xs">
@@ -272,8 +347,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
         )}
         <ArticlesInfinite
           filters={{
-            ...query,
-            period,
+            ...filters,
             sort,
             collectionId: collection.id,
           }}
@@ -289,6 +363,7 @@ export function Collection({
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
+  const currentUser = useCurrentUser();
 
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
     id: collectionId,
@@ -366,154 +441,160 @@ export function Collection({
           deIndex={collection.read !== 'Public' ? 'noindex, nofollow' : undefined}
         />
       )}
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer {...containerProps} p={0}>
-          <Stack spacing="xl" w="100%">
-            <Group spacing="xl">
-              {collection?.image && (
-                <Box
-                  w={220}
-                  sx={(theme) => ({
-                    overflow: 'hidden',
-                    borderRadius: '8px',
-                    boxShadow: theme.shadows.md,
-                    [theme.fn.smallerThan('sm')]: { width: '100%', marginBottom: theme.spacing.xs },
-                  })}
-                >
-                  <AspectRatio ratio={3 / 2}>
-                    <EdgeMedia
-                      className={classes.coverImage}
-                      src={collection.image.url}
-                      type={collection.image.type}
-                      name={collection.image.name ?? collection.image.url}
-                      alt={collection.image.name ?? undefined}
-                      width={collection.image.width ?? 1200}
-                      loading="lazy"
-                    />
-                  </AspectRatio>
-                </Box>
-              )}
-              <Stack spacing={8} sx={{ flex: 1 }}>
-                <Stack spacing={0}>
-                  <Group>
-                    <Title
-                      order={1}
-                      lineClamp={1}
-                      sx={(theme) => ({
-                        [theme.fn.smallerThan('sm')]: {
-                          fontSize: '28px',
-                        },
-                      })}
-                    >
-                      {collection?.name ?? 'Loading...'}
-                    </Title>
-                    {submissionPeriod}
-                  </Group>
-                  {collection?.description && (
-                    <Text size="xs" color="dimmed">
-                      <ReactMarkdown
-                        rehypePlugins={[rehypeRaw, remarkGfm]}
-                        allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
-                        unwrapDisallowed
-                        className="markdown-content"
+      <SensitiveShield enabled={(collection?.nsfw ?? false) && !currentUser}>
+        <MasonryProvider
+          columnWidth={constants.cardSizes.model}
+          maxColumnCount={7}
+          maxSingleColumnWidth={450}
+        >
+          <MasonryContainer {...containerProps} p={0}>
+            <Stack spacing="xl" w="100%">
+              <Group spacing="xl">
+                {collection?.image && (
+                  <Box
+                    w={220}
+                    sx={(theme) => ({
+                      overflow: 'hidden',
+                      borderRadius: '8px',
+                      boxShadow: theme.shadows.md,
+                      [theme.fn.smallerThan('sm')]: {
+                        width: '100%',
+                        marginBottom: theme.spacing.xs,
+                      },
+                    })}
+                  >
+                    <AspectRatio ratio={3 / 2}>
+                      <EdgeMedia
+                        className={classes.coverImage}
+                        src={collection.image.url}
+                        type={collection.image.type}
+                        name={collection.image.name ?? collection.image.url}
+                        alt={collection.image.name ?? undefined}
+                        width={collection.image.width ?? 1200}
+                        loading="lazy"
+                      />
+                    </AspectRatio>
+                  </Box>
+                )}
+                <Stack spacing={8} sx={{ flex: 1 }}>
+                  <Stack spacing={0}>
+                    <Group>
+                      <Title
+                        order={1}
+                        lineClamp={1}
+                        sx={(theme) => ({
+                          [theme.fn.smallerThan('sm')]: {
+                            fontSize: '28px',
+                          },
+                        })}
                       >
-                        {collection.description}
-                      </ReactMarkdown>
-                    </Text>
-                  )}
-                </Stack>
-                {collection && (
-                  <Group spacing={4} noWrap>
-                    {collection.user.id !== -1 && (
-                      <UserAvatar user={collection.user} withUsername linkToProfile />
+                        {collection?.name ?? 'Loading...'}
+                      </Title>
+                      {submissionPeriod}
+                    </Group>
+                    {collection?.description && (
+                      <Text size="xs" color="dimmed">
+                        <ReactMarkdown
+                          rehypePlugins={[rehypeRaw, remarkGfm]}
+                          allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
+                          unwrapDisallowed
+                          className="markdown-content"
+                        >
+                          {collection.description}
+                        </ReactMarkdown>
+                      </Text>
                     )}
-                    {/* TODO.collections: We need some metrics to actually display these badges */}
-                    {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
+                  </Stack>
+                  {collection && (
+                    <Group spacing={4} noWrap>
+                      {collection.user.id !== -1 && (
+                        <UserAvatar user={collection.user} withUsername linkToProfile />
+                      )}
+                      {/* TODO.collections: We need some metrics to actually display these badges */}
+                      {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
                       <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
                     </IconBadge>
                     <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
                       <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
                     </IconBadge> */}
+                    </Group>
+                  )}
+                </Stack>
+                {collection && permissions && (
+                  <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
+                    <CollectionFollowAction collection={collection} permissions={permissions} />
+                    {canAddContent && (
+                      <Tooltip label="Add from your library." position="bottom" withArrow>
+                        <ActionIcon
+                          color="blue"
+                          variant="subtle"
+                          radius="xl"
+                          onClick={() => setOpened(true)}
+                        >
+                          <IconCirclePlus />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                    <CollectionContextMenu
+                      collectionId={collection.id}
+                      ownerId={collection.user.id}
+                      permissions={permissions}
+                    >
+                      <ActionIcon variant="subtle">
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </CollectionContextMenu>
                   </Group>
                 )}
-              </Stack>
-              {collection && permissions && (
-                <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
-                  <CollectionFollowAction collection={collection} permissions={permissions} />
-                  {canAddContent && (
-                    <Tooltip label="Add from your library." position="bottom" withArrow>
-                      <ActionIcon
-                        color="blue"
-                        variant="subtle"
-                        radius="xl"
-                        onClick={() => setOpened(true)}
-                      >
-                        <IconCirclePlus />
-                      </ActionIcon>
-                    </Tooltip>
-                  )}
-                  <CollectionContextMenu
-                    collectionId={collection.id}
-                    ownerId={collection.user.id}
-                    permissions={permissions}
-                  >
-                    <ActionIcon variant="subtle">
-                      <IconDotsVertical size={16} />
-                    </ActionIcon>
-                  </CollectionContextMenu>
-                </Group>
-              )}
-            </Group>
-            {metadata.submissionStartDate && new Date(metadata.submissionStartDate) > new Date() ? (
-              <AlertWithIcon icon={<IconAlertCircle />}>
-                <Text>
-                  This collection is not accepting entries just yet. Please come back after{' '}
-                  {formatDate(metadata.submissionStartDate)}
-                </Text>
-              </AlertWithIcon>
-            ) : (
-              <>
-                {isCollectionSubsmissionPeriod(collection) && (
-                  <AlertWithIcon icon={<IconAlertCircle />}>
-                    <Text>
-                      This collection is accepting entries until{' '}
-                      {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
-                      will only see your entries, both reviewed and unreviewed. Once the submission
-                      period ends, you will see all entries.
-                    </Text>
-                  </AlertWithIcon>
-                )}
-                {collection && collectionType === CollectionType.Model && (
-                  <ModelCollection collection={collection} />
-                )}
-                {collection && collectionType === CollectionType.Image && (
-                  <ImageCollection collection={collection} permissions={permissions} />
-                )}
-                {collection && collectionType === CollectionType.Post && (
-                  <PostCollection collection={collection} />
-                )}
-                {collection && collectionType === CollectionType.Article && (
-                  <ArticleCollection collection={collection} />
-                )}
-              </>
-            )}
-            {!collectionType && !isLoading && (
-              <Center py="xl">
-                <Stack spacing="xs">
-                  <Text size="lg" weight="700" align="center">
-                    Whoops!
+              </Group>
+              {metadata.submissionStartDate &&
+              new Date(metadata.submissionStartDate) > new Date() ? (
+                <AlertWithIcon icon={<IconAlertCircle />}>
+                  <Text>
+                    This collection is not accepting entries just yet. Please come back after{' '}
+                    {formatDate(metadata.submissionStartDate)}
                   </Text>
-                  <Text align="center">This collection type is not supported</Text>
-                </Stack>
-              </Center>
-            )}
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+                </AlertWithIcon>
+              ) : (
+                <>
+                  {isCollectionSubsmissionPeriod(collection) && (
+                    <AlertWithIcon icon={<IconAlertCircle />}>
+                      <Text>
+                        This collection is accepting entries until{' '}
+                        {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
+                        will only see your entries, both reviewed and unreviewed. Once the
+                        submission period ends, you will see all entries.
+                      </Text>
+                    </AlertWithIcon>
+                  )}
+                  {collection && collectionType === CollectionType.Model && (
+                    <ModelCollection collection={collection} />
+                  )}
+                  {collection && collectionType === CollectionType.Image && (
+                    <ImageCollection collection={collection} permissions={permissions} />
+                  )}
+                  {collection && collectionType === CollectionType.Post && (
+                    <PostCollection collection={collection} />
+                  )}
+                  {collection && collectionType === CollectionType.Article && (
+                    <ArticleCollection collection={collection} />
+                  )}
+                </>
+              )}
+              {!collectionType && !isLoading && (
+                <Center py="xl">
+                  <Stack spacing="xs">
+                    <Text size="lg" weight="700" align="center">
+                      Whoops!
+                    </Text>
+                    <Text align="center">This collection type is not supported</Text>
+                  </Stack>
+                </Center>
+              )}
+            </Stack>
+          </MasonryContainer>
+        </MasonryProvider>
+      </SensitiveShield>
       {collection && canAddContent && (
         <AddUserContentModal
           collectionId={collection.id}

@@ -1,5 +1,5 @@
 import { ImageIngestionStatus } from '@prisma/client';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';

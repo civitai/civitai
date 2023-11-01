@@ -1,4 +1,4 @@
-import { isEqual } from 'lodash';
+import { isEqual } from 'lodash-es';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { FieldValues, DeepPartial, useFormContext } from 'react-hook-form';
 import { InputText } from '~/libs/form';
