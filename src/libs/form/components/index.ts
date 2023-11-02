@@ -32,6 +32,7 @@ import { SimpleImageUpload } from './SimpleImageUpload';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInput';
 import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
+import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 
 export * from './Form';
 
@@ -70,6 +71,9 @@ export const InputTime = withWatcher(withController(TimeInput));
 export const InputNumberSlider = withWatcher(withController(NumberSlider));
 export const InputInlineSocialLinkInput = withWatcher(withController(InlineSocialLinkInput));
 export const InputShowcaseItemsInput = withWatcher(withController(ShowcaseItemsInput));
+export const InputProfileSectionsSettingsInput = withWatcher(
+  withController(ProfileSectionsSettingsInput)
+);
 
 export const InputSwitch = withWatcher(
   withController(Switch, ({ field }) => ({

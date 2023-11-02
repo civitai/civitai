@@ -26,6 +26,7 @@ import {
   InputText,
   InputTextArea,
   useForm,
+  InputProfileSectionsSettingsInput,
 } from '~/libs/form';
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -34,6 +35,7 @@ import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import { constants } from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType } from '@prisma/client';
+import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 
 const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
@@ -251,6 +253,11 @@ const { openModal, Modal } = createContextModal({
             />
           )}
           <Divider />
+          <InputProfileSectionsSettingsInput
+            name="profileSectionsSettings"
+            label="Customize profile page"
+            description="Drag diferent sections on your profile in order of your preference"
+          />
         </Stack>
       </Form>
     );

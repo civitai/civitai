@@ -165,7 +165,9 @@ export const ShowcaseItemsInput = ({
             </Box>
           ) : (
             <Center>
-              <Text>You have not selected any items.</Text>
+              <Text size="sm" color="dimmed">
+                You have not selected any items to showcase.
+              </Text>
             </Center>
           )}
         </Paper>

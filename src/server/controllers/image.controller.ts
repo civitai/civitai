@@ -1,7 +1,6 @@
 import {
   GetEntitiesCoverImage,
   GetImageInput,
-  GetImagesForEntitySchema,
   GetInfiniteImagesInput,
   ImageModerationSchema,
 } from './../schema/image.schema';
@@ -11,7 +10,6 @@ import {
   getImage,
   getImageDetail,
   getImageResources,
-  getImagesByEntityExpanded,
   moderateImages,
 } from './../services/image.service';
 import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';

@@ -19,18 +19,6 @@ export const ProfileSectionType = {
 
 export type ProfileSectionType = (typeof ProfileSectionType)[keyof typeof ProfileSectionType];
 
-// Used to determine which sections are enabled by default when the user does not have them
-// on the profile items' list.
-export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = {
-  showcase: true,
-  popularModels: true,
-  popularArticles: true,
-  recent: true,
-  modelsOverview: false,
-  imagesOverview: false,
-  recentReviews: false,
-};
-
 export type ProfileSectionSchema = z.infer<typeof profileSectionSchema>;
 
 export const profileSectionSchema = z.object({

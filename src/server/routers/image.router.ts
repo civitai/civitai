@@ -5,7 +5,6 @@ import {
   getImageHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
-  getImagesForEntitiesHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import {
@@ -14,7 +13,6 @@ import {
   imageModerationSchema,
   getImagesByCategorySchema,
   getImageSchema,
-  getImagesForEntitySchema,
   getEntitiesCoverImage,
 } from './../schema/image.schema';
 import {

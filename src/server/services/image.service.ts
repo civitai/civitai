@@ -23,7 +23,6 @@ import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   GetEntitiesCoverImage,
-  GetImagesForEntitySchema,
   ImageEntityType,
   ImageUploadProps,
   UpdateImageInput,
@@ -1704,28 +1703,6 @@ type GetImageConnectionRaw = {
   entityId: number;
 };
 
-type GetEntityImageRaw = {
-  id: number;
-  name: string;
-  url: string;
-  nsfw: NsfwLevel;
-  width: number;
-  height: number;
-  hash: string;
-  meta: ImageMetaProps;
-  hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
-  createdAt: Date;
-  mimeType: string;
-  scannedAt: Date;
-  needsReview: string | null;
-  userId: number;
-  index: number;
-  type: MediaType;
-  metadata: Prisma.JsonValue;
-  entityId: number;
-  entityType: number;
-};
 export const getImagesByEntity = async ({
   id,
   ids,
@@ -1864,6 +1841,29 @@ export const createEntityImages = async ({
   return imageRecords;
 };
 
+type GetEntityImageRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: NsfwLevel;
+  width: number;
+  height: number;
+  hash: string;
+  meta: ImageMetaProps;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  needsReview: string | null;
+  userId: number;
+  index: number;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
+  entityId: number;
+  entityType: string;
+};
+
 export const getEntityCoverImage = async ({
   entities,
   include,
@@ -1874,6 +1874,8 @@ export const getEntityCoverImage = async ({
     return [];
   }
 
+  // Returns 1 cover image for:
+  // Models, Images, Bounties, BountyEntries.
   const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
     WITH entities AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(

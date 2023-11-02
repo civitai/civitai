@@ -135,7 +135,7 @@ export function ProfileSidebar({ username }: { username: string }) {
           <Text size="md" color="dimmed" weight={590}>
             Awards
           </Text>
-          <Group spacing="xs" position="apart">
+          <Group spacing="xs">
             {awards.map((award) => {
               const data = (award.data ?? {}) as { url?: string };
               const url = (data.url ?? '') as string;

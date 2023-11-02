@@ -74,7 +74,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
     };
   }, [userRatingsTotal]);
 
-  if (!inView && !isLoading && !resourceReviews.length) {
+  if (inView && !isLoading && !resourceReviews.length) {
     // No reviews, this section makes no sense here.
     return null;
   }
