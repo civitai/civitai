@@ -55,6 +55,7 @@ export function EditPostImages({ max }: { max?: number }) {
   const images = useEditPostContext((state) => state.images);
 
   const imageIds = images
+    .filter((x) => x.discriminator === 'image' && x.data.ingestion !== ImageIngestionStatus.Scanned)
     .map((x) => (x.discriminator === 'image' ? x.data.id : undefined))
     .filter(isDefined);
 
