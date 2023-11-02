@@ -64,6 +64,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -708,7 +709,12 @@ export const publishModelById = async ({
               }
             : undefined,
         },
-        select: { id: true, type: true, userId: true },
+        select: {
+          id: true,
+          type: true,
+          userId: true,
+          modelVersions: { select: { id: true, baseModel: true } },
+        },
       });
 
       if (includeVersions) {
@@ -716,6 +722,13 @@ export const publishModelById = async ({
           where: { modelVersionId: { in: versionIds } },
           data: { publishedAt },
         });
+
+        // Send to orchestrator
+        await Promise.all(
+          model.modelVersions.map((version) =>
+            prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
+          )
+        );
       }
 
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
