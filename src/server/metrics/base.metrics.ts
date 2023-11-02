@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { getJobDate } from '~/server/jobs/job';
+import { redis } from '~/server/redis/client';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 const DEFAULT_RANK_REFRESH_INTERVAL = 60 * 60 * 1000;
@@ -34,7 +35,10 @@ export function createMetricProcessor({
 
       // Check if update is needed
       const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
-      if (!shouldUpdate) return;
+      const metricUpdateAllowed =
+        ((await redis.hGet('system:features', `metric:${name.toLowerCase()}`)) ?? 'true') ===
+        'true';
+      if (!shouldUpdate || !metricUpdateAllowed) return;
 
       // Run update
       ctx.lastUpdate = dayjs(lastUpdate).subtract(2, 'minute').toDate(); // Expand window to allow clickhouse tracker to catch up
@@ -53,7 +57,9 @@ export function createMetricProcessor({
       const [lastUpdate, setLastUpdate] = await getJobDate(`rank:${name.toLowerCase()}`);
       const refreshInterval = rank.refreshInterval ?? DEFAULT_RANK_REFRESH_INTERVAL;
       const shouldUpdateRank = lastUpdate.getTime() + refreshInterval < Date.now();
-      if (!shouldUpdateRank) return;
+      const rankUpdateAllowed =
+        ((await redis.hGet('system:features', `rank:${name.toLowerCase()}`)) ?? 'true') === 'true';
+      if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh
       const ctx = { db: dbWrite, ch: clickhouse, lastUpdate };
