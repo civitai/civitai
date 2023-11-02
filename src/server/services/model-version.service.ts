@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { updateModelLastVersionAt } from './model.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -270,7 +271,14 @@ export const upsertModelVersion = async ({
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
-  return dbWrite.modelVersion.delete({ where: { id } });
+  const version = await dbWrite.$transaction(async (tx) => {
+    const deleted = await tx.modelVersion.delete({ where: { id } });
+    await updateModelLastVersionAt({ id: deleted.modelId, tx });
+
+    return deleted;
+  });
+
+  return version;
 };
 
 export const updateModelVersionById = ({
@@ -295,8 +303,6 @@ export const publishModelVersionById = async ({
       status,
       publishedAt,
       meta,
-      model:
-        status !== ModelStatus.Scheduled ? { update: { lastVersionAt: publishedAt } } : undefined,
       posts:
         status !== ModelStatus.Scheduled
           ? { updateMany: { where: { publishedAt: null }, data: { publishedAt } } }
@@ -308,6 +314,8 @@ export const publishModelVersionById = async ({
       model: { select: { userId: true, id: true, type: true, nsfw: true } },
     },
   });
+
+  if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id: version.modelId });
 
   // const { model } = version;
   // await playfab.trackEvent(model.userId, {
@@ -356,6 +364,8 @@ export const unpublishModelVersionById = async ({
         },
         data: { publishedAt: null },
       });
+
+      await updateModelLastVersionAt({ id: updatedVersion.model.id, tx });
 
       return updatedVersion;
     },

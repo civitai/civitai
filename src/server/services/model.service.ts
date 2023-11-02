@@ -696,10 +696,6 @@ export const publishModelById = async ({
           status: republishing ? ModelStatus.Published : status,
           publishedAt,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
-          lastVersionAt:
-            includeVersions && !republishing && status !== ModelStatus.Scheduled
-              ? publishedAt
-              : undefined,
           modelVersions: includeVersions
             ? {
                 updateMany: {
@@ -730,6 +726,7 @@ export const publishModelById = async ({
           )
         );
       }
+      if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id, tx });
 
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
@@ -929,6 +926,28 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
     await updateModelById({ id, data: { earlyAccessDeadline: null } });
   }
 };
+
+export async function updateModelLastVersionAt({
+  id,
+  tx,
+}: {
+  id: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const dbClient = tx ?? dbWrite;
+
+  const modelVersion = await dbClient.modelVersion.findFirst({
+    where: { modelId: id, status: ModelStatus.Published, publishedAt: { not: null } },
+    select: { publishedAt: true },
+    orderBy: { publishedAt: 'desc' },
+  });
+  if (!modelVersion) return;
+
+  return dbClient.model.update({
+    where: { id },
+    data: { lastVersionAt: modelVersion.publishedAt },
+  });
+}
 
 export const getModelsByCategory = async ({
   user,
