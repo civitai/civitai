@@ -194,7 +194,7 @@ const onFetchItemsToIndex = async ({
     b."description",
     b."createdAt",
     b."updatedAt",
-    b."userId", 
+    b."userId",
     b."startsAt",
     b."expiresAt",
     b."type",
@@ -268,7 +268,7 @@ const onFetchItemsToIndex = async ({
       jsonb_agg(
         jsonb_build_object(
           'id', t."id",
-          'name', t."name" 
+          'name', t."name"
         )
       ) tags
     FROM "Tag" t

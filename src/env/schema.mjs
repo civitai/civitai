@@ -96,6 +96,8 @@ export const serverSchema = z.object({
   BUZZ_ENDPOINT: z.string().url().optional(),
   SIGNALS_ENDPOINT: z.string().url().optional(),
   CACHE_DNS: z.coerce.boolean().default(false),
+  GENERATION_ENDPOINT: z.string().optional(),
+  ORCHESTRATOR_TOKEN: z.string().optional()
 });
 
 /**

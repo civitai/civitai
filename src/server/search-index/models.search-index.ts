@@ -99,6 +99,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'user.username',
     'status',
     'category.name',
+    'canGenerate',
   ];
 
   if (

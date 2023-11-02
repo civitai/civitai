@@ -850,7 +850,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
 
 type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement };
 export type RenderSearchComponentProps = {
-  onSearchDone: () => void;
+  onSearchDone?: () => void;
   isMobile: boolean;
   ref?: RefObject<HTMLInputElement>;
 };

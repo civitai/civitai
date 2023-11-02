@@ -124,29 +124,24 @@ export function GenerateFormView({
                     <Stack>
                       <InputResourceSelect
                         name="model"
-                        type={ModelType.Checkpoint}
                         label="Model"
                         buttonLabel="Add Model"
                         withAsterisk
+                        options={{
+                          baseModel,
+                          type: ModelType.Checkpoint,
+                          canGenerate: true,
+                        }}
                       />
                       <InputResourceSelectMultiple
                         name="resources"
                         limit={9}
-                        groups={getGenerationConfig(baseModel).additionalResourceTypes.map(
-                          (type) => ({ type, label: getDisplayName(type) })
-                        )}
-                        // groups={[
-                        //   {
-                        //     type: ModelType.LORA,
-                        //     label: getDisplayName(ModelType.LORA),
-                        //   },
-                        //   {
-                        //     type: ModelType.TextualInversion,
-                        //     label: getDisplayName(ModelType.TextualInversion),
-                        //   },
-                        //   ...getGenerationConfig(baseModel).additionalResourceTypes.map(type => ({type, label: getDisplayName(type)}))
-                        // ]}
                         buttonLabel="Add additional resource"
+                        options={{
+                          baseModel,
+                          types: getGenerationConfig(baseModel).additionalResourceTypes,
+                          canGenerate: true,
+                        }}
                       />
                       <Stack spacing={0}>
                         <InputTextArea
@@ -267,9 +262,13 @@ export function GenerateFormView({
                               {!isSDXL && (
                                 <InputResourceSelect
                                   name="vae"
-                                  type={ModelType.VAE}
                                   label={getDisplayName(ModelType.VAE)}
                                   buttonLabel="Add VAE"
+                                  options={{
+                                    baseModel,
+                                    type: ModelType.VAE,
+                                    canGenerate: true,
+                                  }}
                                 />
                               )}
                             </Stack>

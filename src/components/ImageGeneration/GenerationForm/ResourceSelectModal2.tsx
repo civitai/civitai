@@ -70,9 +70,9 @@ type ResourceSelectModalProps = {
   options?: ResourceSelectOptions;
 };
 
-export const openResourceSelectModal = ({ title, ...innerProps }: ResourceSelectModalProps) =>
+export const openResourceSelectModal2 = ({ title, ...innerProps }: ResourceSelectModalProps) =>
   openContextModal({
-    modal: 'resourceSelectModal',
+    modal: 'resourceSelectModal2',
     title,
     zIndex: 400,
     innerProps,
@@ -103,7 +103,7 @@ const useResourceSelectContext = () => {
   return context;
 };
 
-export default function ResourceSelectModal({
+export default function ResourceSelectModal2({
   context,
   id,
   innerProps: { notIds = [], onSelect, options = {} },

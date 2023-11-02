@@ -104,7 +104,7 @@ export function ModelsHitList() {
   } = useHiddenPreferencesContext();
 
   const models = useMemo(() => {
-    return applyUserPreferencesModels<ModelSearchIndexRecord>({
+    return applyUserPreferencesModels({
       items: hits,
       hiddenModels,
       hiddenImages,

@@ -30,7 +30,10 @@ const useStyles = createStyles<string>((theme) => ({
   },
 }));
 
-export function FeedCard({ href, children, aspectRatio = 'portrait', className, ...props }: Props) {
+function FeedCardInner(
+  { href, children, aspectRatio = 'portrait', className, ...props }: Props,
+  ref?: React.ForwardedRef<any>
+) {
   const { ratio } = aspectRatioValues[aspectRatio];
   const { classes, cx } = useStyles();
 
@@ -39,6 +42,7 @@ export function FeedCard({ href, children, aspectRatio = 'portrait', className, 
       className={cx(classes.root, className)}
       {...props}
       component={href ? 'a' : undefined}
+      ref={ref}
     >
       <AspectRatio ratio={ratio} w="100%">
         {children}
@@ -54,6 +58,8 @@ export function FeedCard({ href, children, aspectRatio = 'portrait', className, 
     card
   );
 }
+
+export const FeedCard = React.forwardRef(FeedCardInner);
 
 type Props = CardProps & {
   children: React.ReactNode;
