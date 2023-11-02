@@ -36,6 +36,7 @@ import { constants } from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType } from '@prisma/client';
 import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
+import { z } from 'zod';
 
 const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
@@ -91,7 +92,7 @@ const { openModal, Modal } = createContextModal({
     }, [user?.profile, equippedCosmetics]);
 
     const handleClose = () => context.close();
-    const handleSubmit = (data) => {
+    const handleSubmit = (data: z.infer<typeof userProfileUpdateSchema>) => {
       console.log(data);
     };
 

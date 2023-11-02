@@ -23,7 +23,6 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
   recentReviews: 'Recent reviews',
 } as const;
 export const getAllAvailableProfileSections = (userSections: ProfileSectionSchema[] = []) => {
-  console.log({ userSections });
   const sections: ProfileSectionSchema[] = [
     ...userSections,
     ...Object.keys(defaultProfileSectionStatus)
@@ -33,7 +32,6 @@ export const getAllAvailableProfileSections = (userSections: ProfileSectionSchem
         enabled: defaultProfileSectionStatus[k as ProfileSectionSchema['key']],
       })),
   ];
-  console.log({ sections });
 
   return sections;
 };

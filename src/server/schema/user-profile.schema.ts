@@ -4,7 +4,8 @@ import { SearchIndexEntityType, SearchIndexEntityTypes } from '~/components/Sear
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;
 export const getUserProfileSchema = z.object({
-  username: z.string(),
+  username: z.string().optional(),
+  id: z.number().optional(),
 });
 
 export const ProfileSectionType = {
@@ -44,6 +45,7 @@ export const privacySettingsSchema = z.object({
 
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;
 export const userProfileUpdateSchema = z.object({
+  userId: z.number().optional(),
   showcaseItems: z.array(showcaseItemSchema).optional(),
   profileSectionsSettings: z.array(profileSectionSchema).optional(),
   privacySettings: privacySettingsSchema.optional(),

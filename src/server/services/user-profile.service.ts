@@ -5,17 +5,22 @@ import {
   PrivacySettingsSchema,
   ProfileSectionSchema,
   ShowcaseItemSchema,
+  UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { Prisma } from '@prisma/client';
 
-export const getUserWithProfile = async ({ username }: GetUserProfileSchema) => {
+export const getUserWithProfile = async ({ username, id }: GetUserProfileSchema) => {
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
+  if (!username && !id) {
+    throw new Error('Either username or id must be provided');
+  }
   const getUser = async () => {
     const user = await dbWrite.user.findUniqueOrThrow({
       where: {
+        id,
         username,
         deletedAt: null,
       },
@@ -46,7 +51,7 @@ export const getUserWithProfile = async ({ username }: GetUserProfileSchema) => 
 
   if (!user.profile) {
     // First time visit to this user's profile. Create base profile:
-    const profile = await dbWrite.userProfile.upsert({
+    await dbWrite.userProfile.upsert({
       where: { userId: user.id },
       create: {
         userId: user.id,
@@ -62,4 +67,74 @@ export const getUserWithProfile = async ({ username }: GetUserProfileSchema) => 
   }
 
   return user;
+};
+
+export const updateUserProfile = async ({
+  profileImage,
+  links,
+  badgeId,
+  userId,
+  coverImage,
+  coverImageId,
+  ...profile
+}: UserProfileUpdateSchema & { userId: number }) => {
+  const updatedUserWithProfile = await dbWrite.$transaction(async (tx) => {
+    await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
+    await tx.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        image: profileImage,
+      },
+    });
+
+    if (links) {
+      await tx.userLink.deleteMany({
+        where: {
+          userId,
+          id: {
+            not: {
+              in: links.filter((l) => !!l.id).map((l) => l.id),
+            },
+          },
+        },
+      });
+
+      const withIndexes = links.map((userLink, index) => ({ ...userLink, userId, index }));
+      const toCreate = withIndexes.filter((x) => !x.id);
+      const toUpdate = withIndexes.filter((x) => !!x.id);
+
+      if (toCreate.length) {
+        await tx.userLink.createMany({ data: toCreate });
+      }
+      if (toUpdate.length) {
+        await Promise.all(
+          toUpdate.map(
+            async (userLink) =>
+              await tx.userLink.updateMany({
+                where: { id: userLink.id },
+                data: userLink,
+              })
+          )
+        );
+      }
+    }
+
+    await tx.userProfile.update({
+      where: { userId },
+      data: {
+        ...profile,
+      },
+    });
+
+    const deletedBounty = await tx.bounty.delete({ where: { id } });
+    if (!deletedBounty) return null;
+
+    await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
+
+    return deletedBounty;
+  });
+
+  return updatedUserWithProfile;
 };
