@@ -1,9 +1,11 @@
 import { applyBrowsingMode } from './../middleware.trpc';
 import {
+  getEntitiesCoverImageHandler,
   getImageDetailHandler,
   getImageHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
+  getImagesForEntitiesHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import {
@@ -12,6 +14,8 @@ import {
   imageModerationSchema,
   getImagesByCategorySchema,
   getImageSchema,
+  getImagesForEntitySchema,
+  getEntitiesCoverImage,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -94,4 +98,7 @@ export const imageRouter = router({
     .use(applyUserPreferences())
     // .use(cacheIt())
     .query(({ input, ctx }) => getImagesByCategory({ ...input, userId: ctx.user?.id })),
+  getEntitiesCoverImage: publicProcedure
+    .input(getEntitiesCoverImage)
+    .query(getEntitiesCoverImageHandler),
 });

@@ -21,7 +21,13 @@ import { ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
-import { ImageEntityType, ImageUploadProps, UpdateImageInput } from '~/server/schema/image.schema';
+import {
+  GetEntitiesCoverImage,
+  GetImagesForEntitySchema,
+  ImageEntityType,
+  ImageUploadProps,
+  UpdateImageInput,
+} from '~/server/schema/image.schema';
 import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -1697,6 +1703,29 @@ type GetImageConnectionRaw = {
   metadata: Prisma.JsonValue;
   entityId: number;
 };
+
+type GetEntityImageRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: NsfwLevel;
+  width: number;
+  height: number;
+  hash: string;
+  meta: ImageMetaProps;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  needsReview: string | null;
+  userId: number;
+  index: number;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
+  entityId: number;
+  entityType: number;
+};
 export const getImagesByEntity = async ({
   id,
   ids,
@@ -1833,4 +1862,114 @@ export const createEntityImages = async ({
   });
 
   return imageRecords;
+};
+
+export const getEntityCoverImage = async ({
+  entities,
+  include,
+}: GetEntitiesCoverImage & {
+  include?: ['tags'];
+}) => {
+  if (entities.length === 0) {
+    return [];
+  }
+
+  const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
+    WITH entities AS (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
+        "entityId" INTEGER,
+        "entityType" VARCHAR
+      )
+    ), targets AS (
+      SELECT
+        e."entityId",
+        e."entityType",
+        CASE
+        WHEN e."entityType" = 'Model'
+            THEN  (
+                SELECT mi."imageId" FROM (
+                  SELECT
+                    m.id,
+                    i.id as "imageId",
+                    ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
+                  FROM "Image" i
+                  JOIN "Post" p ON p.id = i."postId"
+                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+                  JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
+                  WHERE m."id" = e."entityId"
+                      AND i."ingestion" = 'Scanned'
+                      AND i."needsReview" IS NULL
+                  ) mi
+                  WHERE mi.rn = 1
+                )
+        WHEN e."entityType" = 'Image'
+            THEN e."entityId"
+        ELSE (
+            SELECT
+                i.id
+            FROM "Image" i
+            JOIN "ImageConnection" ic ON ic."imageId" = i.id
+              AND ic."entityType" = e."entityType"
+              AND ic."entityId" = e."entityId"
+            LIMIT 1
+        )
+        END as "imageId"
+      FROM entities e
+    )
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i.type,
+      i.metadata,
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      i."index",
+      t."entityId",
+      t."entityType"
+    FROM targets t
+    JOIN "Image" i ON i.id = t."imageId"`;
+
+  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
+  if (include && include.includes('tags')) {
+    const imageIds = images.map((i) => i.id);
+    const rawTags = await dbRead.imageTag.findMany({
+      where: { imageId: { in: imageIds } },
+      select: {
+        imageId: true,
+        tagId: true,
+        tagName: true,
+        tagType: true,
+        tagNsfw: true,
+        score: true,
+        automated: true,
+        upVotes: true,
+        downVotes: true,
+        needsReview: true,
+      },
+    });
+
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfw: tagNsfw,
+      name: tagName,
+    }));
+  }
+
+  return images.map((i) => ({
+    ...i,
+    tags: tagsVar?.filter((x) => x.imageId === i.id),
+  }));
 };

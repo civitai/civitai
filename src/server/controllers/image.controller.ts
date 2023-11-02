@@ -1,13 +1,17 @@
 import {
+  GetEntitiesCoverImage,
   GetImageInput,
+  GetImagesForEntitySchema,
   GetInfiniteImagesInput,
   ImageModerationSchema,
 } from './../schema/image.schema';
 import {
   getAllImages,
+  getEntityCoverImage,
   getImage,
   getImageDetail,
   getImageResources,
+  getImagesByEntityExpanded,
   moderateImages,
 } from './../services/image.service';
 import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
@@ -369,6 +373,16 @@ export const getImageResourcesHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+  try {
+    return await getEntityCoverImage({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 // #endregion
 
 // export const getReportedImages = async ({

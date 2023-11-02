@@ -85,15 +85,6 @@ const useStyles = createStyles((theme) => ({
   targetSelectorRoot: {
     width: '110px',
 
-    [theme.fn.smallerThan('md')]: {
-      display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
-      height: '100%',
-
-      '&, & > [role="combobox"], & > [role="combobox"] *': {
-        height: '100%',
-      },
-    },
-
     [theme.fn.smallerThan('sm')]: {
       width: '25%',
     },
@@ -143,17 +134,20 @@ const SUPPORTED_USERNAME_INDEXES = [
   { value: COLLECTIONS_SEARCH_INDEX, label: 'Collections' },
 ] as const;
 
-const DEFAULT_DROPDOWN_ITEM_LIMIT = 5;
-
 type SupportedSearchIndex = (typeof SUPPORTED_USERNAME_INDEXES)[number]['value'];
 
 type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   supportedIndexes?: SupportedSearchIndex[];
   onItemSelected: (item: ShowcaseItemSchema) => void;
   filters?: string;
+  dropdownItemLimit?: number;
 };
 
-export const QuickSearchDropdown = ({ filters, ...props }: QuickSearchDropdownProps) => {
+export const QuickSearchDropdown = ({
+  filters,
+  dropdownItemLimit = 5,
+  ...props
+}: QuickSearchDropdownProps) => {
   const [targetIndex, setTargetIndex] = useState<SupportedSearchIndex>(MODELS_SEARCH_INDEX);
   const handleTargetChange = (value: SupportedSearchIndex) => {
     setTargetIndex(value);
@@ -161,12 +155,13 @@ export const QuickSearchDropdown = ({ filters, ...props }: QuickSearchDropdownPr
 
   return (
     <InstantSearch searchClient={meilisearch} indexName={targetIndex}>
-      <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
+      <Configure hitsPerPage={dropdownItemLimit} filters={filters} />
 
       <QuickSearchDropdownContent
         {...props}
         indexName={targetIndex}
         onIndexNameChange={handleTargetChange}
+        dropdownItemLimit={dropdownItemLimit}
       />
     </InstantSearch>
   );
@@ -178,6 +173,7 @@ const QuickSearchDropdownContent = ({
   onItemSelected,
   filters,
   supportedIndexes,
+  dropdownItemLimit = 5,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: SearchIndex;
@@ -304,15 +300,16 @@ const QuickSearchDropdownContent = ({
         classNames={classes}
         placeholder="Search Civitai"
         type="search"
+        maxDropdownHeight={300}
         nothingFound={
           !hits.length ? (
             <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
           ) : undefined
         }
         limit={
-          results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
-            ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
-            : DEFAULT_DROPDOWN_ITEM_LIMIT
+          results && results.nbHits > dropdownItemLimit
+            ? dropdownItemLimit + 1 // Allow one more to show more results option
+            : dropdownItemLimit
         }
         defaultValue={query}
         value={search}
