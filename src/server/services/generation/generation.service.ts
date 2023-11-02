@@ -629,8 +629,6 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
     baseModel: orchestratorBaseModel,
     model: `@civitai/${id}`,
     priority: 1,
-    // TODO.luis: confirm the callbackUrl, is it really necessary?
-    callbackUrl: `${env.GENERATION_CALLBACK_HOST}`,
     providers: ['OctoML'],
   };
 
