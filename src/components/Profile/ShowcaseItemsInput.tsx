@@ -19,6 +19,8 @@ import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/consta
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
+import { isEqual } from 'lodash-es';
+import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
@@ -80,6 +82,13 @@ export const ShowcaseItemsInput = ({
       onChange?.(showcaseItems);
     }
   }, [showcaseItems]);
+
+  useDidUpdate(() => {
+    if (!isEqual(value, showcaseItems)) {
+      // Value changed outside.
+      setShowcaseItems(value || []);
+    }
+  }, [value]);
 
   const onItemSelected = (item: ShowcaseItemSchema) => {
     if (

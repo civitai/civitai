@@ -111,8 +111,6 @@ const { openModal, Modal } = createContextModal({
       );
     }
 
-    console.log(form.getValues());
-
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
@@ -247,17 +245,19 @@ const { openModal, Modal } = createContextModal({
           {user?.username && (
             <InputShowcaseItemsInput
               label="Showcase"
-              username={'Lykon'}
+              username={user.username}
               description="Select up to 5 models or images that you're most proud of."
               name="showcaseItems"
             />
           )}
           <Divider />
-          <InputProfileSectionsSettingsInput
-            name="profileSectionsSettings"
-            label="Customize profile page"
-            description="Drag diferent sections on your profile in order of your preference"
-          />
+          {user?.profile && (
+            <InputProfileSectionsSettingsInput
+              name="profileSectionsSettings"
+              label="Customize profile page"
+              description="Drag diferent sections on your profile in order of your preference"
+            />
+          )}
         </Stack>
       </Form>
     );

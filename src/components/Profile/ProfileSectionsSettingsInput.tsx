@@ -18,6 +18,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
+import { isEqual } from 'lodash-es';
 
 type ProfileSectionsSettingsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ProfileSectionSchema[];
@@ -30,7 +31,7 @@ export const ProfileSectionsSettingsInput = ({
   ...props
 }: ProfileSectionsSettingsInputProps) => {
   const [sections, setSections] = useState<ProfileSectionSchema[]>(
-    getAllAvailableProfileSections(value)
+    getAllAvailableProfileSections(value || [])
   );
   const [error, setError] = useState('');
 
@@ -39,6 +40,13 @@ export const ProfileSectionsSettingsInput = ({
       onChange?.(sections);
     }
   }, [sections]);
+
+  useDidUpdate(() => {
+    if (!isEqual(value, sections)) {
+      // Value changed outside.
+      setSections(getAllAvailableProfileSections(value || []));
+    }
+  }, [value]);
 
   const onToggleSection = (key: string) => {
     setSections((current) =>
