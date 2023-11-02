@@ -36,7 +36,7 @@ export function InlineSocialLinkInput({ value, onChange, ...props }: InlineSocia
     const res = zc.safeUrl.safeParse(url);
 
     if (!res.success) {
-      setError(res.error.message ?? 'Invalid URL');
+      setError('Provided URL appears to be invalid');
       return;
     }
 
