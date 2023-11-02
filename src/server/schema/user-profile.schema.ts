@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
+import { SearchIndexEntityType, SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;
 export const getUserProfileSchema = z.object({
@@ -40,7 +41,7 @@ export const profileSectionSchema = z.object({
 export type ShowcaseItemSchema = z.infer<typeof showcaseItemSchema>;
 
 export const showcaseItemSchema = z.object({
-  entityType: z.enum(['Model', 'Image']),
+  entityType: z.nativeEnum(SearchIndexEntityTypes),
   entityId: z.number(),
 });
 
@@ -73,4 +74,5 @@ export const userProfileUpdateSchema = z.object({
       })
     )
     .optional(),
+  badgeId: z.number().nullish(),
 });

@@ -27,6 +27,7 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
+import { CosmeticType } from '@prisma/client';
 
 export function ProfileSidebar({ username }: { username: string }) {
   const currentUser = useCurrentUser();
@@ -42,7 +43,7 @@ export function ProfileSidebar({ username }: { username: string }) {
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === 'Badge' && !!c.data)
+            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
             .slice(0, 4),
     [user]
   );

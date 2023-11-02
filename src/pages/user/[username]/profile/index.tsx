@@ -14,7 +14,7 @@ import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArt
 import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
 import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
-import { constants, profile } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

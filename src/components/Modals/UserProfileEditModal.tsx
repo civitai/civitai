@@ -1,13 +1,26 @@
-import { Button, Center, Divider, Group, Input, Stack, Text, Title } from '@mantine/core';
+import {
+  Box,
+  Button,
+  Center,
+  Divider,
+  Group,
+  HoverCard,
+  Input,
+  Paper,
+  Popover,
+  Stack,
+  Text,
+  useMantineTheme,
+} from '@mantine/core';
 import React, { useEffect } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
 import {
   Form,
-  InputCheckbox,
   InputInlineSocialLinkInput,
   InputProfileImageUpload,
+  InputShowcaseItemsInput,
   InputSimpleImageUpload,
   InputSwitch,
   InputText,
@@ -15,19 +28,24 @@ import {
   useForm,
 } from '~/libs/form';
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
-import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconExclamationMark } from '@tabler/icons-react';
+import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import { constants } from '~/server/common/constants';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { CosmeticType } from '@prisma/client';
 
-const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: number }>({
+const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
   withCloseButton: false,
   size: 'xl',
   Element: ({ context }) => {
-    const queryUtils = trpc.useContext();
     const currentUser = useCurrentUser();
+    const theme = useMantineTheme();
+    const { data: equippedCosmetics } = trpc.user.getCosmetics.useQuery(
+      { equipped: true },
+      { enabled: !!currentUser }
+    );
     const { isLoading, data: user } = trpc.userProfile.get.useQuery(
       {
         username: currentUser ? currentUser.username : '',
@@ -37,15 +55,24 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
       }
     );
 
+    const badges = user
+      ? user.cosmetics
+          .map((c) => c.cosmetic)
+          .filter((c) => c.type === CosmeticType.Badge && !!c.data)
+      : [];
+
     const form = useForm({
       schema: userProfileUpdateSchema,
       shouldUnregister: false,
     });
 
-    console.log(user);
+    const [badgeId] = form.watch(['badgeId']);
 
     useEffect(() => {
-      if (user && user?.profile) {
+      if (user && user?.profile && equippedCosmetics) {
+        const { badges } = equippedCosmetics;
+        const [selectedBadge] = badges;
+
         form.reset({
           ...user.profile,
           // TODO: Fix typing at some point :grimacing:.
@@ -56,9 +83,10 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
             url: link.url,
             type: link.type,
           })),
+          badgeId: selectedBadge?.id ?? null,
         });
       }
-    }, [user?.profile]);
+    }, [user?.profile, equippedCosmetics]);
 
     const handleClose = () => context.close();
     const handleSubmit = (data) => {
@@ -117,16 +145,112 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
           <Divider />
           <InputText name="location" label="Location" maxLength={400} />
           <Divider />
-          <Input.Wrapper label="Privacy">
-            <Stack spacing="xs" mt="md">
-              <InputSwitch label="Show my location" name="privacySettings.showLocation" />
-              <InputSwitch label="Show my followers" name="privacySettings.showFollowers" />
-              <InputSwitch label="Show whom I follow" name="privacySettings.showFollowing" />
-              <InputSwitch label="Show my rating & reviews" name="privacySettings.showRating" />
-            </Stack>
-          </Input.Wrapper>
+          <Stack spacing="xs" mt="md">
+            <Input.Label>Privacy</Input.Label>
+            <InputSwitch label="Show my location" name="privacySettings.showLocation" />
+            <InputSwitch label="Show my followers" name="privacySettings.showFollowers" />
+            <InputSwitch label="Show whom I follow" name="privacySettings.showFollowing" />
+            <InputSwitch label="Show my rating & reviews" name="privacySettings.showRating" />
+          </Stack>{' '}
           <Divider />
           <InputInlineSocialLinkInput name="links" label="Social Links" />
+          <Divider />
+          <Stack>
+            <Group spacing={4}>
+              <Input.Label>Featured Award</Input.Label>
+              <Popover withArrow width={300} withinPortal position="top">
+                <Popover.Target>
+                  <Box
+                    display="inline-block"
+                    sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                  >
+                    <IconInfoCircle size={16} />
+                  </Box>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Text weight={500} size="sm">
+                    Featured Award
+                  </Text>
+                  <Text size="sm">
+                    Badges appear next your username and can even include special effects. You can
+                    earn badges by being a subscriber or earning trophies on the site.
+                  </Text>
+                </Popover.Dropdown>
+              </Popover>
+            </Group>
+
+            {badges.length > 0 ? (
+              <Group spacing={8} noWrap>
+                {badges.map((cosmetic) => {
+                  const data = (cosmetic.data ?? {}) as { url?: string };
+                  const url = (data.url ?? '') as string;
+                  const isSelected = badgeId === cosmetic.id;
+
+                  return (
+                    <HoverCard
+                      key={cosmetic.id}
+                      position="top"
+                      width="auto"
+                      openDelay={300}
+                      withArrow
+                      withinPortal
+                    >
+                      <HoverCard.Target>
+                        <Button
+                          key={cosmetic.id}
+                          p={4}
+                          variant={isSelected ? 'light' : 'subtle'}
+                          style={
+                            isSelected
+                              ? {
+                                  border: '3px solid',
+                                  borderColor: theme.colors.blue[theme.fn.primaryShade()],
+                                }
+                              : undefined
+                          }
+                          onClick={() => {
+                            if (isSelected) {
+                              form.setValue('badgeId', null, { shouldDirty: true });
+                            } else {
+                              form.setValue('badgeId', cosmetic.id, { shouldDirty: true });
+                            }
+                          }}
+                          sx={{ height: 64, width: 64 }}
+                        >
+                          <EdgeMedia src={url} width={64} />
+                        </Button>
+                      </HoverCard.Target>
+                      <HoverCard.Dropdown>
+                        <Stack spacing={0}>
+                          <Text size="sm" weight={500}>
+                            {cosmetic.name}
+                          </Text>
+                        </Stack>
+                      </HoverCard.Dropdown>
+                    </HoverCard>
+                  );
+                })}
+              </Group>
+            ) : (
+              <Paper>
+                <Center sx={{ width: '100%', height: 72 }}>
+                  <Text size="sm" color="dimmed">
+                    Your not earned any awards yet.
+                  </Text>
+                </Center>
+              </Paper>
+            )}
+          </Stack>
+          <Divider />
+          {user?.username && (
+            <InputShowcaseItemsInput
+              label="Showcase"
+              username={'Lykon'}
+              description="Select up to 5 models or images that you're most proud of."
+              name="showcaseItems"
+            />
+          )}
+          <Divider />
         </Stack>
       </Form>
     );
