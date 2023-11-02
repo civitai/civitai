@@ -44,6 +44,7 @@ import {
   baseModelSets,
   generation,
   getGenerationConfig,
+  constants,
 } from '~/server/common/constants';
 import { GenerateFormModel, generationFormShapeSchema } from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
@@ -52,6 +53,10 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import {
+  useGetGenerationRequests,
+  usePollGenerationRequests,
+} from '../utils/generationRequestHooks';
 
 export function GenerateFormView({
   form,
@@ -69,11 +74,17 @@ export function GenerateFormView({
   const { formState } = form;
   const { isSubmitting } = formState;
 
+  // Might be worth moving this to a context provider or zustand store
+  const { requests } = useGetGenerationRequests();
+  const pendingProcessingCount = usePollGenerationRequests(requests);
+  const reachedRequestLimit =
+    pendingProcessingCount >= constants.imageGeneration.maxConcurrentRequests;
+
   // #region [Handle display of survey after 10 minutes]
   if (!localStorage.getItem('generation-first-loaded'))
     localStorage.setItem('generation-first-loaded', Date.now().toString());
-  const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
-  const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
+  // const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
+  // const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
   // #endregion
 
   // #region [Handle parse prompt]
@@ -116,10 +127,13 @@ export function GenerateFormView({
       <BaseModelProvider getBaseModels={getBaseModels}>
         {({ baseModel }) => {
           const isSDXL = baseModel === 'SDXL';
+          const disableGenerateButton =
+            reachedRequestLimit || (isSDXL && !(currentUser?.isMember || currentUser?.isModerator));
+
           return (
-            <Stack h="100%">
-              <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
-                <Stack py="md">
+            <Stack spacing={0} h="100%">
+              <ScrollArea sx={{ flex: 1 }}>
+                <Stack p="md" pb={0}>
                   <Card {...sharedCardProps}>
                     <Stack>
                       <InputResourceSelect
@@ -284,49 +298,58 @@ export function GenerateFormView({
         </Card> */}
                 </Stack>
               </ScrollArea>
-              <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
-                <Card withBorder className={classes.generateButtonQuantity} p={0}>
-                  <Stack spacing={0}>
-                    <Text
-                      size="xs"
-                      color="dimmed"
-                      weight={500}
-                      ta="center"
-                      className={classes.generateButtonQuantityText}
+              <Stack spacing={4} p="md">
+                <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
+                  <Card withBorder className={classes.generateButtonQuantity} p={0}>
+                    <Stack spacing={0}>
+                      <Text
+                        size="xs"
+                        color="dimmed"
+                        weight={500}
+                        ta="center"
+                        className={classes.generateButtonQuantityText}
+                      >
+                        Quantity
+                      </Text>
+                      <InputNumber
+                        name="quantity"
+                        min={1}
+                        max={generation.maxValues.quantity}
+                        className={classes.generateButtonQuantityInput}
+                      />
+                    </Stack>
+                  </Card>
+                  <LoginRedirect reason="image-gen" returnUrl="/generate">
+                    <Button
+                      type="submit"
+                      size="lg"
+                      loading={isSubmitting || loading}
+                      className={classes.generateButtonButton}
+                      disabled={disableGenerateButton}
                     >
-                      Quantity
-                    </Text>
-                    <InputNumber
-                      name="quantity"
-                      min={1}
-                      max={generation.maxValues.quantity}
-                      className={classes.generateButtonQuantityInput}
-                    />
-                  </Stack>
-                </Card>
-                <LoginRedirect reason="image-gen" returnUrl="/generate">
+                      Generate
+                    </Button>
+                  </LoginRedirect>
+                  {/* <Tooltip label="Reset" color="dark" withArrow> */}
                   <Button
-                    type="submit"
-                    size="lg"
-                    loading={isSubmitting || loading}
-                    className={classes.generateButtonButton}
-                    disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
+                    onClick={() => form.reset()}
+                    variant="outline"
+                    className={classes.generateButtonReset}
+                    px="xs"
                   >
-                    Generate
+                    {/* <IconX size={20} strokeWidth={3} /> */}
+                    Clear All
                   </Button>
-                </LoginRedirect>
-                {/* <Tooltip label="Reset" color="dark" withArrow> */}
-                <Button
-                  onClick={() => form.reset()}
-                  variant="outline"
-                  className={classes.generateButtonReset}
-                  px="xs"
-                >
-                  {/* <IconX size={20} strokeWidth={3} /> */}
-                  Clear All
-                </Button>
-                {/* </Tooltip> */}
-              </Group>
+                  {/* </Tooltip> */}
+                </Group>
+                <Text size="xs" color="dimmed">
+                  {reachedRequestLimit
+                    ? 'You have reached the request limit. Please wait until your current requests are finished.'
+                    : `You can queue ${
+                        constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
+                      } more jobs`}
+                </Text>
+              </Stack>
               <GenerationStatusMessage />
               {isSDXL && (
                 <DismissibleAlert

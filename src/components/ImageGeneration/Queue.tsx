@@ -2,12 +2,11 @@ import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
-import { useDeferredValue, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { Virtuoso } from 'react-virtuoso';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 
@@ -17,7 +16,6 @@ export function Queue({
   fetchNextPage,
   hasNextPage,
   isRefetching,
-  isFetching,
   isError,
 }: ReturnType<typeof useGetGenerationRequests>) {
   const { ref, inView } = useInView();
@@ -25,8 +23,8 @@ export function Queue({
 
   // infinite paging
   useEffect(() => {
-    if (inView && !isFetching && !isError) fetchNextPage?.();
-  }, [fetchNextPage, inView, isFetching, isError]);
+    if (inView && !isRefetching) fetchNextPage?.();
+  }, [fetchNextPage, inView, isRefetching]);
 
   if (isError)
     return (
@@ -51,12 +49,12 @@ export function Queue({
         }}
         itemContent={(index, request) => createRenderElement(QueueItem, request.id, request)}
       /> */}
-      <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
-        <Stack py="md">
-          {requests.map((request, index) => (
+      <ScrollArea h="100%">
+        <Stack p="md">
+          {requests.map((request) => (
             <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
           ))}
-          {hasNextPage && !isLoading && !isRefetching && (
+          {hasNextPage && !isRefetching && (
             <Center p="xl" ref={ref} sx={{ height: 36 }} mt="md">
               {inView && <Loader />}
             </Center>

@@ -17,7 +17,7 @@ export default function GenerationTabs({}) {
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
-  const result = useGetGenerationRequests({}, { enabled: view !== 'generate' });
+  const result = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(result.requests);
 
   return (
@@ -29,10 +29,10 @@ export default function GenerationTabs({}) {
       keepMounted={false}
       inverted
     >
-      <Tabs.Panel value="generate" pt={0}>
+      <Tabs.Panel value="generate" p={0}>
         <Generate />
       </Tabs.Panel>
-      <Tabs.Panel value="queue" py={0}>
+      <Tabs.Panel value="queue" p={0}>
         <Queue {...result} />
       </Tabs.Panel>
       <Tabs.Panel value="feed" py={0}>

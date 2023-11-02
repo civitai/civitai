@@ -27,6 +27,7 @@ import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
+  IconBrush,
   IconCircleDashed,
   IconCrown,
   IconHeart,
@@ -333,6 +334,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Training
+          </Group>
+        ),
+      },
+      {
+        href: '/generate',
+        visible: !!currentUser && features.imageGeneration,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBrush stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Create
           </Group>
         ),
       },
