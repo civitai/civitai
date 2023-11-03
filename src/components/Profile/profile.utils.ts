@@ -46,12 +46,13 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
 } as const;
 export const getAllAvailableProfileSections = (userSections: ProfileSectionSchema[] = []) => {
   const sections: ProfileSectionSchema[] = [
-    ...userSections,
+    // Allows to filter items we've removed from available sections.
+    ...userSections.filter(({ key }) => Object.keys(ProfileSectionComponent).includes(key)),
     ...Object.keys(defaultProfileSectionStatus)
       .filter((k) => !userSections.find((u) => u.key === k))
       .map((k) => ({
-        key: k as ProfileSectionSchema['key'],
-        enabled: defaultProfileSectionStatus[k as ProfileSectionSchema['key']],
+        key: k as ProfileSectionType,
+        enabled: defaultProfileSectionStatus[k as ProfileSectionType],
       })),
   ];
 

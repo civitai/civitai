@@ -150,7 +150,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             {badges.length > 4 && (
               <Button
                 color="gray"
-                variant="link"
+                variant="light"
                 onClick={() => setShowAllBadges((prev) => !prev)}
                 size="xs"
                 sx={{ fontSize: 12, fontWeight: 600 }}

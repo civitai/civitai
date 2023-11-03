@@ -9,7 +9,7 @@ export const getUserProfileSchema = z.object({
   id: z.number().optional(),
 });
 
-export const ProfileSectionType = {
+export const ProfileSectionTypeDef = {
   Showcase: 'showcase',
   PopularModels: 'popularModels',
   PopularArticles: 'popularArticles',
@@ -18,12 +18,12 @@ export const ProfileSectionType = {
   RecentReviews: 'recentReviews',
 } as const;
 
-export type ProfileSectionType = (typeof ProfileSectionType)[keyof typeof ProfileSectionType];
+export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof ProfileSectionTypeDef];
 
 export type ProfileSectionSchema = z.infer<typeof profileSectionSchema>;
 
 export const profileSectionSchema = z.object({
-  key: z.nativeEnum(ProfileSectionType),
+  key: z.nativeEnum(ProfileSectionTypeDef),
   enabled: z.boolean(),
 });
 

@@ -16,7 +16,7 @@ import {
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
-import { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
+import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { IconCloudOff } from '@tabler/icons-react';
 
 export const getServerSideProps = createServerSideProps({
@@ -157,7 +157,7 @@ export function UserProfileOverview({ username }: { username: string }) {
               ) : (
                 <Stack mt="md">
                   {sections.map((section) => {
-                    const Section = ProfileSectionComponent[section.key];
+                    const Section = ProfileSectionComponent[section.key as ProfileSectionType];
 
                     if (!Section) {
                       // Useful if we remove a section :)
