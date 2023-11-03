@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityType, SearchIndexEntityTypes } from '~/components/Search/parsers/base';
+import {LinkType} from "@prisma/client";
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;
 export const getUserProfileSchema = z.object({
@@ -54,12 +55,10 @@ export const userProfileUpdateSchema = z.object({
   location: z.string().max(100).nullish(),
   profileImage: z.string().nullish(),
   coverImage: imageSchema.nullish(),
-  coverImageId: z.number().nullish(),
   links: z
     .array(
       z.object({
         id: z.number().optional(),
-        type: z.string(),
         url: z.string(),
       })
     )

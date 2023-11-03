@@ -1,5 +1,5 @@
 import { throwDbError } from '~/server/utils/errorHandling';
-import { getUserWithProfile } from '~/server/services/user-profile.service';
+import {getUserWithProfile, updateUserProfile} from '~/server/services/user-profile.service';
 import { GetUserProfileSchema, UserProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { Context } from '~/server/createContext';
 
@@ -23,8 +23,9 @@ export const updateUserProfileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const user = await getUserWithProfile({
-      username: ctx.user.isModerator ? input.userId ?? ctx.user.id : ctx.user.id,
+    const user = await updateUserProfile({
+      ...input,
+      userId: ctx.user.isModerator ? input.userId || ctx.user.id : ctx.user.id,
     });
 
     return user;

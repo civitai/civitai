@@ -1,5 +1,5 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { getUserProfileHandler } from '~/server/controllers/user-profile.controller';
+import {getUserProfileHandler, updateUserProfileHandler} from '~/server/controllers/user-profile.controller';
 import { getUserProfileSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 
 export const userProfileRouter = router({
@@ -10,5 +10,5 @@ export const userProfileRouter = router({
   update: protectedProcedure
     .use(isFlagProtected('profileOverhaul'))
     .input(userProfileUpdateSchema)
-    .mutation(),
+    .mutation(updateUserProfileHandler),
 });
