@@ -7,6 +7,7 @@ import {
   GetGenerationDataInput,
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
+  PrepareModelInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -620,3 +621,28 @@ export const deleteAllGenerationRequests = async ({ userId }: { userId: number }
 
   if (!deleteResponse.ok) throw throwNotFoundError();
 };
+
+export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModelInput) {
+  const orchestratorBaseModel = baseModel.includes('SDXL') ? 'SDXL' : 'SD_1_5';
+  const payload = {
+    $type: 'prepareModel',
+    baseModel: orchestratorBaseModel,
+    model: `@civitai/${id}`,
+    priority: 1,
+    providers: ['OctoML', 'OctoMLNext'],
+  };
+
+  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+    },
+  });
+
+  if (response.status === 429) throw throwRateLimitError();
+  if (!response.ok) throw new Error(response.statusText);
+
+  return response.json();
+}

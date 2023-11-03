@@ -68,6 +68,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -332,11 +333,13 @@ export const publishModelHandler = async ({
       console.error(e);
     });
 
-    await ctx.track.modelEvent({
-      type: 'Publish',
-      modelId: input.id,
-      nsfw: model.nsfw,
-    });
+    await ctx.track
+      .modelEvent({
+        type: 'Publish',
+        modelId: input.id,
+        nsfw: model.nsfw,
+      })
+      .catch(handleLogError);
 
     return updatedModel;
   } catch (error) {

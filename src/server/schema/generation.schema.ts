@@ -192,3 +192,9 @@ export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedI
 export const bulkDeleteGeneratedImagesSchema = z.object({
   ids: z.number().array(),
 });
+
+export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
+export const prepareModelSchema = z.object({
+  id: z.number(),
+  baseModel: z.string(),
+});

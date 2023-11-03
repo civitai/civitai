@@ -49,7 +49,7 @@ yarn-error.log*
 
 # WebStorm
 .idea
-sample.http
+*.http
 
 # SEO
 /public/sitemap*.xml
