@@ -6,7 +6,7 @@ import {
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
-import { IconApiApp } from '@tabler/icons-react';
+import { IconCategory } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
@@ -57,7 +57,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
       {isLoading ? (
         <ProfileSectionPreview />
       ) : (
-        <ProfileSection title="Models" icon={<IconApiApp />}>
+        <ProfileSection title="Models" icon={<IconCategory />}>
           <Group position="apart" spacing={0}>
             <SortFilter
               type="models"

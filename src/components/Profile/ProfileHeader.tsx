@@ -43,6 +43,7 @@ import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ReactMarkdown from 'react-markdown';
+import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -152,7 +153,12 @@ export function ProfileHeader({ username }: { username: string }) {
     return (
       <Alert px="xs" className={classes.message}>
         <Group spacing="xs" noWrap>
-          <ThemeIcon size={32} variant="subtle" p={0}>
+          <ThemeIcon
+            size={32}
+            // @ts-ignore: transparent variant does work
+            variant="transparent"
+            p={0}
+          >
             <IconBellFilled />
           </ThemeIcon>
           <Stack spacing={0}>
@@ -173,6 +179,7 @@ export function ProfileHeader({ username }: { username: string }) {
   if (isMobile) {
     return (
       <Stack spacing={0}>
+        <ProfileNavigation username={username} />
         {renderMessage()}
         {renderCoverImage()}
         <div className={classes.profileSection}>
@@ -184,6 +191,7 @@ export function ProfileHeader({ username }: { username: string }) {
 
   return (
     <Stack>
+      <ProfileNavigation username={username} />
       {renderCoverImage()}
       {renderMessage()}
     </Stack>

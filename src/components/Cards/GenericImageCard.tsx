@@ -5,7 +5,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import { IconApiApp, IconPhoto } from '@tabler/icons-react';
+import { IconCategory, IconPhoto } from '@tabler/icons-react';
 
 export function GenericImageCard({
   image: coverImage,
@@ -44,7 +44,7 @@ export function GenericImageCard({
   const Icon = (() => {
     switch (entityType) {
       case 'Model': {
-        return IconApiApp;
+        return IconCategory;
       }
       case 'Image': {
         return IconPhoto;
