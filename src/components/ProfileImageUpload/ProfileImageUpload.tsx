@@ -121,7 +121,7 @@ export function ProfileImageUpload({
               justifyContent: 'center',
               alignItems: 'center',
             }}
-            radius="xl"
+            radius="md"
             styles={(theme) => ({
               root: hasError ? { borderColor: theme.colors.red[6] } : undefined,
             })}
@@ -130,23 +130,6 @@ export function ProfileImageUpload({
               maxSize
             )}`}</Text>
           </Dropzone>
-          {files.length > 0 && (
-            <Button
-              onClick={() => {
-                onChange?.(null);
-                filesHandlers.setState([]);
-              }}
-              radius="xl"
-              color="red"
-              variant="light"
-              mr="auto"
-            >
-              <Group spacing={2}>
-                <IconTrash size={16} />
-                <Text>Remove</Text>
-              </Group>
-            </Button>
-          )}
         </Stack>
       </Group>
     </Input.Wrapper>

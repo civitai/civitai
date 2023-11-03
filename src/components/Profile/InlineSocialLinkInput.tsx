@@ -64,7 +64,7 @@ export function InlineSocialLinkInput({ value, onChange, ...props }: InlineSocia
               variant="light"
               color="red"
               size="xs"
-              radius="xl"
+              radius="sm"
               ml="auto"
               onClick={() => {
                 setLinks((current) => {
@@ -82,14 +82,14 @@ export function InlineSocialLinkInput({ value, onChange, ...props }: InlineSocia
           <TextInput
             value={createLink}
             onChange={(e) => setCreateLink(e.target.value)}
-            radius="xl"
+            radius="sm"
             size="sm"
             placeholder="Add new link"
             styles={{
               root: { flex: 1 },
             }}
           />
-          <Button onClick={onAddLink} size="sm" radius="xl">
+          <Button onClick={onAddLink} size="sm" radius="sm">
             Add
           </Button>
         </Group>

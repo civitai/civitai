@@ -2,10 +2,12 @@ import {
   Box,
   Button,
   Center,
+  CloseButton,
   Divider,
   Group,
   HoverCard,
   Input,
+  Loader,
   Paper,
   Popover,
   Stack,
@@ -62,11 +64,9 @@ const { openModal, Modal } = createContextModal({
         });
       },
     });
-    const { data: equippedCosmetics } = trpc.user.getCosmetics.useQuery(
-      { equipped: true },
-      { enabled: !!currentUser }
-    );
-    const { isLoading, data: user } = trpc.userProfile.get.useQuery(
+    const { data: equippedCosmetics, isLoading: loadingCosmetics } =
+      trpc.user.getCosmetics.useQuery({ equipped: true }, { enabled: !!currentUser });
+    const { isLoading: loadingProfile, data: user } = trpc.userProfile.get.useQuery(
       {
         username: currentUser ? currentUser.username : '',
       },
@@ -113,6 +113,8 @@ const { openModal, Modal } = createContextModal({
       mutate(data);
     };
 
+    const isLoading = loadingCosmetics || loadingProfile;
+
     if (!user && !isLoading) {
       return (
         <Stack>
@@ -129,6 +131,14 @@ const { openModal, Modal } = createContextModal({
       );
     }
 
+    if (isLoading) {
+      return (
+        <Center>
+          <Loader />
+        </Center>
+      );
+    }
+
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
@@ -137,9 +147,21 @@ const { openModal, Modal } = createContextModal({
               Edit Profile
             </Text>
 
-            <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
-              Save Changes
-            </Button>
+            <Group>
+              <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
+                Save Changes
+              </Button>
+              <CloseButton
+                size="md"
+                radius="xl"
+                variant="transparent"
+                ml="auto"
+                iconSize={20}
+                onClick={(e) => {
+                  context.close();
+                }}
+              />
+            </Group>
           </Group>
           <Divider />
           <InputProfileImageUpload name="profileImage" label="Edit profile image" />
