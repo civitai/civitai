@@ -114,7 +114,7 @@ export const getUserWithProfile = async ({
 
   const user = await getUser();
 
-  if (!user.profile) {
+  if (!user.profile?.userId) {
     // First time visit to this user's profile. Create base profile:
     await dbClient.userProfile.upsert({
       where: { userId: user.id },
