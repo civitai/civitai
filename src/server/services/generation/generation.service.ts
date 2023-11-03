@@ -646,12 +646,12 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
     providers: ['OctoML', 'OctoMLNext'],
   };
 
-  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
+  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs`, {
     method: 'POST',
     body: JSON.stringify(payload),
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
     },
   });
 

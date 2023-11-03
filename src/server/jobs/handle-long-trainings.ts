@@ -34,11 +34,11 @@ const _handleJob = async (
   }
 
   const eventResp = await fetch(
-    `${env.GENERATION_ENDPOINT}/v1/producer/jobs/${job_id}/events?descending=true&take=1`,
+    `${env.ORCHESTRATOR_ENDPOINT}/v1/producer/jobs/${job_id}/events?descending=true&take=1`,
     {
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+        Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
       },
     }
   );
@@ -134,12 +134,15 @@ const _handleJob = async (
     if (status === 'Submitted') {
       // - if it's not in the queue after 10 minutes, resubmit it
       if (minsDiff > 10) {
-        const queueResponse = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${job_id}`, {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
-          },
-        });
+        const queueResponse = await fetch(
+          `${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs/${job_id}`,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+            },
+          }
+        );
         if (!queueResponse.ok) {
           logJob({
             message: `Could not fetch position in queue.`,
