@@ -16,6 +16,7 @@ import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
+import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
@@ -58,6 +59,7 @@ const useStyles = createStyles((theme) => ({
 export function ImageFiltersDropdown({ query, onChange }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
+  const isClient = useIsClient();
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isSameUser = useIsSameUser(router.query.username);
@@ -102,7 +104,7 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
   const target = (
     <Indicator
       offset={4}
-      label={filterLength ? filterLength : undefined}
+      label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
       showZero={false}

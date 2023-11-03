@@ -4,10 +4,14 @@ import { UpdateSubscriptionSchema } from '~/server/schema/newsletter.schema';
 export async function updateSubscription({
   email,
   ...input
-}: UpdateSubscriptionSchema & { email?: string }) {
+}: UpdateSubscriptionSchema & { email?: string; username?: string }) {
   if (!email) throw new Error('No email provided');
 
-  await mailchimp.setSubscription({ email, subscribed: input.subscribed });
+  await mailchimp.setSubscription({
+    email,
+    username: input.username,
+    subscribed: input.subscribed,
+  });
 }
 
 export async function getSubscription(email?: string) {

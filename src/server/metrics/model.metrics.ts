@@ -87,6 +87,7 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
   ).map((x) => x.modelVersionId);
 
   const batches = chunk(versionIds, 5000);
+  let rows = 0;
   for (const batch of batches) {
     try {
       const affectedModelVersionsResponse = await ch.query({
@@ -121,7 +122,7 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
       for (const batch of batches) {
         const batchJson = JSON.stringify(batch);
 
-        await db.$executeRaw`
+        rows += await db.$executeRaw`
           INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
           SELECT
               mvm.modelVersionId, mvm.timeframe, mvm.downloads
@@ -147,13 +148,14 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
           WHERE mvm.downloads IS NOT NULL
           AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
           ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-            SET "downloadCount" = EXCLUDED."downloadCount";
+            SET "downloadCount" = EXCLUDED."downloadCount", "updatedAt" = now();
         `;
       }
     } catch (e) {
       throw e;
     }
   }
+  console.log('downloads', rows);
 
   if (versionIds.length > 0) {
     // Get affected models from version IDs:
@@ -190,9 +192,10 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
   affectedModelVersionsDb.forEach(({ modelVersionId }) => modelVersionIds.add(modelVersionId));
 
   const batches = chunk([...modelVersionIds], 500);
+  let rows = 0;
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
-    await db.$executeRaw`
+    rows += await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
       SELECT
           mv.id,
@@ -236,9 +239,10 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
       ) tf
       WHERE mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
       GROUP BY mv.id, tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "updatedAt" = now();
     `;
   }
+  console.log('ratings', rows);
 
   if (modelVersionIds.size > 0) {
     // Get affected models from version IDs:
@@ -255,7 +259,7 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
       SELECT DISTINCT modelId
       FROM modelEngagements
       WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-      AND type = 'Favorite' OR type = 'Delete'
+      AND (type = 'Favorite' OR type = 'Delete')
     `,
     format: 'JSONEachRow',
   });
@@ -275,7 +279,7 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
       Prisma.sql`f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)`
     );
 
-  await db.$executeRaw`
+  const rows = await db.$executeRaw`
     INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
     SELECT
         mv."id",
@@ -301,8 +305,9 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
       SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
     ) tf
     GROUP BY mv.id, tf.timeframe
-    ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount";
+    ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount", "updatedAt" = now();
   `;
+  console.log('favorites', rows);
 
   return affectedModels.map(({ modelId }) => modelId);
 }
@@ -327,10 +332,11 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
 
   const modelIds = affectedModels.map((x) => x.modelId);
   const batches = chunk(modelIds, 500);
+  let rows = 0;
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
 
-    await db.$executeRaw`
+    rows += await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "commentCount")
       SELECT
           mv."id",
@@ -357,9 +363,10 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       GROUP BY mv.id, tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "commentCount" = EXCLUDED."commentCount";
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = now();
     `;
   }
+  console.log('comments', rows);
 
   return modelIds;
 }
@@ -377,43 +384,44 @@ async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunC
   const versionIds = affected.map((x) => x.modelVersionId);
 
   const batches = chunk(versionIds, 1000);
+  let rows = 0;
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
 
-    await db.$executeRaw`
+    rows += await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
       SELECT
           i."modelVersionId",
           tf.timeframe,
           COALESCE(SUM(
-              CASE
-                  WHEN tf.timeframe = 'AllTime' THEN 1
-                  WHEN tf.timeframe = 'Year' THEN IIF(i."publishedAt" >= NOW() - interval '1 year', 1, 0)
-                  WHEN tf.timeframe = 'Month' THEN IIF(i."publishedAt" >= NOW() - interval '1 month', 1, 0)
-                  WHEN tf.timeframe = 'Week' THEN IIF(i."publishedAt" >= NOW() - interval '1 week', 1, 0)
-                  WHEN tf.timeframe = 'Day' THEN IIF(i."publishedAt" >= NOW() - interval '1 day', 1, 0)
-              END
+            CASE
+              WHEN tf.timeframe = 'AllTime' THEN 1
+              WHEN tf.timeframe = 'Year' THEN IIF(i."publishedAt" >= NOW() - interval '1 year', 1, 0)
+              WHEN tf.timeframe = 'Month' THEN IIF(i."publishedAt" >= NOW() - interval '1 month', 1, 0)
+              WHEN tf.timeframe = 'Week' THEN IIF(i."publishedAt" >= NOW() - interval '1 week', 1, 0)
+              WHEN tf.timeframe = 'Day' THEN IIF(i."publishedAt" >= NOW() - interval '1 day', 1, 0)
+            END
           ), 0)
       FROM (
-          SELECT
-              ir."modelVersionId",
-              p."publishedAt"
-          FROM "Image" i
-          JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
-          JOIN "Post" p ON i."postId" = p.id
-          JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-          JOIN "Model" m ON m.id = mv."modelId"
-          WHERE p."publishedAt" < now() AND p."publishedAt" IS NOT NULL
-            AND m."userId" != i."userId"
-            AND p."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+        SELECT
+          ir."modelVersionId",
+          p."publishedAt"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        JOIN "ImageResource" ir ON mv.id = ir."modelVersionId"
+        JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
+        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
+        WHERE
+          mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
       ) i
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       GROUP BY i."modelVersionId", tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "imageCount" = EXCLUDED."imageCount";
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "imageCount" = EXCLUDED."imageCount", "updatedAt" = now();
     `;
   }
+  console.log('images', rows);
 
   return getModelIdFromVersions({ versionIds, db });
 }
@@ -427,12 +435,14 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
   `;
 
   const modelIds = affected.map((x) => x.modelId);
+  console.log('collects', modelIds.length);
 
   const batches = chunk(modelIds, 1000);
+  let rows = 0;
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
 
-    await db.$executeRaw`
+    rows += await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "collectedCount")
       SELECT
         mv."id",
@@ -463,9 +473,10 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       GROUP BY mv."id", tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount";
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
     `;
   }
+  console.log('collects', rows);
 
   return modelIds;
 }
@@ -479,12 +490,14 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
   `;
 
   const modelIds = affected.map((x) => x.modelId);
+  console.log('tipped', modelIds.length);
 
   const batches = chunk(modelIds, 1000);
+  let rows = 0;
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
 
-    await db.$executeRaw`
+    rows += await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount")
       SELECT
         mv."id",
@@ -509,12 +522,12 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
         ), 0)
       FROM (
         SELECT
-          "entityId" as "modelId", 
+          "entityId" as "modelId",
           bt."updatedAt",
           bt."amount"
         FROM "BuzzTip" bt
         JOIN "Model" m ON m.id = bt."entityId"
-        WHERE bt."entityType" = 'Model' AND bt."entityId" IS NOT NULL 
+        WHERE bt."entityType" = 'Model' AND bt."entityId" IS NOT NULL
             AND bt."entityId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
        ) i
       JOIN "ModelVersion" mv ON mv."modelId" = i."modelId"
@@ -522,15 +535,16 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       GROUP BY mv."id", tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = now();
     `;
   }
+  console.log('tipped', rows);
 
   return modelIds;
 }
 
-async function updateModelMetrics({ db }: MetricProcessorRunContext) {
-  await db.$executeRaw`
+async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
+  const rows = await db.$executeRaw`
     INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount")
     SELECT
       mv."modelId",
@@ -545,7 +559,7 @@ async function updateModelMetrics({ db }: MetricProcessorRunContext) {
       MAX(mvm."tippedCount") "tippedCount",
       MAX(mvm."tippedAmountCount") "tippedAmountCount"
     FROM "ModelVersionMetric" mvm
-    JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
+    JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id AND mvm."updatedAt" > ${lastUpdate}
     GROUP BY mv."modelId", mvm.timeframe
     ON CONFLICT ("modelId", timeframe) DO UPDATE SET
       "downloadCount" = EXCLUDED."downloadCount",
@@ -558,6 +572,7 @@ async function updateModelMetrics({ db }: MetricProcessorRunContext) {
       "tippedCount" = EXCLUDED."tippedCount",
       "tippedAmountCount" = EXCLUDED."tippedAmountCount";
   `;
+  console.log('models', rows);
 
   return [];
 }

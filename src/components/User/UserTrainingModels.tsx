@@ -46,6 +46,8 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { IconExclamationCircle } from '@tabler/icons-react';
 
 const useStyles = createStyles((theme) => ({
   header: {
@@ -183,6 +185,19 @@ export default function UserTrainingModels() {
 
   return (
     <Stack>
+      <AlertWithIcon
+        icon={<IconExclamationCircle size={16} />}
+        iconColor="yellow"
+        color="yellow"
+        size="md"
+        iconSize="md"
+      >
+        Due to high load, LoRA Trainings are not always successful, they may fail or get stuck in
+        processing. Not to worry though, If your LoRA training fails your buzz will be refunded
+        within 24 hours. If your training has been processing for more than 24 hours it will be auto
+        failed and a refund will be issued to you. If your training fails its recommended that you
+        try again.
+      </AlertWithIcon>
       <ScrollArea
         // TODO [bw] this 600px here should be autocalced via a css var, to capture the top nav, user info section, and bottom bar
         style={{ height: 'max(400px, calc(100vh - 600px))' }}

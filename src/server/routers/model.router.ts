@@ -57,6 +57,7 @@ import {
   getAssociatedResourcesSimple,
   getModelsByCategory,
   getSimpleModelWithVersions,
+  rescanModel,
   setAssociatedResources,
   setModelsCategory,
 } from '~/server/services/model.service';
@@ -64,6 +65,7 @@ import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/use
 import {
   guardedProcedure,
   middleware,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -233,4 +235,5 @@ export const modelRouter = router({
     .input(z.object({ sourceId: z.number() }))
     .use(applyUserPreferences)
     .query(getRecommendedResourcesCardDataHandler),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
 });

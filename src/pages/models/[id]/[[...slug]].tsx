@@ -16,6 +16,7 @@ import {
   Paper,
   Center,
   Box,
+  Loader,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -45,6 +46,7 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
+  IconRadar2,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -384,6 +386,11 @@ export default function ModelDetailsV2({
         },
       }
     );
+  };
+
+  const rescanModelMutation = trpc.model.rescan.useMutation();
+  const handleRescanModel = async () => {
+    rescanModelMutation.mutate({ id });
   };
 
   useEffect(() => {
@@ -744,6 +751,20 @@ export default function ModelDetailsV2({
                           Report
                         </Menu.Item>
                       </LoginRedirect>
+                    )}
+                    {isModerator && (
+                      <Menu.Item
+                        icon={
+                          rescanModelMutation.isLoading ? (
+                            <Loader size={14} />
+                          ) : (
+                            <IconRadar2 size={14} stroke={1.5} />
+                          )
+                        }
+                        onClick={() => handleRescanModel()}
+                      >
+                        Rescan Files
+                      </Menu.Item>
                     )}
                     {currentUser && (
                       <>

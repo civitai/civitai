@@ -19,6 +19,7 @@ import { ModelFileType } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -45,6 +46,7 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
@@ -54,6 +56,7 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetAssociatedResourcesInput,
@@ -61,6 +64,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -330,6 +334,20 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   return { items, isPrivate };
+};
+
+export const rescanModel = async ({ id }: GetByIdInput) => {
+  const modelFiles = await dbRead.modelFile.findMany({
+    where: { modelVersion: { modelId: id } },
+    select: { id: true, url: true },
+  });
+
+  const s3 = getS3Client();
+  const tasks = modelFiles.map((file) => async () => {
+    await requestScannerTasks({ file, s3, tasks: ['Hash', 'Scan'], lowPriority: true });
+  });
+
+  await limitConcurrency(tasks, 10);
 };
 
 export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
@@ -678,10 +696,6 @@ export const publishModelById = async ({
           status: republishing ? ModelStatus.Published : status,
           publishedAt,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
-          lastVersionAt:
-            includeVersions && !republishing && status !== ModelStatus.Scheduled
-              ? publishedAt
-              : undefined,
           modelVersions: includeVersions
             ? {
                 updateMany: {
@@ -691,7 +705,12 @@ export const publishModelById = async ({
               }
             : undefined,
         },
-        select: { id: true, type: true, userId: true },
+        select: {
+          id: true,
+          type: true,
+          userId: true,
+          modelVersions: { select: { id: true, baseModel: true } },
+        },
       });
 
       if (includeVersions) {
@@ -699,7 +718,15 @@ export const publishModelById = async ({
           where: { modelVersionId: { in: versionIds } },
           data: { publishedAt },
         });
+
+        // Send to orchestrator
+        await Promise.all(
+          model.modelVersions.map((version) =>
+            prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
+          )
+        );
       }
+      if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id, tx });
 
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
@@ -899,6 +926,28 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
     await updateModelById({ id, data: { earlyAccessDeadline: null } });
   }
 };
+
+export async function updateModelLastVersionAt({
+  id,
+  tx,
+}: {
+  id: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const dbClient = tx ?? dbWrite;
+
+  const modelVersion = await dbClient.modelVersion.findFirst({
+    where: { modelId: id, status: ModelStatus.Published, publishedAt: { not: null } },
+    select: { publishedAt: true },
+    orderBy: { publishedAt: 'desc' },
+  });
+  if (!modelVersion) return;
+
+  return dbClient.model.update({
+    where: { id },
+    data: { lastVersionAt: modelVersion.publishedAt },
+  });
+}
 
 export const getModelsByCategory = async ({
   user,

@@ -11,8 +11,8 @@
     "neotenous",
     "immatured?",
     "infantile",
-    "scho*l",
-    "lit*le",
+    "scho+l",
+    "lit+le",
     "lil",
     "small",
     "tiny",
@@ -42,8 +42,8 @@
     "shota"
   ],
   "partialNouns": [
-    "\\w*girl*\\w*",
-    "\\w*boy*\\w*"
+    "\\w*girl+\\w*",
+    "\\w*bo+y+\\w*"
   ],
   "nouns": [
     "\\w*kg[0-9]+\\w*",
@@ -76,8 +76,8 @@
     "\\w*youngling\\w*",
     "\\w*ki+d\\w*",
     "\\w*kiddo\\w*",
-    "\\w*bab*y\\w*",
-    "\\w*babies\\w*",
+    "\\w*ba+b+y\\w*",
+    "\\w*ba+bies\\w*",
     "\\w*t[i|o]d*le*r\\w*",
     "\\w*child\\w*",
     "\\w*children\\w*",
