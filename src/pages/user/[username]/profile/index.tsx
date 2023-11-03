@@ -19,6 +19,7 @@ import {
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { IconCloudOff } from '@tabler/icons-react';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+import ProfileLayout from '~/components/Profile/ProfileLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -51,16 +52,12 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export function UserProfileOverview({ username }: { username: string }) {
-  const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
   const { isLoading: isLoadingOverview, data: userOverview } = trpc.userProfile.overview.useQuery({
     username,
   });
-
-  console.log(userOverview);
 
   const sections = useMemo(
     () =>
@@ -84,60 +81,47 @@ export function UserProfileOverview({ username }: { username: string }) {
     return <NotFound />;
   }
 
-  const { profile } = user;
-
   const shouldDisplayUserNullStateBool = shouldDisplayUserNullState({
     overview: userOverview,
     userWithProfile: user,
   });
 
   return (
-    <>
-      <SidebarLayout.Root>
-        <SidebarLayout.Sidebar>
-          <ProfileSidebar username={username} />
-        </SidebarLayout.Sidebar>
-        <SidebarLayout.Content>
-          <Center>
-            <Container size="xl" w="100%">
-              <ProfileHeader username={username} />
-              {shouldDisplayUserNullStateBool ? (
-                <Stack mt="md">
-                  <Stack align="center" py="lg">
-                    <ThemeIcon size={128} radius={100}>
-                      <IconCloudOff size={80} />
-                    </ThemeIcon>
-                    <Text size="lg" maw={600} align="center">
-                      Whoops! Looks like this user doesn&rsquo;t have any content yet or has chosen
-                      not to display anything. Check back later!
-                    </Text>
-                  </Stack>
-                </Stack>
-              ) : (
-                <Stack mt="md">
-                  {sections.map((section) => {
-                    const Section = ProfileSectionComponent[section.key as ProfileSectionType];
+    <ProfileLayout username={username}>
+      <ProfileHeader username={username} />
+      {shouldDisplayUserNullStateBool ? (
+        <Stack mt="md">
+          <Stack align="center" py="lg">
+            <ThemeIcon size={128} radius={100}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+            <Text size="lg" maw={600} align="center">
+              Whoops! Looks like this user doesn&rsquo;t have any content yet or has chosen not to
+              display anything. Check back later!
+            </Text>
+          </Stack>
+        </Stack>
+      ) : (
+        <Stack mt="md">
+          {sections.map((section) => {
+            const Section = ProfileSectionComponent[section.key as ProfileSectionType];
 
-                    if (!Section) {
-                      // Useful if we remove a section :)
-                      return null;
-                    }
+            if (!Section) {
+              // Useful if we remove a section :)
+              return null;
+            }
 
-                    return (
-                      <Section
-                        key={section.key}
-                        // Keep typescript happy.
-                        user={{ ...user, username: user.username as string }}
-                      />
-                    );
-                  })}
-                </Stack>
-              )}
-            </Container>
-          </Center>
-        </SidebarLayout.Content>
-      </SidebarLayout.Root>
-    </>
+            return (
+              <Section
+                key={section.key}
+                // Keep typescript happy.
+                user={{ ...user, username: user.username as string }}
+              />
+            );
+          })}
+        </Stack>
+      )}
+    </ProfileLayout>
   );
 }
 

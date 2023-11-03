@@ -93,12 +93,12 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ProfileHeader({ username, className }: { username: string }) {
+export function ProfileHeader({ username }: { username: string }) {
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
   const isMobile = useIsMobile();
-  const { classes, theme } = useStyles();
+  const { classes } = useStyles();
 
   if (!user) {
     return null;

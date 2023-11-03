@@ -163,14 +163,6 @@ const { openModal, Modal } = createContextModal({
           <Divider />
           <InputText name="location" label="Location" maxLength={400} />
           <Divider />
-          <Stack spacing="xs" mt="md">
-            <Input.Label>Privacy</Input.Label>
-            <InputSwitch label="Show my location" name="privacySettings.showLocation" />
-            <InputSwitch label="Show my followers" name="privacySettings.showFollowers" />
-            <InputSwitch label="Show whom I follow" name="privacySettings.showFollowing" />
-            <InputSwitch label="Show my rating & reviews" name="privacySettings.showRating" />
-          </Stack>{' '}
-          <Divider />
           <InputInlineSocialLinkInput name="links" label="Social Links" />
           <Divider />
           <Stack>
