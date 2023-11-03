@@ -6,14 +6,6 @@ import { parseNumericStringArray } from '~/utils/query-string-helpers';
 
 export function ImageCategories() {
   const router = useRouter();
-  const { data: { items } = { items: [] } } = trpc.tag.getAll.useQuery({
-    entityType: ['Image'],
-    sort: TagSort.MostImages,
-    unlisted: false,
-    categories: true,
-    limit: 100,
-  });
-
   const tagIds = parseNumericStringArray(router.query.tags);
   const handleChange = (ids: number[]) => {
     const { pathname, query } = router;
@@ -23,5 +15,23 @@ export function ImageCategories() {
     });
   };
 
-  return <TagScroller data={items} value={tagIds} onChange={handleChange} />;
+  return <DumbImageCategories value={tagIds ?? []} onChange={handleChange} />;
+}
+
+export function DumbImageCategories({
+  value,
+  onChange,
+}: {
+  value: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const { data: { items } = { items: [] } } = trpc.tag.getAll.useQuery({
+    entityType: ['Image'],
+    sort: TagSort.MostImages,
+    unlisted: false,
+    categories: true,
+    limit: 100,
+  });
+
+  return <TagScroller data={items} value={value} onChange={onChange} />;
 }

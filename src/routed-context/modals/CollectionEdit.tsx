@@ -49,7 +49,6 @@ export default createRoutedContext({
 
     const upsertCollectionMutation = trpc.collection.upsert.useMutation();
     const handleSubmit = (data: UpsertCollectionInput) => {
-      console.log(data);
       upsertCollectionMutation.mutate(
         { ...data, mode: data.mode || null },
         {

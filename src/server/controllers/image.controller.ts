@@ -1,10 +1,12 @@
 import {
+  GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesInput,
   ImageModerationSchema,
 } from './../schema/image.schema';
 import {
   getAllImages,
+  getEntityCoverImage,
   getImage,
   getImageDetail,
   getImageResources,
@@ -369,6 +371,16 @@ export const getImageResourcesHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+  try {
+    return await getEntityCoverImage({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 // #endregion
 
 // export const getReportedImages = async ({

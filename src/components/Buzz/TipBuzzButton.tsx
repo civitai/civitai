@@ -7,9 +7,14 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openSendTipModal } from '../Modals/SendTipModal';
 import { useTrackEvent } from '../TrackView/track.utils';
 
-type Props = ButtonProps & { toUserId: number; entityId?: number; entityType?: string };
+type Props = ButtonProps & {
+  toUserId: number;
+  entityId?: number;
+  entityType?: string;
+  label?: string;
+};
 
-export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }: Props) {
+export function TipBuzzButton({ toUserId, entityId, entityType, label, ...buttonProps }: Props) {
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
@@ -41,7 +46,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }
       >
         <Group spacing={4} noWrap>
           <IconBolt size={14} fill="currentColor" />
-          Tip
+          {label ?? 'Tip'}
         </Group>
       </Button>
     </LoginPopover>

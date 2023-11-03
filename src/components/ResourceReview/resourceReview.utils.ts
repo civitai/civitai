@@ -2,6 +2,10 @@ import { queryClient, trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { getQueryKey } from '@trpc/react-query';
 import { ResourceReviewPaged } from '~/types/router';
+import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useMemo } from 'react';
+import { GetResourceReviewsInfiniteInput } from '~/server/schema/resourceReview.schema';
 
 export const useCreateResourceReview = ({
   modelId,
@@ -74,4 +78,24 @@ export const useUpdateResourceReview = ({
       }
     },
   });
+};
+
+export const useQueryResourceReview = (
+  filters?: Partial<GetResourceReviewsInfiniteInput>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  filters ??= {};
+  const { data, ...rest } = trpc.resourceReview.getInfinite.useInfiniteQuery(
+    { ...filters },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      ...options,
+    }
+  );
+
+  const resourceReviews = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+
+  return { data, resourceReviews, ...rest };
 };

@@ -18,6 +18,17 @@ const searchIndexes = [
   BOUNTIES_SEARCH_INDEX,
 ] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
+export const SearchIndexEntityTypes = {
+  [MODELS_SEARCH_INDEX]: 'Model',
+  [ARTICLES_SEARCH_INDEX]: 'Article',
+  [USERS_SEARCH_INDEX]: 'User',
+  [IMAGES_SEARCH_INDEX]: 'Image',
+  [COLLECTIONS_SEARCH_INDEX]: 'Collection',
+  [BOUNTIES_SEARCH_INDEX]: 'Bounty',
+} as const;
+
+export type SearchIndexEntityType =
+  (typeof SearchIndexEntityTypes)[keyof typeof SearchIndexEntityTypes];
 
 export const searchParamsSchema = z.object({
   query: z.coerce.string().optional(),

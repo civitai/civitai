@@ -10,7 +10,14 @@ const rankColors: Record<number, MantineColor> = {
   100: 'orange',
 };
 
-export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props }: Props) => {
+export const RankBadge = ({
+  rank,
+  size,
+  textSize = 'sm',
+  iconSize = 18,
+  withTitle,
+  ...props
+}: Props) => {
   if (!rank || !rank.leaderboardRank || rank.leaderboardRank > 100) return null;
 
   let badgeColor: MantineColor = 'gray';
@@ -34,7 +41,8 @@ export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props
         <IconBadge
           size={size}
           color={badgeColor}
-          variant={badgeColor === 'gray' ? 'filled' : undefined}
+          // @ts-ignore
+          variant={withTitle ? 'transparent' : badgeColor === 'gray' ? 'filled' : undefined}
           href={`/leaderboard/${rank.leaderboardId}?position=${rank.leaderboardRank}`}
           icon={!hasLeaderboardCosmetic ? <IconCrown size={iconSize} /> : undefined}
           sx={
@@ -50,7 +58,7 @@ export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props
           {...props}
         >
           <Text size={textSize} inline>
-            #{rank.leaderboardRank}
+            #{rank.leaderboardRank} {withTitle ? rank.leaderboardTitle : null}
           </Text>
         </IconBadge>
       </Group>
@@ -67,4 +75,5 @@ type Props = {
   } | null;
   textSize?: MantineSize;
   iconSize?: number;
+  withTitle?: boolean;
 } & Omit<BadgeProps, 'leftSection'>;

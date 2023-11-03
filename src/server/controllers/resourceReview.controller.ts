@@ -5,7 +5,7 @@ import {
   UpdateResourceReviewInput,
   UpsertResourceReviewInput,
 } from '../schema/resourceReview.schema';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import {
   deleteResourceReview,
   upsertResourceReview,
@@ -13,8 +13,11 @@ import {
   createResourceReview,
   getPagedResourceReviews,
   toggleExcludeResourceReview,
+  getUserRatingTotals,
 } from '~/server/services/resourceReview.service';
 import { Context } from '~/server/createContext';
+import { GetByUsernameSchema } from '~/server/schema/user.schema';
+import { dbRead } from '~/server/db/client';
 
 export const upsertResourceReviewHandler = async ({
   input,
@@ -114,6 +117,24 @@ export const toggleExcludeResourceReviewHandler = async ({
       nsfw: result.nsfw,
     });
     return result;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserRatingTotalHandler = async ({ input }: { input: GetByUsernameSchema }) => {
+  try {
+    const { username } = input;
+    const user = await dbRead.user.findUnique({
+      where: { username },
+    });
+
+    if (!user) {
+      throw throwBadRequestError('User not found');
+    }
+
+    const rating = await getUserRatingTotals({ userId: user.id });
+    return rating;
   } catch (error) {
     throw throwDbError(error);
   }

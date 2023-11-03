@@ -101,6 +101,7 @@ model User {
   leaderboardShowcase String?
   referral            UserReferral?
   onboardingSteps     OnboardingStep[]      @default([Moderation, Buzz])
+  profile             UserProfile?
 
   accounts             Account[]
   sessions             Session[]
@@ -1063,6 +1064,7 @@ model Image {
   collectionItems CollectionItem[]
   collections     Collection[]
   connections     ImageConnection[]
+  UserProfile     UserProfile[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -3203,6 +3205,23 @@ model GenerationCoverage {
   covered        Boolean
 
   @@id([modelId, modelVersionId])
+}
+
+model UserProfile {
+  userId                  Int
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coverImageId            Int?
+  coverImage              Image?    @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  bio                     String?
+  message                 String?
+  messageAddedAt          DateTime?
+  location                String?
+  nsfw                    Boolean   @default(false)
+  privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
+  profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
+  showcaseItems           Json      @default("[]")
+
+  @@id([userId])
 }
 
 /// @view

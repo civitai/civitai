@@ -11,6 +11,7 @@ import { periodModeSchema } from '~/server/schema/base.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { BrowsingMode, ImageSort } from './../common/enums';
+import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 
 const stringToNumber = z.preprocess(
   (value) => (value ? Number(value) : undefined),
@@ -270,4 +271,14 @@ export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema
 export const removeImageResourceSchema = z.object({
   imageId: z.number(),
   resourceId: z.number(),
+});
+
+export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
+export const getEntitiesCoverImage = z.object({
+  entities: z.array(
+    z.object({
+      entityType: z.nativeEnum(SearchIndexEntityTypes),
+      entityId: z.number(),
+    })
+  ),
 });
