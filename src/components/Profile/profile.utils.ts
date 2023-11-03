@@ -19,7 +19,6 @@ export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = 
   showcase: true,
   popularModels: true,
   popularArticles: true,
-  recent: true,
   modelsOverview: false,
   imagesOverview: false,
   recentReviews: false,
@@ -32,7 +31,6 @@ export const ProfileSectionComponent: Record<
   showcase: ShowcaseSection,
   popularModels: PopularModelsSection,
   popularArticles: PopularArticlesSection,
-  recent: MyModelsSection, // TODO
   modelsOverview: MyModelsSection,
   imagesOverview: MyImagesSection,
   recentReviews: RecentReviewsSection,
@@ -42,7 +40,6 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
   showcase: 'Showcase',
   popularModels: 'Most popular models',
   popularArticles: 'Most popular articles',
-  recent: 'My recent activity',
   modelsOverview: 'Models overview',
   imagesOverview: 'Images overview',
   recentReviews: 'Recent reviews',
@@ -82,11 +79,8 @@ export const shouldDisplayUserNullState = ({
     return sections.find((s) => keys.includes(s.key) && s.enabled);
   };
 
-  const recentContent = overview.modelCount + overview.imageCount;
-
   return (
     (showcaseItems.length === 0 || !someSectionEnabled(['showcase'])) &&
-    (recentContent === 0 || !someSectionEnabled(['recent'])) &&
     (overview.modelCount === 0 || !someSectionEnabled(['modelsOverview', 'popularModels'])) &&
     (overview.imageCount === 0 || !someSectionEnabled(['imagesOverview'])) &&
     (overview.articleCount === 0 || !someSectionEnabled(['popularArticles'])) &&

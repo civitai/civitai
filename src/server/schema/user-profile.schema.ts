@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityType, SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import {LinkType} from "@prisma/client";
+import { LinkType } from '@prisma/client';
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;
 export const getUserProfileSchema = z.object({
@@ -13,7 +13,6 @@ export const ProfileSectionType = {
   Showcase: 'showcase',
   PopularModels: 'popularModels',
   PopularArticles: 'popularArticles',
-  Recent: 'recent',
   ModelsOverview: 'modelsOverview',
   ImagesOverview: 'imagesOverview',
   RecentReviews: 'recentReviews',

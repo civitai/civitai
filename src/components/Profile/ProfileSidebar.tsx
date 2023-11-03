@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Avatar,
   Button,
   Divider,
   Group,
@@ -11,8 +10,6 @@ import {
 } from '@mantine/core';
 import { IconMapPin, IconPencilMinus, IconRss } from '@tabler/icons-react';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { getInitials } from '~/utils/string-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -24,30 +21,27 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { formatDate } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
-import { showSuccessNotification } from '~/utils/notifications';
-import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
-import { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
 
-export function ProfileSidebar({ username }: { username: string }) {
+export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
   const isCurrentUser = currentUser?.id === user?.id;
   const theme = useMantineTheme();
+  const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
 
-  const awards = useMemo(
+  const badges = useMemo(
     () =>
       !user
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-            .slice(0, 4),
+            .filter((c) => c.type === CosmeticType.Badge && !!c.data),
     [user]
   );
 
@@ -58,7 +52,7 @@ export function ProfileSidebar({ username }: { username: string }) {
   const { profile, stats } = user;
 
   return (
-    <Stack>
+    <Stack className={className}>
       <UserAvatar user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
@@ -133,13 +127,13 @@ export function ProfileSidebar({ username }: { username: string }) {
 
       <Divider my="sm" />
 
-      {awards.length > 0 && (
+      {badges.length > 0 && (
         <Stack>
           <Text size="md" color="dimmed" weight={590}>
-            Awards
+            Badges
           </Text>
           <Group spacing="xs">
-            {awards.map((award) => {
+            {(showAllBadges ? badges : badges.slice(0, 4)).map((award) => {
               const data = (award.data ?? {}) as { url?: string };
               const url = (data.url ?? '') as string;
 
@@ -153,6 +147,18 @@ export function ProfileSidebar({ username }: { username: string }) {
                 </Tooltip>
               );
             })}
+            {badges.length > 4 && (
+              <Button
+                color="gray"
+                variant="link"
+                onClick={() => setShowAllBadges((prev) => !prev)}
+                size="xs"
+                sx={{ fontSize: 12, fontWeight: 600 }}
+                fullWidth
+              >
+                {showAllBadges ? 'Show less' : `Show all (${badges.length})`}
+              </Button>
+            )}
           </Group>
           <Divider my="sm" />
         </Stack>

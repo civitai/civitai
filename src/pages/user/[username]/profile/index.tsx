@@ -106,7 +106,6 @@ export function UserProfileOverview({ username }: { username: string }) {
                     width: '100%',
                     overflow: 'hidden',
                     height: 0,
-                    // 5 / 17 aspect ratio
                     paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
                     borderRadius: theme.radius.md,
                     display: 'flex',
@@ -159,6 +158,11 @@ export function UserProfileOverview({ username }: { username: string }) {
                 <Stack mt="md">
                   {sections.map((section) => {
                     const Section = ProfileSectionComponent[section.key];
+
+                    if (!Section) {
+                      // Useful if we remove a section :)
+                      return null;
+                    }
 
                     return (
                       <Section

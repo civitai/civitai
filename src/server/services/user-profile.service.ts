@@ -9,7 +9,12 @@ import {
 } from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
-import { ImageIngestionStatus, LinkType, Prisma } from '@prisma/client';
+import {
+  CollectionReadConfiguration,
+  ImageIngestionStatus,
+  LinkType,
+  Prisma,
+} from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
 
@@ -47,6 +52,7 @@ export const getUserContentOverview = async ({
       bountyEntryCount: number;
       receivedReviewCount: number;
       writtenReviewCount: number;
+      collectionCount: number;
     }[]
   >`
     SELECT 
@@ -56,7 +62,8 @@ export const getUserContentOverview = async ({
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() ) as "bountyCount",
         (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
         (SELECT COUNT(*)::INT FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id) as "receivedReviewCount",
-        (SELECT COUNT(*)::INT FROM "ResourceReview" r WHERE r."userId" = u.id) as "writtenReviewCount"
+        (SELECT COUNT(*)::INT FROM "ResourceReview" r WHERE r."userId" = u.id) as "writtenReviewCount",
+        (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration" ) as "collectionCount"
     FROM "User" u
     WHERE u.id = ${userId}
   `;
