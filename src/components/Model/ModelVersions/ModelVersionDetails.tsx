@@ -237,9 +237,14 @@ export function ModelVersionDetails({
               Clip Skip: {version.clipSkip.toLocaleString()}
             </Badge>
           )}
+          {!!version.settings?.strength && (
+            <Badge size="sm" radius="sm" color="cyan">
+              {`Strength: ${version.settings.strength}`}
+            </Badge>
+          )}
         </Group>
       ),
-      visible: !!version.clipSkip,
+      visible: !!version.clipSkip || !!version.settings?.strength,
     },
     {
       label: 'Trigger Words',

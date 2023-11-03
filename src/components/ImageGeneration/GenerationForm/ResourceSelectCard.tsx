@@ -64,8 +64,8 @@ export const ResourceSelectCard = ({
                 <NumberSlider
                   value={resource.strength}
                   onChange={(strength) => onUpdate({ ...resource, strength })}
-                  min={-1}
-                  max={2}
+                  min={resource.minStrength ?? -1}
+                  max={resource.maxStrength ?? 2}
                   step={0.05}
                   sliderProps={{ marks: [{ value: 0 }, { value: 1 }] }}
                 />

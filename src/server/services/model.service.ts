@@ -1194,3 +1194,12 @@ export const setAssociatedResources = async (
   ]);
 };
 // #endregion
+
+export const getRecommendedResourcesByVersionId = async ({ sourceId }: { sourceId: number }) => {
+  const resources = await dbRead.recommendedResource.findMany({
+    where: { sourceId, source: { status: 'Published' } },
+    select: { resource: { select: { id: true, modelId: true } } },
+  });
+
+  return resources.map(({ resource }) => resource);
+};

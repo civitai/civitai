@@ -94,6 +94,20 @@ export const modelVersionUpsertSchema = z.object({
   // recipe: z.array(recipeSchema).optional(),
 });
 
+export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
+const recommendedSettingsSchema = z.object({
+  minStrength: z.number().optional(),
+  maxStrength: z.number().optional(),
+  strength: z.number().optional(),
+});
+
+export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
+const recommendedResourceSchema = z.object({
+  id: z.number().optional(),
+  resourceId: z.number(),
+  settings: recommendedSettingsSchema.optional(),
+});
+
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
@@ -131,6 +145,8 @@ export const modelVersionUpsertSchema2 = z.object({
         .nullish(),
     })
     .nullish(),
+  settings: recommendedSettingsSchema.nullish(),
+  recommendedResources: z.array(recommendedResourceSchema).optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;

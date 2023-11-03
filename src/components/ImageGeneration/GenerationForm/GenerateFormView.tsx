@@ -125,10 +125,11 @@ export function GenerateFormView({
       schema={generationFormShapeSchema.deepPartial()}
     >
       <BaseModelProvider getBaseModels={getBaseModels}>
-        {({ baseModel }) => {
+        {({ baseModel, baseModels }) => {
           const isSDXL = baseModel === 'SDXL';
           const disableGenerateButton =
             reachedRequestLimit || (isSDXL && !(currentUser?.isMember || currentUser?.isModerator));
+          const [supportedBaseModel] = baseModels;
 
           return (
             <Stack spacing={0} h="100%">
@@ -142,7 +143,7 @@ export function GenerateFormView({
                         buttonLabel="Add Model"
                         withAsterisk
                         options={{
-                          baseModel,
+                          baseModel: supportedBaseModel,
                           type: ModelType.Checkpoint,
                           canGenerate: true,
                         }}
@@ -152,7 +153,7 @@ export function GenerateFormView({
                         limit={9}
                         buttonLabel="Add additional resource"
                         options={{
-                          baseModel,
+                          baseModel: supportedBaseModel,
                           types: getGenerationConfig(baseModel).additionalResourceTypes,
                           canGenerate: true,
                         }}
@@ -279,7 +280,7 @@ export function GenerateFormView({
                                   label={getDisplayName(ModelType.VAE)}
                                   buttonLabel="Add VAE"
                                   options={{
-                                    baseModel,
+                                    baseModel: supportedBaseModel,
                                     type: ModelType.VAE,
                                     canGenerate: true,
                                   }}
