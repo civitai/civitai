@@ -278,26 +278,24 @@ export function ModelCard({ data }: Props) {
                                       </Menu.Dropdown>
                                     </Menu>
                                   )}
-                                  {features.imageGeneration &&
-                                    data.canGenerate &&
-                                    data.version?.id && (
-                                      <HoverActionButton
-                                        label="Create"
-                                        size={30}
-                                        color="white"
-                                        variant="filled"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          generationPanel.open({
-                                            type: 'model',
-                                            id: data.version.id,
-                                          });
-                                        }}
-                                      >
-                                        <IconBrush stroke={2.5} size={16} />
-                                      </HoverActionButton>
-                                    )}
+                                  {features.imageGeneration && data.canGenerate && (
+                                    <HoverActionButton
+                                      label="Create"
+                                      size={30}
+                                      color="white"
+                                      variant="filled"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        generationPanel.open({
+                                          type: 'model',
+                                          id: data.id,
+                                        });
+                                      }}
+                                    >
+                                      <IconBrush stroke={2.5} size={16} />
+                                    </HoverActionButton>
+                                  )}
                                   <CivitiaLinkManageButton
                                     modelId={data.id}
                                     modelName={data.name}

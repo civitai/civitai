@@ -482,15 +482,24 @@ export const getGenerationData = async (
     case 'image':
       return await getImageGenerationData(props.id);
     case 'model':
-      return await getResourceGenerationData(props.id);
+      return await getResourceGenerationData({ modelId: props.id });
+    case 'modelVersion':
+      return await getResourceGenerationData({ modelVersionId: props.id });
     case 'random':
       return await getRandomGenerationData(props.includeResources);
   }
 };
 
-export const getResourceGenerationData = async (id: number): Promise<Generation.Data> => {
-  const resource = await dbRead.modelVersion.findUnique({
-    where: { id },
+export const getResourceGenerationData = async ({
+  modelId,
+  modelVersionId,
+}: {
+  modelId?: number;
+  modelVersionId?: number;
+}): Promise<Generation.Data> => {
+  if (!modelId && !modelVersionId) throw new Error('modelId or modelVersionId required');
+  const resource = await dbRead.modelVersion.findFirst({
+    where: { id: modelVersionId, modelId },
     select: {
       ...generationResourceSelect,
       clipSkip: true,
@@ -500,8 +509,8 @@ export const getResourceGenerationData = async (id: number): Promise<Generation.
   if (!resource) throw throwNotFoundError();
   const resources = [resource];
   if (resource.vaeId) {
-    const vae = await dbRead.modelVersion.findUnique({
-      where: { id },
+    const vae = await dbRead.modelVersion.findFirst({
+      where: { id: modelVersionId, modelId },
       select: { ...generationResourceSelect, clipSkip: true },
     });
     if (vae) resources.push({ ...vae, vaeId: null });

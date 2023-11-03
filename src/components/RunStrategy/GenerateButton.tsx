@@ -7,7 +7,7 @@ export function GenerateButton({ iconOnly, modelVersionId }: Props) {
     <Button
       variant="filled"
       sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-      onClick={() => generationPanel.open({ type: 'model', id: modelVersionId })}
+      onClick={() => generationPanel.open({ type: 'modelVersion', id: modelVersionId })}
     >
       {iconOnly ? (
         <IconBrush size={24} />
