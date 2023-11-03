@@ -88,7 +88,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             leftIcon={<IconPencilMinus size={16} />}
             size="md"
             onClick={() => {
-              openUserProfileEditModal();
+              openUserProfileEditModal({});
             }}
             sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
             radius="xl"
