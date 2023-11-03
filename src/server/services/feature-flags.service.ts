@@ -25,7 +25,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Image Generation (Beta)',
     description: `Generate images with any supported AI resource. This is a beta feature, so please report any issues you find!`,
-    availability: ['public'],
+    availability: ['user'],
   },
   enhancedSearch: {
     toggleable: true,

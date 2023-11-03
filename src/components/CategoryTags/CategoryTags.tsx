@@ -81,7 +81,13 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function CategoryTags() {
+export function CategoryTags({
+  selected,
+  setSelected,
+}: {
+  selected?: string;
+  setSelected?: (tag?: string) => void;
+}) {
   const { classes, cx, theme } = useStyles();
   const { set, tag: tagQuery } = useModelQueryParams();
 
@@ -108,6 +114,9 @@ export function CategoryTags() {
 
   const handleSetTag = (tag: string | undefined) => set({ tag });
 
+  const _tag = selected ?? tagQuery;
+  const _setTag = setSelected ?? handleSetTag;
+
   return (
     <ScrollArea
       viewportRef={viewportRef}
@@ -129,22 +138,22 @@ export function CategoryTags() {
       <Group className={classes.tagsGroup} spacing={8} noWrap>
         <Button
           className={classes.tag}
-          variant={!tagQuery ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          color={!tagQuery ? 'blue' : 'gray'}
-          onClick={() => handleSetTag(undefined)}
+          variant={!_tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          color={!_tag ? 'blue' : 'gray'}
+          onClick={() => _setTag(undefined)}
           compact
         >
           All
         </Button>
         {categories.map((tag) => {
-          const active = tagQuery === tag.name;
+          const active = _tag === tag.name;
           return (
             <Button
               key={tag.id}
               className={classes.tag}
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
-              onClick={() => handleSetTag(!active ? tag.name : undefined)}
+              onClick={() => _setTag(!active ? tag.name : undefined)}
               compact
             >
               {tag.name}
