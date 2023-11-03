@@ -14,7 +14,7 @@ import {
 import { IconLock } from '@tabler/icons-react';
 import React from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { Feed } from '~/components/ImageGeneration/Feed';
+import { Feed, FloatingFeedActions } from '~/components/ImageGeneration/Feed';
 import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { Queue } from '~/components/ImageGeneration/Queue';
@@ -86,9 +86,12 @@ export default function GeneratePage() {
         <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray">
           <Tabs.List p="md" mt={-16} className={classes.tabList}>
             <Container size="md" sx={{ width: '100%' }}>
-              <Group align="flex-start">
-                <Tabs.Tab value="queue">Queue</Tabs.Tab>
-                <Tabs.Tab value="feed">Feed</Tabs.Tab>
+              <Group position="apart">
+                <Group align="flex-start">
+                  <Tabs.Tab value="queue">Queue</Tabs.Tab>
+                  <Tabs.Tab value="feed">Feed</Tabs.Tab>
+                </Group>
+                <FloatingFeedActions images={result.images} />
               </Group>
             </Container>
           </Tabs.List>
@@ -105,25 +108,6 @@ export default function GeneratePage() {
     </>
   );
 }
-
-// function Sidebar() {
-//   const isMobile = useIsMobile();
-//   const isClient = useIsClient();
-
-//   if (!isClient || isMobile) return <></>;
-
-//   return (
-//     <Navbar height="100%" width={{ base: 400 }}>
-//       <Navbar.Section grow>
-//         <GenerateFormLogic />
-//       </Navbar.Section>
-//     </Navbar>
-//   );
-// }
-
-// GeneratePage.getLayout = (page: React.ReactNode) => (
-//   <AppLayout navbar={<Sidebar />}>{page}</AppLayout>
-// );
 
 const useStyles = createStyles((theme) => {
   const sidebarWidth = 400;
@@ -154,8 +138,9 @@ const useStyles = createStyles((theme) => {
     },
     content: {
       marginLeft: sidebarWidth,
-      // maxHeight: 'calc(100% - var(--mantine-header-height))',
+      // height: 'calc(100% - var(--mantine-header-height))',
       // overflow: 'hidden',
+      // marginBottom: -61,
 
       [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
         marginLeft: sidebarWidthLg,

@@ -42,20 +42,18 @@ export function Queue({
         }}
         itemContent={(index, request) => createRenderElement(QueueItem, request.id, request)}
       /> */}
-      <ScrollArea h="100%">
-        <Stack p="md">
-          {requests.map((request) => (
-            <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
-          ))}
-          {hasNextPage && (
-            <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-              <Center p="xl" sx={{ height: 36 }} mt="md">
-                <Loader />
-              </Center>
-            </InViewLoader>
-          )}
-        </Stack>
-      </ScrollArea>
+      <Stack p="md">
+        {requests.map((request) => (
+          <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
+        ))}
+        {hasNextPage && (
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+            <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Loader />
+            </Center>
+          </InViewLoader>
+        )}
+      </Stack>
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>

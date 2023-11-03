@@ -1,6 +1,6 @@
-import { Tabs, createStyles, Badge } from '@mantine/core';
-import { IconBrush, IconListDetails, IconSlideshow } from '@tabler/icons-react';
-import { Feed } from './Feed';
+import { createStyles, Badge, Card, Stack, Group, Button } from '@mantine/core';
+import { IconBrush, IconListDetails, IconSlideshow, TablerIconsProps } from '@tabler/icons-react';
+import { Feed, FloatingFeedActions } from './Feed';
 import { Queue } from './Queue';
 import {
   useGetGenerationRequests,
@@ -20,67 +20,87 @@ export default function GenerationTabs({}) {
   const result = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(result.requests);
 
+  type Tabs = Record<
+    typeof view,
+    {
+      Icon: (props: TablerIconsProps) => JSX.Element;
+      header?: () => JSX.Element;
+      render: () => JSX.Element;
+      label: React.ReactNode;
+    }
+  >;
+
+  const tabs: Tabs = {
+    generate: {
+      Icon: IconBrush,
+      render: () => <Generate />,
+      label: <>Generate</>,
+    },
+    queue: {
+      Icon: IconListDetails,
+      render: () => <Queue {...result} />,
+      label: (
+        <>
+          Queue{' '}
+          {pendingProcessingCount > 0 && (
+            <Badge color="red" variant="filled" size="xs">
+              {pendingProcessingCount}
+            </Badge>
+          )}
+        </>
+      ),
+    },
+    feed: {
+      Icon: IconSlideshow,
+      header: () => (
+        <FloatingFeedActions images={result.images}>
+          {({ selected, render }) => (selected.length ? <Card radius={0}>{render}</Card> : <></>)}
+        </FloatingFeedActions>
+      ),
+      render: () => (
+        <Stack spacing={0}>
+          <Feed {...result} />
+        </Stack>
+      ),
+      label: <>Feed</>,
+    },
+  };
+
+  const header = tabs[view].header;
+  const render = tabs[view].render;
+
   return (
-    <Tabs
-      value={view}
-      onTabChange={setView}
-      variant="pills"
-      classNames={classes}
-      keepMounted={false}
-      inverted
-    >
-      <Tabs.Panel value="generate" p={0}>
-        <Generate />
-      </Tabs.Panel>
-      <Tabs.Panel value="queue" p={0}>
-        <Queue {...result} />
-      </Tabs.Panel>
-      <Tabs.Panel value="feed" p={0}>
-        <Feed {...result} />
-      </Tabs.Panel>
+    <Stack style={{ height: '100%', overflow: 'hidden' }} spacing={0}>
+      {header && <div>{header()}</div>}
+      <div style={{ flexGrow: 1, overflowY: 'auto' }}>{render()}</div>
 
       {currentUser && (
-        <Tabs.List grow>
-          <Tabs.Tab value="generate" icon={<IconBrush size={16} />} data-autofocus>
-            Generate
-          </Tabs.Tab>
-          <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>
-            Queue{' '}
-            {pendingProcessingCount > 0 && (
-              <Badge color="red" variant="filled" size="xs">
-                {pendingProcessingCount}
-              </Badge>
-            )}
-          </Tabs.Tab>
-          <Tabs.Tab value="feed" icon={<IconSlideshow size={16} />}>
-            Feed
-          </Tabs.Tab>
-        </Tabs.List>
+        <Group spacing={0} grow className={classes.tabsList}>
+          {Object.entries(tabs).map(([key, { Icon, label }], index) => (
+            <Button
+              key={index}
+              data-autofocus={index === 0}
+              onClick={() => setView(key as any)}
+              variant={key === view ? 'filled' : 'default'}
+              radius={0}
+              sx={{ height: 54 }}
+            >
+              <Stack align="center" spacing={4}>
+                <Icon size={16} />
+                {label}
+              </Stack>
+            </Button>
+          ))}
+        </Group>
       )}
-    </Tabs>
+    </Stack>
   );
 }
 
 const useStyles = createStyles((theme) => ({
-  root: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  panel: {
-    padding: theme.spacing.md,
-    flex: 1,
-    overflowY: 'auto',
-  },
   tabsList: {
-    gap: 0,
     borderTop: `1px solid ${
       theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
     }`,
-  },
-  tab: {
-    borderRadius: 0,
-    flexDirection: 'column',
-    gap: '4px',
   },
 }));
