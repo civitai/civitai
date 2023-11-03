@@ -41,6 +41,8 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
+import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -638,25 +640,17 @@ export const deleteAllGenerationRequests = async ({ userId }: { userId: number }
 
 export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModelInput) {
   const orchestratorBaseModel = baseModel.includes('SDXL') ? 'SDXL' : 'SD_1_5';
-  const payload = {
-    $type: 'prepareModel',
-    baseModel: orchestratorBaseModel,
-    model: `@civitai/${id}`,
-    priority: 1,
-    providers: ['OctoML', 'OctoMLNext'],
-  };
-
-  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+  const response = await orchestratorCaller.prepareModel({
+    payload: {
+      baseModel: orchestratorBaseModel,
+      model: `@civitai/${id}`,
+      priority: 1,
+      providers: ['OctoML', 'OctoMLNext'],
     },
   });
 
   if (response.status === 429) throw throwRateLimitError();
-  if (!response.ok) throw new Error(response.statusText);
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
-  return response.json();
+  return response.data;
 }

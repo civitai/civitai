@@ -4,7 +4,28 @@ import { trainingDetailsParams } from '~/server/schema/model-version.schema';
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
   export type JobResponse<TJob = Job> = { token: string; jobs: TJob[] };
-  export type JobQueryParams = { wait?: boolean };
+  export type JobQueryParams = { id?: string; wait?: boolean };
+
+  type QueuePosition = {
+    precedingJobs: number;
+    precedingCost: number;
+    jobs: number;
+    cost: number;
+    estimatedThroughputRate: number;
+    workers: number;
+    precedingPriorityJobs: number;
+    precedingPriorityCost: number;
+    estimatedStartDuration: string;
+    estimatedCompletedDuration: string;
+    estimatedStartDate: Date;
+    estimatedCompletedDate: Date;
+  };
+  type ServiceProvider = {
+    support: string;
+    queuePosition: QueuePosition;
+  };
+
+  export type GetJobResponse = { serviceProviders: Record<string, ServiceProvider> };
 
   export namespace Training {
     export type CopyAssetJob = Orchestrator.Job<{ found?: boolean; fileSize?: number }>;
@@ -69,26 +90,6 @@ export namespace Orchestrator {
 
     export type TextToImageJobPayload = z.infer<typeof textToImageJobInputSchema>;
 
-    type QueuePosition = {
-      precedingJobs: number;
-      precedingCost: number;
-      jobs: number;
-      cost: number;
-      estimatedThroughputRate: number;
-      workers: number;
-      precedingPriorityJobs: number;
-      precedingPriorityCost: number;
-      estimatedStartDuration: string;
-      estimatedCompletedDuration: string;
-      estimatedStartDate: Date;
-      estimatedCompletedDate: Date;
-    };
-
-    type ServiceProvider = {
-      support: string;
-      queuePosition: QueuePosition;
-    };
-
     export type TextToImageJob = Orchestrator.Job<{ blobKey: string; available: boolean }> & {
       serviceProviders: Record<string, ServiceProvider>;
     };
@@ -116,5 +117,26 @@ export namespace Orchestrator {
 
     export type BlobActionPayload = z.infer<typeof blobActionSchema>;
     export type BlobActionResponse = { success: boolean };
+
+    export type PrepareModelJob = Orchestrator.Job & {
+      serviceProviders: Record<string, ServiceProvider>;
+    };
+    export type PrepareModelPayload = {
+      baseModel: string;
+      model: string;
+      priority: number;
+      providers: string[];
+    };
+    export type PrepareModelResponse = Orchestrator.JobResponse<PrepareModelJob>;
+  }
+
+  export namespace Events {
+    export type QueryParams = {
+      id: string;
+      take?: number;
+      descending?: boolean;
+    };
+
+    export type GetResponse = Array<{ type?: string; dateTime?: string }>;
   }
 }

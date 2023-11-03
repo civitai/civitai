@@ -75,6 +75,22 @@ class OrchestratorCaller extends HttpCaller {
       payload: { ...payload, $type: 'imageResourceTraining' },
     });
   }
+
+  public getEventById({ id, take, descending }: Orchestrator.Events.QueryParams) {
+    return this.get<Orchestrator.Events.GetResponse>(`/v1/producer/jobs/${id}/events`, {
+      queryParams: { take, descending },
+    });
+  }
+
+  public getJobById({ id }: Orchestrator.JobQueryParams) {
+    return this.get<Orchestrator.GetJobResponse>(`/v1/consumer/jobs/${id}`);
+  }
+
+  public prepareModel({ payload }: { payload: Orchestrator.Generation.PrepareModelPayload }) {
+    return this.post<Orchestrator.Generation.PrepareModelResponse>('/v1/consumer/jobs', {
+      payload: { ...payload, $type: 'prepareModel' },
+    });
+  }
 }
 
 export default OrchestratorCaller.getInstance();
