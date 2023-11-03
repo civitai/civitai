@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -98,6 +99,8 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
 
 export const upsertModelVersion = async ({
   monetization,
+  settings,
+  recommendedResources,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -114,6 +117,7 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          settings: settings !== null ? settings : Prisma.JsonNull,
           monetization:
             monetization && monetization.type
               ? {
@@ -134,6 +138,16 @@ export const upsertModelVersion = async ({
                 }
               : undefined,
           index: 0,
+          recommendedResources: recommendedResources
+            ? {
+                createMany: {
+                  data: recommendedResources?.map((resource) => ({
+                    resourceId: resource.resourceId,
+                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                  })),
+                },
+              }
+            : undefined,
         },
       }),
       ...existingVersions.map(({ id }, index) =>
@@ -165,6 +179,7 @@ export const upsertModelVersion = async ({
       where: { id: data.id },
       data: {
         ...data,
+        settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
           existingVersion.monetization?.id && !monetization
             ? { delete: true }
@@ -213,6 +228,31 @@ export const upsertModelVersion = async ({
                 },
               }
             : undefined,
+        recommendedResources: recommendedResources
+          ? {
+              deleteMany: {
+                id: {
+                  notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
+                },
+              },
+              createMany: {
+                data: recommendedResources
+                  .filter((resource) => !resource.id)
+                  .map((resource) => ({
+                    resourceId: resource.resourceId,
+                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                  })),
+              },
+              update: recommendedResources
+                .filter((resource) => resource.id)
+                .map((resource) => ({
+                  where: { id: resource.id },
+                  data: {
+                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                  },
+                })),
+            }
+          : undefined,
       },
     });
 

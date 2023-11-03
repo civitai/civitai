@@ -9,6 +9,7 @@ import {
   ModelVersionMeta,
   ModelVersionUpsertInput,
   PublishVersionInput,
+  RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import { DeclineReviewSchema, ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
@@ -72,6 +73,22 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         files: withFiles ? { select: modelFileSelect } : false,
         posts: withFiles ? { select: { id: true } } : false,
         requireAuth: true,
+        settings: true,
+        recommendedResources: {
+          select: {
+            id: true,
+            resource: {
+              select: {
+                id: true,
+                name: true,
+                trainedWords: true,
+                baseModel: true,
+                model: { select: { id: true, name: true, type: true } },
+              },
+            },
+            settings: true,
+          },
+        },
         monetization: {
           select: {
             id: true,
@@ -99,6 +116,17 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       files: version.files as unknown as Array<
         Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
       >,
+      settings: version.settings as RecommendedSettingsSchema | undefined,
+      recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
+        id: resource.id,
+        name: resource.name,
+        baseModel: resource.baseModel,
+        modelId: resource.model.id,
+        modelName: resource.model.name,
+        modelType: resource.model.type,
+        trainedWords: resource.trainedWords,
+        strength: (settings as any)?.strength,
+      })),
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;

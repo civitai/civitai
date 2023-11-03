@@ -23,6 +23,7 @@ type Props<TData> = {
   itemId?: (data: TData) => string | number;
   id?: string | number;
   empty?: React.ReactNode;
+  itemWrapperProps?: React.HTMLAttributes<HTMLDivElement>;
 };
 
 export function MasonryCarousel<TData>({
@@ -33,6 +34,7 @@ export function MasonryCarousel<TData>({
   itemId,
   id,
   empty,
+  itemWrapperProps,
 }: Props<TData>) {
   const { classes } = useStyles();
   const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContainerContext();
@@ -62,7 +64,7 @@ export function MasonryCarousel<TData>({
         const key = itemId ? itemId(item) : index;
         return (
           <Carousel.Slide key={key} id={key.toString()}>
-            <div style={{ position: 'relative', paddingTop: '100%' }}>
+            <div style={{ position: 'relative', paddingTop: '100%' }} {...itemWrapperProps}>
               {createRenderElement(RenderComponent, index, item, height)}
             </div>
           </Carousel.Slide>

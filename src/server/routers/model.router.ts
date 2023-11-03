@@ -26,6 +26,7 @@ import {
   toggleModelLockHandler,
   unpublishModelHandler,
   upsertModelHandler,
+  getRecommendedResourcesCardDataHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -228,4 +229,8 @@ export const modelRouter = router({
   setAssociatedResources: protectedProcedure
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
+  getRecommendedResourcesCardData: publicProcedure
+    .input(z.object({ sourceId: z.number() }))
+    .use(applyUserPreferences)
+    .query(getRecommendedResourcesCardDataHandler),
 });

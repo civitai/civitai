@@ -39,6 +39,7 @@ import { chunk, uniqBy } from 'lodash-es';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { calculateGenerationBill } from '~/server/common/generation';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -72,8 +73,10 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
-function mapGenerationResource(resource: GenerationResourceSelect): Generation.Resource {
-  const { model, ...x } = resource;
+function mapGenerationResource(
+  resource: GenerationResourceSelect & { settings?: RecommendedSettingsSchema | null }
+): Generation.Resource {
+  const { model, settings, ...x } = resource;
   return {
     id: x.id,
     name: x.name,
@@ -82,7 +85,9 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelName: model.name,
     modelType: model.type,
     baseModel: x.baseModel,
-    strength: 1,
+    strength: settings?.strength ?? 1,
+    minStrength: settings?.minStrength ?? -1,
+    maxStrength: settings?.maxStrength ?? 2,
   };
 }
 
