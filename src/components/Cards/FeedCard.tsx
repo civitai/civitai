@@ -1,6 +1,6 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
-import React from 'react';
+import React, { forwardRef } from 'react';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number; cssRatio: number }> =
@@ -55,48 +55,46 @@ const useCSSAspectRatioStyles = createStyles<string, { aspectRatio: number }>(
   })
 );
 
-export function FeedCard({
-  href,
-  children,
-  aspectRatio = 'portrait',
-  className,
-  useCSSAspectRatio,
-  ...props
-}: Props) {
-  const { ratio, cssRatio } = aspectRatioValues[aspectRatio];
-  const { classes, cx } = useStyles();
-  const { classes: cssAspectRatioClasses } = useCSSAspectRatioStyles({ aspectRatio: cssRatio });
+export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
+  ({ href, children, aspectRatio = 'portrait', className, useCSSAspectRatio, ...props }, ref) => {
+    const { ratio, cssRatio } = aspectRatioValues[aspectRatio];
+    const { classes, cx } = useStyles();
+    const { classes: cssAspectRatioClasses } = useCSSAspectRatioStyles({ aspectRatio: cssRatio });
 
-  const card = useCSSAspectRatio ? (
-    <Card<'a'>
-      className={cx(cssAspectRatioClasses.root, className)}
-      {...props}
-      component={href ? 'a' : undefined}
-    >
-      <AspectRatio ratio={ratio} w="100%">
-        {children}
-      </AspectRatio>
-    </Card>
-  ) : (
-    <Card<'a'>
-      className={cx(classes.root, className)}
-      {...props}
-      component={href ? 'a' : undefined}
-    >
-      <AspectRatio ratio={ratio} w="100%">
-        {children}
-      </AspectRatio>
-    </Card>
-  );
+    const card = useCSSAspectRatio ? (
+      <Card<'a'>
+        className={cx(cssAspectRatioClasses.root, className)}
+        {...props}
+        component={href ? 'a' : undefined}
+        ref={ref}
+      >
+        <AspectRatio ratio={ratio} w="100%">
+          {children}
+        </AspectRatio>
+      </Card>
+    ) : (
+      <Card<'a'>
+        className={cx(classes.root, className)}
+        {...props}
+        component={href ? 'a' : undefined}
+      >
+        <AspectRatio ratio={ratio} w="100%">
+          {children}
+        </AspectRatio>
+      </Card>
+    );
 
-  return href ? (
-    <Link href={href} passHref>
-      {card}
-    </Link>
-  ) : (
-    card
-  );
-}
+    return href ? (
+      <Link href={href} passHref>
+        {card}
+      </Link>
+    ) : (
+      card
+    );
+  }
+);
+
+FeedCard.displayName = 'FeedCard';
 
 type Props = CardProps & {
   children: React.ReactNode;
