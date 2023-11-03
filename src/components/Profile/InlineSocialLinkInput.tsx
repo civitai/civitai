@@ -14,6 +14,8 @@ import { IconTrash, IconUser } from '@tabler/icons-react';
 import { useDidUpdate } from '@mantine/hooks';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { zc } from '~/utils/schema-helpers';
+import { isEqual } from 'lodash-es';
+import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
 
 type InlineSocialLinkInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: { url: string; id?: number }[];
@@ -30,6 +32,13 @@ export function InlineSocialLinkInput({ value, onChange, ...props }: InlineSocia
       onChange?.(links);
     }
   }, [links]);
+
+  useDidUpdate(() => {
+    if (!isEqual(value, links)) {
+      // Value changed outside.
+      setLinks(value || []);
+    }
+  }, [value]);
 
   const onAddLink = () => {
     const url = createLink;

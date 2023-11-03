@@ -19,7 +19,7 @@ import {
 
 const IMAGE_CARD_WIDTH = 332;
 
-export function ArticleCard({ data, aspectRatio }: Props) {
+export function ArticleCard({ data, aspectRatio, useCSSAspectRatio }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, title, cover, publishedAt, user, tags, stats } = data;
@@ -34,7 +34,11 @@ export function ArticleCard({ data, aspectRatio }: Props) {
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: data.id });
 
   return (
-    <FeedCard href={`/articles/${id}/${slugit(title)}`} aspectRatio={aspectRatio}>
+    <FeedCard
+      href={`/articles/${id}/${slugit(title)}`}
+      aspectRatio={aspectRatio}
+      useCSSAspectRatio={useCSSAspectRatio}
+    >
       <div className={classes.root}>
         <Group
           spacing={4}
@@ -122,4 +126,8 @@ export function ArticleCard({ data, aspectRatio }: Props) {
   );
 }
 
-type Props = { data: ArticleGetAll['items'][0]; aspectRatio?: 'flat' | 'landscape' };
+type Props = {
+  data: ArticleGetAll['items'][0];
+  aspectRatio?: 'flat' | 'landscape';
+  useCSSAspectRatio: boolean;
+};

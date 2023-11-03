@@ -46,7 +46,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
         <ProfileSection title="Most popular articles" icon={<IconPencilMinus />}>
           <div className={classes.grid}>
             {articles.map((article) => (
-              <ArticleCard data={article} aspectRatio="flat" key={article.id} />
+              <ArticleCard data={article} aspectRatio="flat" key={article.id} useCSSAspectRatio />
             ))}
           </div>
 

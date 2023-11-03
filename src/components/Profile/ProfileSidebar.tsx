@@ -28,6 +28,7 @@ import React, { useMemo } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
+import { showSuccessNotification } from '~/utils/notifications';
 
 export function ProfileSidebar({ username }: { username: string }) {
   const currentUser = useCurrentUser();

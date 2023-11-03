@@ -37,14 +37,31 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType } from '@prisma/client';
 import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { z } from 'zod';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
   withCloseButton: false,
   size: 'xl',
   Element: ({ context }) => {
+    const utils = trpc.useContext();
     const currentUser = useCurrentUser();
     const theme = useMantineTheme();
+    const { mutate, isLoading: isUpdating } = trpc.userProfile.update.useMutation({
+      onSuccess: () => {
+        if (currentUser) {
+          utils.userProfile.get.invalidate({ username: currentUser.username });
+        }
+        showSuccessNotification({ message: 'Profile updated successfully' });
+        context.close();
+      },
+      onError: async (error) => {
+        showErrorNotification({
+          title: 'There was an error awarding the entry',
+          error: new Error(error.message),
+        });
+      },
+    });
     const { data: equippedCosmetics } = trpc.user.getCosmetics.useQuery(
       { equipped: true },
       { enabled: !!currentUser }
@@ -93,7 +110,7 @@ const { openModal, Modal } = createContextModal({
 
     const handleClose = () => context.close();
     const handleSubmit = (data: z.infer<typeof userProfileUpdateSchema>) => {
-      console.log(data);
+      mutate(data);
     };
 
     if (!user && !isLoading) {
@@ -120,7 +137,7 @@ const { openModal, Modal } = createContextModal({
               Edit Profile
             </Text>
 
-            <Button radius="xl" size="md" loading={isLoading} type="submit">
+            <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
               Save Changes
             </Button>
           </Group>

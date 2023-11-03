@@ -1,5 +1,5 @@
 import { throwDbError } from '~/server/utils/errorHandling';
-import {getUserWithProfile, updateUserProfile} from '~/server/services/user-profile.service';
+import { getUserWithProfile, updateUserProfile } from '~/server/services/user-profile.service';
 import { GetUserProfileSchema, UserProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { Context } from '~/server/createContext';
 
@@ -30,6 +30,7 @@ export const updateUserProfileHandler = async ({
 
     return user;
   } catch (error) {
+    console.log(error);
     throw throwDbError(error);
   }
 };
