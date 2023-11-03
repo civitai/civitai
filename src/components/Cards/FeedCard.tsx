@@ -77,6 +77,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         className={cx(classes.root, className)}
         {...props}
         component={href ? 'a' : undefined}
+        ref={ref}
       >
         <AspectRatio ratio={ratio} w="100%">
           {children}
