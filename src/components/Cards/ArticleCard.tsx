@@ -19,7 +19,7 @@ import {
 
 const IMAGE_CARD_WIDTH = 332;
 
-export function ArticleCard({ data, aspectRatio, useCSSAspectRatio }: Props) {
+export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, title, cover, publishedAt, user, tags, stats } = data;
@@ -129,5 +129,5 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio }: Props) {
 type Props = {
   data: ArticleGetAll['items'][0];
   aspectRatio?: 'flat' | 'landscape';
-  useCSSAspectRatio: boolean;
+  useCSSAspectRatio?: boolean;
 };

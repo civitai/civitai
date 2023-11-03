@@ -1,4 +1,10 @@
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
+import { ProfileSectionProps } from '~/components/Profile/ProfileSection';
+import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
+import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
+import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
+import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
+import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
 
 // Used to determine which sections are enabled by default when the user does not have them
 // on the profile items' list. This is used such that when we add a new section, if we want to enforce
@@ -11,6 +17,19 @@ export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = 
   modelsOverview: false,
   imagesOverview: false,
   recentReviews: false,
+} as const;
+
+export const ProfileSectionComponent: Record<
+  ProfileSectionType,
+  React.ComponentType<ProfileSectionProps>
+> = {
+  showcase: MyModelsSection, // TODO
+  popularModels: PopularModelsSection,
+  popularArticles: PopularArticlesSection,
+  recent: MyModelsSection, // TODO
+  modelsOverview: MyModelsSection,
+  imagesOverview: MyImagesSection,
+  recentReviews: RecentReviewsSection,
 } as const;
 
 export const profileSectionLabels: Record<ProfileSectionType, string> = {

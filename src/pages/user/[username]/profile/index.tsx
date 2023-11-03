@@ -15,6 +15,12 @@ import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
 import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
 import { constants } from '~/server/common/constants';
+import { useMemo } from 'react';
+import {
+  getAllAvailableProfileSections,
+  ProfileSectionComponent,
+} from '~/components/Profile/profile.utils';
+import { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -51,6 +57,16 @@ export function UserProfileOverview({ username }: { username: string }) {
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
+
+  const sections = useMemo(
+    () =>
+      !user
+        ? []
+        : getAllAvailableProfileSections(
+            user.profile?.profileSectionsSettings as ProfileSectionSchema[]
+          ).filter((section) => section.enabled),
+    [user]
+  );
 
   if (isLoading) {
     return (
@@ -120,11 +136,10 @@ export function UserProfileOverview({ username }: { username: string }) {
                 </div>
               )}
               <Stack mt="md">
-                <PopularModelsSection user={{ id: user.id, username }} />
-                <PopularArticlesSection user={{ id: user.id, username }} />
-                <MyModelsSection user={{ id: user.id, username }} />
-                <MyImagesSection user={{ id: user.id, username }} />
-                <RecentReviewsSection user={{ id: user.id, username }} />
+                {sections.map((section) => {
+                  const Section = ProfileSectionComponent[section.key];
+                  return <Section key={section.key} user={{ id: user.id, username }} />;
+                })}
               </Stack>
             </Container>
           </Center>

@@ -29,6 +29,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
+import { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
 
 export function ProfileSidebar({ username }: { username: string }) {
   const currentUser = useCurrentUser();
