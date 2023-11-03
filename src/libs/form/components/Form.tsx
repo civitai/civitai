@@ -101,7 +101,8 @@ function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.AnyZ
   const watchedValues = useWatch();
   const { setValue } = useFormContext();
 
-  const getStorage = () => storage || window.sessionStorage;
+  const getStorage = () =>
+    typeof window !== 'undefined' ? storage || window.sessionStorage : undefined;
 
   const parseStoredData = (values: any) => {
     if (!schema) return values;
@@ -110,7 +111,7 @@ function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.AnyZ
   };
 
   useEffect(() => {
-    const str = getStorage().getItem(name);
+    const str = getStorage()?.getItem(name);
 
     if (str) {
       const values = JSON.parse(str);
@@ -140,7 +141,7 @@ function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.AnyZ
       : Object.assign({}, watchedValues);
 
     if (Object.entries(values).length) {
-      getStorage().setItem(name, JSON.stringify(values));
+      getStorage()?.setItem(name, JSON.stringify(values));
     }
   }, [watchedValues, restored]); //eslint-disable-line
 

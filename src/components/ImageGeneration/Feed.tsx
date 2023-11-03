@@ -87,7 +87,7 @@ export function Feed({
 
   return (
     <Stack sx={{ position: 'relative', height: '100%' }} spacing={0}>
-      <div className={classes.searchPanel}>
+      {/* <div className={classes.searchPanel}>
         <HoverCard withArrow>
           <HoverCard.Target>
             <Overlay blur={1} opacity={0.3} color="#000" />
@@ -140,8 +140,8 @@ export function Feed({
             </Group>
           </Group>
         </Card>
-      </div>
-      <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
+      </div> */}
+      <ScrollArea h="100%">
         <div className={classes.grid}>
           {feed
             .map((image) => {
@@ -322,8 +322,7 @@ const useStyles = createStyles((theme) => ({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
     gap: theme.spacing.md,
-    paddingTop: 4 + 36 + theme.spacing.xs,
-    paddingBottom: theme.spacing.md,
+    padding: theme.spacing.md,
 
     [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
       gridTemplateColumns: '1fr 1fr',

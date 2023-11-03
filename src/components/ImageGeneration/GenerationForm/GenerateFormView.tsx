@@ -57,6 +57,7 @@ import {
   useGetGenerationRequests,
   usePollGenerationRequests,
 } from '../utils/generationRequestHooks';
+import useIsClient from '~/hooks/useIsClient';
 
 export function GenerateFormView({
   form,
@@ -69,6 +70,7 @@ export function GenerateFormView({
   onError?: (error: unknown) => void;
   loading?: boolean;
 }) {
+  const isClient = useIsClient();
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const { formState } = form;
@@ -81,7 +83,7 @@ export function GenerateFormView({
     pendingProcessingCount >= constants.imageGeneration.maxConcurrentRequests;
 
   // #region [Handle display of survey after 10 minutes]
-  if (!localStorage.getItem('generation-first-loaded'))
+  if (isClient && !localStorage.getItem('generation-first-loaded'))
     localStorage.setItem('generation-first-loaded', Date.now().toString());
   // const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
   // const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
@@ -119,7 +121,7 @@ export function GenerateFormView({
       form={form}
       onSubmit={onSubmit}
       onError={onError}
-      style={{ height: '100%' }}
+      style={{ height: '100%', width: '100%' }}
       name="generation-form"
       storage={typeof window !== 'undefined' ? window.localStorage : undefined}
       schema={generationFormShapeSchema.deepPartial()}
