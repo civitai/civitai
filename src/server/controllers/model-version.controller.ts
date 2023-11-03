@@ -24,6 +24,7 @@ import {
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -212,12 +213,14 @@ export const publishModelVersionHandler = async ({
     });
 
     // Send event in background
-    ctx.track.modelVersionEvent({
-      type: 'Publish',
-      modelId: updatedVersion.modelId,
-      modelVersionId: updatedVersion.id,
-      nsfw: updatedVersion.model.nsfw,
-    });
+    ctx.track
+      .modelVersionEvent({
+        type: 'Publish',
+        modelId: updatedVersion.modelId,
+        modelVersionId: updatedVersion.id,
+        nsfw: updatedVersion.model.nsfw,
+      })
+      .catch(handleLogError);
 
     return updatedVersion;
   } catch (error) {

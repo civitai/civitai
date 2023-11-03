@@ -16,6 +16,7 @@ import {
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
+import { prepareModelInOrchestrator } from './generation/generation.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -311,18 +312,13 @@ export const publishModelVersionById = async ({
     select: {
       id: true,
       modelId: true,
+      baseModel: true,
       model: { select: { userId: true, id: true, type: true, nsfw: true } },
     },
   });
 
   if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id: version.modelId });
-
-  // const { model } = version;
-  // await playfab.trackEvent(model.userId, {
-  //   eventName: 'user_update_model',
-  //   modelId: model.id,
-  //   type: model.type,
-  // });
+  await prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel });
 
   return version;
 };
