@@ -16,6 +16,7 @@ import {
   Paper,
   Center,
   Box,
+  Loader,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -45,6 +46,7 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
+  IconRadar2,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -107,6 +109,7 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { RecommendedResources } from '~/components/Model/Recommended/RecommendedResources';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -383,6 +386,11 @@ export default function ModelDetailsV2({
         },
       }
     );
+  };
+
+  const rescanModelMutation = trpc.model.rescan.useMutation();
+  const handleRescanModel = async () => {
+    rescanModelMutation.mutate({ id });
   };
 
   useEffect(() => {
@@ -744,6 +752,20 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </LoginRedirect>
                     )}
+                    {isModerator && (
+                      <Menu.Item
+                        icon={
+                          rescanModelMutation.isLoading ? (
+                            <Loader size={14} />
+                          ) : (
+                            <IconRadar2 size={14} stroke={1.5} />
+                          )
+                        }
+                        onClick={() => handleRescanModel()}
+                      >
+                        Rescan Files
+                      </Menu.Item>
+                    )}
                     {currentUser && (
                       <>
                         <HideUserButton as="menu-item" userId={model.user.id} />
@@ -936,9 +958,16 @@ export default function ModelDetailsV2({
       </Container>
       {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
         <AssociatedModels
-          fromId={model.id}
+          fromId={latestVersion.id}
           type="Suggested"
           label="Suggested Resources"
+          ownerId={model.user.id}
+        />
+      )}
+      {canLoadBelowTheFold && model.supportsRecommendedResources && (
+        <RecommendedResources
+          sourceId={latestVersion.id}
+          label="Recommended Resources"
           ownerId={model.user.id}
         />
       )}

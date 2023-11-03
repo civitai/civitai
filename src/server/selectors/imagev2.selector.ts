@@ -43,6 +43,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     createdAt: true,
     mimeType: true,
     scannedAt: true,
+    ingestion: true,
     type: true,
     metadata: true,
     stats: {

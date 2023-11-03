@@ -400,6 +400,7 @@ type GetAllImagesRaw = {
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
+  ingestion: ImageIngestionStatus;
   needsReview: string | null;
   userId: number;
   index: number;
@@ -765,6 +766,7 @@ export const getAllImages = async ({
       i."mimeType",
       i.type,
       i.metadata,
+      i.ingestion,
       i."scannedAt",
       i."needsReview",
       i."userId",
@@ -985,6 +987,7 @@ export const getImage = async ({
       i."scannedAt",
       i."needsReview",
       i."postId",
+      i.ingestion,
       i.type,
       i.metadata,
       COALESCE(im."cryCount", 0) "cryCount",
@@ -1420,6 +1423,7 @@ type GetImageByCategoryRaw = {
   type: MediaType;
   metadata: Prisma.JsonValue;
   scannedAt: Date;
+  ingestion: ImageIngestionStatus;
   needsReview: string | null;
   postId: number;
   username: string | null;
@@ -1567,6 +1571,7 @@ export const getImagesByCategory = async ({
         i."scannedAt",
         i."needsReview",
         i."postId",
+        i.ingestion,
         u.username,
         u.image AS "userImage",
         i."createdAt",
@@ -1690,6 +1695,7 @@ type GetImageConnectionRaw = {
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
+  ingestion: ImageIngestionStatus;
   needsReview: string | null;
   userId: number;
   index: number;
@@ -1746,6 +1752,7 @@ export const getImagesByEntity = async ({
       i."mimeType",
       i.type,
       i.metadata,
+      i.ingestion,
       i."scannedAt",
       i."needsReview",
       i."userId",

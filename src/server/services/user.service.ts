@@ -161,8 +161,17 @@ export const isUsernamePermitted = (username: string) => {
   return isPermitted;
 };
 
-export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpdateInput }) => {
-  return dbWrite.user.update({ where: { id }, data });
+export const updateUserById = async ({
+  id,
+  data,
+}: {
+  id: number;
+  data: Prisma.UserUpdateInput;
+}) => {
+  const user = await dbWrite.user.update({ where: { id }, data });
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return user;
 };
 
 export const acceptTOS = ({ id }: { id: number }) => {

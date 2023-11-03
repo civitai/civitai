@@ -1,13 +1,18 @@
-import { Button, Group, Text, Tooltip } from '@mantine/core';
+import { Button, ButtonProps, Group, Text, Tooltip } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import { generationPanel } from '~/store/generation.store';
 
-export function GenerateButton({ iconOnly, modelVersionId }: Props) {
+export function GenerateButton({ iconOnly, modelVersionId, ...buttonProps }: Props) {
   const button = (
     <Button
       variant="filled"
       sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-      onClick={() => generationPanel.open({ type: 'modelVersion', id: modelVersionId })}
+      onClick={() =>
+        modelVersionId
+          ? generationPanel.open({ type: 'modelVersion', id: modelVersionId })
+          : generationPanel.open()
+      }
+      {...buttonProps}
     >
       {iconOnly ? (
         <IconBrush size={24} />
@@ -30,4 +35,4 @@ export function GenerateButton({ iconOnly, modelVersionId }: Props) {
     button
   );
 }
-type Props = { iconOnly?: boolean; modelVersionId: number };
+type Props = Omit<ButtonProps, 'onClick'> & { iconOnly?: boolean; modelVersionId?: number };

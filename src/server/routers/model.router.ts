@@ -26,6 +26,7 @@ import {
   toggleModelLockHandler,
   unpublishModelHandler,
   upsertModelHandler,
+  getRecommendedResourcesCardDataHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -56,6 +57,7 @@ import {
   getAssociatedResourcesSimple,
   getModelsByCategory,
   getSimpleModelWithVersions,
+  rescanModel,
   setAssociatedResources,
   setModelsCategory,
 } from '~/server/services/model.service';
@@ -63,6 +65,7 @@ import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/use
 import {
   guardedProcedure,
   middleware,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -228,4 +231,9 @@ export const modelRouter = router({
   setAssociatedResources: protectedProcedure
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
+  getRecommendedResourcesCardData: publicProcedure
+    .input(z.object({ sourceId: z.number() }))
+    .use(applyUserPreferences)
+    .query(getRecommendedResourcesCardDataHandler),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
 });

@@ -65,8 +65,8 @@ const mapTrainingStatus = {
   Updated: TrainingStatus.Processing,
   Succeeded: TrainingStatus.InReview,
   Failed: TrainingStatus.Failed,
-  Rejected: TrainingStatus.Failed,
-  LateRejected: TrainingStatus.Failed,
+  Rejected: TrainingStatus.Processing,
+  LateRejected: TrainingStatus.Processing,
   Deleted: TrainingStatus.Failed,
   Expired: TrainingStatus.Failed,
 } as const;

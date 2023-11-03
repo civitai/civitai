@@ -73,6 +73,29 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
     ? getRandom(Object.values(ModelSort))
     : query.sort ?? ModelSort.Newest;
 
+  // For contest collections, we need to keep the filters clean from outside intervention.
+  const filters = isContestCollection
+    ? {
+        types: undefined,
+        checkpointType: undefined,
+        baseModels: undefined,
+        browsingMode: undefined,
+        status: undefined,
+        earlyAccess: undefined,
+        view: undefined,
+        supportsGeneration: undefined,
+        followed: undefined,
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+      }
+    : {
+        ...query,
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+      };
+
   return (
     <Stack spacing="xs">
       <IsClient>
@@ -94,10 +117,8 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         )}
         <ModelsInfinite
           filters={{
-            ...query,
-            period,
-            sort,
-            collectionId: collection.id,
+            // For contest collections, we should always have a clean slate.
+            ...filters,
           }}
         />
       </IsClient>
@@ -119,6 +140,27 @@ const ImageCollection = ({
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const currentUser = useCurrentUser();
   const utils = trpc.useContext();
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
+  const filters = isContestCollection
+    ? {
+        generation: undefined,
+        view: undefined,
+        excludeCrossPosts: undefined,
+        types: undefined,
+        withMeta: undefined,
+        hidden: undefined,
+        followed: undefined,
+        period: MetricTimeframe.AllTime,
+        sort,
+        collectionId: collection.id,
+      }
+    : {
+        ...query,
+        period,
+        sort,
+        collectionId: collection.id,
+      };
 
   return (
     <ImageGuardReportContext.Provider
@@ -188,8 +230,7 @@ const ImageCollection = ({
           <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
             <ImagesInfinite
               filters={{
-                ...query,
-                period,
+                ...filters,
                 sort,
                 collectionId: collection.id,
                 types: undefined,
@@ -212,6 +253,26 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
     ? getRandom(Object.values(PostSort))
     : query.sort ?? PostSort.Newest;
 
+  const filters = isContestCollection
+    ? {
+        modelId: undefined,
+        modelVersionId: undefined, // not hooked up to service/schema yet
+        tags: undefined,
+        username: undefined,
+        draftOnly: undefined,
+        followed: undefined,
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+      }
+    : {
+        ...query,
+        period,
+        sort,
+        collectionId: collection.id,
+      };
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
   return (
     <Stack spacing="xs">
       <IsClient>
@@ -235,8 +296,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
         <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
           <PostsInfinite
             filters={{
-              ...query,
-              period,
+              ...filters,
               sort,
               collectionId: collection.id,
             }}
@@ -254,6 +314,16 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const sort = isContestCollection
     ? getRandom(Object.values(ArticleSort))
     : query.sort ?? ArticleSort.Newest;
+
+  // For contest collections, we need to keep the filters clean from outside intervention.
+  const filters = isContestCollection
+    ? { sort, period: MetricTimeframe.AllTime, followed: false, collectionId: collection.id }
+    : {
+        ...query,
+        sort,
+        period,
+        collectionId: collection.id,
+      };
 
   return (
     <Stack spacing="xs">
@@ -277,8 +347,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
         )}
         <ArticlesInfinite
           filters={{
-            ...query,
-            period,
+            ...filters,
             sort,
             collectionId: collection.id,
           }}

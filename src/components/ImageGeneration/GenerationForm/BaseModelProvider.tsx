@@ -21,7 +21,7 @@ export function BaseModelProvider<T extends FieldValues>({
   children,
   getBaseModels,
 }: {
-  children: ({ baseModel }: { baseModel?: BaseModelSetType }) => React.ReactNode;
+  children: (props: GetBaseModelReturn) => React.ReactNode;
   getBaseModels: (data: DeepPartial<T>) => GetBaseModelReturn;
 }) {
   const [baseModels, setBaseModels] = useState<string[]>([]);
@@ -42,7 +42,7 @@ export function BaseModelProvider<T extends FieldValues>({
   return (
     <BaseModelsContext.Provider value={{ baseModels, baseModel }}>
       <InputText type="hidden" name="baseModel" clearable={false} hidden />
-      {children({ baseModel })}
+      {children({ baseModel, baseModels })}
     </BaseModelsContext.Provider>
   );
 }

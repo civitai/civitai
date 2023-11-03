@@ -58,7 +58,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
     }, [value]); //eslint-disable-line
 
     return (
-      <Input.Wrapper {...inputWrapperProps}>
+      <Input.Wrapper {...inputWrapperProps} ref={ref}>
         <Stack spacing="xs">
           {groups.map((group) => {
             return (

@@ -1,8 +1,10 @@
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
+const CONCURRENCY = 5;
 export const resetImageViewCounts = createJob(
   'reset-image-view-counts',
   UNRUNNABLE_JOB_CRON,
@@ -23,58 +25,59 @@ export const resetImageViewCounts = createJob(
       `,
       format: 'JSONEachRow',
     });
-    const viewedImages = (await imageViews?.json()) as [
-      {
-        imageId: number;
-        day: number;
-        week: number;
-        month: number;
-        year: number;
-        all_time: number;
-      }
-    ];
+    const viewedImages = (await imageViews?.json()) as ImageViewCount[];
     console.log(viewedImages.length);
 
     const batches = chunk(viewedImages, 1000);
-    let i = 0;
-    for (const batch of batches) {
-      console.log(`Processing batch ${i + 1} of ${batches.length}`);
-      try {
-        const batchJson = JSON.stringify(batch);
-        await dbWrite.$executeRaw`
-        INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
-        SELECT
-          imageId,
-          timeframe,
-          views
-        FROM
-        (
-            SELECT
-                CAST(mvs::json->>'imageId' AS INT) AS imageId,
-                tf.timeframe,
-                CAST(
-                  CASE
-                    WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
-                    WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
-                    WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
-                    WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
-                    WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
-                  END
-                AS int) as views
-            FROM json_array_elements(${batchJson}::json) mvs
-            CROSS JOIN (
-                SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-            ) tf
-        ) im
-        WHERE im.views IS NOT NULL
-        AND im.imageId IN (SELECT id FROM "Image")
-        ON CONFLICT ("imageId", timeframe) DO UPDATE
-          SET "viewCount" = EXCLUDED."viewCount";
-      `;
-      } catch (e) {
-        throw e;
-      }
-      i++;
-    }
+    console.log(`Processing ${batches.length} batches`);
+    const tasks = batches.map((batch, i) => () => processBatch(batch, i));
+    await limitConcurrency(tasks, CONCURRENCY);
   }
 );
+
+type ImageViewCount = {
+  imageId: number;
+  day: number;
+  week: number;
+  month: number;
+  year: number;
+  all_time: number;
+};
+async function processBatch(batch: ImageViewCount[], i: number) {
+  console.log(`Processing batch ${i + 1}`);
+  try {
+    const batchJson = JSON.stringify(batch);
+    await dbWrite.$executeRaw`
+      INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
+      SELECT
+        imageId,
+        timeframe,
+        views
+      FROM
+      (
+          SELECT
+              CAST(mvs::json->>'imageId' AS INT) AS imageId,
+              tf.timeframe,
+              CAST(
+                CASE
+                  WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                  WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                  WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                  WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                  WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
+                END
+              AS int) as views
+          FROM json_array_elements(${batchJson}::json) mvs
+          CROSS JOIN (
+              SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+          ) tf
+      ) im
+      WHERE im.views IS NOT NULL
+      AND im.imageId IN (SELECT id FROM "Image")
+      ON CONFLICT ("imageId", timeframe) DO UPDATE
+        SET "viewCount" = EXCLUDED."viewCount";
+    `;
+  } catch (e) {
+    throw e;
+  }
+}

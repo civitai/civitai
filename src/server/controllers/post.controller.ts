@@ -216,13 +216,12 @@ export const updatePostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
-  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await reorderPostImages({ ...input, userId: ctx.user.id });
+    return await reorderPostImages({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

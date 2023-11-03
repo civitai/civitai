@@ -7,6 +7,7 @@ import {
   GetGenerationDataInput,
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
+  PrepareModelInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -39,6 +40,7 @@ import { chunk, uniqBy } from 'lodash-es';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { calculateGenerationBill } from '~/server/common/generation';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -72,8 +74,10 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
-function mapGenerationResource(resource: GenerationResourceSelect): Generation.Resource {
-  const { model, ...x } = resource;
+function mapGenerationResource(
+  resource: GenerationResourceSelect & { settings?: RecommendedSettingsSchema | null }
+): Generation.Resource {
+  const { model, settings, ...x } = resource;
   return {
     id: x.id,
     name: x.name,
@@ -82,7 +86,9 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelName: model.name,
     modelType: model.type,
     baseModel: x.baseModel,
-    strength: 1,
+    strength: settings?.strength ?? 1,
+    minStrength: settings?.minStrength ?? -1,
+    maxStrength: settings?.maxStrength ?? 2,
   };
 }
 
@@ -629,3 +635,28 @@ export const deleteAllGenerationRequests = async ({ userId }: { userId: number }
 
   if (!deleteResponse.ok) throw throwNotFoundError();
 };
+
+export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModelInput) {
+  const orchestratorBaseModel = baseModel.includes('SDXL') ? 'SDXL' : 'SD_1_5';
+  const payload = {
+    $type: 'prepareModel',
+    baseModel: orchestratorBaseModel,
+    model: `@civitai/${id}`,
+    priority: 1,
+    providers: ['OctoML', 'OctoMLNext'],
+  };
+
+  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/consumer/jobs`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+    },
+  });
+
+  if (response.status === 429) throw throwRateLimitError();
+  if (!response.ok) throw new Error(response.statusText);
+
+  return response.json();
+}

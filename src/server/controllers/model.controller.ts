@@ -3,6 +3,7 @@ import {
   ModelHashType,
   ModelModifier,
   ModelStatus,
+  ModelType,
   Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
@@ -16,7 +17,11 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ModelVersionMeta, TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import {
+  ModelVersionMeta,
+  RecommendedSettingsSchema,
+  TrainingDetailsObj,
+} from '~/server/schema/model-version.schema';
 import {
   ChangeModelModifierSchema,
   DeclineReviewSchema,
@@ -52,6 +57,7 @@ import {
   getModels,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getRecommendedResourcesByVersionId,
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
@@ -68,6 +74,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -118,6 +125,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     return {
       ...model,
       hasSuggestedResources: suggestedResources > 0,
+      supportsRecommendedResources: model.type !== ModelType.Checkpoint,
       meta: model.meta as ModelMeta | null,
       tagsOnModels: model.tagsOnModels
         .filter(({ tag }) => !tag.unlisted)
@@ -178,6 +186,18 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           baseModelType: version.baseModelType as BaseModelType,
           meta: version.meta as ModelVersionMeta,
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
+          settings: version.settings as RecommendedSettingsSchema | undefined,
+          recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
+            id: resource.id,
+            name: resource.name,
+            baseModel: resource.baseModel,
+            trainedWords: resource.trainedWords,
+            modelId: resource.model.id,
+            modelName: resource.model.name,
+            modelType: resource.model.type,
+            // TODO.manuel: type this better
+            strength: (settings as any)?.strength,
+          })),
         };
       }),
     };
@@ -332,11 +352,13 @@ export const publishModelHandler = async ({
       console.error(e);
     });
 
-    await ctx.track.modelEvent({
-      type: 'Publish',
-      modelId: input.id,
-      nsfw: model.nsfw,
-    });
+    await ctx.track
+      .modelEvent({
+        type: 'Publish',
+        modelId: input.id,
+        nsfw: model.nsfw,
+      })
+      .catch(handleLogError);
 
     return updatedModel;
   } catch (error) {
@@ -1151,3 +1173,134 @@ export const getAssociatedResourcesCardDataHandler = async ({
   }
 };
 // #endregion
+
+export const getRecommendedResourcesCardDataHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UserPreferencesForModelsInput & { sourceId: number };
+  ctx: Context;
+}) => {
+  try {
+    const { user } = ctx;
+    const { sourceId, ...userPreferences } = input;
+    const recommendedResources = await getRecommendedResourcesByVersionId({ sourceId });
+    if (!recommendedResources.length) return [];
+
+    const modelIds = recommendedResources.map(({ modelId }) => modelId);
+    const modelInput = getAllModelsSchema.parse({
+      ...userPreferences,
+      ids: modelIds,
+      period: MetricTimeframe.AllTime,
+    });
+
+    const modelsData = await getModels({
+      user,
+      input: modelInput,
+      // TODO.manuel: We could probably extract this and reuse it
+      // cause I copy/pasted it from getAssociatedResourcesCardDataHandler
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        nsfw: true,
+        status: true,
+        createdAt: true,
+        lastVersionAt: true,
+        publishedAt: true,
+        locked: true,
+        earlyAccessDeadline: true,
+        mode: true,
+        rank: {
+          select: {
+            downloadCountAllTime: true,
+            favoriteCountAllTime: true,
+            commentCountAllTime: true,
+            ratingCountAllTime: true,
+            ratingAllTime: true,
+            collectedCountAllTime: true,
+            tippedAmountCountAllTime: true,
+          },
+        },
+        modelVersions: {
+          where: {
+            status: ModelStatus.Published,
+            id: { in: recommendedResources.map(({ id }) => id) },
+          },
+          select: {
+            id: true,
+            earlyAccessTimeFrame: true,
+            createdAt: true,
+            baseModel: true,
+            baseModelType: true,
+            generationCoverage: { select: { covered: true } },
+          },
+        },
+        user: { select: simpleUserSelect },
+        tagsOnModels: { select: { tagId: true } },
+        hashes: {
+          select: modelHashSelect,
+          where: {
+            hashType: ModelHashType.SHA256,
+            fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+          },
+        },
+      },
+    });
+
+    if (!modelsData.items) return [];
+
+    const { items: models } = modelsData;
+    const modelVersionIds = models
+      .flatMap((m) => m.modelVersions)
+      .map((m) => m.id)
+      .filter((id) => recommendedResources.some((rr) => rr.id === id));
+
+    const images = !!modelVersionIds.length
+      ? await getImagesForModelVersion({
+          modelVersionIds,
+          excludedTagIds: modelInput.excludedImageTagIds,
+          excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+          excludedUserIds: modelInput.excludedUserIds,
+          currentUserId: user?.id,
+        })
+      : [];
+
+    const completeModels = models
+      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
+        // TODO.manuel: I believe we could extract this whole logic reuse it in other places
+        const [version] = modelVersions;
+        if (!version) return null;
+        const [image] = images.filter((i) => i.modelVersionId === version.id);
+        const showImageless =
+          (user?.isModerator || model.user.id === user?.id) &&
+          (modelInput.user || modelInput.username);
+        if (!image && !showImageless) return null;
+        const canGenerate = !!version.generationCoverage?.covered;
+
+        return {
+          ...model,
+          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          tags: tagsOnModels.map((x) => x.tagId),
+          rank: {
+            downloadCount: rank?.downloadCountAllTime ?? 0,
+            favoriteCount: rank?.favoriteCountAllTime ?? 0,
+            commentCount: rank?.commentCountAllTime ?? 0,
+            ratingCount: rank?.ratingCountAllTime ?? 0,
+            rating: rank?.ratingAllTime ?? 0,
+            collectedCount: rank?.collectedCountAllTime ?? 0,
+            tippedAmountCount: rank?.tippedAmountCountAllTime ?? 0,
+          },
+          image,
+          canGenerate,
+          version,
+        };
+      })
+      .filter(isDefined);
+
+    return completeModels;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
