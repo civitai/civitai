@@ -1,8 +1,25 @@
 import { throwDbError } from '~/server/utils/errorHandling';
-import { getUserWithProfile, updateUserProfile } from '~/server/services/user-profile.service';
+import {
+  getUserContentOverview,
+  getUserWithProfile,
+  updateUserProfile,
+} from '~/server/services/user-profile.service';
 import { GetUserProfileSchema, UserProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { Context } from '~/server/createContext';
+import { TRPCError } from '@trpc/server';
 
+export const getUserContentOverviewHandler = async ({ input }: { input: GetUserProfileSchema }) => {
+  try {
+    const overview = await getUserContentOverview({
+      username: input.username,
+    });
+
+    return overview;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
 export const getUserProfileHandler = async ({ input }: { input: GetUserProfileSchema }) => {
   try {
     const user = await getUserWithProfile({
@@ -11,6 +28,7 @@ export const getUserProfileHandler = async ({ input }: { input: GetUserProfileSc
 
     return user;
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
@@ -30,7 +48,7 @@ export const updateUserProfileHandler = async ({
 
     return user;
   } catch (error) {
-    console.log(error);
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

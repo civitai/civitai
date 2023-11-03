@@ -5,6 +5,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import { IconApiApp, IconPhoto } from '@tabler/icons-react';
 
 export function GenericImageCard({
   image: coverImage,
@@ -36,6 +37,20 @@ export function GenericImageCard({
       }
       default: {
         return '/';
+      }
+    }
+  })();
+
+  const Icon = (() => {
+    switch (entityType) {
+      case 'Model': {
+        return IconApiApp;
+      }
+      case 'Image': {
+        return IconPhoto;
+      }
+      default: {
+        return null;
       }
     }
   })();
@@ -73,6 +88,24 @@ export function GenericImageCard({
                       />
                     ) : (
                       <MediaHash {...image} />
+                    )}
+
+                    {Icon && (
+                      <Icon
+                        size={20}
+                        style={{
+                          position: 'absolute',
+                          bottom: '10px',
+                          left: '10px',
+                          zIndex: 1,
+                          borderRadius: '50%',
+                          width: '20px',
+                          height: '20px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      />
                     )}
                   </>
                 );

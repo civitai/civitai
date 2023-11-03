@@ -11,6 +11,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
+import { UserWithProfile } from '~/types/router';
 
 type Props = {
   title: string;
@@ -18,7 +19,7 @@ type Props = {
   children?: React.ReactNode;
 };
 
-export type ProfileSectionProps = { user: { id: number; username: string } };
+export type ProfileSectionProps = { user: UserWithProfile & { username: string } };
 
 export const useProfileSectionStyles = createStyles<
   string,

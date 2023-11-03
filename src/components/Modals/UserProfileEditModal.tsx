@@ -263,7 +263,7 @@ const { openModal, Modal } = createContextModal({
           {user?.username && (
             <InputShowcaseItemsInput
               label="Showcase"
-              username={user.username}
+              username={'Lykon' || user.username}
               description="Select up to 5 models or images that you're most proud of."
               name="showcaseItems"
             />

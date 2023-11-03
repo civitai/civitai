@@ -10,7 +10,7 @@ const useStyles = createStyles((theme, _, getRef) => {
   return {
     sidebar: {
       ref: sidebarRef,
-      height: 'calc(100vh - 2 * var(--mantine-header-height, 50px))',
+      height: '100vh',
       position: 'fixed',
       top: 'var(--mantine-header-height, 50px)',
       width: `${SIDEBAR_SIZE}px`,
@@ -19,6 +19,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       transition: 'transform 200ms ease',
       zIndex: 1,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      paddingBottom: 'calc(2 * var(--mantine-header-height, 50px))',
 
       [theme.fn.smallerThan('sm')]: {
         display: 'none',

@@ -1,4 +1,4 @@
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
 import {
   GetUserProfileSchema,
@@ -12,6 +12,57 @@ import { ImageMetadata } from '~/server/schema/media.schema';
 import { ImageIngestionStatus, LinkType, Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
+
+export const getUserContentOverview = async ({
+  username,
+  userId,
+}: {
+  username?: string;
+  userId?: number;
+}) => {
+  if (!username && !userId) {
+    throw new Error('Either username or id must be provided');
+  }
+
+  if (!userId) {
+    const user = await dbWrite.user.findUnique({
+      where: { username },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    userId = user.id;
+  }
+
+  const [data] = await dbRead.$queryRaw<
+    {
+      id: number;
+      modelCount: number;
+      imageCount: number;
+      articleCount: number;
+      bountyCount: number;
+      bountyEntryCount: number;
+      receivedReviewCount: number;
+      writtenReviewCount: number;
+    }[]
+  >`
+    SELECT 
+        (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published') as "modelCount",
+        (SELECT COUNT(*)::INT FROM "Image" i WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL) as "imageCount",
+        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" <= NOW()) as "articleCount", 
+        (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() ) as "bountyCount",
+        (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
+        (SELECT COUNT(*)::INT FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id) as "receivedReviewCount",
+        (SELECT COUNT(*)::INT FROM "ResourceReview" r WHERE r."userId" = u.id) as "writtenReviewCount"
+    FROM "User" u
+    WHERE u.id = ${userId}
+  `;
+
+  return data;
+};
 
 export const getUserWithProfile = async ({
   username,

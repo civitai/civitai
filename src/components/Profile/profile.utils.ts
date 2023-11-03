@@ -1,10 +1,16 @@
-import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
+import {
+  ProfileSectionSchema,
+  ProfileSectionType,
+  ShowcaseItemSchema,
+} from '~/server/schema/user-profile.schema';
 import { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
 import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
 import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
 import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
+import { UserOverview, UserWithProfile } from '~/types/router';
+import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
 
 // Used to determine which sections are enabled by default when the user does not have them
 // on the profile items' list. This is used such that when we add a new section, if we want to enforce
@@ -23,7 +29,7 @@ export const ProfileSectionComponent: Record<
   ProfileSectionType,
   React.ComponentType<ProfileSectionProps>
 > = {
-  showcase: MyModelsSection, // TODO
+  showcase: ShowcaseSection,
   popularModels: PopularModelsSection,
   popularArticles: PopularArticlesSection,
   recent: MyModelsSection, // TODO
@@ -53,4 +59,37 @@ export const getAllAvailableProfileSections = (userSections: ProfileSectionSchem
   ];
 
   return sections;
+};
+
+export const shouldDisplayUserNullState = ({
+  overview,
+  userWithProfile,
+}: {
+  overview: UserOverview;
+  userWithProfile: UserWithProfile;
+}) => {
+  const userSections = (userWithProfile?.profile?.profileSectionsSettings ??
+    []) as ProfileSectionSchema[];
+
+  const sectionEnabled = userSections.find((s) => s.enabled);
+
+  if (!sectionEnabled) return true;
+
+  const showcaseItems = (userWithProfile?.profile?.showcaseItems ?? []) as ShowcaseItemSchema[];
+  const sections = getAllAvailableProfileSections(userSections);
+
+  const someSectionEnabled = (keys: ProfileSectionSchema['key'][]) => {
+    return sections.find((s) => keys.includes(s.key) && s.enabled);
+  };
+
+  const recentContent = overview.modelCount + overview.imageCount;
+
+  return (
+    (showcaseItems.length === 0 || !someSectionEnabled(['showcase'])) &&
+    (recentContent === 0 || !someSectionEnabled(['recent'])) &&
+    (overview.modelCount === 0 || !someSectionEnabled(['modelsOverview', 'popularModels'])) &&
+    (overview.imageCount === 0 || !someSectionEnabled(['imagesOverview'])) &&
+    (overview.articleCount === 0 || !someSectionEnabled(['popularArticles'])) &&
+    (overview.receivedReviewCount === 0 || !someSectionEnabled(['recentReviews']))
+  );
 };
