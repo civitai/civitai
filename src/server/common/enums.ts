@@ -25,6 +25,7 @@ export enum ReviewSort {
   MostLiked = 'most-liked',
   MostDisliked = 'most-disliked',
   MostComments = 'most-comments',
+  Rating = 'rating',
 }
 
 export enum ReviewFilter {

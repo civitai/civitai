@@ -90,7 +90,17 @@ export function CategoryTags({
 }) {
   const { classes, cx, theme } = useStyles();
   const { set, tag: tagQuery } = useModelQueryParams();
+  return <DumbCategoryTags onChange={set} tag={tagQuery} />;
+}
 
+export function DumbCategoryTags({
+  tag: tagQuery,
+  onChange,
+}: {
+  tag?: string;
+  onChange: (data: { tag?: string }) => void;
+}) {
+  const { classes, cx, theme } = useStyles();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
@@ -112,7 +122,7 @@ export function CategoryTags({
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
 
-  const handleSetTag = (tag: string | undefined) => set({ tag });
+  const handleSetTag = (tag: string | undefined) => onChange({ tag });
 
   const _tag = selected ?? tagQuery;
   const _setTag = setSelected ?? handleSetTag;

@@ -75,7 +75,7 @@ export const constants = {
     'Archive',
   ],
   trainingModelTypes: ['Character', 'Style', 'Concept'],
-  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
+  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix', 'SDXL Distilled'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
@@ -212,6 +212,12 @@ export const constants = {
     referralBonusAmount: 500,
     maxTipAmount: 100000000,
     minTipAmount: 50,
+  },
+  profile: {
+    coverImageAspectRatio: 5 / 17,
+    mobileCoverImageAspectRatio: 12 / 17,
+    coverImageHeight: 240,
+    coverImageWidth: 816,
   },
 } as const;
 

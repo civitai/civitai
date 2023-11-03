@@ -1,20 +1,21 @@
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
-  GetResourceReviewsInfiniteInput,
-  GetRatingTotalsInput,
-  UpdateResourceReviewInput,
   CreateResourceReviewInput,
+  GetRatingTotalsInput,
   GetResourceReviewPagedInput,
+  GetResourceReviewsInfiniteInput,
   GetUserResourceReviewInput,
+  UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import { resourceReviewSelect } from '~/server/selectors/resourceReview.selector';
+import { ReviewSort } from '~/server/common/enums';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
@@ -59,16 +60,32 @@ export const getResourceReviewsInfinite = async ({
   cursor,
   modelId,
   modelVersionId,
+  username,
+  include,
 }: GetResourceReviewsInfiniteInput) => {
   const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
 
+  if (username) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username },
+      select: { id: true },
+    });
+
+    if (!targetUser) throw new Error('User not found');
+
+    AND.push({
+      model: {
+        userId: targetUser.id,
+      },
+    });
+  }
   if (modelId) AND.push({ modelId });
   if (modelVersionId) AND.push({ modelVersionId });
+
   AND.push({ details: { not: null } });
 
   orderBy.push({ createdAt: 'desc' });
-
   const items = await dbRead.resourceReview.findMany({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
@@ -88,6 +105,19 @@ export const getResourceReviewsInfinite = async ({
       rating: true,
       user: { select: userWithCosmeticsSelect },
       helper: { select: { imageCount: true } },
+      model: include?.includes('model')
+        ? {
+            select: { id: true, name: true },
+          }
+        : undefined,
+      modelVersion: include?.includes('model')
+        ? {
+            select: {
+              id: true,
+              name: true,
+            },
+          }
+        : undefined,
     },
   });
 
@@ -197,4 +227,27 @@ export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
       exclude: true,
     },
   });
+};
+
+export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
+  const result = await dbRead.$queryRaw<{ rating: number; count: number }[]>`
+    SELECT
+      rr.rating,
+      COUNT(rr.id)::int count
+    FROM "ResourceReview" rr
+    JOIN "Model" m ON rr."modelId" = m.id AND m."userId" = ${userId}
+    WHERE rr."userId" != ${userId} AND NOT rr.exclude
+    GROUP BY rr.rating
+  `;
+
+  const transformed = result.reduce(
+    (acc, { rating, count }) => {
+      const key = rating.toString() as keyof RatingTotalsModel;
+      if (acc[key] !== undefined) acc[key] = count;
+      return acc;
+    },
+    { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 }
+  );
+
+  return transformed;
 };

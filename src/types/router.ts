@@ -87,3 +87,6 @@ export type BountyGetEntries = BountyRouter['getEntries'];
 
 type BountyEntryRouter = RouterOutput['bountyEntry'];
 export type BountyEntryGetById = BountyEntryRouter['getById'];
+
+export type UserOverview = RouterOutput['userProfile']['overview'];
+export type UserWithProfile = RouterOutput['userProfile']['get'];

@@ -1,5 +1,5 @@
 import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
@@ -10,6 +10,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { GetAllModelsInput } from '~/server/schema/model.schema';
+import { isEqual } from 'lodash-es';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -47,6 +49,17 @@ export const useImageFilters = (type: FilterKeys<'images' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
   return removeEmpty({ ...storeFilters, ...query });
+};
+
+export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesInput>) => {
+  const [filters, setFilters] = useState<Partial<GetInfiniteImagesInput>>(defaultFilters ?? {});
+  const filtersUpdated = !isEqual(filters, defaultFilters);
+
+  return {
+    filters,
+    setFilters,
+    filtersUpdated,
+  };
 };
 
 export const useQueryImages = (

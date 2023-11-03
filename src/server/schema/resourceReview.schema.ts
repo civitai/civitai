@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { numericString, sanitizedNullableString } from '~/utils/zod-helpers';
+import { ReviewSort } from '~/server/common/enums';
 
 export type GetUserResourceReviewInput = z.infer<typeof getUserResourceReviewSchema>;
 export const getUserResourceReviewSchema = z.object({ modelVersionId: z.number() });
@@ -23,6 +24,8 @@ export const getResourceReviewsInfiniteSchema = z.object({
   cursor: z.number().optional(),
   modelId: z.number().optional(),
   modelVersionId: z.number().optional(),
+  username: z.string().optional(),
+  include: z.array(z.enum(['model'])).optional(),
 });
 
 export type UpsertResourceReviewInput = z.infer<typeof upsertResourceReviewSchema>;

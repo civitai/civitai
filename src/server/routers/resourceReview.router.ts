@@ -10,6 +10,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createResourceReviewHandler,
   deleteResourceReviewHandler,
+  getUserRatingTotalHandler,
   toggleExcludeResourceReviewHandler,
   updateResourceReviewHandler,
   upsertResourceReviewHandler,
@@ -33,6 +34,7 @@ import {
   toggleExcludeResourceReview,
 } from '~/server/services/resourceReview.service';
 import { moderatorProcedure } from '~/server/trpc';
+import { getByUsernameSchema } from '~/server/schema/user.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -88,4 +90,5 @@ export const resourceReviewRouter = router({
   toggleExclude: moderatorProcedure
     .input(getByIdSchema)
     .mutation(toggleExcludeResourceReviewHandler),
+  getUserRatingsTotal: publicProcedure.input(getByUsernameSchema).query(getUserRatingTotalHandler),
 });
