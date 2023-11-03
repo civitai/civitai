@@ -75,7 +75,7 @@ export const constants = {
     'Archive',
   ],
   trainingModelTypes: ['Character', 'Style', 'Concept'],
-  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
+  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix', 'SDXL Distilled'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
