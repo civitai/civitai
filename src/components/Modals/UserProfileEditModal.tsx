@@ -36,7 +36,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import { constants } from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType, LinkType } from '@prisma/client';
 import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { z } from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -98,11 +98,20 @@ const { openModal, Modal } = createContextModal({
           // TODO: Fix typing at some point :grimacing:.
           coverImage: user.profile.coverImage as any,
           profileImage: user?.image,
-          links: (user?.links ?? []).map((link) => ({
-            id: link.id,
-            url: link.url,
-            type: link.type,
-          })),
+          socialLinks: (user?.links ?? [])
+            .filter((link) => link.type === LinkType.Social)
+            .map((link) => ({
+              id: link.id,
+              url: link.url,
+              type: link.type,
+            })),
+          sponsorshipLinks: (user?.links ?? [])
+            .filter((link) => link.type === LinkType.Sponsorship)
+            .map((link) => ({
+              id: link.id,
+              url: link.url,
+              type: link.type,
+            })),
           badgeId: selectedBadge?.id ?? null,
         });
       }
@@ -186,7 +195,16 @@ const { openModal, Modal } = createContextModal({
           <Divider />
           <InputText name="location" label="Location" maxLength={400} />
           <Divider />
-          <InputInlineSocialLinkInput name="links" label="Social Links" />
+          <InputInlineSocialLinkInput
+            name="socialLinks"
+            label="Social Links"
+            type={LinkType.Social}
+          />
+          <InputInlineSocialLinkInput
+            name="sponsorshipLinks"
+            label="Sponsorship Links"
+            type={LinkType.Sponsorship}
+          />
           <Divider />
           <Stack>
             <Group spacing={4}>

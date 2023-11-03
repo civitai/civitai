@@ -54,11 +54,21 @@ export const userProfileUpdateSchema = z.object({
   location: z.string().max(100).nullish(),
   profileImage: z.string().nullish(),
   coverImage: imageSchema.nullish(),
-  links: z
+  socialLinks: z
     .array(
       z.object({
         id: z.number().optional(),
         url: z.string(),
+        type: z.nativeEnum(LinkType),
+      })
+    )
+    .optional(),
+  sponsorshipLinks: z
+    .array(
+      z.object({
+        id: z.number().optional(),
+        url: z.string(),
+        type: z.nativeEnum(LinkType),
       })
     )
     .optional(),

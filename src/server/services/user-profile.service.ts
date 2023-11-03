@@ -136,7 +136,8 @@ export const getUserWithProfile = async ({
 
 export const updateUserProfile = async ({
   profileImage,
-  links,
+  socialLinks,
+  sponsorshipLinks,
   badgeId,
   userId,
   coverImage,
@@ -172,9 +173,9 @@ export const updateUserProfile = async ({
         },
       });
 
-      if (links) {
-        // TODO:
-        // First delete all links that are not in the new list
+      const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];
+
+      if (links.length) {
         await tx.userLink.deleteMany({
           where: {
             userId,
@@ -183,16 +184,16 @@ export const updateUserProfile = async ({
                 in: links.map((l) => l.id).filter(isDefined),
               },
             },
-            type: LinkType.Social,
           },
         });
 
-        const parsed = links.map(({ url, id }) => ({
-          type: LinkType.Social,
+        const parsed = links.map(({ url, id, type }) => ({
+          type,
           url,
           userId,
           id,
         }));
+
         const toCreate = parsed.filter((x) => !x.id);
         const toUpdate = parsed.filter((x) => !!x.id);
 

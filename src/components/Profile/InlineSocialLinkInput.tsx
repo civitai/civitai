@@ -10,21 +10,27 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useState } from 'react';
-import { IconTrash, IconUser } from '@tabler/icons-react';
+import { IconTrash } from '@tabler/icons-react';
 import { useDidUpdate } from '@mantine/hooks';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { zc } from '~/utils/schema-helpers';
 import { isEqual } from 'lodash-es';
-import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
+import { LinkType } from '@prisma/client';
 
 type InlineSocialLinkInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
-  value?: { url: string; id?: number }[];
-  onChange?: (value: { url: string; id?: number }[]) => void;
+  value?: { url: string; id?: number; type: LinkType }[];
+  onChange?: (value: { url: string; id?: number; type: LinkType }[]) => void;
+  type: LinkType;
 };
 
-export function InlineSocialLinkInput({ value, onChange, ...props }: InlineSocialLinkInputProps) {
+export function InlineSocialLinkInput({
+  value,
+  onChange,
+  type,
+  ...props
+}: InlineSocialLinkInputProps) {
   const [error, setError] = useState('');
-  const [links, setLinks] = useState<{ url: string; id?: number }[]>(value || []);
+  const [links, setLinks] = useState<{ url: string; id?: number; type: LinkType }[]>(value || []);
   const [createLink, setCreateLink] = useState<string>('');
 
   useDidUpdate(() => {
@@ -49,7 +55,7 @@ export function InlineSocialLinkInput({ value, onChange, ...props }: InlineSocia
       return;
     }
 
-    setLinks((current) => [...current, { url }]);
+    setLinks((current) => [...current, { url, type }]);
     setCreateLink('');
   };
 
