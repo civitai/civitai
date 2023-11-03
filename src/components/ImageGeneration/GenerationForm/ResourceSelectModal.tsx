@@ -25,6 +25,8 @@ import {
   InstantSearchProps,
   useInfiniteHits,
   useInstantSearch,
+  useRefinementList,
+  useToggleRefinement,
 } from 'react-instantsearch';
 import {
   BaseModel,
@@ -62,6 +64,8 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { IconTagOff } from '@tabler/icons-react';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { usePrevious } from '@mantine/hooks';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -138,11 +142,25 @@ export default function ResourceSelectModal({
         <Configure hitsPerPage={20} filters={filters.join(' AND ')} />
         <Stack>
           <CustomSearchBox isMobile={isMobile} autoFocus />
+          <CategoryTagFilters />
           <ResourceHitList />
         </Stack>
       </InstantSearch>
     </ResourceSelectContext.Provider>
   );
+}
+
+function CategoryTagFilters() {
+  const [tag, setTag] = useState<string>();
+  const { refine } = useRefinementList({ attribute: 'tags.name' });
+
+  const handleSetTag = (value?: string) => {
+    if (tag) refine(tag);
+    if (value) refine(value);
+    setTag(value);
+  };
+
+  return <CategoryTags selected={tag} setSelected={handleSetTag} />;
 }
 
 function ResourceHitList() {
@@ -220,7 +238,7 @@ function ResourceHitList() {
       <Box className={classes.grid}>
         {models.map((model, index) => {
           return (
-            <div key={index} id={model.id.toString()}>
+            <div key={model.id.toString()} id={model.id.toString()}>
               {createRenderElement(ResourceSelectCard, index, model)}
             </div>
           );
@@ -239,7 +257,7 @@ function ResourceHitList() {
 
 const createRenderElement = trieMemoize(
   [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, model) => <RenderComponent index={index} data={model} />
+  (RenderComponent, index, model) => <RenderComponent key={model.id} index={index} data={model} />
 );
 
 const IMAGE_CARD_WIDTH = 450;

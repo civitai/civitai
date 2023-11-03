@@ -2,13 +2,12 @@ import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
-import { useEffect } from 'react';
-import { useInView } from 'react-intersection-observer';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export function Queue({
   requests,
@@ -18,13 +17,7 @@ export function Queue({
   isRefetching,
   isError,
 }: ReturnType<typeof useGetGenerationRequests>) {
-  const { ref, inView } = useInView();
   const mobile = useIsMobile({ breakpoint: 'md' });
-
-  // infinite paging
-  useEffect(() => {
-    if (inView && !isRefetching) fetchNextPage?.();
-  }, [fetchNextPage, inView, isRefetching]);
 
   if (isError)
     return (
@@ -54,10 +47,12 @@ export function Queue({
           {requests.map((request) => (
             <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
           ))}
-          {hasNextPage && !isRefetching && (
-            <Center p="xl" ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
         </Stack>
       </ScrollArea>

@@ -68,6 +68,7 @@ export const ResourceSelectCard = ({
                   max={resource.maxStrength ?? 2}
                   step={0.05}
                   sliderProps={{ marks: [{ value: 0 }, { value: 1 }] }}
+                  sx={{ flex: 1 }}
                 />
               </Group>
             )}
