@@ -35,7 +35,7 @@ export default function GenerationTabs({}) {
       <Tabs.Panel value="queue" p={0}>
         <Queue {...result} />
       </Tabs.Panel>
-      <Tabs.Panel value="feed" py={0}>
+      <Tabs.Panel value="feed" p={0}>
         <Feed {...result} />
       </Tabs.Panel>
 

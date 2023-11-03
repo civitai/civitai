@@ -29,8 +29,7 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState, useEffect } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useState } from 'react';
 
 import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
@@ -39,6 +38,7 @@ import {
   useDeleteGenerationRequestImages,
   useGetGenerationRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel } from '~/store/generation.store';
@@ -71,22 +71,16 @@ export function Feed({
   isFetching,
   isError,
 }: ReturnType<typeof useGetGenerationRequests>) {
-  const { ref, inView } = useInView();
   const [state, setState] = useState<State>({
     layout: 'grid',
     selectedItems: [],
     variantModalOpened: false,
   });
 
-  // infinite paging
-  useEffect(() => {
-    if (inView && !isFetching && !isError) fetchNextPage?.();
-  }, [fetchNextPage, inView, isFetching, isError]);
-
   const { classes } = useStyles();
 
   return (
-    <Stack sx={{ position: 'relative', height: '100%' }} spacing={0}>
+    <Stack sx={{ position: 'relative', height: '100%', overflow: 'hidden' }} spacing={0}>
       {/* <div className={classes.searchPanel}>
         <HoverCard withArrow>
           <HoverCard.Target>
@@ -141,7 +135,7 @@ export function Feed({
           </Group>
         </Card>
       </div> */}
-      <ScrollArea h="100%">
+      <ScrollArea h="100%" style={{ position: 'relative' }}>
         <div className={classes.grid}>
           {feed
             .map((image) => {
@@ -182,10 +176,12 @@ export function Feed({
               );
             })
             .filter(isDefined)}
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center p="xl" ref={ref} sx={{ height: 36, gridColumn: '1/-1' }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+              <Center p="xl" sx={{ height: 36, gridColumn: '1/-1' }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
         </div>
       </ScrollArea>

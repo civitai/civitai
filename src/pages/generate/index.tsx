@@ -4,6 +4,7 @@ import {
   Divider,
   Grid,
   Group,
+  Navbar,
   Stack,
   Tabs,
   Text,
@@ -11,6 +12,8 @@ import {
   createStyles,
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
+import React from 'react';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
@@ -78,7 +81,6 @@ export default function GeneratePage() {
     <>
       <div className={classes.sidebar}>
         <GenerateFormLogic />
-        <Divider orientation="vertical" />
       </div>
       <div className={classes.content}>
         <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray">
@@ -104,6 +106,25 @@ export default function GeneratePage() {
   );
 }
 
+// function Sidebar() {
+//   const isMobile = useIsMobile();
+//   const isClient = useIsClient();
+
+//   if (!isClient || isMobile) return <></>;
+
+//   return (
+//     <Navbar height="100%" width={{ base: 400 }}>
+//       <Navbar.Section grow>
+//         <GenerateFormLogic />
+//       </Navbar.Section>
+//     </Navbar>
+//   );
+// }
+
+// GeneratePage.getLayout = (page: React.ReactNode) => (
+//   <AppLayout navbar={<Sidebar />}>{page}</AppLayout>
+// );
+
 const useStyles = createStyles((theme) => {
   const sidebarWidth = 400;
   const sidebarWidthLg = 600;
@@ -122,6 +143,10 @@ const useStyles = createStyles((theme) => {
       width: sidebarWidth,
       height: 'calc(100% - var(--mantine-header-height))',
       display: 'flex',
+      borderRight:
+        theme.colorScheme === 'dark'
+          ? `1px solid ${theme.colors.dark[5]}`
+          : `1px solid ${theme.colors.gray[2]}`,
 
       [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
         width: sidebarWidthLg,
@@ -129,7 +154,8 @@ const useStyles = createStyles((theme) => {
     },
     content: {
       marginLeft: sidebarWidth,
-      position: 'relative',
+      // maxHeight: 'calc(100% - var(--mantine-header-height))',
+      // overflow: 'hidden',
 
       [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
         marginLeft: sidebarWidthLg,
