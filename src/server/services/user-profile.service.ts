@@ -142,9 +142,10 @@ export const updateUserProfile = async ({
   coverImage,
   ...profile
 }: UserProfileUpdateSchema & { userId: number }) => {
-  const updatedUserWithProfile = await dbWrite.$transaction(
+  const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
+
+  await dbWrite.$transaction(
     async (tx) => {
-      await getUserWithProfile({ id: userId, tx }); // Ensures user exists && has a profile record.
       await tx.user.update({
         where: {
           id: userId,
@@ -152,7 +153,9 @@ export const updateUserProfile = async ({
         data: {
           image: profileImage,
           cosmetics:
-            badgeId !== undefined
+            badgeId !== undefined &&
+            // Avoid resetting the same badge
+            !current.cosmetics.find((x) => x.cosmeticId === badgeId && !!x.equippedAt)
               ? {
                   updateMany: {
                     where: { equippedAt: { not: null } },
@@ -170,6 +173,7 @@ export const updateUserProfile = async ({
       });
 
       if (links) {
+        // TODO:
         // First delete all links that are not in the new list
         await tx.userLink.deleteMany({
           where: {
@@ -183,15 +187,14 @@ export const updateUserProfile = async ({
           },
         });
 
-        const withIndexes = links.map(({ url, id }, index) => ({
+        const parsed = links.map(({ url, id }) => ({
           type: LinkType.Social,
           url,
           userId,
-          index,
           id,
         }));
-        const toCreate = withIndexes.filter((x) => !x.id);
-        const toUpdate = withIndexes.filter((x) => !!x.id);
+        const toCreate = parsed.filter((x) => !x.id);
+        const toUpdate = parsed.filter((x) => !!x.id);
 
         if (toCreate.length) {
           await tx.userLink.createMany({ data: toCreate });
@@ -219,7 +222,7 @@ export const updateUserProfile = async ({
         data: {
           ...profile,
           coverImage:
-            coverImage !== undefined
+            coverImage !== undefined && !coverImage?.id
               ? coverImage === null
                 ? { disconnect: true }
                 : {
@@ -243,14 +246,12 @@ export const updateUserProfile = async ({
       ) {
         await ingestImage({ image: updatedProfile.coverImage, tx });
       }
-
-      return getUserWithProfile({ id: userId, tx });
     },
     {
       // Wait double of time because it might be a long transaction
-      timeout: 10000,
+      timeout: 15000,
     }
   );
 
-  return updatedUserWithProfile;
+  return getUserWithProfile({ id: userId });
 };

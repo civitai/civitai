@@ -157,6 +157,7 @@ const { openModal, Modal } = createContextModal({
                 variant="transparent"
                 ml="auto"
                 iconSize={20}
+                loading={isLoading || isUpdating}
                 onClick={(e) => {
                   context.close();
                 }}
