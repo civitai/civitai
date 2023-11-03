@@ -50,6 +50,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   }
 
   const { profile, stats } = user;
+  const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
 
   return (
     <Stack className={className}>
@@ -108,7 +109,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       <Divider my="sm" />
 
-      {stats && (
+      {shouldDisplayStats && (
         <UserStats
           rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
           followers={stats.followerCountAllTime}
@@ -125,7 +126,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         sx={{ fontSize: '14px', fontWeight: 590 }}
       />
 
-      <Divider my="sm" />
+      {(!isCurrentUser || shouldDisplayStats) && <Divider my="sm" />}
 
       {badges.length > 0 && (
         <Stack>

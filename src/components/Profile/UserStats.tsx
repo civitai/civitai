@@ -27,28 +27,28 @@ const UserStat = ({
 export function UserStats({ rating, followers, downloads, favorites }: Props) {
   return (
     <Group spacing={0} align="center" position="apart" noWrap>
-      {favorites != null && (
+      {favorites != null && favorites !== 0 && (
         <UserStat
           value={abbreviateNumber(favorites)}
           icon={<IconHeart size={16} />}
           subtext="Likes"
         />
       )}
-      {followers != null && (
+      {followers != null && followers !== 0 && (
         <UserStat
           value={abbreviateNumber(followers)}
           icon={<IconUser size={16} />}
           subtext="Followers"
         />
       )}
-      {downloads != null && (
+      {downloads != null && downloads !== 0 && (
         <UserStat
           value={abbreviateNumber(downloads)}
           icon={<IconArrowDown size={16} />}
           subtext="Downloads"
         />
       )}
-      {rating != null && (
+      {rating != null && rating?.count !== 0 && (
         <UserStat
           value={formatToLeastDecimals(rating.value)}
           icon={<IconStarFilled size={16} />}
