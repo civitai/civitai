@@ -214,6 +214,7 @@ export const constants = {
   },
   profile: {
     coverImageAspectRatio: 5 / 17,
+    mobileCoverImageAspectRatio: 12 / 17,
     coverImageHeight: 240,
     coverImageWidth: 816,
   },

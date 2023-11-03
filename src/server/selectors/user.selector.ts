@@ -88,6 +88,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
         select: imageSelect,
       },
       message: true,
+      messageAddedAt: true,
       profileSectionsSettings: true,
       privacySettings: true,
       showcaseItems: true,

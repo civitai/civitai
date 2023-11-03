@@ -18,6 +18,7 @@ import {
 } from '~/components/Profile/profile.utils';
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { IconCloudOff } from '@tabler/icons-react';
+import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -99,49 +100,7 @@ export function UserProfileOverview({ username }: { username: string }) {
         <SidebarLayout.Content>
           <Center>
             <Container size="xl" w="100%">
-              {profile?.coverImage && (
-                <div
-                  style={{
-                    position: 'relative',
-                    width: '100%',
-                    overflow: 'hidden',
-                    height: 0,
-                    paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
-                    borderRadius: theme.radius.md,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <ImageGuard
-                    images={[profile.coverImage]}
-                    connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
-                    render={(image) => {
-                      return (
-                        <ImageGuard.Content>
-                          {({ safe }) => (
-                            <div style={{ width: '100%' }}>
-                              <ImageGuard.ToggleConnect position="top-left" />
-                              <ImageGuard.Report />
-
-                              {!safe ? (
-                                <MediaHash {...image} />
-                              ) : (
-                                <ImagePreview
-                                  image={image}
-                                  edgeImageProps={{ width: 816 }}
-                                  radius="md"
-                                  style={{ width: '100%' }}
-                                />
-                              )}
-                            </div>
-                          )}
-                        </ImageGuard.Content>
-                      );
-                    }}
-                  />
-                </div>
-              )}
+              <ProfileHeader username={username} />
               {shouldDisplayUserNullStateBool ? (
                 <Stack mt="md">
                   <Stack align="center" py="lg">

@@ -136,11 +136,12 @@ export function SimpleImageUpload({
                     // 5 / 17 aspect ratio
                     paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
                     borderRadius: theme.radius.md,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
 
                     '& > img': {
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%)',
                       height: 'auto',
                       objectFit: 'cover',
                       borderRadius: theme.radius.md,
