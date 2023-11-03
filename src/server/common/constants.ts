@@ -62,6 +62,7 @@ export const constants = {
     'SD 2.1 Unclip',
     'SDXL 0.9',
     'SDXL 1.0',
+    'SDXL Distilled',
     'Other',
   ],
   modelFileTypes: [
@@ -75,7 +76,7 @@ export const constants = {
     'Archive',
   ],
   trainingModelTypes: ['Character', 'Style', 'Concept'],
-  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix', 'SDXL Distilled'],
+  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
@@ -228,12 +229,13 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL'] as const;
+export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled'] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0'],
+  SDXLDistilled: ['SDXL Distilled'],
 };
 
 type LicenseDetails = {
@@ -265,6 +267,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 2.1 Unclip': baseLicenses['openrail'],
   'SDXL 0.9': baseLicenses['sdxl 0.9'],
   'SDXL 1.0': baseLicenses['openrail++'],
+  'SDXL Distilled': baseLicenses['openrail++'],
   Other: undefined,
 };
 
