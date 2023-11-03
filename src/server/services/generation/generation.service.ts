@@ -629,7 +629,7 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
     baseModel: orchestratorBaseModel,
     model: `@civitai/${id}`,
     priority: 1,
-    providers: ['OctoML'],
+    providers: ['OctoML', 'OctoMLNext'],
   };
 
   const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
