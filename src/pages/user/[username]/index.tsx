@@ -396,7 +396,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploads, username, features]);
 
-  if (userLoading && !user)
+  if ((userLoading && !user) || !features || features?.profileOverhaul)
     return (
       <Container>
         <Center p="xl">
