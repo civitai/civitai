@@ -16,12 +16,12 @@ import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
 // on the profile items' list. This is used such that when we add a new section, if we want to enforce
 // all users to have it before they update their profile, we can.
 export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = {
-  showcase: true,
+  showcase: false,
   popularModels: true,
-  popularArticles: true,
-  modelsOverview: false,
-  imagesOverview: false,
-  recentReviews: false,
+  popularArticles: false,
+  modelsOverview: true,
+  imagesOverview: true,
+  recentReviews: true,
 } as const;
 
 export const ProfileSectionComponent: Record<
@@ -69,12 +69,12 @@ export const shouldDisplayUserNullState = ({
   const userSections = (userWithProfile?.profile?.profileSectionsSettings ??
     []) as ProfileSectionSchema[];
 
-  const sectionEnabled = userSections.find((s) => s.enabled);
+  const sections = getAllAvailableProfileSections(userSections);
+  const sectionEnabled = sections.find((s) => s.enabled);
 
   if (!sectionEnabled) return true;
 
   const showcaseItems = (userWithProfile?.profile?.showcaseItems ?? []) as ShowcaseItemSchema[];
-  const sections = getAllAvailableProfileSections(userSections);
 
   const someSectionEnabled = (keys: ProfileSectionSchema['key'][]) => {
     return sections.find((s) => keys.includes(s.key) && s.enabled);
