@@ -429,7 +429,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   limit={10}
                   options={{
                     baseModel,
-                    types: RECOMMENDED_RESOURCE_TYPES,
+                    types: [ModelType.Checkpoint],
                   }}
                 />
               )}
