@@ -1,15 +1,9 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SidebarLayout } from '~/components/Profile/SidebarLayout';
 import { trpc } from '~/utils/trpc';
-import { Center, Container, Loader, Stack, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
+import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { constants } from '~/server/common/constants';
 import { useMemo } from 'react';
 import {
   getAllAvailableProfileSections,
@@ -23,18 +17,12 @@ import ProfileLayout from '~/components/Profile/ProfileLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx, features }) => {
+  resolver: async ({ ssg, ctx }) => {
     const { username } = userPageQuerySchema.parse(ctx.params);
 
     if (username) {
-      if (!features?.profileOverhaul) {
-        return {
-          notFound: true,
-        };
-      } else {
-        await ssg?.userProfile.get.prefetch({ username });
-        await ssg?.userProfile.overview.prefetch({ username });
-      }
+      await ssg?.userProfile.get.prefetch({ username });
+      await ssg?.userProfile.overview.prefetch({ username });
     }
 
     if (!username) {

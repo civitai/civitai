@@ -1,6 +1,12 @@
 import { Anchor, Badge, Group, Tabs, Text } from '@mantine/core';
 import React from 'react';
-import { IconAssembly, IconCategory, IconPencilMinus, IconPhoto } from '@tabler/icons-react';
+import {
+  IconAssembly,
+  IconCategory,
+  IconPencilMinus,
+  IconPhoto,
+  IconPlaylistAdd,
+} from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -41,6 +47,11 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `/articles`,
       icon: <IconPencilMinus />,
       count: userOverview?.articleCount,
+    },
+    collections: {
+      url: `/collections`,
+      icon: <IconPlaylistAdd />,
+      count: userOverview?.collectionCount,
     },
   };
 

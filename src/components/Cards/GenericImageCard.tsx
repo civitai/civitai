@@ -16,7 +16,6 @@ export function GenericImageCard({
   entityType: string;
   entityId: number;
 }) {
-  console.log(coverImage);
   const { classes: sharedClasses, cx } = useCardStyles({
     aspectRatio: coverImage.width && coverImage.height ? coverImage.width / coverImage.height : 1,
   });

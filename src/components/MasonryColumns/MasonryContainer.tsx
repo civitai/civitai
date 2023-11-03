@@ -48,8 +48,6 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
     ...masonryProviderState,
   };
 
-  console.log(containerProps);
-
   return (
     <Container {...containerProps}>
       <div ref={containerRef} className={classes.container}>

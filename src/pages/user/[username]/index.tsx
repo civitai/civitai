@@ -371,10 +371,30 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
 
   // Redirect all users to the creator's models tab if they have uploaded models
   useEffect(() => {
+    if (!features) {
+      return; // Wait for features to be loaded.
+    }
+
+    if (features.profileOverhaul) {
+      // Redirect to the new profile page.
+      let path: string | undefined = '';
+      if (router.pathname !== '/user/[username]') {
+        path = router.pathname.split('/').pop();
+      }
+
+      if (path && !['models', 'images', 'collections', 'articles'].includes(path)) {
+        return; // Avoid changing paths, we might not support this path on new profile
+      }
+
+      router.replace(`/user/${username}/profile/${path ?? ''}`);
+
+      return;
+    }
+
     if (router.pathname !== '/user/[username]') return;
     if (uploads > 0) router.replace(`/user/${username}/models`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uploads, username]);
+  }, [uploads, username, features]);
 
   if (userLoading && !user)
     return (
