@@ -293,6 +293,7 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SD1: 'SD_1_5',
   SD2: undefined,
   SDXL: 'SDXL',
+  SDXLDistilled: 'SDXL_Distilled',
 };
 
 export const createGenerationRequest = async ({
