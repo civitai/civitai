@@ -90,12 +90,13 @@ const useStyles = createStyles((theme) => ({
     background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
   },
   profileSectionWithCoverImage: {
+    padding: '0 16px',
+
     '& > div': {
       position: 'relative',
       top: '-44px',
       height: 'auto',
       marginBottom: '-22px',
-      padding: '0 16px',
     },
   },
 }));
