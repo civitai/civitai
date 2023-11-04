@@ -68,6 +68,10 @@ const useStyles = createStyles((theme) => ({
       marginRight: '-16px',
       borderRadius: 0,
       paddingBottom: `${(constants.profile.mobileCoverImageAspectRatio * 100).toFixed(3)}%`,
+
+      div: {
+        borderRadius: 0,
+      },
     },
 
     '& > div': {
