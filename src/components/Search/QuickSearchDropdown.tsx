@@ -340,7 +340,7 @@ const QuickSearchDropdownContent = ({
             setSearch('');
           }
         }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+        itemComponent={IndexRenderItem[SearchPathToIndexMap[indexName]] ?? ModelSearchItem}
         // prevent default filtering behavior
         filter={() => true}
         clearable={query.length > 0}
