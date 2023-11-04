@@ -63,7 +63,7 @@ export function InlineSocialLinkInput({
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
         {links.map((link, index) => (
-          <Group key={index} align="center">
+          <Group key={index} align="center" noWrap>
             <DomainIcon url={link.url} size={24} />
             <Text size="sm">{link.url}</Text>
             <Button
