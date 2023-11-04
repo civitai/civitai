@@ -40,6 +40,7 @@ export const getGenerationRequestsSchema = z.object({
   detailed: z.boolean().optional(),
 });
 
+export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = z.object({
   id: z.number(),
   name: z.string(),
@@ -48,6 +49,8 @@ export const generationResourceSchema = z.object({
   modelName: z.string(),
   modelType: z.nativeEnum(ModelType),
   strength: z.number().optional(),
+  minStrength: z.number().optional(),
+  maxStrength: z.number().optional(),
 
   // navigation props
   covered: z.boolean().optional(),
@@ -185,6 +188,7 @@ export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
   z.object({ type: z.literal('model'), id: z.coerce.number() }),
+  z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
   z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
 ]);
 

@@ -3,6 +3,8 @@ import { ModelType } from '@prisma/client';
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
     strength: number;
+    minStrength: number;
+    maxStrength: number;
   }>;
 
   export type Image = {

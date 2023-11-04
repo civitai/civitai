@@ -388,6 +388,7 @@ export const CustomSearchBox = forwardRef<
 
   return (
     <TextInput
+      {...props}
       classNames={classes}
       variant={isMobile ? 'filled' : undefined}
       icon={<IconSearch size={20} />}

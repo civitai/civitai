@@ -1,4 +1,11 @@
-import { ParseOptions, StringifyOptions, stringify, parse } from 'query-string';
+import {
+  ParseOptions,
+  StringifyOptions,
+  stringify,
+  parse,
+  stringifyUrl,
+  UrlObject,
+} from 'query-string';
 
 export abstract class QS {
   static stringify(query: Record<string, unknown>, options?: StringifyOptions) {
@@ -16,5 +23,11 @@ export abstract class QS {
       sort: false,
       ...options,
     }) as T;
+  }
+  static stringifyUrl({ url, query, ...options }: UrlObject & StringifyOptions) {
+    return stringifyUrl(
+      { url, query },
+      { skipEmptyString: true, skipNull: true, sort: false, ...options }
+    );
   }
 }

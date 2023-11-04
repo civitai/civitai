@@ -2,15 +2,8 @@ import { ModelSearchIndexRecord } from '~/server/search-index/models.search-inde
 import { isDefined } from '~/utils/type-guards';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 
-export const applyUserPreferencesModels = <T>({
-  items,
-  currentUserId,
-  hiddenModels,
-  hiddenImages,
-  hiddenTags,
-  hiddenUsers,
-}: {
-  items: {
+export const applyUserPreferencesModels = <
+  T extends {
     id: number;
     user?: {
       id: number;
@@ -24,7 +17,16 @@ export const applyUserPreferencesModels = <T>({
         id: number;
       }[];
     }[];
-  }[];
+  }
+>({
+  items,
+  currentUserId,
+  hiddenModels,
+  hiddenImages,
+  hiddenTags,
+  hiddenUsers,
+}: {
+  items: T[];
   hiddenModels: Map<number, boolean>;
   hiddenImages: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
@@ -49,34 +51,31 @@ export const applyUserPreferencesModels = <T>({
           if (hiddenTags.get(tag.id)) return false;
         }
         return true;
-      });
+      }) as T['images'];
 
       if (!filteredImages?.length) return null;
 
+      const { tags, ...image } = filteredImages[0] as T['images'][number];
+
+      // TODO - don't mutate data if the intention is to make this reusable
       return {
         ...x,
         // Search index stores tag name for searching purposes. We need to convert it back to id
         tags: x.tags.map((t) => t.id),
         image: {
-          ...filteredImages[0],
+          ...image,
           // Search index stores tag name for searching purposes. We need to convert it back to id
-          tags: filteredImages[0].tags?.map((t) => t.id),
+          tags: tags?.map((t) => t.id),
         },
       };
     })
     .filter(isDefined);
 
-  return filtered as T[];
+  return filtered;
 };
 
-export const applyUserPreferencesImages = <T>({
-  items,
-  currentUserId,
-  hiddenImages,
-  hiddenTags,
-  hiddenUsers,
-}: {
-  items: {
+export const applyUserPreferencesImages = <
+  T extends {
     id: number;
     user?: {
       id: number;
@@ -84,7 +83,15 @@ export const applyUserPreferencesImages = <T>({
     tags?: {
       id: number;
     }[];
-  }[];
+  }
+>({
+  items,
+  currentUserId,
+  hiddenImages,
+  hiddenTags,
+  hiddenUsers,
+}: {
+  items: T[];
   hiddenImages: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
@@ -100,16 +107,11 @@ export const applyUserPreferencesImages = <T>({
     return true;
   });
 
-  return filtered as T[];
+  return filtered;
 };
 
-export const applyUserPreferencesArticles = <T>({
-  items,
-  currentUserId,
-  hiddenTags,
-  hiddenUsers,
-}: {
-  items: {
+export const applyUserPreferencesArticles = <
+  T extends {
     id: number;
     user?: {
       id: number;
@@ -117,7 +119,14 @@ export const applyUserPreferencesArticles = <T>({
     tags?: {
       id: number;
     }[];
-  }[];
+  }
+>({
+  items,
+  currentUserId,
+  hiddenTags,
+  hiddenUsers,
+}: {
+  items: T[];
   hiddenTags: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
   currentUserId?: number | null;
@@ -131,17 +140,19 @@ export const applyUserPreferencesArticles = <T>({
     return true;
   });
 
-  return filtered as T[];
+  return filtered;
 };
 
-export const applyUserPreferencesUsers = <T>({
+export const applyUserPreferencesUsers = <
+  T extends {
+    id: number;
+  }
+>({
   items,
   currentUserId,
   hiddenUsers,
 }: {
-  items: {
-    id: number;
-  }[];
+  items: T[];
   hiddenUsers: Map<number, boolean>;
   currentUserId?: number | null;
 }) => {
@@ -151,17 +162,11 @@ export const applyUserPreferencesUsers = <T>({
     return true;
   });
 
-  return filtered as T[];
+  return filtered;
 };
 
-export const applyUserPreferencesCollections = <T>({
-  items,
-  currentUserId,
-  hiddenImages,
-  hiddenUsers,
-  hiddenTags,
-}: {
-  items: {
+export const applyUserPreferencesCollections = <
+  T extends {
     id: number;
     userId?: number;
     user?: {
@@ -185,7 +190,15 @@ export const applyUserPreferencesCollections = <T>({
         | number[]
         | null;
     }[];
-  }[];
+  }
+>({
+  items,
+  currentUserId,
+  hiddenImages,
+  hiddenUsers,
+  hiddenTags,
+}: {
+  items: T[];
   hiddenImages: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
@@ -226,7 +239,7 @@ export const applyUserPreferencesCollections = <T>({
         }
 
         return true;
-      });
+      }) as T['images'];
 
       if (!filteredImages?.length) return null;
 
@@ -237,17 +250,11 @@ export const applyUserPreferencesCollections = <T>({
     })
     .filter(isDefined);
 
-  return filtered as T[];
+  return filtered;
 };
 
-export const applyUserPreferencesBounties = <T>({
-  items,
-  currentUserId,
-  hiddenImages,
-  hiddenUsers,
-  hiddenTags,
-}: {
-  items: {
+export const applyUserPreferencesBounties = <
+  T extends {
     id: number;
     userId?: number;
     user?: {
@@ -268,7 +275,15 @@ export const applyUserPreferencesBounties = <T>({
         | number[]
         | null;
     }[];
-  }[];
+  }
+>({
+  items,
+  currentUserId,
+  hiddenImages,
+  hiddenUsers,
+  hiddenTags,
+}: {
+  items: T[];
   hiddenImages: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
@@ -303,7 +318,7 @@ export const applyUserPreferencesBounties = <T>({
         }
 
         return true;
-      });
+      }) as T['images'];
 
       if (!filteredImages?.length) return null;
 
@@ -314,5 +329,5 @@ export const applyUserPreferencesBounties = <T>({
     })
     .filter(isDefined);
 
-  return filtered as T[];
+  return filtered;
 };

@@ -40,6 +40,9 @@ import { chunk, uniqBy } from 'lodash-es';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { calculateGenerationBill } from '~/server/common/generation';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
+import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -73,8 +76,10 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
-function mapGenerationResource(resource: GenerationResourceSelect): Generation.Resource {
-  const { model, ...x } = resource;
+function mapGenerationResource(
+  resource: GenerationResourceSelect & { settings?: RecommendedSettingsSchema | null }
+): Generation.Resource {
+  const { model, settings, ...x } = resource;
   return {
     id: x.id,
     name: x.name,
@@ -83,7 +88,9 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelName: model.name,
     modelType: model.type,
     baseModel: x.baseModel,
-    strength: 1,
+    strength: settings?.strength ?? 1,
+    minStrength: settings?.minStrength ?? -1,
+    maxStrength: settings?.maxStrength ?? 2,
   };
 }
 
@@ -474,7 +481,7 @@ export async function getGenerationStatusMessage() {
       select: { value: true },
     })) ?? {};
 
-  return value ? (value as string) : undefined;
+  return value ? (value as string) : null;
 }
 
 export const getGenerationData = async (
@@ -484,15 +491,24 @@ export const getGenerationData = async (
     case 'image':
       return await getImageGenerationData(props.id);
     case 'model':
-      return await getResourceGenerationData(props.id);
+      return await getResourceGenerationData({ modelId: props.id });
+    case 'modelVersion':
+      return await getResourceGenerationData({ modelVersionId: props.id });
     case 'random':
       return await getRandomGenerationData(props.includeResources);
   }
 };
 
-export const getResourceGenerationData = async (id: number): Promise<Generation.Data> => {
-  const resource = await dbRead.modelVersion.findUnique({
-    where: { id },
+export const getResourceGenerationData = async ({
+  modelId,
+  modelVersionId,
+}: {
+  modelId?: number;
+  modelVersionId?: number;
+}): Promise<Generation.Data> => {
+  if (!modelId && !modelVersionId) throw new Error('modelId or modelVersionId required');
+  const resource = await dbRead.modelVersion.findFirst({
+    where: { id: modelVersionId, modelId },
     select: {
       ...generationResourceSelect,
       clipSkip: true,
@@ -502,8 +518,8 @@ export const getResourceGenerationData = async (id: number): Promise<Generation.
   if (!resource) throw throwNotFoundError();
   const resources = [resource];
   if (resource.vaeId) {
-    const vae = await dbRead.modelVersion.findUnique({
-      where: { id },
+    const vae = await dbRead.modelVersion.findFirst({
+      where: { id: modelVersionId, modelId },
       select: { ...generationResourceSelect, clipSkip: true },
     });
     if (vae) resources.push({ ...vae, vaeId: null });
@@ -625,25 +641,17 @@ export const deleteAllGenerationRequests = async ({ userId }: { userId: number }
 
 export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModelInput) {
   const orchestratorBaseModel = baseModel.includes('SDXL') ? 'SDXL' : 'SD_1_5';
-  const payload = {
-    $type: 'prepareModel',
-    baseModel: orchestratorBaseModel,
-    model: `@civitai/${id}`,
-    priority: 1,
-    providers: ['OctoML', 'OctoMLNext'],
-  };
-
-  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+  const response = await orchestratorCaller.prepareModel({
+    payload: {
+      baseModel: orchestratorBaseModel,
+      model: `@civitai/${id}`,
+      priority: 1,
+      providers: ['OctoML', 'OctoMLNext'],
     },
   });
 
   if (response.status === 429) throw throwRateLimitError();
-  if (!response.ok) throw new Error(response.statusText);
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
-  return response.json();
+  return response.data;
 }

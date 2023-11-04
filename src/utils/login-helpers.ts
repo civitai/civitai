@@ -25,6 +25,7 @@ export const loginRedirectReasons = {
   'create-bounty': 'You need to be logged in to create a new bounty',
   'perform-action': 'You need to be logged in to perform this action',
   'purchase-buzz': 'You need to be logged in to purchase Buzz',
+  'image-gen': 'You need to be logged in to generate images',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

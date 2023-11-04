@@ -109,6 +109,7 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { RecommendedResources } from '~/components/Model/Recommended/RecommendedResources';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -957,12 +958,20 @@ export default function ModelDetailsV2({
       </Container>
       {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
         <AssociatedModels
-          fromId={model.id}
+          fromId={latestVersion.id}
           type="Suggested"
           label="Suggested Resources"
           ownerId={model.user.id}
         />
       )}
+      {/* TODO.manuel: Move this to the ModelVersionDetails */}
+      {/* {canLoadBelowTheFold && model.supportsRecommendedResources && (
+        <RecommendedResources
+          sourceId={latestVersion.id}
+          label="Recommended Resources"
+          ownerId={model.user.id}
+        />
+      )} */}
       {canLoadBelowTheFold &&
         (!model.locked ? (
           <Container size="xl" my="xl">

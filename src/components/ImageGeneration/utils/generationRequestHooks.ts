@@ -10,13 +10,16 @@ import { GenerationRequestStatus, Generation } from '~/server/services/generatio
 import { useDebouncer } from '~/utils/debouncer';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,
   options?: { enabled?: boolean; onError?: (err: unknown) => void }
 ) => {
+  const currentUser = useCurrentUser();
   const { data, ...rest } = trpc.generation.getRequests.useInfiniteQuery(input ?? {}, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+    enabled: !!currentUser,
     ...options,
   });
   const requests = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
@@ -37,6 +40,7 @@ export const useUpdateGenerationRequests = () => {
 
 const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 export const usePollGenerationRequests = (requestsInput: Generation.Request[] = []) => {
+  const currentUser = useCurrentUser();
   const update = useUpdateGenerationRequests();
   const debouncer = useDebouncer(5000);
   const requestIds = requestsInput
@@ -51,7 +55,7 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
     },
     {
       onError: () => debouncer(refetch),
-      enabled: !!requestIds.length,
+      enabled: !!requestIds.length && !!currentUser,
     }
   );
 

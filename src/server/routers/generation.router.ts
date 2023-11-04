@@ -52,7 +52,7 @@ export const generationRouter = router({
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .query(({ input }) => checkResourcesCoverage(input)),
-  getStatusMessage: protectedProcedure
+  getStatusMessage: publicProcedure
     .use(edgeCacheIt({ ttl: 60 }))
     .query(() => getGenerationStatusMessage()),
 });

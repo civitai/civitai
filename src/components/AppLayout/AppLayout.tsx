@@ -15,20 +15,17 @@ import React from 'react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
-import { GenerationButton } from '~/components/ImageGeneration/GenerationButton';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { getScrollPosition } from '~/utils/window-helpers';
-import { useRouter } from 'next/router';
 
 export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
   const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
-  const router = useRouter();
 
   const [hasFooter, setHasFooter] = useDebouncedState(true, 200);
 
@@ -36,8 +33,6 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
     const scroll = getScrollPosition();
     setHasFooter(scroll.y < 10);
   });
-
-  const atCreatePath = router.pathname.includes('/create');
 
   return (
     <AppShell
@@ -62,7 +57,7 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
       {!isBanned ? (
         <>
           {children}
-          {(flags.imageGeneration || flags.assistant) && (
+          {flags.assistant && (
             <Affix
               // @ts-ignore: ignoring cause target prop accepts string. See: https://v5.mantine.dev/core/portal#specify-target-dom-node
               target="#freezeBlock"
@@ -70,8 +65,7 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
               zIndex={199}
               style={{ transition: 'bottom 300ms linear' }}
             >
-              {flags.assistant && <AssistantButton mr={4} />}
-              {flags.imageGeneration && !atCreatePath && <GenerationButton />}
+              <AssistantButton mr={4} />
             </Affix>
           )}
         </>

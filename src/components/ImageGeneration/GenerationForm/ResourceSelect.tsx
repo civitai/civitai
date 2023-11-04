@@ -2,7 +2,6 @@ import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
-import { useBaseModelsContext } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
 import { withController } from '~/libs/form/hoc/withController';
@@ -11,18 +10,24 @@ import { Generation } from '~/server/services/generation/generation.types';
 function ResourceSelect({
   value,
   onChange,
-  type,
   buttonLabel,
   buttonProps,
+  options = {},
   ...inputWrapperProps
 }: {
   value?: Generation.Resource;
   onChange?: (value?: Generation.Resource) => void;
-  type: ModelType;
   buttonLabel: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
+  options?: {
+    baseModel?: string;
+    type?: ModelType;
+    canGenerate?: boolean;
+  };
 } & Omit<InputWrapperProps, 'children'>) {
-  const canAdd = !value;
+  const { type } = options;
+  const _value = type && type !== value?.modelType ? undefined : value;
+  const canAdd = !_value;
 
   const handleAdd = (resource: Generation.Resource) => {
     if (!canAdd) return;
@@ -37,7 +42,10 @@ function ResourceSelect({
     onChange?.(resource);
   };
 
-  const { baseModels } = useBaseModelsContext();
+  // removes resources that have unsupported types
+  useEffect(() => {
+    if (!_value && !!value) onChange?.(_value);
+  }, [value]); //eslint-disable-line
 
   return (
     <Input.Wrapper {...inputWrapperProps}>
@@ -50,9 +58,11 @@ function ResourceSelect({
             onClick={() =>
               openResourceSelectModal({
                 title: buttonLabel,
-                baseModel: baseModels?.[0],
-                types: [type],
                 onSelect: handleAdd,
+                options: {
+                  ...options,
+                  types: type ? [type] : undefined,
+                },
               })
             }
             {...buttonProps}

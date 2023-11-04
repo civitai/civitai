@@ -1,11 +1,11 @@
 import { Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { Currency, ModelVersionMonetizationType } from '@prisma/client';
-import { IconCurrencyDollar, IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
+import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
+import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import {
   Form,
@@ -26,6 +26,7 @@ import {
 } from '~/server/common/constants';
 import {
   ModelVersionUpsertInput,
+  RecommendedResourceSchema,
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -33,6 +34,11 @@ import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import {
+  GenerationResourceSchema,
+  generationResourceSchema,
+} from '~/server/schema/generation.schema';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -43,14 +49,41 @@ const schema = modelVersionUpsertSchema2
         message: 'Invalid value',
       }),
     useMonetization: z.boolean().default(false),
+    recommendedResources: generationResourceSchema.array().optional(),
   })
   .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
     message: 'You need to specify at least one trained word',
     path: ['trainedWords'],
-  });
+  })
+  .refine(
+    (data) => {
+      if (data.settings?.minStrength && data.settings?.maxStrength) {
+        return data.settings.minStrength <= data.settings.maxStrength;
+      }
+
+      return true;
+    },
+    { message: 'Min strength must be less than max strength', path: ['settings.minStrength'] }
+  )
+  .refine(
+    (data) => {
+      if (data.settings?.minStrength && data.settings.maxStrength) {
+        return data.settings.maxStrength >= data.settings.minStrength;
+      }
+
+      return true;
+    },
+    { message: 'Max strength must be greater than min strength', path: ['settings.maxStrength'] }
+  );
 type Schema = z.infer<typeof schema>;
 
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
+const RECOMMENDED_RESOURCE_TYPES = [
+  ModelType.Checkpoint,
+  ModelType.LORA,
+  ModelType.LoCon,
+  ModelType.TextualInversion,
+];
 
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
@@ -66,6 +99,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const isTextualInversion = model?.type === 'TextualInversion';
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
+  const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
 
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
@@ -103,6 +137,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? false,
+    settings: version?.settings ?? { strength: 0.8, minStrength: -1, maxStrength: 2 },
+    recommendedResources: version?.recommendedResources ?? [],
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -111,6 +147,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const trainedWords = form.watch('trainedWords') ?? [];
   const monetization = form.watch('monetization') ?? null;
   const sponsorshipSettings = form.watch('monetization.sponsorshipSettings') ?? null;
+  const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  const [minStrength, maxStrength] = form.watch([
+    'settings.minStrength',
+    'settings.maxStrength',
+  ]) as number[];
   const { isDirty } = form.formState;
   const canMonetize = !model?.poi;
 
@@ -122,8 +163,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
       });
     },
   });
-  const handleSubmit = async (data: Schema) => {
+  const handleSubmit = async ({
+    recommendedResources: rawRecommendedResources,
+    ...data
+  }: Schema) => {
     if (isDirty || !version?.id) {
+      const recommendedResources =
+        rawRecommendedResources?.map(({ id, strength }) => ({
+          resourceId: id,
+          settings: { strength },
+        })) ?? [];
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         clipSkip: data.clipSkip ?? null,
@@ -135,6 +184,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
         monetization: data.monetization,
+        recommendedResources,
       });
 
       await queryUtils.modelVersion.getById.invalidate();
@@ -162,6 +212,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           version.earlyAccessTimeFrame && features.earlyAccessModel
             ? String(version.earlyAccessTimeFrame)
             : '0',
+        settings: version.settings ?? { strength: 0.8, minStrength: 0, maxStrength: 1 },
+        recommendedResources: version.recommendedResources ?? [],
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
@@ -313,7 +365,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           </Stack>
           <Stack spacing={4}>
             <Divider label="Recommended Settings" />
-            <Group spacing="xs" grow>
+            <Group spacing="xs" sx={{ '&>*': { flexGrow: 1 } }}>
               <InputNumber
                 name="clipSkip"
                 label="Clip Skip"
@@ -321,14 +373,64 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 min={1}
                 max={12}
               />
-              {hasVAE && (
-                <InputSelect
-                  name="vaeId"
-                  label="VAE"
-                  placeholder="VAE"
-                  data={vaeOptions}
-                  clearable
-                  searchable
+              {showStrengthInput && (
+                <Group w="100%" align="start" grow>
+                  <InputNumber
+                    name="settings.minStrength"
+                    label="Min Strength"
+                    min={-100}
+                    max={100}
+                    precision={1}
+                    step={0.1}
+                  />
+                  <InputNumber
+                    name="settings.maxStrength"
+                    label="Max Strength"
+                    min={-100}
+                    max={100}
+                    precision={1}
+                    step={0.1}
+                  />
+                  <InputNumber
+                    name="settings.strength"
+                    label="Strength"
+                    min={minStrength}
+                    max={maxStrength}
+                    precision={1}
+                    step={0.1}
+                  />
+                </Group>
+              )}
+              {hasVAE ? (
+                <>
+                  {/* <InputResourceSelect
+                    name="recommendedResources"
+                    type={ModelType.VAE}
+                    label={getDisplayName(ModelType.VAE)}
+                    buttonLabel="Add VAE"
+                    baseModel={baseModel}
+                  /> */}
+                  <InputSelect
+                    name="vaeId"
+                    label="VAE"
+                    placeholder="VAE"
+                    data={vaeOptions}
+                    clearable
+                    searchable
+                  />
+                </>
+              ) : (
+                <InputResourceSelectMultiple
+                  name="recommendedResources"
+                  label="Resources"
+                  description="Select which resources work best with your model"
+                  buttonLabel="Add resource"
+                  w="100%"
+                  limit={10}
+                  options={{
+                    baseModel,
+                    types: [ModelType.Checkpoint],
+                  }}
                 />
               )}
             </Group>
@@ -482,11 +584,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   );
 }
 
+type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
+  createdAt: Date | null;
+  recommendedResources?: GenerationResourceSchema[];
+};
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
-  version?: Partial<ModelVersionUpsertInput & { createdAt: Date | null }>;
+  version?: Partial<VersionInput>;
 };
 
 const monetizationTypeExplanation: Record<ModelVersionMonetizationType, string> = {

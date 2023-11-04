@@ -15,6 +15,8 @@ import {
   HoverCard,
   TooltipProps,
   LoadingOverlay,
+  Collapse,
+  Box,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -29,8 +31,7 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState, useEffect } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useState } from 'react';
 
 import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
@@ -39,6 +40,7 @@ import {
   useDeleteGenerationRequestImages,
   useGetGenerationRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel } from '~/store/generation.store';
@@ -71,23 +73,17 @@ export function Feed({
   isFetching,
   isError,
 }: ReturnType<typeof useGetGenerationRequests>) {
-  const { ref, inView } = useInView();
   const [state, setState] = useState<State>({
     layout: 'grid',
     selectedItems: [],
     variantModalOpened: false,
   });
 
-  // infinite paging
-  useEffect(() => {
-    if (inView && !isFetching && !isError) fetchNextPage?.();
-  }, [fetchNextPage, inView, isFetching, isError]);
-
   const { classes } = useStyles();
 
   return (
-    <Stack sx={{ position: 'relative', height: '100%' }} spacing={0}>
-      <div className={classes.searchPanel}>
+    <Stack sx={{ position: 'relative', flex: 1, overflow: 'hidden' }} spacing={0}>
+      {/* <div className={classes.searchPanel}>
         <HoverCard withArrow>
           <HoverCard.Target>
             <Overlay blur={1} opacity={0.3} color="#000" />
@@ -140,60 +136,61 @@ export function Feed({
             </Group>
           </Group>
         </Card>
-      </div>
-      <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
-        <div className={classes.grid}>
-          {feed
-            .map((image) => {
-              const selected = state.selectedItems.includes(image.id);
-              const request = requests.find((request) =>
-                request.images?.some((x) => x.id === image.id)
-              );
+      </div> */}
 
-              if (!request) return null;
+      <div className={classes.grid}>
+        {feed
+          .map((image) => {
+            const selected = state.selectedItems.includes(image.id);
+            const request = requests.find((request) =>
+              request.images?.some((x) => x.id === image.id)
+            );
 
-              return (
-                <FeedItem
-                  key={image.id}
-                  image={image}
-                  request={request}
-                  selected={selected}
-                  onCheckboxClick={({ image, checked }) => {
-                    if (checked) {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: [...current.selectedItems, image.id],
-                      }));
-                    } else {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                      }));
-                    }
-                  }}
-                  onCreateVariantClick={(image) =>
+            if (!request) return null;
+
+            return (
+              <FeedItem
+                key={image.id}
+                image={image}
+                request={request}
+                selected={selected}
+                onCheckboxClick={({ image, checked }) => {
+                  if (checked) {
                     setState((current) => ({
                       ...current,
-                      variantModalOpened: true,
-                      selectedItems: [image.id],
-                    }))
+                      selectedItems: [...current.selectedItems, image.id],
+                    }));
+                  } else {
+                    setState((current) => ({
+                      ...current,
+                      selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                    }));
                   }
-                />
-              );
-            })
-            .filter(isDefined)}
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center p="xl" ref={ref} sx={{ height: 36, gridColumn: '1/-1' }} mt="md">
-              {inView && <Loader />}
+                }}
+                onCreateVariantClick={(image) =>
+                  setState((current) => ({
+                    ...current,
+                    variantModalOpened: true,
+                    selectedItems: [image.id],
+                  }))
+                }
+              />
+            );
+          })
+          .filter(isDefined)}
+        {hasNextPage && (
+          <InViewLoader
+            loadFn={fetchNextPage}
+            loadCondition={!isRefetching}
+            style={{ gridColumn: '1/-1' }}
+          >
+            <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Loader />
             </Center>
-          )}
-        </div>
-      </ScrollArea>
-      <FloatingActions
-        images={feed}
-        onPostClick={() => console.log('post images')}
-        onUpscaleClick={() => console.log('upscale images')}
-      />
+          </InViewLoader>
+        )}
+      </div>
+
       <CreateVariantsModal
         opened={state.variantModalOpened}
         onClose={() =>
@@ -211,7 +208,7 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
-function FloatingActions({ images }: FloatingActionsProps) {
+export function FloatingFeedActions({ images = [], children }: FloatingActionsProps) {
   const router = useRouter();
   const selected = generationImageSelect.useSelection();
   const handleDeselect = () => generationImageSelect.setSelected([]);
@@ -262,59 +259,50 @@ function FloatingActions({ images }: FloatingActionsProps) {
     handleDeselect();
   };
 
-  return (
-    <Transition mounted={selected.length > 0} transition="slide-up">
-      {(transitionStyles) => (
-        <Card
-          p={4}
-          radius="sm"
-          shadow="xl"
-          style={transitionStyles}
-          sx={{ position: 'absolute', bottom: 8, left: 8, zIndex: 3 }}
-          withBorder
-        >
-          <LoadingOverlay visible={loading} loaderProps={{ variant: 'bars', size: 'sm' }} />
-          <Stack spacing={6}>
-            <Text color="dimmed" size="xs" weight={500} inline>
-              {selected.length} selected
-            </Text>
-            <Group spacing={4}>
-              <Tooltip label="Deselect all" {...tooltipProps}>
-                <ActionIcon size="md" onClick={handleDeselect} variant="light">
-                  <IconSquareOff size={20} />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label="Delete selected" {...tooltipProps}>
-                <ActionIcon size="md" onClick={handleDeleteImages} color="red">
-                  <IconTrash size={20} />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label="Post images" {...tooltipProps}>
-                <ActionIcon size="md" variant="light" onClick={handlePostImages}>
-                  <IconCloudUpload size={20} />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label="Upscale images" {...tooltipProps}>
-                <span>
-                  <ActionIcon size="md" variant="light" disabled>
-                    <IconWindowMaximize size={20} />
-                  </ActionIcon>
-                </span>
-              </Tooltip>
-            </Group>
-          </Stack>
-        </Card>
-      )}
-    </Transition>
+  const render = (
+    <div style={{ position: 'relative' }}>
+      <LoadingOverlay visible={loading} loaderProps={{ variant: 'bars', size: 'sm' }} />
+      <Group spacing={6} position="right">
+        <Text color="dimmed" size="xs" weight={500} inline>
+          {selected.length} selected
+        </Text>
+        <Group spacing={4}>
+          <Tooltip label="Deselect all" {...tooltipProps}>
+            <ActionIcon size="md" onClick={handleDeselect} variant="light">
+              <IconSquareOff size={20} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Delete selected" {...tooltipProps}>
+            <ActionIcon size="md" onClick={handleDeleteImages} color="red">
+              <IconTrash size={20} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Post images" {...tooltipProps}>
+            <ActionIcon size="md" variant="light" onClick={handlePostImages}>
+              <IconCloudUpload size={20} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Upscale images" {...tooltipProps}>
+            <span>
+              <ActionIcon size="md" variant="light" disabled>
+                <IconWindowMaximize size={20} />
+              </ActionIcon>
+            </span>
+          </Tooltip>
+        </Group>
+      </Group>
+    </div>
   );
+
+  if (children) return children({ selected, render });
+  if (!selected.length) return null;
+
+  return render;
 }
 
 type FloatingActionsProps = {
-  // selectCount: number;
-  // onDeselectClick: () => void;
-  images: Generation.Image[];
-  onPostClick: () => void;
-  onUpscaleClick: () => void;
+  images?: Generation.Image[];
+  children?: (args: { selected: number[]; render: JSX.Element }) => React.ReactElement;
 };
 
 const useStyles = createStyles((theme) => ({
@@ -322,8 +310,7 @@ const useStyles = createStyles((theme) => ({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
     gap: theme.spacing.md,
-    paddingTop: 4 + 36 + theme.spacing.xs,
-    paddingBottom: theme.spacing.md,
+    padding: theme.spacing.md,
 
     [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
       gridTemplateColumns: '1fr 1fr',
