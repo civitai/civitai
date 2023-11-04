@@ -548,8 +548,8 @@ const queryFilters: Record<
 > = {
   models: {
     filters: {
-      'tags.name': /(^|\s+)#(?<value>\w+)/g,
-      'user.username': /(^|\s+)@(?<value>\w+)/g,
+      'tags.name': /(^|\s+)(?<not>!|-)?#(?<value>\w+)/g,
+      'user.username': /(^|\s+)(?<not>!|-)?@(?<value>\w+)/g,
     },
     searchPageMap: {
       'user.username': 'users',
@@ -566,7 +566,8 @@ function parseQuery(index: string, query: string) {
     for (const [attribute, regex] of Object.entries(filterAttributes.filters)) {
       for (const match of query.matchAll(regex)) {
         const cleanedMatch = match?.groups?.value?.trim();
-        filters.push(`${attribute} = ${cleanedMatch}`);
+        const not = match?.groups?.not !== undefined;
+        filters.push(`${not ? 'NOT ' : ''}${attribute} = ${cleanedMatch}`);
         searchPageQuery.push(
           `${filterAttributes.searchPageMap[attribute] ?? attribute}=${encodeURIComponent(
             cleanedMatch ?? ''
