@@ -24,7 +24,7 @@ class OrchestratorCaller extends HttpCaller {
 
   public textToImage({ payload }: { payload: Orchestrator.Generation.TextToImageJobPayload }) {
     return this.post<Orchestrator.Generation.TextToImageResponse>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'textToImage' },
+      payload: { $type: 'textToImage', ...payload },
     });
   }
 
@@ -36,7 +36,7 @@ class OrchestratorCaller extends HttpCaller {
     queryParams?: Orchestrator.JobQueryParams;
   }) {
     return this.post<Orchestrator.Training.CopyAssetJobResponse>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'copyAsset' },
+      payload: { $type: 'copyAsset', ...payload },
       queryParams,
     });
   }
@@ -49,20 +49,20 @@ class OrchestratorCaller extends HttpCaller {
     queryParams?: Orchestrator.JobQueryParams;
   }) {
     return this.post<Orchestrator.Training.ClearAssetsJobResponse>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'clearAssets' },
+      payload: { $type: 'clearAssets', ...payload },
       queryParams,
     });
   }
 
   public getBlob({ payload }: { payload: Orchestrator.Generation.BlobGetPayload }) {
     return this.post<Orchestrator.Generation.BlobGetResponse>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'blobGet' },
+      payload: { $type: 'blobGet', ...payload },
     });
   }
 
   public deleteBlob({ payload }: { payload: Orchestrator.Generation.BlobActionPayload }) {
     return this.post<Orchestrator.Generation.BlobActionPayload>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'blobDelete' },
+      payload: { $type: 'blobDelete', ...payload },
     });
   }
 
@@ -72,7 +72,7 @@ class OrchestratorCaller extends HttpCaller {
     payload: Orchestrator.Training.ImageResourceTrainingJobPayload;
   }) {
     return this.post<Orchestrator.Training.ImageResourceTrainingResponse>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'imageResourceTraining' },
+      payload: { $type: 'imageResourceTraining', ...payload },
     });
   }
 
@@ -88,7 +88,7 @@ class OrchestratorCaller extends HttpCaller {
 
   public prepareModel({ payload }: { payload: Orchestrator.Generation.PrepareModelPayload }) {
     return this.post<Orchestrator.Generation.PrepareModelResponse>('/v1/consumer/jobs', {
-      payload: { ...payload, $type: 'prepareModel' },
+      payload: { $type: 'prepareModel', ...payload },
     });
   }
 }
