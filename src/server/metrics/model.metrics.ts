@@ -550,7 +550,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
       JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-      WHERE mvm."updatedAt" > now() - ${lastUpdate}
+      WHERE mvm."updatedAt" > ${lastUpdate}
     )
     SELECT
       mv."modelId",
