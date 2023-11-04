@@ -34,6 +34,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
+import { isNumber } from '~/utils/type-guards';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
   const theme = useMantineTheme();
@@ -185,7 +186,10 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                         fontWeight: 510,
                       }}
                     >
-                      {userRatingsTotalCount.avgRating.toFixed(2)} out of 5
+                      {isNumber(userRatingsTotalCount.avgRating)
+                        ? userRatingsTotalCount.avgRating.toFixed(2)
+                        : 0}{' '}
+                      out of 5
                     </Text>
                     <Text size="lg" color="dimmed">
                       {abbreviateNumber(userRatingsTotalCount.count)} Reviews

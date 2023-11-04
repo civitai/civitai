@@ -505,34 +505,35 @@ model ModelVersionMonetization {
 }
 
 model ModelVersion {
-  id                   Int                       @id @default(autoincrement())
+  id                   Int             @id @default(autoincrement())
   index                Int?
   name                 String
   description          String?
   modelId              Int
-  model                Model                     @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model                Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   trainedWords         String[]
   steps                Int?
   epochs               Int?
   clipSkip             Int?
   vaeId                Int?
-  vae                  ModelVersion?             @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt            DateTime                  @default(now())
-  updatedAt            DateTime                  @updatedAt
+  vae                  ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
   publishedAt          DateTime?
-  status               ModelStatus               @default(Draft)
+  status               ModelStatus     @default(Draft)
   trainingStatus       TrainingStatus?
   trainingDetails      Json?
-  fromImport           Import?                   @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImport           Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId         Int?
-  inaccurate           Boolean                   @default(false)
+  inaccurate           Boolean         @default(false)
   baseModel            String
   baseModelType        String?
-  meta                 Json                      @default("{}")
-  earlyAccessTimeFrame Int                       @default(0)
-  requireAuth          Boolean                   @default(false)
-  monetization         ModelVersionMonetization?
+  meta                 Json            @default("{}")
+  earlyAccessTimeFrame Int             @default(0)
+  requireAuth          Boolean         @default(false)
+  settings             Json?
 
+  monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
   files                   ModelFile[]
   runStrategies           RunStrategy[]
@@ -547,6 +548,8 @@ model ModelVersion {
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
   generationCoverage      GenerationCoverage?
+  recommendedResources    RecommendedResource[]     @relation("recommendedResources")
+  recommendedTo           RecommendedResource[]     @relation("recommendedTo")
 
   @@index([modelId], type: Hash)
 }
@@ -572,6 +575,17 @@ enum ModelHashType {
   SHA256
   CRC32
   BLAKE3
+}
+
+model RecommendedResource {
+  id         Int           @id @default(autoincrement())
+  resourceId Int
+  resource   ModelVersion  @relation("recommendedTo", fields: [resourceId], references: [id], onDelete: Cascade)
+  sourceId   Int?
+  source     ModelVersion? @relation("recommendedResources", fields: [sourceId], references: [id], onDelete: Cascade)
+  settings   Json?
+
+  @@index([sourceId], type: Hash)
 }
 
 model ModelFileHash {

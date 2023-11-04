@@ -15,7 +15,7 @@ import { Button, Center, Group, Loader, Stack } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
-import { DumbCategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 
 const MAX_MODELS_DISPLAY = 12;

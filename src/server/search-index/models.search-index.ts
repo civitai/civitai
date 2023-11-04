@@ -99,6 +99,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'user.username',
     'status',
     'category.name',
+    'canGenerate',
   ];
 
   if (
@@ -166,9 +167,9 @@ const onFetchItemsToIndex = async ({
       },
       modelVersions: {
         orderBy: { index: 'asc' },
-        take: 1,
         select: {
           id: true,
+          name: true,
           earlyAccessTimeFrame: true,
           createdAt: true,
           generationCoverage: { select: { covered: true } },
@@ -292,7 +293,7 @@ const onFetchItemsToIndex = async ({
         return null;
       }
 
-      const canGenerate = !!version.generationCoverage?.covered;
+      const canGenerate = modelVersions.some((x) => x.generationCoverage?.covered);
 
       const category = tagsOnModels.find((tagOnModel) =>
         modelCategoriesIds.includes(tagOnModel.tag.id)
@@ -303,6 +304,10 @@ const onFetchItemsToIndex = async ({
         user,
         category: category?.tag,
         version,
+        versions: modelVersions.map(({ generationCoverage, ...x }) => ({
+          ...x,
+          canGenerate: generationCoverage?.covered,
+        })),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],

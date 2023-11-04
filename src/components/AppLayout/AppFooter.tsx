@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
@@ -28,6 +29,7 @@ const buttonProps: ButtonProps = {
 const hash = env.NEXT_PUBLIC_GIT_HASH;
 
 export function AppFooter() {
+  const router = useRouter();
   const { classes, cx } = useStyles();
   const [showHash, setShowHash] = useState(false);
   const [showFooter, setShowFooter] = useDebouncedState(true, 200);
@@ -38,6 +40,8 @@ export function AppFooter() {
     const scroll = getScrollPosition();
     setShowFooter(scroll.y < 10);
   });
+
+  if (router.asPath === '/generate') return null;
 
   return (
     <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">

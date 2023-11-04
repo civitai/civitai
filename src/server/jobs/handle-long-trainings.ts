@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { createJob } from './job';
+import orchestratorCaller from '../http/orchestrator/orchestrator.caller';
 
 const minutesPerRun = 10;
 
@@ -33,15 +34,11 @@ const _handleJob = async (
     return;
   }
 
-  const eventResp = await fetch(
-    `${env.GENERATION_ENDPOINT}/v1/producer/jobs/${job_id}/events?descending=true&take=1`,
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
-      },
-    }
-  );
+  const eventResp = await orchestratorCaller.getEventById({
+    id: job_id,
+    descending: true,
+    take: 1,
+  });
 
   if (!eventResp.ok) {
     logJob({
@@ -55,15 +52,13 @@ const _handleJob = async (
     return;
   }
 
-  let eventData: { type?: string; dateTime?: string }[] = [];
-  try {
-    eventData = await eventResp.json();
-  } catch (e) {
+  const eventData = eventResp.data;
+  if (!eventData) {
     logJob({
       message: `Couldn't parse JSON events for job`,
       data: {
-        error: (e as Error)?.message,
-        cause: (e as Error)?.cause,
+        // error: (e as Error)?.message,
+        // cause: (e as Error)?.cause,
         jobId: job_id,
         modelFileId: mf_id,
         important: true,
@@ -134,12 +129,7 @@ const _handleJob = async (
     if (status === 'Submitted') {
       // - if it's not in the queue after 10 minutes, resubmit it
       if (minsDiff > 10) {
-        const queueResponse = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${job_id}`, {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
-          },
-        });
+        const queueResponse = await orchestratorCaller.getJobById({ id: job_id });
         if (!queueResponse.ok) {
           logJob({
             message: `Could not fetch position in queue.`,
@@ -152,7 +142,7 @@ const _handleJob = async (
           return;
         }
 
-        const queueData: MixedObject = await queueResponse.json();
+        const queueData = queueResponse.data;
         if (!queueData?.serviceProviders || isEmpty(queueData.serviceProviders)) {
           logJob({
             message: `Not in queue, needs resubmission.`,

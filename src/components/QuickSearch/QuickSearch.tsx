@@ -308,6 +308,7 @@ const debouncedQueryHook = debounce((query, refine) => {
   refine(query);
 }, 300);
 
+// TODO.Deprecate - it appears that this isn't being used anywhere in the site
 export function QuickSearch(searchBarProps: UnstyledButtonProps) {
   return (
     <InstantSearch

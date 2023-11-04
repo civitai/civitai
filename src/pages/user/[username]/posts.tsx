@@ -16,6 +16,16 @@ import { UserProfileLayout } from './';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features, ctx }) => {
+    const { username } = ctx.query;
+    if (features?.profileOverhaul)
+      return { redirect: { destination: `/user/${username}/profile/images`, permanent: false } };
+  },
+});
 
 export default function UserPostsPage() {
   const currentUser = useCurrentUser();

@@ -173,6 +173,7 @@ export const constants = {
       notified: 8,
       muted: 16,
     },
+    maxConcurrentRequests: 10,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -362,7 +363,7 @@ export const getGenerationConfig = (baseModel?: string) => {
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
-export const MODELS_SEARCH_INDEX = 'models_v2';
+export const MODELS_SEARCH_INDEX = 'models_v3';
 export const IMAGES_SEARCH_INDEX = 'images_v2';
 export const ARTICLES_SEARCH_INDEX = 'articles_v2';
 export const USERS_SEARCH_INDEX = 'users_v2';

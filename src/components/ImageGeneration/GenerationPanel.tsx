@@ -1,7 +1,9 @@
-import { Drawer, Center, Loader, Text, Stack } from '@mantine/core';
+import { Drawer, Center, Loader, Text, Stack, ActionIcon, Tooltip } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
+import { IconArrowsMaximize } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
-import { useState, useTransition } from 'react';
+import { useRouter } from 'next/router';
+import { useEffect, useState, useTransition } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -42,7 +44,7 @@ type State = {
 
 export const useGenerationPanelControls = create<State>()(
   devtools(
-    immer((set, get) => ({
+    immer((set) => ({
       opened: false,
       view: 'generate',
       open: (input) => {
@@ -81,11 +83,14 @@ export const generationPanel = {
 export function GenerationPanel() {
   const debouncer = useDebouncer(300);
   const mobile = useIsMobile({ breakpoint: 'md' });
-  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const [, startTransition] = useTransition();
 
   const opened = useGenerationStore((state) => state.opened);
   const onClose = useGenerationStore((state) => state.close);
   const [showContent, setShowContent] = useState(false);
+
+  useEffect(() => onClose(), [router, onClose]);
 
   useDidUpdate(() => {
     startTransition(() => {
@@ -102,11 +107,37 @@ export function GenerationPanel() {
       position={mobile ? 'bottom' : 'right'}
       withCloseButton={false}
       zIndex={constants.imageGeneration.drawerZIndex}
-      styles={(theme) => ({
-        drawer: { [theme.fn.smallerThan('md')]: { position: 'absolute', height: 'auto' } },
-      })}
+      styles={{ body: { height: '100%' } }}
     >
-      {showContent && <GenerationTabs />}
+      {showContent && (
+        <>
+          <GenerationTabs />
+          <Tooltip label="Expand">
+            <ActionIcon
+              radius="xl"
+              size="lg"
+              variant="filled"
+              onClick={() => router.push('/generate')}
+              sx={(theme) => ({
+                position: 'absolute',
+                top: theme.spacing.xs,
+                left: -theme.spacing.xl - 17,
+                backgroundColor: theme.white,
+                '&:hover': {
+                  backgroundColor: theme.colors.gray[1],
+                },
+
+                [theme.fn.smallerThan('sm')]: {
+                  top: -theme.spacing.xl - 17,
+                  left: 'calc(100% - 48px)',
+                },
+              })}
+            >
+              <IconArrowsMaximize size={18} color="black" />
+            </ActionIcon>
+          </Tooltip>
+        </>
+      )}
     </Drawer>
   );
 }

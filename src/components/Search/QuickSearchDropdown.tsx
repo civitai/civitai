@@ -47,6 +47,7 @@ import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/user
 import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
 import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
+import { IndexToLabel, SearchPathToIndexMap } from '~/components/Search/useSearchState';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -125,19 +126,17 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const SUPPORTED_USERNAME_INDEXES = [
-  { value: MODELS_SEARCH_INDEX, label: 'Models' },
-  { value: IMAGES_SEARCH_INDEX, label: 'Images' },
-  { value: BOUNTIES_SEARCH_INDEX, label: 'Bounties' },
-  { value: ARTICLES_SEARCH_INDEX, label: 'Articles' },
-  { value: USERS_SEARCH_INDEX, label: 'Users' },
-  { value: COLLECTIONS_SEARCH_INDEX, label: 'Collections' },
-] as const;
-
-type SupportedSearchIndex = (typeof SUPPORTED_USERNAME_INDEXES)[number]['value'];
+// const SUPPORTED_USERNAME_INDEXES = [
+//   { value: MODELS_SEARCH_INDEX, label: 'Models' },
+//   { value: IMAGES_SEARCH_INDEX, label: 'Images' },
+//   { value: BOUNTIES_SEARCH_INDEX, label: 'Bounties' },
+//   { value: ARTICLES_SEARCH_INDEX, label: 'Articles' },
+//   { value: USERS_SEARCH_INDEX, label: 'Users' },
+//   { value: COLLECTIONS_SEARCH_INDEX, label: 'Collections' },
+// ] as const;
 
 type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
-  supportedIndexes?: SupportedSearchIndex[];
+  supportedIndexes?: TargetIndex[];
   onItemSelected: (item: ShowcaseItemSchema) => void;
   filters?: string;
   dropdownItemLimit?: number;
@@ -148,13 +147,13 @@ export const QuickSearchDropdown = ({
   dropdownItemLimit = 5,
   ...props
 }: QuickSearchDropdownProps) => {
-  const [targetIndex, setTargetIndex] = useState<SupportedSearchIndex>(MODELS_SEARCH_INDEX);
-  const handleTargetChange = (value: SupportedSearchIndex) => {
+  const [targetIndex, setTargetIndex] = useState<TargetIndex>('models');
+  const handleTargetChange = (value: TargetIndex) => {
     setTargetIndex(value);
   };
 
   return (
-    <InstantSearch searchClient={meilisearch} indexName={targetIndex}>
+    <InstantSearch searchClient={meilisearch} indexName={SearchPathToIndexMap[targetIndex]}>
       <Configure hitsPerPage={dropdownItemLimit} filters={filters} />
 
       <QuickSearchDropdownContent
@@ -167,6 +166,26 @@ export const QuickSearchDropdown = ({
   );
 };
 
+type TargetIndex = keyof DataIndex;
+type DataIndex = {
+  models: ModelSearchIndexRecord[];
+  images: ImageSearchIndexRecord[];
+  articles: ArticleSearchIndexRecord[];
+  users: UserSearchIndexRecord[];
+  collections: CollectionSearchIndexRecord[];
+  bounties: BountySearchIndexRecord[];
+};
+type Boxed<Mapping> = { [K in keyof Mapping]: { key: K; value: Mapping[K] } }[keyof Mapping];
+/**
+ * boxes a key and corresponding value from a mapping and returns {key: , value: } structure
+ * the type of return value is setup so that a switch over the key field will guard type of value
+ * It is intentionally not checked that key and value actually correspond to each other so that
+ * this can return a union of possible pairings, intended to be put in a switch statement over the key field.
+ */
+function paired<Mapping>(key: keyof Mapping, value: Mapping[keyof Mapping]) {
+  return { key, value } as Boxed<Mapping>;
+}
+
 const QuickSearchDropdownContent = ({
   indexName,
   onIndexNameChange,
@@ -176,21 +195,23 @@ const QuickSearchDropdownContent = ({
   dropdownItemLimit = 5,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
-  indexName: SearchIndex;
-  onIndexNameChange: (indexName: SupportedSearchIndex) => void;
+  indexName: TargetIndex;
+  onIndexNameChange: (indexName: TargetIndex) => void;
 }) => {
   const currentUser = useCurrentUser();
   const { query, refine: setQuery } = useSearchBox();
-  const { hits, results } = useHits();
+  const { hits, results } = useHits<any>();
   const { classes } = useStyles();
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
-  const availableIndexes = useMemo(() => {
-    if (!supportedIndexes) return SUPPORTED_USERNAME_INDEXES;
+  const availableIndexes = supportedIndexes ?? [];
+  // TODO - revisit this
+  // const availableIndexes = useMemo(() => {
+  //   if (!supportedIndexes) return SUPPORTED_USERNAME_INDEXES;
 
-    return SUPPORTED_USERNAME_INDEXES.filter((index) => supportedIndexes.includes(index.value));
-  }, [supportedIndexes]);
+  //   return SUPPORTED_USERNAME_INDEXES.filter((index) => supportedIndexes.includes(index.value));
+  // }, [supportedIndexes]);
 
   const {
     models: hiddenModels,
@@ -203,56 +224,35 @@ const QuickSearchDropdownContent = ({
   const items = useMemo(() => {
     if (!results || !results.nbHits) return [];
 
-    let filteredResults: (
-      | ModelSearchIndexRecord
-      | ArticleSearchIndexRecord
-      | ImageSearchIndexRecord
-      | UserSearchIndexRecord
-      | CollectionSearchIndexRecord
-      | BountySearchIndexRecord
-    )[] = [];
+    const getFilteredResults = () => {
+      const opts = {
+        currentUserId: currentUser?.id,
+        hiddenImages: hiddenImages,
+        hiddenTags: hiddenTags,
+        hiddenUsers: hiddenUsers,
+        hiddenModels,
+      };
 
-    const opts = {
-      currentUserId: currentUser?.id,
-      hiddenImages: hiddenImages,
-      hiddenTags: hiddenTags,
-      hiddenUsers: hiddenUsers,
-      hiddenModels,
+      const pair = paired<DataIndex>(indexName, hits);
+      switch (pair.key) {
+        case 'models':
+          return applyUserPreferencesModels({ ...opts, items: pair.value });
+        case 'images':
+          return applyUserPreferencesImages({ ...opts, items: pair.value });
+        case 'articles':
+          return applyUserPreferencesArticles({ ...opts, items: pair.value });
+        case 'bounties':
+          return applyUserPreferencesBounties({ ...opts, items: pair.value });
+        case 'collections':
+          return applyUserPreferencesCollections({ ...opts, items: pair.value });
+        case 'users':
+          return applyUserPreferencesUsers({ ...opts, items: pair.value });
+        default:
+          return [];
+      }
     };
 
-    if (indexName === MODELS_SEARCH_INDEX) {
-      filteredResults = applyUserPreferencesModels({
-        ...opts,
-        items: hits as unknown as ModelSearchIndexRecord[],
-      });
-    } else if (indexName === ARTICLES_SEARCH_INDEX) {
-      filteredResults = applyUserPreferencesArticles({
-        ...opts,
-        items: hits as unknown as ArticleSearchIndexRecord[],
-      });
-    } else if (indexName === IMAGES_SEARCH_INDEX) {
-      filteredResults = applyUserPreferencesImages({
-        ...opts,
-        items: hits as unknown as ImageSearchIndexRecord[],
-      });
-    } else if (indexName === USERS_SEARCH_INDEX) {
-      filteredResults = applyUserPreferencesUsers({
-        ...opts,
-        items: hits as unknown as UserSearchIndexRecord[],
-      });
-    } else if (indexName === COLLECTIONS_SEARCH_INDEX) {
-      filteredResults = applyUserPreferencesCollections({
-        ...opts,
-        items: hits as unknown as CollectionSearchIndexRecord[],
-      });
-    } else if (indexName === BOUNTIES_SEARCH_INDEX) {
-      filteredResults = applyUserPreferencesBounties({
-        ...opts,
-        items: hits as unknown as BountySearchIndexRecord[],
-      });
-    } else {
-      filteredResults = [];
-    }
+    const filteredResults = getFilteredResults();
 
     type Item = AutocompleteItem & { hit: any | null };
     const items: Item[] = filteredResults.map((hit) => {
@@ -264,9 +264,20 @@ const QuickSearchDropdownContent = ({
         hit,
       };
     });
+    // If there are more results than the default limit,
+    // then we add a "view more" option
 
     return items;
-  }, [hits, query, results, hiddenModels, hiddenImages, hiddenTags, hiddenUsers]);
+  }, [
+    hits,
+    results,
+    hiddenModels,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    indexName,
+    currentUser?.id,
+  ]);
 
   useEffect(() => {
     // Only set the query when the debounced search changes
@@ -286,11 +297,13 @@ const QuickSearchDropdownContent = ({
           rightSection: classes.targetSelectorRightSection,
         }}
         maxDropdownHeight={280}
-        defaultValue={availableIndexes[0].value}
+        defaultValue={availableIndexes[0]}
         // Ensure we disable search targets if they are not enabled
-        data={availableIndexes.filter((value) =>
-          features.imageSearch ? true : value.value !== IMAGES_SEARCH_INDEX
-        )}
+        data={availableIndexes
+          .filter((value) =>
+            features.imageSearch ? true : SearchPathToIndexMap[value] !== IMAGES_SEARCH_INDEX
+          )
+          .map((index) => ({ label: IndexToLabel[SearchPathToIndexMap[index]], value: index }))}
         rightSection={<IconChevronDown size={16} color="currentColor" />}
         sx={{ flexShrink: 1 }}
         onChange={onIndexNameChange}
@@ -321,13 +334,13 @@ const QuickSearchDropdownContent = ({
           if (item.hit) {
             onItemSelected({
               entityId: item.hit.id,
-              entityType: SearchIndexEntityTypes[indexName],
+              entityType: SearchIndexEntityTypes[SearchPathToIndexMap[indexName]],
             });
 
             setSearch('');
           }
         }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+        itemComponent={IndexRenderItem[SearchPathToIndexMap[indexName]] ?? ModelSearchItem}
         // prevent default filtering behavior
         filter={() => true}
         clearable={query.length > 0}

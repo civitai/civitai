@@ -27,6 +27,7 @@ import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
+  IconBrush,
   IconCircleDashed,
   IconCrown,
   IconHeart,
@@ -84,6 +85,7 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
+import { GenerateButton } from '../RunStrategy/GenerateButton';
 
 const HEADER_HEIGHT = 70;
 
@@ -591,6 +593,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
     [currentUser, features.buzz, isMobile]
   );
 
+  const createButton = features.imageGeneration ? (
+    <GenerateButton variant="light" py={8} px={12} h="auto" radius="xl" compact />
+  ) : null;
+
   const handleSignOut = async () => {
     // Removes referral cookies on sign out
     deleteCookies(['ref_code', 'ref_source']);
@@ -684,6 +690,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="md" align="center" noWrap>
             <Group spacing="sm" noWrap>
+              {createButton}
               {currentUser && (
                 <>
                   <UploadTracker />
@@ -767,6 +774,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
+            {createButton}
             {features.enhancedSearch && (
               <ActionIcon onClick={() => setShowSearch(true)}>
                 <IconSearch />
@@ -850,7 +858,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
 
 type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement };
 export type RenderSearchComponentProps = {
-  onSearchDone: () => void;
+  onSearchDone?: () => void;
   isMobile: boolean;
   ref?: RefObject<HTMLInputElement>;
 };

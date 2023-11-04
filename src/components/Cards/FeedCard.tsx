@@ -1,6 +1,6 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
-import React from 'react';
+import React, { forwardRef } from 'react';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number; cssRatio: number }> =
@@ -28,75 +28,54 @@ const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number; cs
     },
   };
 
-const useStyles = createStyles<string>((theme) => ({
-  root: {
-    padding: '0 !important',
-    color: 'white',
-    borderRadius: theme.radius.md,
-    cursor: 'pointer',
-    // 280 = min column width based off of CollectionHomeBlock styles grid.
-    // Min height based off of portrait as it's technically the smaller possible height wise.
-    minHeight: 280 * aspectRatioValues['portrait'].ratio,
-  },
-}));
-
-const useCSSAspectRatioStyles = createStyles<string, { aspectRatio: number }>(
-  (theme, { aspectRatio }) => ({
+const useStyles = createStyles<string, { aspectRatio?: number }>((theme, { aspectRatio }) => {
+  return {
     root: {
       padding: '0 !important',
       color: 'white',
       borderRadius: theme.radius.md,
       cursor: 'pointer',
-      position: 'relative',
-      height: 0,
-      paddingBottom: `${(aspectRatio * 100).toFixed(3)}% !important`,
-      overflow: 'hidden',
+      ...(aspectRatio
+        ? {
+            position: 'relative',
+            height: 0,
+            paddingBottom: `${(aspectRatio * 100).toFixed(3)}% !important`,
+            overflow: 'hidden',
+          }
+        : {}),
     },
-  })
+  };
+});
+
+export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
+  ({ href, children, aspectRatio = 'portrait', className, useCSSAspectRatio, ...props }, ref) => {
+    const { ratio, cssRatio } = aspectRatioValues[aspectRatio];
+    const { classes, cx } = useStyles({ aspectRatio: useCSSAspectRatio ? cssRatio : undefined });
+
+    const card = (
+      <Card<'a'>
+        className={cx(classes.root, className)}
+        {...props}
+        component={href ? 'a' : undefined}
+        ref={ref}
+      >
+        <AspectRatio ratio={ratio} w="100%">
+          {children}
+        </AspectRatio>
+      </Card>
+    );
+
+    return href ? (
+      <Link href={href} passHref>
+        {card}
+      </Link>
+    ) : (
+      card
+    );
+  }
 );
 
-export function FeedCard({
-  href,
-  children,
-  aspectRatio = 'portrait',
-  className,
-  useCSSAspectRatio,
-  ...props
-}: Props) {
-  const { ratio, cssRatio } = aspectRatioValues[aspectRatio];
-  const { classes, cx } = useStyles();
-  const { classes: cssAspectRatioClasses } = useCSSAspectRatioStyles({ aspectRatio: cssRatio });
-
-  const card = useCSSAspectRatio ? (
-    <Card<'a'>
-      className={cx(cssAspectRatioClasses.root, className)}
-      {...props}
-      component={href ? 'a' : undefined}
-    >
-      <AspectRatio ratio={ratio} w="100%">
-        {children}
-      </AspectRatio>
-    </Card>
-  ) : (
-    <Card<'a'>
-      className={cx(classes.root, className)}
-      {...props}
-      component={href ? 'a' : undefined}
-    >
-      <AspectRatio ratio={ratio} w="100%">
-        {children}
-      </AspectRatio>
-    </Card>
-  );
-
-  return href ? (
-    <Link href={href} passHref>
-      {card}
-    </Link>
-  ) : (
-    card
-  );
-}
+FeedCard.displayName = 'FeedCard';
 
 type Props = CardProps & {
   children: React.ReactNode;

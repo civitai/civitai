@@ -179,6 +179,26 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+type TargetIndex = keyof DataIndex;
+type DataIndex = {
+  models: ModelSearchIndexRecord[];
+  images: ImageSearchIndexRecord[];
+  articles: ArticleSearchIndexRecord[];
+  users: UserSearchIndexRecord[];
+  collections: CollectionSearchIndexRecord[];
+  bounties: BountySearchIndexRecord[];
+};
+type Boxed<Mapping> = { [K in keyof Mapping]: { key: K; value: Mapping[K] } }[keyof Mapping];
+/**
+ * boxes a key and corresponding value from a mapping and returns {key: , value: } structure
+ * the type of return value is setup so that a switch over the key field will guard type of value
+ * It is intentionally not checked that key and value actually correspond to each other so that
+ * this can return a union of possible pairings, intended to be put in a switch statement over the key field.
+ */
+function paired<Mapping>(key: keyof Mapping, value: Mapping[keyof Mapping]) {
+  return { key, value } as Boxed<Mapping>;
+}
+
 const targetData = [
   { value: 'models', label: 'Models' },
   { value: 'images', label: 'Images' },
@@ -187,7 +207,6 @@ const targetData = [
   { value: 'collections', label: 'Collections' },
   { value: 'bounties', label: 'Bounties' },
 ] as const;
-type TargetIndex = (typeof targetData)[number]['value'];
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const [targetIndex, setTargetIndex] = useState<TargetIndex>('models');
@@ -212,61 +231,63 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
 
 AutocompleteSearch.displayName = 'AutocompleteSearch';
 
-const AutocompleteSearchContent = forwardRef<
-  { focus: () => void },
-  Props & { indexName: string; onTargetChange: (target: TargetIndex) => void }
->(
-  (
-    {
-      onClear,
-      onSubmit,
-      className,
-      searchBoxProps,
-      indexName,
-      onTargetChange,
-      ...autocompleteProps
-    },
-    ref
-  ) => {
-    const { classes } = useStyles();
-    const router = useRouter();
-    const isMobile = useIsMobile();
-    const features = useFeatureFlags();
-    const inputRef = useRef<HTMLInputElement>(null);
-    const wrapperRef = useClickOutside(() => onClear?.());
+// declare module 'react' {
+//   function forwardRef<T, P = Record<string, unknown>>(
+//     render: (
+//       props: P,
+//       ref: React.Ref<T>
+//     ) => ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>
+//   ): (
+//     props: P & React.RefAttributes<T>
+//   ) => ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>;
+// }
 
-    const { query, refine: setQuery } = useSearchBox(searchBoxProps);
-    // TODO: Needs to be refactored to support hit type based off of indexName
-    const { hits, results } = useHits();
+type AutocompleteSearchProps<T> = Props & {
+  indexName: T;
+  onTargetChange: (target: TargetIndex) => void;
+};
 
-    const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
-    const [search, setSearch] = useState(query);
-    const [filters, setFilters] = useState('');
-    const [searchPageQuery, setSearchPageQuery] = useState('');
-    const [debouncedSearch] = useDebouncedValue(search, 300);
+function AutocompleteSearchContentInner<TKey extends TargetIndex>(
+  {
+    onClear,
+    onSubmit,
+    className,
+    searchBoxProps,
+    indexName,
+    onTargetChange,
+    ...autocompleteProps
+  }: AutocompleteSearchProps<TKey>,
+  ref: React.ForwardedRef<{ focus: () => void }>
+) {
+  const currentUser = useCurrentUser();
+  const { classes } = useStyles();
+  const router = useRouter();
+  const isMobile = useIsMobile();
+  const features = useFeatureFlags();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useClickOutside(() => onClear?.());
 
-    const currentUser = useCurrentUser();
-    const {
-      models: hiddenModels,
-      images: hiddenImages,
-      tags: hiddenTags,
-      users: hiddenUsers,
-      isLoading: loadingPreferences,
-    } = useHiddenPreferencesContext();
+  const { query, refine: setQuery } = useSearchBox(searchBoxProps);
+  const { hits, results } = useHits<any>();
 
-    // Prep items to display in dropdown
-    const items = useMemo(() => {
-      if (!results || !results.nbHits) return [];
+  const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
+  const [search, setSearch] = useState(query);
+  const [filters, setFilters] = useState('');
+  const [searchPageQuery, setSearchPageQuery] = useState('');
+  const [debouncedSearch] = useDebouncedValue(search, 300);
 
-      let filteredResults: (
-        | ModelSearchIndexRecord
-        | ArticleSearchIndexRecord
-        | ImageSearchIndexRecord
-        | UserSearchIndexRecord
-        | CollectionSearchIndexRecord
-        | BountySearchIndexRecord
-      )[] = [];
+  const {
+    models: hiddenModels,
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: loadingPreferences,
+  } = useHiddenPreferencesContext();
 
+  const items = useMemo(() => {
+    if (!results || !results.nbHits) return [];
+
+    const getFilteredResults = () => {
       const opts = {
         currentUserId: currentUser?.id,
         hiddenImages: hiddenImages,
@@ -275,246 +296,242 @@ const AutocompleteSearchContent = forwardRef<
         hiddenModels,
       };
 
-      if (indexName === 'models') {
-        filteredResults = applyUserPreferencesModels({
-          ...opts,
-          items: hits as unknown as ModelSearchIndexRecord[],
-        });
-      } else if (indexName === 'articles') {
-        filteredResults = applyUserPreferencesArticles({
-          ...opts,
-          items: hits as unknown as ArticleSearchIndexRecord[],
-        });
-      } else if (indexName === 'images') {
-        filteredResults = applyUserPreferencesImages({
-          ...opts,
-          items: hits as unknown as ImageSearchIndexRecord[],
-        });
-      } else if (indexName === 'users') {
-        filteredResults = applyUserPreferencesUsers({
-          ...opts,
-          items: hits as unknown as UserSearchIndexRecord[],
-        });
-      } else if (indexName === 'collections') {
-        filteredResults = applyUserPreferencesCollections({
-          ...opts,
-          items: hits as unknown as CollectionSearchIndexRecord[],
-        });
-      } else if (indexName === 'bounties') {
-        filteredResults = applyUserPreferencesBounties({
-          ...opts,
-          items: hits as unknown as BountySearchIndexRecord[],
-        });
-      } else {
-        filteredResults = [];
-      }
-
-      type Item = AutocompleteItem & { hit: any | null };
-      const items: Item[] = filteredResults.map((hit) => {
-        const anyHit = hit as any;
-
-        return {
-          // Value isn't really used, but better safe than sorry:
-          value: anyHit?.name || anyHit?.title || anyHit?.username || anyHit?.id,
-          hit,
-        };
-      });
-      // If there are more results than the default limit,
-      // then we add a "view more" option
-      if (results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
-        items.push({ key: 'view-more', value: query, hit: null });
-
-      return items;
-    }, [hits, query, results, hiddenModels, hiddenImages, hiddenTags, hiddenUsers]);
-
-    const focusInput = () => inputRef.current?.focus();
-    const blurInput = () => inputRef.current?.blur();
-
-    useImperativeHandle(ref, () => ({
-      focus: focusInput,
-    }));
-
-    const handleSubmit = () => {
-      if (query) {
-        router.push(
-          `/search/${indexName}?query=${encodeURIComponent(query)}&${
-            searchPageQuery.length ? `${searchPageQuery}` : ''
-          }`,
-          undefined,
-          {
-            shallow: false,
-          }
-        );
-
-        blurInput();
-      }
-
-      onSubmit?.();
-    };
-
-    const handleClear = () => {
-      setSearch('');
-      onClear?.();
-    };
-
-    useHotkeys([
-      ['/', focusInput],
-      ['mod+k', focusInput],
-    ]);
-
-    useEffect(() => {
-      // Only set the query when the debounced search changes
-      // and user didn't select from the list
-      if (debouncedSearch === query || selectedItem) return;
-
-      const {
-        query: cleanedSearch,
-        filters,
-        searchPageQuery,
-      } = parseQuery(indexName, debouncedSearch);
-
-      setQuery(cleanedSearch);
-      setFilters(filters);
-      setSearchPageQuery(searchPageQuery);
-
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [debouncedSearch, query]);
-
-    // Clear selected item after search changes
-    useEffect(() => {
-      setSelectedItem(null);
-    }, [debouncedSearch]);
-
-    const processHitUrl = (hit: Hit) => {
-      switch (indexName) {
-        case 'articles':
-          return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
-        case 'images':
-          return `/${indexName}/${hit.id}`;
-        case 'users':
-          return `/user/${hit.username}`;
+      const pair = paired<DataIndex>(indexName, hits);
+      switch (pair.key) {
         case 'models':
+          return applyUserPreferencesModels({ ...opts, items: pair.value });
+        case 'images':
+          return applyUserPreferencesImages({ ...opts, items: pair.value });
+        case 'articles':
+          return applyUserPreferencesArticles({ ...opts, items: pair.value });
+        case 'bounties':
+          return applyUserPreferencesBounties({ ...opts, items: pair.value });
+        case 'collections':
+          return applyUserPreferencesCollections({ ...opts, items: pair.value });
+        case 'users':
+          return applyUserPreferencesUsers({ ...opts, items: pair.value });
         default:
-          return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
+          return [];
       }
     };
 
-    return (
-      <>
-        <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
-        <Group ref={wrapperRef} className={classes.wrapper} spacing={0} noWrap>
-          <Select
-            classNames={{
-              root: classes.targetSelectorRoot,
-              input: classes.targetSelectorInput,
-              rightSection: classes.targetSelectorRightSection,
-            }}
-            maxDropdownHeight={280}
-            defaultValue={targetData[0].value}
-            // Ensure we disable search targets if they are not enabled
-            data={targetData
-              .filter((value) => (features.imageSearch ? true : value.value !== 'images'))
-              .filter((value) => (features.bounties ? true : value.value !== 'bounties'))}
-            rightSection={<IconChevronDown size={16} color="currentColor" />}
-            sx={{ flexShrink: 1 }}
-            onChange={onTargetChange}
-          />
-          <ClearableAutoComplete
-            ref={inputRef}
-            key={indexName}
-            className={className}
-            classNames={classes}
-            placeholder="Search Civitai"
-            type="search"
-            nothingFound={
-              query && !hits.length ? (
-                <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-              ) : undefined
-            }
-            limit={
-              results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
-                ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
-                : DEFAULT_DROPDOWN_ITEM_LIMIT
-            }
-            defaultValue={query}
-            value={search}
-            data={items}
-            onChange={setSearch}
-            onClear={handleClear}
-            onKeyDown={getHotkeyHandler([
-              ['Escape', blurInput],
-              ['Enter', handleSubmit],
-            ])}
-            // onBlur={() => (!isMobile ? onClear?.() : undefined)}
-            onItemSubmit={(item) => {
-              item.hit
-                ? router.push(processHitUrl(item.hit)) // when a model is clicked
-                : router.push(
-                    `/search/${indexName}?query=${encodeURIComponent(item.value)}`,
-                    undefined,
-                    {
-                      shallow: false,
-                    }
-                  ); // when view more is clicked
+    const filteredResults = getFilteredResults();
 
-              setSelectedItem(item);
-              onSubmit?.();
-            }}
-            itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
-            rightSection={
-              <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
-                <HoverCard.Target>
-                  <Text
-                    weight="bold"
-                    sx={(theme) => ({
-                      border: `1px solid ${
-                        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                      borderRadius: theme.radius.sm,
-                      backgroundColor:
-                        theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                      color:
-                        theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
-                      textAlign: 'center',
-                      width: 24,
-                      userSelect: 'none',
-                    })}
-                  >
-                    /
-                  </Text>
-                </HoverCard.Target>
-                <HoverCard.Dropdown>
-                  <Text size="sm" color="yellow" weight={500}>
-                    Pro-tip: Quick search faster!
-                  </Text>
-                  <Text size="xs" lh={1.2}>
-                    Open the quick search without leaving your keyboard by tapping the{' '}
-                    <Code>/</Code> key from anywhere and just start typing.
-                  </Text>
-                </HoverCard.Dropdown>
-              </HoverCard>
-            }
-            // prevent default filtering behavior
-            filter={() => true}
-            clearable={query.length > 0}
-            maxDropdownHeight={isMobile ? 450 : undefined}
-            {...autocompleteProps}
-          />
-          <ActionIcon
-            className={classes.searchButton}
-            variant="filled"
-            size={36}
-            onClick={handleSubmit}
-          >
-            <IconSearch size={18} />
-          </ActionIcon>
-        </Group>
-      </>
-    );
-  }
-);
+    type Item = AutocompleteItem & { hit: any | null };
+    const items: Item[] = filteredResults.map((hit) => {
+      const anyHit = hit as any;
 
-AutocompleteSearchContent.displayName = 'AutocompleteSearchContent';
+      return {
+        // Value isn't really used, but better safe than sorry:
+        value: anyHit?.name || anyHit?.title || anyHit?.username || anyHit?.id,
+        hit,
+      };
+    });
+    // If there are more results than the default limit,
+    // then we add a "view more" option
+    if (results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
+      items.push({ key: 'view-more', value: query, hit: null });
+
+    return items;
+  }, [
+    hits,
+    query,
+    results,
+    hiddenModels,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    indexName,
+    currentUser?.id,
+  ]);
+
+  const focusInput = () => inputRef.current?.focus();
+  const blurInput = () => inputRef.current?.blur();
+
+  useImperativeHandle(ref, () => ({
+    focus: focusInput,
+  }));
+
+  const handleSubmit = () => {
+    if (query) {
+      router.push(
+        `/search/${indexName}?query=${encodeURIComponent(query)}&${
+          searchPageQuery.length ? `${searchPageQuery}` : ''
+        }`,
+        undefined,
+        {
+          shallow: false,
+        }
+      );
+
+      blurInput();
+    }
+
+    onSubmit?.();
+  };
+
+  const handleClear = () => {
+    setSearch('');
+    onClear?.();
+  };
+
+  useHotkeys([
+    ['/', focusInput],
+    ['mod+k', focusInput],
+  ]);
+
+  useEffect(() => {
+    // Only set the query when the debounced search changes
+    // and user didn't select from the list
+    if (debouncedSearch === query || selectedItem) return;
+
+    const {
+      query: cleanedSearch,
+      filters,
+      searchPageQuery,
+    } = parseQuery(indexName, debouncedSearch);
+
+    setQuery(cleanedSearch);
+    setFilters(filters);
+    setSearchPageQuery(searchPageQuery);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, query]);
+
+  // Clear selected item after search changes
+  useEffect(() => {
+    setSelectedItem(null);
+  }, [debouncedSearch]);
+
+  const processHitUrl = (hit: Hit) => {
+    switch (indexName) {
+      case 'articles':
+        return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
+      case 'images':
+        return `/${indexName}/${hit.id}`;
+      case 'users':
+        return `/user/${hit.username}`;
+      case 'models':
+      default:
+        return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
+    }
+  };
+
+  return (
+    <>
+      <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
+      <Group ref={wrapperRef} className={classes.wrapper} spacing={0} noWrap>
+        <Select
+          classNames={{
+            root: classes.targetSelectorRoot,
+            input: classes.targetSelectorInput,
+            rightSection: classes.targetSelectorRightSection,
+          }}
+          maxDropdownHeight={280}
+          defaultValue={targetData[0].value}
+          // Ensure we disable search targets if they are not enabled
+          data={targetData
+            .filter((value) => (features.imageSearch ? true : value.value !== 'images'))
+            .filter((value) => (features.bounties ? true : value.value !== 'bounties'))}
+          rightSection={<IconChevronDown size={16} color="currentColor" />}
+          sx={{ flexShrink: 1 }}
+          onChange={onTargetChange}
+        />
+        <ClearableAutoComplete
+          ref={inputRef}
+          key={indexName}
+          className={className}
+          classNames={classes}
+          placeholder="Search Civitai"
+          type="search"
+          nothingFound={
+            query && !hits.length ? (
+              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+            ) : undefined
+          }
+          limit={
+            results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
+              ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
+              : DEFAULT_DROPDOWN_ITEM_LIMIT
+          }
+          defaultValue={query}
+          value={search}
+          data={items}
+          onChange={setSearch}
+          onClear={handleClear}
+          onKeyDown={getHotkeyHandler([
+            ['Escape', blurInput],
+            ['Enter', handleSubmit],
+          ])}
+          // onBlur={() => (!isMobile ? onClear?.() : undefined)}
+          onItemSubmit={(item) => {
+            item.hit
+              ? router.push(processHitUrl(item.hit)) // when a model is clicked
+              : router.push(
+                  `/search/${indexName}?query=${encodeURIComponent(item.value)}`,
+                  undefined,
+                  {
+                    shallow: false,
+                  }
+                ); // when view more is clicked
+
+            setSelectedItem(item);
+            onSubmit?.();
+          }}
+          itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+          rightSection={
+            <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
+              <HoverCard.Target>
+                <Text
+                  weight="bold"
+                  sx={(theme) => ({
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                    }`,
+                    borderRadius: theme.radius.sm,
+                    backgroundColor:
+                      theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                    color:
+                      theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                    textAlign: 'center',
+                    width: 24,
+                    userSelect: 'none',
+                  })}
+                >
+                  /
+                </Text>
+              </HoverCard.Target>
+              <HoverCard.Dropdown>
+                <Text size="sm" color="yellow" weight={500}>
+                  Pro-tip: Quick search faster!
+                </Text>
+                <Text size="xs" lh={1.2}>
+                  Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
+                  key from anywhere and just start typing.
+                </Text>
+              </HoverCard.Dropdown>
+            </HoverCard>
+          }
+          // prevent default filtering behavior
+          filter={() => true}
+          clearable={query.length > 0}
+          maxDropdownHeight={isMobile ? 450 : undefined}
+          {...autocompleteProps}
+        />
+        <ActionIcon
+          className={classes.searchButton}
+          variant="filled"
+          size={36}
+          onClick={handleSubmit}
+        >
+          <IconSearch size={18} />
+        </ActionIcon>
+      </Group>
+    </>
+  );
+}
+
+const AutocompleteSearchContent = React.forwardRef(AutocompleteSearchContentInner);
 
 const IndexRenderItem: Record<string, React.FC> = {
   models: ModelSearchItem,

@@ -60,7 +60,7 @@ export const SearchPathToIndexMap = {
   ['users']: USERS_SEARCH_INDEX,
   ['collections']: COLLECTIONS_SEARCH_INDEX,
   ['bounties']: BOUNTIES_SEARCH_INDEX,
-};
+} as const;
 
 export const IndexToLabel = {
   [MODELS_SEARCH_INDEX]: 'Models',
@@ -69,7 +69,7 @@ export const IndexToLabel = {
   [USERS_SEARCH_INDEX]: 'Users',
   [COLLECTIONS_SEARCH_INDEX]: 'Collections',
   [BOUNTIES_SEARCH_INDEX]: 'Bounties',
-};
+} as const;
 
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {
   switch (index) {

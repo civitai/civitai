@@ -123,6 +123,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       publishedAt: true,
       meta: true,
       vaeId: true,
+      settings: true,
       rank: {
         select: {
           downloadCountAllTime: true,
@@ -134,6 +135,21 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
         select: modelFileSelect,
       },
       generationCoverage: { select: { covered: true } },
+      recommendedResources: {
+        select: {
+          id: true,
+          resource: {
+            select: {
+              id: true,
+              name: true,
+              baseModel: true,
+              trainedWords: true,
+              model: { select: { id: true, name: true, type: true } },
+            },
+          },
+          settings: true,
+        },
+      },
     },
   },
   rank: {
