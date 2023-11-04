@@ -15,7 +15,7 @@ export default createRoutedContext({
         withCloseButton={false}
         fullScreen
         padding={0}
-        style={{ maxHeight: '100vh', maxWidth: '100vw' }}
+        style={{ maxHeight: '100dvh', maxWidth: '100vw' }}
       >
         <ImageDetailProvider imageId={imageId} filters={filters}>
           <ImageDetail />
