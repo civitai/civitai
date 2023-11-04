@@ -13,7 +13,6 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort } from '~/server/common/enums';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from './';
@@ -22,9 +21,8 @@ import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFil
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ ctx, session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.articles)
+  resolver: async ({ ctx, features }) => {
+    if (!features?.articles)
       return {
         redirect: {
           destination: `/user/${ctx.query.username}`,

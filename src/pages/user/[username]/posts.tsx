@@ -22,8 +22,9 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
     const { username } = ctx.query;
-    if (features?.profileOverhaul)
-      return { redirect: { destination: `/user/${username}/profile/images`, permanent: false } };
+    // TODO: Make the Post page for the new profile. Disable this for now...
+    // if (features?.profileOverhaul)
+    //   return { redirect: { destination: `/user/${username}/profile/images`, permanent: false } };
   },
 });
 

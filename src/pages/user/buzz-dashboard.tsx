@@ -59,9 +59,8 @@ const options = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.buzz) {
+  resolver: async ({ features }) => {
+    if (!features?.buzz) {
       return { notFound: true };
     }
   },
