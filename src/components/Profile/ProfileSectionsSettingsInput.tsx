@@ -8,7 +8,7 @@ import {
   profileSectionLabels,
 } from '~/components/Profile/profile.utils';
 import {
-  closestCenter,
+  rectIntersection,
   DndContext,
   DragEndEvent,
   PointerSensor,
@@ -58,8 +58,7 @@ export const ProfileSectionsSettingsInput = ({
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over) return;
-    if (active.id !== over.id) {
+    if (over && active.id !== over.id) {
       setSections((items) => {
         const ids = items.map(({ key }): UniqueIdentifier => key);
         const oldIndex = ids.indexOf(active.id);
@@ -73,7 +72,11 @@ export const ProfileSectionsSettingsInput = ({
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack mt="md" spacing="xs">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={rectIntersection}
+          onDragEnd={handleDragEnd}
+        >
           <SortableContext
             items={sections.map((s) => s.key)}
             strategy={verticalListSortingStrategy}
@@ -91,9 +94,9 @@ export const ProfileSectionsSettingsInput = ({
                     p="xs"
                     radius="md"
                   >
-                    <Group>
+                    <Group noWrap>
                       <IconArrowsMove />
-                      <Text>{profileSectionLabels[s.key]}</Text>
+                      <Text size="sm">{profileSectionLabels[s.key]}</Text>
                       <Switch
                         checked={s.enabled}
                         onChange={() => onToggleSection(s.key)}

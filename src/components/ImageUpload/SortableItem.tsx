@@ -20,6 +20,8 @@ export function SortableItem({
     transform: CSS.Transform.toString(transform),
     transition,
     cursor: isDragging ? 'grabbing' : !disabled ? 'pointer' : 'auto',
+    zIndex: isDragging ? 1 : undefined,
+    touchAction: 'none',
   };
 
   return cloneElement(children, {
