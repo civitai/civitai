@@ -593,9 +593,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
     [currentUser, features.buzz, isMobile]
   );
 
-  const createButton = features.imageGeneration ? (
-    <GenerateButton variant="light" py={8} px={12} h="auto" radius="xl" compact />
-  ) : null;
+  const createButton =
+    features.imageGeneration && !router.asPath.includes('/generate') ? (
+      <GenerateButton variant="light" py={8} px={12} h="auto" radius="xl" compact />
+    ) : null;
 
   const handleSignOut = async () => {
     // Removes referral cookies on sign out
