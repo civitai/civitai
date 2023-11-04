@@ -162,7 +162,7 @@ const tagCombos: ComputedTagCombo[] = [
       '!underwear',
       'skin tight + navel',
       'miniskirt',
-      '(cleavage|covered nipples) + (large_breasts|huge_breasts)',
+      '(cleavage|covered nipples) + (large breasts|huge breasts|large_breasts|huge_breasts)',
       'navel + midriff',
       'navel + thighs',
       'midriff + thighs',
