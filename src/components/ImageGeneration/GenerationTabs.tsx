@@ -40,14 +40,14 @@ export default function GenerationTabs({}) {
       Icon: IconListDetails,
       render: () => <Queue {...result} />,
       label: (
-        <>
+        <Group spacing={4}>
           Queue{' '}
           {pendingProcessingCount > 0 && (
             <Badge color="red" variant="filled" size="xs">
               {pendingProcessingCount}
             </Badge>
           )}
-        </>
+        </Group>
       ),
     },
     feed: {
