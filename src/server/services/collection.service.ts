@@ -756,6 +756,7 @@ export const getCollectionItemsByCollectionId = async ({
       articleId: true,
       status: input.forReview,
       createdAt: true,
+      randomId: true,
     },
     where,
     orderBy,

@@ -634,7 +634,11 @@ export const getAllImages = async ({
             AND (
               (
                 ci."status" = 'ACCEPTED'
-                AND ((c.metadata::json->'submissionEndDate') IS NULL OR (c.metadata::json->>'submissionEndDate')::TIMESTAMP WITH TIME ZONE <= NOW())
+                AND (
+                  (c.metadata::json->'submissionEndDate') IS NULL
+                  OR (c.metadata::json->'submissionEndDate')::TEXT = 'null'
+                  OR (c.metadata::json->>'submissionEndDate')::TIMESTAMP WITH TIME ZONE <= NOW()
+                )
                 ${Prisma.raw(sort === ImageSort.Random ? `AND ci."randomId" IS NOT NULL` : '')}
               )
               ${Prisma.raw(displayOwnedItems)}
