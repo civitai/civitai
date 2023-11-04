@@ -546,6 +546,12 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
 async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
   const rows = await db.$executeRaw`
     INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount")
+    WITH affected AS (
+      SELECT DISTINCT mv."modelId"
+      FROM "ModelVersionMetric" mvm
+      JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+      WHERE mvm."updatedAt" > now() - ${lastUpdate}
+    )
     SELECT
       mv."modelId",
       mvm.timeframe,
@@ -559,7 +565,8 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       MAX(mvm."tippedCount") "tippedCount",
       MAX(mvm."tippedAmountCount") "tippedAmountCount"
     FROM "ModelVersionMetric" mvm
-    JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id AND mvm."updatedAt" > ${lastUpdate}
+    JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
+    WHERE mv."modelId" IN (SELECT "modelId" FROM affected)
     GROUP BY mv."modelId", mvm.timeframe
     ON CONFLICT ("modelId", timeframe) DO UPDATE SET
       "downloadCount" = EXCLUDED."downloadCount",
@@ -570,7 +577,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       "imageCount" = EXCLUDED."imageCount",
       "collectedCount" = EXCLUDED."collectedCount",
       "tippedCount" = EXCLUDED."tippedCount",
-      "tippedAmountCount" = EXCLUDED."tippedAmountCount";
+      "tippedAmountCount" = EXCLUDED."tippedAmountCount"
   `;
   console.log('models', rows);
 
