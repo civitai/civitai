@@ -34,7 +34,7 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, features, ctx }) => {
     // Temporary until we have the new designs available
-    if (!session?.user?.isModerator) return { notFound: true };
+    // if (!session?.user?.isModerator) return { notFound: true };
     if (!session)
       return {
         redirect: {
