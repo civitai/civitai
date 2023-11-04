@@ -720,6 +720,7 @@ export const publishModelById = async ({
         });
 
         // Send to orchestrator
+        // TODO - check with Koen and re-enable
         // await Promise.all(
         //   model.modelVersions.map((version) =>
         //     prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })

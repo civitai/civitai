@@ -958,7 +958,7 @@ export default function ModelDetailsV2({
       </Container>
       {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
         <AssociatedModels
-          fromId={latestVersion.id}
+          fromId={model.id}
           type="Suggested"
           label="Suggested Resources"
           ownerId={model.user.id}
