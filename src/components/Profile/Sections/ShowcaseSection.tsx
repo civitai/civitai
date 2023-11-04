@@ -35,19 +35,11 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     widthGrid: 'auto',
   });
 
-  if (showcaseItems.length === 0) {
-    // User has this section enabled but has nothing to showcase.
-    return null;
-  }
-
-  if (inView && !isLoading && !coverImages.length) {
-    // No point in showing this without images
-    return null;
-  }
+  const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
   return (
     <div ref={ref}>
-      {isLoading ? (
+      {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Showcase" icon={<IconHeart />}>

@@ -21,13 +21,11 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 const MAX_IMAGES_DISPLAY = 8;
 export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
-  const { filters, setFilters, filtersUpdated } = useDumbImageFilters({
+  const { filters } = useDumbImageFilters({
     sort: ImageSort.Newest,
     period: MetricTimeframe.AllTime,
     tags: [],
   });
-
-  const { sort, period, tags } = filters;
 
   const {
     images: _images,
@@ -51,33 +49,14 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
     rowCount: 2,
   });
 
-  if (inView && !isLoading && !images.length && !filtersUpdated) {
-    // No point in showing this without images
-    return null;
-  }
+  const isNullState = !isLoading && !images.length;
 
   return (
     <div ref={ref}>
-      {isLoading ? (
+      {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Images" icon={<IconPhoto />}>
-          <Group position="apart" spacing={0}>
-            <SortFilter
-              type="images"
-              value={sort ?? ImageSort.Newest}
-              onChange={(x) => setFilters((f) => ({ ...f, sort: x as ImageSort }))}
-            />
-            <PeriodFilter
-              type="images"
-              value={period ?? MetricTimeframe.AllTime}
-              onChange={(x) => setFilters((f) => ({ ...f, period: x }))}
-            />
-          </Group>
-          <DumbImageCategories
-            value={tags ?? []}
-            onChange={(x) => setFilters((f) => ({ ...f, tags: x }))}
-          />
           <div
             className={cx({
               [classes.grid]: images.length > 0,

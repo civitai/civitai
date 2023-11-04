@@ -75,19 +75,12 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
     };
   }, [userRatingsTotal]);
 
-  if (inView && !isLoading && !resourceReviews.length) {
-    // No reviews, this section makes no sense here.
-    return null;
-  }
-
-  if (!userRatingsTotal && !isLoadingTotals) {
-    // something is off, we should have totals by now
-    return null;
-  }
+  const isNullState =
+    (!isLoading && !resourceReviews.length) || (!userRatingsTotal && !isLoadingTotals);
 
   return (
     <div ref={ref}>
-      {isLoading ? (
+      {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Recent Reviews" icon={<IconStar />}>
@@ -203,32 +196,34 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                     </Text>
                   </Stack>
 
-                  <Stack spacing="xs" w="100%">
-                    {Object.keys(userRatingsTotal)
-                      .reverse()
-                      .map((rating: string) => {
-                        const key = rating as keyof typeof userRatingsTotal;
-                        const progress =
-                          (userRatingsTotal && userRatingsTotalCount.count
-                            ? userRatingsTotal[key] / userRatingsTotalCount.count
-                            : 0) * 100;
-                        const rounded = Math.ceil(progress);
-                        return (
-                          <Group key={key}>
-                            <Text>{rating} Star</Text>
-                            <Progress
-                              value={progress}
-                              color="yellow"
-                              size="lg"
-                              style={{ flex: 1 }}
-                            />
-                            <Text align="left" color="dimmed" w={30}>
-                              {rounded}%
-                            </Text>
-                          </Group>
-                        );
-                      })}
-                  </Stack>
+                  {userRatingsTotal && (
+                    <Stack spacing="xs" w="100%">
+                      {Object.keys(userRatingsTotal)
+                        .reverse()
+                        .map((rating: string) => {
+                          const key = rating as keyof typeof userRatingsTotal;
+                          const progress =
+                            (userRatingsTotal && userRatingsTotalCount.count
+                              ? userRatingsTotal[key] / userRatingsTotalCount.count
+                              : 0) * 100;
+                          const rounded = Math.ceil(progress);
+                          return (
+                            <Group key={key}>
+                              <Text>{rating} Star</Text>
+                              <Progress
+                                value={progress}
+                                color="yellow"
+                                size="lg"
+                                style={{ flex: 1 }}
+                              />
+                              <Text align="left" color="dimmed" w={30}>
+                                {rounded}%
+                              </Text>
+                            </Group>
+                          );
+                        })}
+                    </Stack>
+                  )}
                 </Stack>
               )}
             </Grid.Col>

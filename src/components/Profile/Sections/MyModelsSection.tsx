@@ -22,11 +22,11 @@ const MAX_MODELS_DISPLAY = 12;
 export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
 
-  const { filters, setFilters, filtersUpdated } = useDumbModelFilters({
+  const { filters } = useDumbModelFilters({
     period: 'AllTime',
     sort: ModelSort.Newest,
   });
-  const { period, sort, tag } = filters;
+
   const {
     models: _models,
     isLoading,
@@ -47,37 +47,14 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
     rowCount: 3,
   });
 
-  if (inView && !isLoading && !models.length && !filtersUpdated) {
-    // User has no models whatsoever. Don't return anything at all.
-    return null;
-  }
+  const isNullState = !isLoading && !models.length;
 
   return (
     <div ref={ref}>
-      {isLoading ? (
+      {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Models" icon={<IconCategory />}>
-          <Group position="apart" spacing={0}>
-            <SortFilter
-              type="models"
-              value={sort as ModelSort}
-              onChange={(x) => setFilters((f) => ({ ...f, sort: x as ModelSort }))}
-            />
-            <Group spacing="xs">
-              <PeriodFilter
-                type="models"
-                value={period ?? 'AllTime'}
-                onChange={(x) => setFilters((f) => ({ ...f, period: x }))}
-              />
-              <DumbModelFiltersDropdown
-                filters={filters as ModelFilterSchema}
-                setFilters={(updatedFilters) => setFilters((f) => ({ ...f, ...updatedFilters }))}
-              />
-            </Group>
-          </Group>
-          <CategoryTags setSelected={(tag) => setFilters((f) => ({ ...f, tag }))} selected={tag} />
-
           <Stack>
             <div
               className={cx({

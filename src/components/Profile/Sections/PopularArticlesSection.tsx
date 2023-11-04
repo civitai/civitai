@@ -33,14 +33,11 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
     columnCount: 2,
   });
 
-  if (inView && !isLoading && !articles.length) {
-    // No point in showing this without articles
-    return null;
-  }
+  const isNullState = !isLoading && !articles.length;
 
   return (
     <div ref={ref}>
-      {isLoading ? (
+      {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Most popular articles" icon={<IconPencilMinus />}>

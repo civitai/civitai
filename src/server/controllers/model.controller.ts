@@ -118,7 +118,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const vaeFiles = await getVaeFiles({ vaeIds });
 
     const suggestedResources = await dbRead.modelAssociations.count({
-      where: { fromModelId: model.id },
+      where: { fromModelId: model.id, type: 'Suggested' },
     });
 
     const modelCategories = await getCategoryTags('model');

@@ -720,11 +720,12 @@ export const publishModelById = async ({
         });
 
         // Send to orchestrator
-        await Promise.all(
-          model.modelVersions.map((version) =>
-            prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
-          )
-        );
+        // TODO - check with Koen and re-enable
+        // await Promise.all(
+        //   model.modelVersions.map((version) =>
+        //     prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
+        //   )
+        // );
       }
       if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id, tx });
 
