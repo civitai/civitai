@@ -129,6 +129,9 @@ export default function ResourceSelectModal({
       `(${baseModelSet.map((baseModel) => `version.baseModel = '${baseModel}'`).join(' OR ')})`
     );
 
+  const exclude: string[] = [];
+  exclude.push('NOT tags.name = "celebrity"');
+
   const handleSelect = (value: Generation.Resource) => {
     onSelect(value);
     context.closeModal(id);
@@ -139,7 +142,7 @@ export default function ResourceSelectModal({
       value={{ onSelect: handleSelect, canGenerate: options.canGenerate }}
     >
       <InstantSearch searchClient={searchClient} indexName={MODELS_SEARCH_INDEX}>
-        <Configure hitsPerPage={20} filters={filters.join(' AND ')} />
+        <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
         <Stack>
           <CustomSearchBox isMobile={isMobile} autoFocus />
           <CategoryTagFilters />
@@ -160,7 +163,13 @@ function CategoryTagFilters() {
     setTag(value);
   };
 
-  return <CategoryTags selected={tag} setSelected={handleSetTag} />;
+  return (
+    <CategoryTags
+      selected={tag}
+      setSelected={handleSetTag}
+      filter={(tag) => !['celebrity'].includes(tag)}
+    />
+  );
 }
 
 function ResourceHitList() {

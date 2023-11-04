@@ -84,9 +84,11 @@ const useStyles = createStyles((theme) => ({
 export function CategoryTags({
   selected,
   setSelected,
+  filter,
 }: {
   selected?: string;
   setSelected?: (tag?: string) => void;
+  filter?: (tag: string) => boolean;
 }) {
   const { classes, cx, theme } = useStyles();
   const { set, tag: tagQuery } = useModelQueryParams();
@@ -145,21 +147,23 @@ export function CategoryTags({
         >
           All
         </Button>
-        {categories.map((tag) => {
-          const active = _tag === tag.name;
-          return (
-            <Button
-              key={tag.id}
-              className={classes.tag}
-              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
-              color={active ? 'blue' : 'gray'}
-              onClick={() => _setTag(!active ? tag.name : undefined)}
-              compact
-            >
-              {tag.name}
-            </Button>
-          );
-        })}
+        {categories
+          .filter((x) => (filter ? filter(x.name) : true))
+          .map((tag) => {
+            const active = _tag === tag.name;
+            return (
+              <Button
+                key={tag.id}
+                className={classes.tag}
+                variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                color={active ? 'blue' : 'gray'}
+                onClick={() => _setTag(!active ? tag.name : undefined)}
+                compact
+              >
+                {tag.name}
+              </Button>
+            );
+          })}
       </Group>
       <Box className={cx(classes.rightArrow, atEnd && classes.hidden)}>
         <ActionIcon
