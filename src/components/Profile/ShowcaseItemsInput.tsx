@@ -115,7 +115,7 @@ export const ShowcaseItemsInput = ({
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
         <QuickSearchDropdown
-          supportedIndexes={[MODELS_SEARCH_INDEX, IMAGES_SEARCH_INDEX]}
+          supportedIndexes={['models', 'images']}
           onItemSelected={onItemSelected}
           filters={`user.username='${username}'`}
           dropdownItemLimit={25}
