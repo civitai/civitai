@@ -12,7 +12,9 @@ import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 
 export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({
+    delay: 100,
+  });
   const { models, isLoading } = useQueryModels(
     {
       limit: 8,
@@ -24,14 +26,11 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
 
   const { classes } = useProfileSectionStyles({ count: models.length });
 
-  if (inView && !isLoading && !models.length) {
-    // No point in showing this without models
-    return null;
-  }
+  const isNullState = !isLoading && !models.length;
 
   return (
     <div ref={ref}>
-      {isLoading ? (
+      {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Most popular models" icon={<IconTrendingUp />}>
