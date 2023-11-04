@@ -81,15 +81,17 @@ const useStyles = createStyles((theme) => ({
     width: 'auto',
     marginLeft: '-16px',
     marginRight: '-16px',
-    padding: '0 16px',
+    padding: '16px',
     position: 'relative',
     background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-
+  },
+  profileSectionWithCoverImage: {
     '& > div': {
       position: 'relative',
       top: '-44px',
       height: 'auto',
       marginBottom: '-22px',
+      padding: '0 16px',
     },
   },
 }));
@@ -99,7 +101,7 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useIsMobile();
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
 
   if (!user) {
     return null;
@@ -182,7 +184,11 @@ export function ProfileHeader({ username }: { username: string }) {
         <ProfileNavigation username={username} />
         {renderMessage()}
         {renderCoverImage()}
-        <div className={classes.profileSection}>
+        <div
+          className={cx(classes.profileSection, {
+            [classes.profileSectionWithCoverImage]: !!profile?.coverImage,
+          })}
+        >
           <ProfileSidebar username={username} />
         </div>
       </Stack>
