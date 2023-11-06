@@ -150,11 +150,12 @@ export const updateUserProfile = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
-      const shouldUpdateCosmetics =
-        (badgeId !== undefined || nameplateId !== undefined) &&
-        current.cosmetics.find(
-          (c) => !c.equippedAt && [badgeId, nameplateId].filter(isDefined).includes(c.cosmetic.id)
-        );
+      const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
+
+      const payloadCosmeticIds: number[] = [];
+
+      if (badgeId) payloadCosmeticIds.push(badgeId);
+      if (nameplateId) payloadCosmeticIds.push(nameplateId);
 
       await tx.user.update({
         where: {
@@ -169,6 +170,10 @@ export const updateUserProfile = async ({
                   where: { equippedAt: { not: null } },
                   data: { equippedAt: null },
                 },
+                update: payloadCosmeticIds.map((cosmeticId) => ({
+                  where: { userId_cosmeticId: { userId, cosmeticId } },
+                  data: { equippedAt: new Date() },
+                })),
               }
             : undefined,
         },
@@ -176,23 +181,6 @@ export const updateUserProfile = async ({
 
       if (leaderboardShowcase !== undefined) {
         await updateLeaderboardRank(userId);
-      }
-
-      if (shouldUpdateCosmetics) {
-        // Because we attempt to update both cosmetics, we need to run another updateMany
-        await tx.user.update({
-          where: {
-            id: userId,
-          },
-          data: {
-            cosmetics: {
-              updateMany: {
-                where: { cosmeticId: { in: [badgeId, nameplateId].filter(isDefined) } },
-                data: { equippedAt: new Date() },
-              },
-            },
-          },
-        });
       }
 
       const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];

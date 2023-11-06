@@ -124,8 +124,6 @@ const { openModal, Modal } = createContextModal({
       shouldUnregister: false,
     });
 
-    console.log(user, leaderboards);
-
     const [badgeId, nameplateId] = form.watch(['badgeId', 'nameplateId', 'leaderboardShowcase']);
     const equippedCosmetics = useMemo(
       () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
