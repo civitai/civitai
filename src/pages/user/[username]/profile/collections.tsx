@@ -1,5 +1,5 @@
 import { SidebarLayout } from '~/components/Profile/SidebarLayout';
-import { Group, Stack } from '@mantine/core';
+import { Center, Group, Loader, Stack } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { constants } from '~/server/common/constants';
 import { useState } from 'react';
@@ -28,10 +28,18 @@ export function UserProfileCollections() {
   const sort = queryFilters.sort ?? constants.collectionFilterDefaults.sort;
 
   const username = (router.query.username as string) ?? '';
-  const { data: creator } = trpc.user.getCreator.useQuery({ username });
+  const { data: creator, isLoading } = trpc.user.getCreator.useQuery({ username });
 
   // currently not showing any content if the username is undefined
-  if (!username || !creator) return <NotFound />;
+  if (!username || (!creator && !isLoading)) return <NotFound />;
+
+  if (!creator) {
+    return (
+      <Center>
+        <Loader />
+      </Center>
+    );
+  }
 
   return (
     <ProfileLayout username={username}>
