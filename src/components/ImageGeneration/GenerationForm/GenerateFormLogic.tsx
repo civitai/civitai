@@ -20,6 +20,7 @@ import { calculateGenerationBill } from '~/server/common/generation';
 
 type GenerationMaxValueKey = keyof typeof generation.maxValues;
 const maxValueKeys = Object.keys(generation.maxValues);
+const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -89,7 +90,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         when setting data, any keys that don't have data will be set to undefined
         this is necessary for 'remix' to work properly.
       */
-      const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
       if (!formData.model)
