@@ -162,10 +162,12 @@ export const ProfileSection = ({ children, title, icon }: Props) => {
   return (
     <Stack spacing="md">
       <Group>
+        <ThemeIcon size="xl" variant="light">
+          {icon}
+        </ThemeIcon>
         <Text size={28} weight={590} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
           {title}
         </Text>
-        {icon}
       </Group>
       {children}
     </Stack>
