@@ -1,8 +1,10 @@
 import {
   ActionIcon,
+  Box,
   Button,
   Divider,
   Group,
+  HoverCard,
   Stack,
   Text,
   Tooltip,
@@ -25,6 +27,7 @@ import React, { useMemo, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
+import { Username } from '~/components/User/Username';
 
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
   const currentUser = useCurrentUser();
@@ -57,9 +60,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       <UserAvatar user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
-        <Text weight={700} size={24} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
-          {user.username}
-        </Text>
+        <Username {...user} size="xl" color={theme.colorScheme === 'dark' ? 'white' : 'black'} />
+
         {profile.location && (
           <Group spacing="sm">
             <Text color="dimmed">{profile.location}</Text>
@@ -143,9 +145,20 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               }
 
               return (
-                <Tooltip key={award.id} label={award.name} withinPortal>
-                  <EdgeMedia src={url} width={56} />
-                </Tooltip>
+                <HoverCard key={award.id} withArrow width={200} openDelay={250} position="top">
+                  <HoverCard.Target>
+                    <Box>
+                      <EdgeMedia src={url} width={56} />
+                    </Box>
+                  </HoverCard.Target>
+                  <HoverCard.Dropdown>
+                    <Stack spacing={0}>
+                      <Text size="sm" align="center" weight={500}>
+                        {award.name}
+                      </Text>
+                    </Stack>
+                  </HoverCard.Dropdown>
+                </HoverCard>
               );
             })}
             {badges.length > 4 && (
