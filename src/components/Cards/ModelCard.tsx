@@ -392,7 +392,7 @@ export function ModelCard({ data }: Props) {
                         </Text>
                       </IconBadge>
                     )}
-                    <Group spacing={4} noWrap>
+                    <Group spacing={4}>
                       <IconBadge
                         className={classes.iconBadge}
                         icon={

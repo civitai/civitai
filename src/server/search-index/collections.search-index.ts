@@ -289,70 +289,74 @@ const onFetchItemsToIndex = async ({
   }
 
   const collectionsNeedingImages = collections.filter((c) => !c.image).map((c) => c.id);
-  const itemImages = await db.$queryRaw<CollectionImageRaw[]>`
-    WITH target AS MATERIALIZED (
-      SELECT *
-      FROM (
-        SELECT *,
-        ROW_NUMBER() OVER (
-            PARTITION BY ci."collectionId"
-            ORDER BY ci.id
-          ) AS idx
-        FROM "CollectionItem" ci
-        WHERE ci.status = 'ACCEPTED'
-          AND ci."collectionId" IN (${Prisma.join(collectionsNeedingImages)})
-      ) t
-      WHERE idx <= 10
-    ), imageItemImage AS MATERIALIZED (
-      SELECT
-        i.id,
-        ${imageSql}
-      FROM "Image" i
-      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
-        AND i."ingestion" = 'Scanned'
-        AND i."needsReview" IS NULL
-    ), postItemImage AS MATERIALIZED (
-      SELECT * FROM (
-          SELECT
-            i."postId" id,
-            ${imageSql},
-            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
-          FROM "Image" i
-          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
-            AND i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-      ) t
-      WHERE t.rn = 1
-    ), modelItemImage AS MATERIALIZED (
-      SELECT * FROM (
-          SELECT
-            m.id,
-            ${imageSql},
-            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
-          FROM "Image" i
-          JOIN "Post" p ON p.id = i."postId"
-          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
-          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
+  let itemImages: CollectionImageRaw[] = [];
+
+  if (collectionsNeedingImages.length > 0) {
+    itemImages = await db.$queryRaw<CollectionImageRaw[]>`
+      WITH target AS MATERIALIZED (
+        SELECT *
+        FROM (
+          SELECT *,
+          ROW_NUMBER() OVER (
+              PARTITION BY ci."collectionId"
+              ORDER BY ci.id
+            ) AS idx
+          FROM "CollectionItem" ci
+          WHERE ci.status = 'ACCEPTED'
+            AND ci."collectionId" IN (${Prisma.join(collectionsNeedingImages)})
+        ) t
+        WHERE idx <= 10
+      ), imageItemImage AS MATERIALIZED (
+        SELECT
+          i.id,
+          ${imageSql}
+        FROM "Image" i
+        WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+      ), postItemImage AS MATERIALIZED (
+        SELECT * FROM (
+            SELECT
+              i."postId" id,
+              ${imageSql},
+              ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
+            FROM "Image" i
+            WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
-      ) t
-      WHERE t.rn = 1
-    ), articleItemImage as MATERIALIZED (
-        SELECT a.id, a.cover image FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target)
-    )
-    SELECT
-        target."collectionId" id,
-        COALESCE(
-          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
-          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
-          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
-          NULL
-        ) image,
-        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
-    FROM target
-  `;
+        ) t
+        WHERE t.rn = 1
+      ), modelItemImage AS MATERIALIZED (
+        SELECT * FROM (
+            SELECT
+              m.id,
+              ${imageSql},
+              ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
+            FROM "Image" i
+            JOIN "Post" p ON p.id = i."postId"
+            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+            JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
+            WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
+                AND i."ingestion" = 'Scanned'
+                AND i."needsReview" IS NULL
+        ) t
+        WHERE t.rn = 1
+      ), articleItemImage as MATERIALIZED (
+          SELECT a.id, a.cover image FROM "Article" a
+          WHERE a.id IN (SELECT "articleId" FROM target)
+      )
+      SELECT
+          target."collectionId" id,
+          COALESCE(
+            (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
+            (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
+            (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+            NULL
+          ) image,
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+      FROM target
+    `;
+  }
 
   console.log(
     `onFetchItemsToIndex :: images fetching complete on ${indexName} range:`,
