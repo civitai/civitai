@@ -194,7 +194,9 @@ export const ShowcaseItemsInput = ({
                                 {isRefetching || isLoading ? (
                                   <Loader />
                                 ) : (
-                                  <Text align="center">Could not find cover image</Text>
+                                  <Text align="center">
+                                    There was a problem loading the cover image.
+                                  </Text>
                                 )}
                               </Center>
                             </Stack>
