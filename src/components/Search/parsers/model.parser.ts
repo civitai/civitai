@@ -12,6 +12,7 @@ export const ModelSearchIndexSortBy = [
   `${MODELS_SEARCH_INDEX}:metrics.favoriteCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.commentCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.collectedCount:desc`,
+  `${MODELS_SEARCH_INDEX}:metrics.tippedAmountCount:desc`,
   `${MODELS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 

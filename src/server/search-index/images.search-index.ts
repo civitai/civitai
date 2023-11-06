@@ -62,6 +62,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
     'rank.collectedCountAllTimeRank',
+    'rank.tippedAmountCountAllTimeRank',
   ];
 
   const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
@@ -150,6 +151,7 @@ type ImageForSearchIndex = {
     commentCountAllTimeRank: number;
     reactionCountAllTimeRank: number;
     collectedCountAllTimeRank: number;
+    tippedAmountCountAllTimeRank: number;
   } | null;
 };
 
@@ -223,6 +225,7 @@ const onFetchItemsToIndex = async ({
         'commentCountAllTimeRank', ir."commentCountAllTimeRank",
         'reactionCountAllTimeRank', ir."reactionCountAllTimeRank",
         'collectedCountAllTimeRank', ir."collectedCountAllTimeRank"
+        'tippedAmountCountAllTimeRank', ir."tippedAmountCountAllTimeRank"
       ) rank
     FROM "ImageRank" ir
     WHERE ir."imageId" IN (SELECT id FROM target)

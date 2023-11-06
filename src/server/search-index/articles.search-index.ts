@@ -45,6 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'stats.commentCount',
     'stats.favoriteCount',
     'stats.viewCount',
+    'stats.tippedAmountCount',
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
