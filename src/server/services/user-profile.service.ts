@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
+import { updateLeaderboardRank } from '~/server/services/user.service';
 
 export const getUserContentOverview = async ({
   username,
@@ -142,6 +143,7 @@ export const updateUserProfile = async ({
   nameplateId,
   userId,
   coverImage,
+  leaderboardShowcase,
   ...profile
 }: UserProfileUpdateSchema & { userId: number }) => {
   const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
@@ -160,6 +162,7 @@ export const updateUserProfile = async ({
         },
         data: {
           image: profileImage,
+          leaderboardShowcase,
           cosmetics: shouldUpdateCosmetics
             ? {
                 updateMany: {
@@ -171,7 +174,12 @@ export const updateUserProfile = async ({
         },
       });
 
+      if (leaderboardShowcase !== undefined) {
+        await updateLeaderboardRank(userId);
+      }
+
       if (shouldUpdateCosmetics) {
+        // Because we attempt to update both cosmetics, we need to run another updateMany
         await tx.user.update({
           where: {
             id: userId,

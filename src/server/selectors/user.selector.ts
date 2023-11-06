@@ -42,6 +42,7 @@ export type UserWithCosmetics = Prisma.UserGetPayload<typeof userWithCosmetics>;
 
 export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
   ...simpleUserSelect,
+  leaderboardShowcase: true,
   createdAt: true,
   cosmetics: {
     select: {
