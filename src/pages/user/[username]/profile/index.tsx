@@ -20,13 +20,6 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { username } = userPageQuerySchema.parse(ctx.params);
 
-    return {
-      redirect: {
-        destination: `/user/${username}`,
-        permanent: false,
-      },
-    };
-
     if (username) {
       await ssg?.userProfile.get.prefetch({ username });
       await ssg?.userProfile.overview.prefetch({ username });

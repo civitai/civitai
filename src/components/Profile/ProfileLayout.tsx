@@ -51,7 +51,7 @@ export function ProfileLayout({
         </SidebarLayout.Sidebar>
         <SidebarLayout.Content>
           <Center>
-            <Container size="xl" w="100%">
+            <Container fluid w="100%">
               {children}
             </Container>
           </Center>

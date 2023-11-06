@@ -54,18 +54,29 @@ const useStyles = createStyles((theme) => ({
       marginRight: '-16px',
     },
   },
+  coverImageWrapper: {
+    maxHeight: '30vh',
+    overflow: 'hidden',
+    borderRadius: theme.radius.md,
+    position: 'relative',
+
+    [theme.fn.smallerThan('sm')]: {
+      width: 'auto',
+      marginLeft: '-16px',
+      marginRight: '-16px',
+      maxHeight: 'auto',
+      borderRadius: 0,
+    },
+  },
   coverImage: {
     position: 'relative',
     width: '100%',
     overflow: 'hidden',
     height: 0,
     paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
-    borderRadius: theme.radius.md,
 
     [theme.fn.smallerThan('sm')]: {
       width: 'auto',
-      marginLeft: '-16px',
-      marginRight: '-16px',
       borderRadius: 0,
       paddingBottom: `${(constants.profile.mobileCoverImageAspectRatio * 100).toFixed(3)}%`,
 
@@ -120,34 +131,36 @@ export function ProfileHeader({ username }: { username: string }) {
     }
 
     return (
-      <div className={classes.coverImage}>
-        <ImageGuard
-          images={[profile.coverImage]}
-          connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
-          render={(image) => {
-            return (
-              <ImageGuard.Content>
-                {({ safe }) => (
-                  <div style={{ width: '100%' }}>
-                    <ImageGuard.ToggleConnect position="top-left" />
-                    <ImageGuard.Report />
+      <div className={classes.coverImageWrapper}>
+        <div className={classes.coverImage}>
+          <ImageGuard
+            images={[profile.coverImage]}
+            connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
+            render={(image) => {
+              return (
+                <ImageGuard.Content>
+                  {({ safe }) => (
+                    <div style={{ width: '100%' }}>
+                      <ImageGuard.ToggleConnect position="top-left" />
+                      <ImageGuard.Report />
 
-                    {!safe ? (
-                      <MediaHash {...image} />
-                    ) : (
-                      <ImagePreview
-                        image={image}
-                        edgeImageProps={{ width: 816 }}
-                        radius="md"
-                        style={{ width: '100%' }}
-                      />
-                    )}
-                  </div>
-                )}
-              </ImageGuard.Content>
-            );
-          }}
-        />
+                      {!safe ? (
+                        <MediaHash {...image} />
+                      ) : (
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{ width: 816 }}
+                          radius="md"
+                          style={{ width: '100%' }}
+                        />
+                      )}
+                    </div>
+                  )}
+                </ImageGuard.Content>
+              );
+            }}
+          />
+        </div>
       </div>
     );
   };
