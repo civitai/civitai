@@ -44,7 +44,8 @@ function RenderFilters() {
           { label: 'Most Reactions', value: ImagesSearchIndexSortBy[1] as string },
           { label: 'Most Discussed', value: ImagesSearchIndexSortBy[2] as string },
           { label: 'Most Collected', value: ImagesSearchIndexSortBy[3] as string },
-          { label: 'Newest', value: ImagesSearchIndexSortBy[4] as string },
+          { label: 'Most Buzz', value: ImagesSearchIndexSortBy[4] as string },
+          { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
         ]}
       />
       <SearchableMultiSelectRefinementList

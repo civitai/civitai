@@ -63,6 +63,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'metrics.rating',
     'metrics.ratingCount',
     'metrics.collectedCount',
+    'metrics.tippedAmountCount',
   ];
 
   // Meilisearch stores sorted.
@@ -210,6 +211,7 @@ const onFetchItemsToIndex = async ({
           [`commentCount${MetricTimeframe.AllTime}`]: true,
           [`ratingCount${MetricTimeframe.AllTime}`]: true,
           [`rating${MetricTimeframe.AllTime}`]: true,
+          [`collectedCount${MetricTimeframe.AllTime}`]: true,
           [`tippedAmountCount${MetricTimeframe.AllTime}`]: true,
         },
       },
@@ -323,6 +325,8 @@ const onFetchItemsToIndex = async ({
           commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
           ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
           rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,
+          collectedCount: rank?.[`collectedCount${MetricTimeframe.AllTime}`] ?? 0,
+          tippedAmountCount: rank?.[`tippedAmountCount${MetricTimeframe.AllTime}`] ?? 0,
         },
         canGenerate,
       };
