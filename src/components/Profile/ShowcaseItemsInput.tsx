@@ -21,6 +21,22 @@ import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
+import {
+  DndContext,
+  DragEndEvent,
+  PointerSensor,
+  rectIntersection,
+  UniqueIdentifier,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  horizontalListSortingStrategy,
+  SortableContext,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { SortableItem } from '~/components/ImageUpload/SortableItem';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
@@ -111,6 +127,23 @@ export const ShowcaseItemsInput = ({
     );
   };
 
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setShowcaseItems((items) => {
+        const ids = items.map(
+          ({ entityType, entityId }): UniqueIdentifier => `${entityType}-${entityId}`
+        );
+        const oldIndex = ids.indexOf(active.id);
+        const newIndex = ids.indexOf(over.id);
+        const sorted = arrayMove(items, oldIndex, newIndex);
+        return sorted;
+      });
+    }
+  };
+
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
@@ -122,63 +155,74 @@ export const ShowcaseItemsInput = ({
         />
 
         <Paper mt="md">
-          {showcaseItems.length > 0 ? (
-            <Box className={classes.selectedItemsGrid}>
-              {showcaseItems.map((item) => {
-                const coverImage = coverImages?.find(
-                  (i) => i.entityType === item.entityType && i.entityId === item.entityId
-                );
+          <DndContext
+            sensors={sensors}
+            collisionDetection={rectIntersection}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={showcaseItems.map((item) => `${item.entityType}-${item.entityId}`)}
+              strategy={horizontalListSortingStrategy}
+            >
+              {showcaseItems.length > 0 ? (
+                <Box className={classes.selectedItemsGrid}>
+                  {showcaseItems.map((item) => {
+                    const coverImage = coverImages?.find(
+                      (i) => i.entityType === item.entityType && i.entityId === item.entityId
+                    );
 
-                const removeBtn = (
-                  <Button
-                    onClick={() => onRemoveSelectedItem(item)}
-                    className={classes.selectedItemRemove}
-                    color="red"
-                    variant="filled"
-                    radius="xl"
-                  >
-                    <IconTrash size={15} />
-                  </Button>
-                );
+                    const removeBtn = (
+                      <Button
+                        onClick={() => onRemoveSelectedItem(item)}
+                        className={classes.selectedItemRemove}
+                        color="red"
+                        variant="filled"
+                        radius="xl"
+                      >
+                        <IconTrash size={15} />
+                      </Button>
+                    );
 
-                if (!coverImage) {
-                  return (
-                    <Paper
-                      key={`${item.entityType}-${item.entityId}`}
-                      withBorder
-                      radius="md"
-                      p="md"
-                      pos="relative"
-                    >
-                      <Stack w="100%" h="100%">
-                        <Center>
-                          {isRefetching || isLoading ? (
-                            <Loader />
-                          ) : (
-                            <Text align="center">Could not find cover image</Text>
-                          )}
-                        </Center>
-                      </Stack>
-                      {removeBtn}
-                    </Paper>
-                  );
-                }
+                    const key = `${item.entityType}-${item.entityId}`;
 
-                return (
-                  <Box key={`${item.entityType}-${item.entityId}`} pos="relative">
-                    <GenericImageCard {...item} image={coverImage} />
-                    {removeBtn}
-                  </Box>
-                );
-              })}
-            </Box>
-          ) : (
-            <Center>
-              <Text size="sm" color="dimmed">
-                You have not selected any items to showcase.
-              </Text>
-            </Center>
-          )}
+                    if (!coverImage) {
+                      return (
+                        <SortableItem key={key} id={key}>
+                          <Paper withBorder radius="md" p="md" pos="relative">
+                            <Stack w="100%" h="100%">
+                              <Center>
+                                {isRefetching || isLoading ? (
+                                  <Loader />
+                                ) : (
+                                  <Text align="center">Could not find cover image</Text>
+                                )}
+                              </Center>
+                            </Stack>
+                            {removeBtn}
+                          </Paper>
+                        </SortableItem>
+                      );
+                    }
+
+                    return (
+                      <SortableItem key={key} id={key}>
+                        <Box pos="relative">
+                          <GenericImageCard {...item} image={coverImage} disabled />
+                          {removeBtn}
+                        </Box>
+                      </SortableItem>
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Center>
+                  <Text size="sm" color="dimmed">
+                    You have not selected any items to showcase.
+                  </Text>
+                </Center>
+              )}
+            </SortableContext>
+          </DndContext>
         </Paper>
       </Stack>
     </Input.Wrapper>

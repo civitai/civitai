@@ -11,10 +11,12 @@ export function GenericImageCard({
   image: coverImage,
   entityType,
   entityId,
+  disabled,
 }: {
   image: ImageProps;
   entityType: string;
   entityId: number;
+  disabled?: boolean;
 }) {
   const { classes: sharedClasses, cx } = useCardStyles({
     aspectRatio: coverImage.width && coverImage.height ? coverImage.width / coverImage.height : 1,
@@ -55,7 +57,7 @@ export function GenericImageCard({
   })();
 
   return (
-    <FeedCard href={url} aspectRatio="portrait" useCSSAspectRatio>
+    <FeedCard href={disabled ? undefined : url} aspectRatio="portrait" useCSSAspectRatio>
       <div className={sharedClasses.root}>
         <ImageGuard
           images={[coverImage]}
