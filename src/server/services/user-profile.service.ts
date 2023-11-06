@@ -48,6 +48,7 @@ export const getUserContentOverview = async ({
       id: number;
       modelCount: number;
       imageCount: number;
+      postCount: number;
       articleCount: number;
       bountyCount: number;
       bountyEntryCount: number;
@@ -58,6 +59,7 @@ export const getUserContentOverview = async ({
   >`
     SELECT 
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published') as "modelCount",
+        (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL) as "postCount",
         (SELECT COUNT(*)::INT FROM "Image" i WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL) as "imageCount",
         (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" <= NOW()) as "articleCount", 
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() ) as "bountyCount",
@@ -151,41 +153,44 @@ export const updateUserProfile = async ({
   await dbWrite.$transaction(
     async (tx) => {
       const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
-
       const payloadCosmeticIds: number[] = [];
 
       if (badgeId) payloadCosmeticIds.push(badgeId);
       if (nameplateId) payloadCosmeticIds.push(nameplateId);
 
-      await tx.user.update({
-        where: {
-          id: userId,
-        },
-        data: {
-          image: profileImage,
-          leaderboardShowcase,
-          cosmetics: shouldUpdateCosmetics
-            ? {
-                updateMany: {
-                  where: { equippedAt: { not: null } },
-                  data: { equippedAt: null },
-                },
-                update: payloadCosmeticIds.map((cosmeticId) => ({
-                  where: { userId_cosmeticId: { userId, cosmeticId } },
-                  data: { equippedAt: new Date() },
-                })),
-              }
-            : undefined,
-        },
-      });
+      const shouldUpdateUser = shouldUpdateCosmetics || profileImage || leaderboardShowcase;
 
-      if (leaderboardShowcase !== undefined) {
-        await updateLeaderboardRank(userId);
+      if (shouldUpdateUser) {
+        await tx.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            image: profileImage,
+            leaderboardShowcase,
+            cosmetics: shouldUpdateCosmetics
+              ? {
+                  updateMany: {
+                    where: { equippedAt: { not: null } },
+                    data: { equippedAt: null },
+                  },
+                  update: payloadCosmeticIds.map((cosmeticId) => ({
+                    where: { userId_cosmeticId: { userId, cosmeticId } },
+                    data: { equippedAt: new Date() },
+                  })),
+                }
+              : undefined,
+          },
+        });
+
+        if (leaderboardShowcase !== undefined) {
+          await updateLeaderboardRank(userId);
+        }
       }
 
       const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];
 
-      if (links.length) {
+      if (socialLinks !== undefined || sponsorshipLinks !== undefined) {
         await tx.userLink.deleteMany({
           where: {
             userId,

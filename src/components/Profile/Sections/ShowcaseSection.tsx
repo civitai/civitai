@@ -55,7 +55,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
                 image={image}
                 entityId={image.entityId}
                 entityType={image.entityType}
-                key={image.id}
+                key={`${image.entityType}-${image.entityId}`}
               />
             ))}
           </div>
