@@ -135,7 +135,7 @@ export const ProfileSectionPreview = ({
   columnCount?: number;
 }) => {
   return (
-    <Stack spacing="md" w="100%">
+    <Stack spacing="md" w="100%" style={{ overflow: 'hidden' }}>
       <Skeleton width="33%" height={22} />
       <Grid>
         {Array.from({ length: rowCount }).map((_, i) => {
