@@ -11,7 +11,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
@@ -79,16 +79,26 @@ export const ShowcaseItemsInput = ({
   const { classes } = useStyles();
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseItemSchema[]>(value || []);
   const [error, setError] = useState('');
+  // Sort them so that we don't retrigger a query when the order changes.
+  const sortedShowcaseItems = useMemo(() => {
+    return [...showcaseItems].sort((a, b) => {
+      const aType = `${a.entityType}-${a.entityId}`;
+      const bType = `${b.entityType}-${b.entityId}`;
+
+      return aType.localeCompare(bType);
+    });
+  }, [showcaseItems]);
+
   const {
     data: coverImages,
     isLoading,
     isRefetching,
   } = trpc.image.getEntitiesCoverImage.useQuery(
     {
-      entities: showcaseItems,
+      entities: sortedShowcaseItems,
     },
     {
-      enabled: showcaseItems.length > 0,
+      enabled: sortedShowcaseItems.length > 0,
       keepPreviousData: true,
     }
   );
