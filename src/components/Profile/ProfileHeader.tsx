@@ -59,6 +59,9 @@ const useStyles = createStyles((theme) => ({
     overflow: 'hidden',
     borderRadius: theme.radius.md,
     position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
 
     [theme.fn.smallerThan('sm')]: {
       width: 'auto',
@@ -66,6 +69,7 @@ const useStyles = createStyles((theme) => ({
       marginRight: '-16px',
       maxHeight: 'auto',
       borderRadius: 0,
+      display: 'block',
     },
   },
   coverImage: {

@@ -60,7 +60,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       <UserAvatar user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
-        <Username {...user} size="xl" color={theme.colorScheme === 'dark' ? 'white' : 'black'} />
+        <Username {...user} size="xl" />
 
         {profile.location && (
           <Group spacing="sm">
