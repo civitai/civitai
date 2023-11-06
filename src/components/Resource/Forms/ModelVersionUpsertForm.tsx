@@ -26,7 +26,6 @@ import {
 } from '~/server/common/constants';
 import {
   ModelVersionUpsertInput,
-  RecommendedResourceSchema,
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -78,12 +77,6 @@ const schema = modelVersionUpsertSchema2
 type Schema = z.infer<typeof schema>;
 
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
-const RECOMMENDED_RESOURCE_TYPES = [
-  ModelType.Checkpoint,
-  ModelType.LORA,
-  ModelType.LoCon,
-  ModelType.TextualInversion,
-];
 
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
@@ -137,7 +130,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? false,
-    settings: version?.settings ?? { strength: 0.8, minStrength: -1, maxStrength: 2 },
     recommendedResources: version?.recommendedResources ?? [],
   };
 
@@ -212,7 +204,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           version.earlyAccessTimeFrame && features.earlyAccessModel
             ? String(version.earlyAccessTimeFrame)
             : '0',
-        settings: version.settings ?? { strength: 0.8, minStrength: 0, maxStrength: 1 },
         recommendedResources: version.recommendedResources ?? [],
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -394,8 +385,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   <InputNumber
                     name="settings.strength"
                     label="Strength"
-                    min={minStrength}
-                    max={maxStrength}
+                    min={minStrength ?? -1}
+                    max={maxStrength ?? 2}
                     precision={1}
                     step={0.1}
                   />
