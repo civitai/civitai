@@ -58,7 +58,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   return (
     <Stack className={className}>
-      <UserAvatar user={user} size="xl" radius="md" />
+      <UserAvatar avatarSize={144} user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
         <Username {...user} cosmetics={equippedCosmetics} size="xl" />

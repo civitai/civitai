@@ -109,9 +109,9 @@ const useStyles = createStyles((theme) => ({
 
     '& > div': {
       position: 'relative',
-      top: '-44px',
       height: 'auto',
-      marginBottom: '-22px',
+      top: '-72px', // Half the avatar size.
+      marginBottom: '-36px', // half of top.
     },
   },
 }));
