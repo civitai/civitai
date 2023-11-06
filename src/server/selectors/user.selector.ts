@@ -47,6 +47,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
     select: {
       equippedAt: true,
       cosmeticId: true,
+      obtainedAt: true,
       cosmetic: {
         select: {
           id: true,
@@ -54,6 +55,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
           type: true,
           source: true,
           name: true,
+          description: true,
         },
       },
     },

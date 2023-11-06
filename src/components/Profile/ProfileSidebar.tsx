@@ -54,13 +54,14 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const { profile, stats } = user;
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
+  const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
 
   return (
     <Stack className={className}>
       <UserAvatar user={user} size="xl" radius="md" />
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
-        <Username {...user} size="xl" />
+        <Username {...user} cosmetics={equippedCosmetics} size="xl" />
 
         {profile.location && (
           <Group spacing="sm">

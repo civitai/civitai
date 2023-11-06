@@ -14,7 +14,7 @@ import {
   Text,
   useMantineTheme,
 } from '@mantine/core';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
@@ -29,6 +29,7 @@ import {
   InputTextArea,
   useForm,
   InputProfileSectionsSettingsInput,
+  InputSelect,
 } from '~/libs/form';
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -37,9 +38,14 @@ import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import { constants } from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType, LinkType } from '@prisma/client';
-import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { z } from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { formatDate } from '~/utils/date-helpers';
+import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { titleCase } from '~/utils/string-helpers';
+import { UserWithProfile } from '~/types/router';
 
 const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
@@ -49,6 +55,10 @@ const { openModal, Modal } = createContextModal({
     const utils = trpc.useContext();
     const currentUser = useCurrentUser();
     const theme = useMantineTheme();
+
+    const { data: leaderboards = [], isLoading: loadingLeaderboards } =
+      trpc.leaderboard.getLeaderboards.useQuery();
+
     const { mutate, isLoading: isUpdating } = trpc.userProfile.update.useMutation({
       onSuccess: () => {
         if (currentUser) {
@@ -64,8 +74,7 @@ const { openModal, Modal } = createContextModal({
         });
       },
     });
-    const { data: equippedCosmetics, isLoading: loadingCosmetics } =
-      trpc.user.getCosmetics.useQuery({ equipped: true }, { enabled: !!currentUser });
+
     const { isLoading: loadingProfile, data: user } = trpc.userProfile.get.useQuery(
       {
         username: currentUser ? currentUser.username : '',
@@ -75,23 +84,56 @@ const { openModal, Modal } = createContextModal({
       }
     );
 
-    const badges = user
-      ? user.cosmetics
-          .map((c) => c.cosmetic)
-          .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-      : [];
+    const badges = useMemo(
+      () =>
+        user
+          ? user.cosmetics
+              .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
+              .map((c) => ({
+                ...c,
+                ...c.cosmetic,
+                data: c.cosmetic.data as any,
+              }))
+          : [],
+      [user]
+    );
+
+    const nameplates = useMemo(
+      () =>
+        user
+          ? user.cosmetics
+              .filter(({ cosmetic: c }) => c.type === CosmeticType.NamePlate && !!c.data)
+              .map((c) => ({ ...c, ...c.cosmetic, data: c.cosmetic.data as any }))
+          : [],
+      [user]
+    );
+
+    const leaderboardOptions = useMemo(
+      () =>
+        leaderboards
+          .filter((board) => board.public)
+          .map(({ title, id }) => ({
+            label: titleCase(title),
+            value: id,
+          })),
+      [leaderboards]
+    );
 
     const form = useForm({
       schema: userProfileUpdateSchema,
       shouldUnregister: false,
     });
 
-    const [badgeId] = form.watch(['badgeId']);
+    const [badgeId, nameplateId] = form.watch(['badgeId', 'nameplateId', 'leaderboardShowcase']);
+    const equippedCosmetics = useMemo(
+      () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
+      [user]
+    );
 
     useEffect(() => {
-      if (user && user?.profile && equippedCosmetics) {
-        const { badges } = equippedCosmetics;
-        const [selectedBadge] = badges;
+      if (user && user?.profile) {
+        const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
+        const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
 
         form.reset({
           ...user.profile,
@@ -113,6 +155,7 @@ const { openModal, Modal } = createContextModal({
               type: link.type,
             })),
           badgeId: selectedBadge?.id ?? null,
+          nameplateId: selectedNameplate?.id ?? null,
         });
       }
     }, [user?.profile, equippedCosmetics]);
@@ -122,7 +165,7 @@ const { openModal, Modal } = createContextModal({
       mutate(data);
     };
 
-    const isLoading = loadingCosmetics || loadingProfile;
+    const isLoading = loadingProfile || loadingLeaderboards;
 
     if (!user && !isLoading) {
       return (
@@ -174,41 +217,53 @@ const { openModal, Modal } = createContextModal({
             </Group>
           </Group>
           <Divider />
-          <InputProfileImageUpload name="profileImage" label="Edit profile image" />
-          <Divider />
-          <InputSimpleImageUpload
-            name="coverImage"
-            label="Edit cover image"
-            aspectRatio={constants.profile.coverImageAspectRatio}
-            // Im aware ideally this should ideally be 450, but images will look better on a higher res here
-            previewWidth={constants.profile.coverImageWidth}
-          >
-            <Text size="sm" color="dimmed">
-              Suggested resolution: {constants.profile.coverImageWidth}px x{' '}
-              {constants.profile.coverImageHeight}px
-            </Text>
-          </InputSimpleImageUpload>
-          <Divider />
-          <InputTextArea name="message" label="Message" maxLength={200} />
-          <Divider />
-          <InputTextArea name="bio" label="Bio" maxLength={400} />
-          <Divider />
-          <InputText name="location" label="Location" maxLength={400} />
-          <Divider />
-          <InputInlineSocialLinkInput
-            name="socialLinks"
-            label="Social Links"
-            type={LinkType.Social}
-          />
-          <InputInlineSocialLinkInput
-            name="sponsorshipLinks"
-            label="Sponsorship Links"
-            type={LinkType.Sponsorship}
-          />
-          <Divider />
           <Stack>
+            <ProfilePreview
+              user={user}
+              badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
+              nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
+            />
+            <Stack>
+              <InputSelect
+                name="nameplateId"
+                placeholder="Select style"
+                label={
+                  <Group spacing={4} noWrap>
+                    <Input.Label>Nameplate Style</Input.Label>
+                    <Popover withArrow width={300} withinPortal position="top">
+                      <Popover.Target>
+                        <Box
+                          display="inline-block"
+                          sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                        >
+                          <IconInfoCircle size={16} />
+                        </Box>
+                      </Popover.Target>
+                      <Popover.Dropdown>
+                        <Text weight={500} size="sm">
+                          Nameplates
+                        </Text>
+                        <Text size="sm">
+                          Nameplates change the appearance of your username. They can include
+                          special colors or effects. You can earn nameplates by being a subscriber
+                          or earning trophies on the site.
+                        </Text>
+                      </Popover.Dropdown>
+                    </Popover>
+                  </Group>
+                }
+                nothingFound="Your earned nameplate styles will appear here"
+                data={
+                  nameplates.map((cosmetic) => ({
+                    label: cosmetic.name,
+                    value: cosmetic.id,
+                  })) ?? []
+                }
+                clearable
+              />
+            </Stack>
             <Group spacing={4}>
-              <Input.Label>Featured Award</Input.Label>
+              <Input.Label>Featured Badge</Input.Label>
               <Popover withArrow width={300} withinPortal position="top">
                 <Popover.Target>
                   <Box
@@ -220,7 +275,7 @@ const { openModal, Modal } = createContextModal({
                 </Popover.Target>
                 <Popover.Dropdown>
                   <Text weight={500} size="sm">
-                    Featured Award
+                    Featured Badge
                   </Text>
                   <Text size="sm">
                     Badges appear next your username and can even include special effects. You can
@@ -291,8 +346,52 @@ const { openModal, Modal } = createContextModal({
                 </Center>
               </Paper>
             )}
+
+            <InputSelect
+              label="Showcase Leaderboard"
+              placeholder="Select a leaderboard"
+              description="Choose which leaderboard badge to display on your profile card"
+              name="leaderboardShowcase"
+              data={leaderboardOptions}
+              disabled={loadingLeaderboards}
+              searchable
+              clearable
+            />
           </Stack>
           <Divider />
+          <InputProfileImageUpload name="profileImage" label="Edit profile image" />
+          <Divider />
+          <InputSimpleImageUpload
+            name="coverImage"
+            label="Edit cover image"
+            aspectRatio={constants.profile.coverImageAspectRatio}
+            // Im aware ideally this should ideally be 450, but images will look better on a higher res here
+            previewWidth={constants.profile.coverImageWidth}
+          >
+            <Text size="sm" color="dimmed">
+              Suggested resolution: {constants.profile.coverImageWidth}px x{' '}
+              {constants.profile.coverImageHeight}px
+            </Text>
+          </InputSimpleImageUpload>
+          <Divider />
+          <InputTextArea name="message" label="Message" maxLength={200} />
+          <Divider />
+          <InputTextArea name="bio" label="Bio" maxLength={400} />
+          <Divider />
+          <InputText name="location" label="Location" maxLength={400} />
+          <Divider />
+          <InputInlineSocialLinkInput
+            name="socialLinks"
+            label="Social Links"
+            type={LinkType.Social}
+          />
+          <InputInlineSocialLinkInput
+            name="sponsorshipLinks"
+            label="Sponsorship Links"
+            type={LinkType.Sponsorship}
+          />
+          <Divider />
+
           {user?.username && (
             <InputShowcaseItemsInput
               label="Showcase"
@@ -314,6 +413,41 @@ const { openModal, Modal } = createContextModal({
     );
   },
 });
+
+type ProfilePreviewProps = {
+  user?: UserWithProfile;
+  badge?: BadgeCosmetic;
+  nameplate?: NamePlateCosmetic;
+};
+function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
+  if (!user) {
+    return null;
+  }
+
+  const userWithCosmetics: UserWithCosmetics = {
+    ...user,
+    cosmetics: [],
+    deletedAt: null,
+  };
+
+  if (badge) userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' } });
+  if (nameplate)
+    userWithCosmetics.cosmetics.push({ cosmetic: { ...nameplate, type: 'NamePlate' } });
+
+  return (
+    <Stack spacing={4}>
+      <Input.Label>Preview</Input.Label>
+      <Paper p="sm" withBorder>
+        <UserAvatar
+          user={userWithCosmetics}
+          size="md"
+          subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
+          withUsername
+        />
+      </Paper>
+    </Stack>
+  );
+}
 
 export const openUserProfileEditModal = openModal;
 export default Modal;

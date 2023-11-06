@@ -139,6 +139,7 @@ export const updateUserProfile = async ({
   socialLinks,
   sponsorshipLinks,
   badgeId,
+  nameplateId,
   userId,
   coverImage,
   ...profile
@@ -147,31 +148,44 @@ export const updateUserProfile = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
+      const shouldUpdateCosmetics =
+        (badgeId !== undefined || nameplateId !== undefined) &&
+        current.cosmetics.find(
+          (c) => !c.equippedAt && [badgeId, nameplateId].filter(isDefined).includes(c.cosmetic.id)
+        );
+
       await tx.user.update({
         where: {
           id: userId,
         },
         data: {
           image: profileImage,
-          cosmetics:
-            badgeId !== undefined &&
-            // Avoid resetting the same badge
-            !current.cosmetics.find((x) => x.cosmeticId === badgeId && !!x.equippedAt)
-              ? {
-                  updateMany: {
-                    where: { equippedAt: { not: null } },
-                    data: { equippedAt: null },
-                  },
-                  update: badgeId
-                    ? {
-                        where: { userId_cosmeticId: { userId, cosmeticId: badgeId } },
-                        data: { equippedAt: new Date() },
-                      }
-                    : undefined,
-                }
-              : undefined,
+          cosmetics: shouldUpdateCosmetics
+            ? {
+                updateMany: {
+                  where: { equippedAt: { not: null } },
+                  data: { equippedAt: null },
+                },
+              }
+            : undefined,
         },
       });
+
+      if (shouldUpdateCosmetics) {
+        await tx.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            cosmetics: {
+              updateMany: {
+                where: { cosmeticId: { in: [badgeId, nameplateId].filter(isDefined) } },
+                data: { equippedAt: new Date() },
+              },
+            },
+          },
+        });
+      }
 
       const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];
 
