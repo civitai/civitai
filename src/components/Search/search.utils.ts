@@ -204,6 +204,7 @@ export const applyUserPreferencesCollections = <
   hiddenTags: Map<number, boolean>;
   currentUserId?: number | null;
 }) => {
+  console.log(items);
   const filtered = items
     .filter((x) => {
       const userId = x.user?.id || x.userId;
@@ -227,6 +228,14 @@ export const applyUserPreferencesCollections = <
       return true;
     })
     .map(({ images, ...x }) => {
+      if (x?.image) {
+        // Has already been filtered.
+        return {
+          ...x,
+          images,
+        };
+      }
+
       const filteredImages = images?.filter((i) => {
         if (hiddenImages.get(i.id)) return false;
 
@@ -241,7 +250,7 @@ export const applyUserPreferencesCollections = <
         return true;
       }) as T['images'];
 
-      if (!filteredImages?.length) return null;
+      if (!filteredImages?.length && !x.image) return null;
 
       return {
         ...x,
@@ -249,7 +258,7 @@ export const applyUserPreferencesCollections = <
       };
     })
     .filter(isDefined);
-
+  console.log(filtered);
   return filtered;
 };
 
