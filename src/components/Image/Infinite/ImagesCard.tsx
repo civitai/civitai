@@ -41,7 +41,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
     useCallback((state) => state.pending[image.id] ?? { attempts: 0, success: true }, [image.id])
   );
   const isBlocked = ingestionData.ingestion === ImageIngestionStatus.Blocked;
-  const isLoading = pending.attempts < 5 && !pending.success;
+  const isLoading = pending.attempts < 30 && !pending.success;
   const loadingFailed = !isLoading && !ingestionData;
 
   const tags = useMemo(() => {

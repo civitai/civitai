@@ -48,7 +48,7 @@ const createIngestionStore = () =>
 
 type ImageIngestionState = ReturnType<typeof createIngestionStore>;
 
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 30;
 const TIMEOUT_BASE = 1000;
 const ImageIngestionContext = createContext<ImageIngestionState | null>(null);
 export const ImageIngestionProvider = ({
