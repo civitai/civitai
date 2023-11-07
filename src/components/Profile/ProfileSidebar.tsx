@@ -183,7 +183,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               </Button>
             )}
           </Group>
-          <Divider my="sm" />
         </Stack>
       )}
     </Stack>
