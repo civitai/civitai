@@ -14,6 +14,7 @@ import { ImageIngestionStatus } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
@@ -24,12 +25,11 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
-  const filters = useImagesInfiniteContext();
+  const { images } = useImagesInfiniteContext();
 
   const ingestionData = useImageIngestionContext(
     useCallback(
@@ -69,7 +69,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                       <>
                         {!isBlocked && <ImageGuard.Report context="image" position="top-right" />}
                         <ImageGuard.ToggleImage position="top-left" />
-                        <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
+                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                               <MediaHash {...image} />
@@ -86,7 +86,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               style={{ width: '100%' }}
                             />
                           )}
-                        </RoutedContextLink>
+                        </RoutedDialogLink>
                         {showVotes ? (
                           <div className={classes.footer}>
                             <VotableTags entityType="image" entityId={image.id} tags={tags} />

@@ -8,13 +8,15 @@ type Url = UrlObject | string;
 type DialogItem<T> = {
   component: ComponentType<T>;
   resolve: (
-    query: Record<string, string | string[]>,
+    query: Record<string, unknown>,
     args: ComponentProps<ComponentType<T>>
   ) => { url: Url; asPath?: Url; state?: Record<string, unknown> };
 };
-type DialogRegistry<T> = { [K in keyof T]: DialogItem<T[K]> };
+type DialogRegistry<T extends Record<string, unknown>> = { [K in keyof T]: DialogItem<T[K]> };
 
-function createDialogDictionary<T>(dictionary: DialogRegistry<T>): DialogRegistry<T> {
+function createDialogDictionary<T extends Record<string, unknown>>(
+  dictionary: DialogRegistry<T>
+): DialogRegistry<T> {
   return dictionary;
 }
 

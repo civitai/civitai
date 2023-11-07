@@ -1,18 +1,31 @@
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { UrlObject } from 'url';
 import { resolveHref } from 'next/dist/shared/lib/router/router';
-import { parse } from 'query-string';
+import { QS } from '~/utils/qs';
+import { create } from 'zustand';
+import { removeEmpty, removeEmpty2 } from '~/utils/object-helpers';
 
 type Url = UrlObject | string;
 
 const BrowserRouterContext = createContext<{
-  // asPath: string;
-  query: Record<string, string | string[]>;
+  asPath: string;
+  query: Record<string, any>;
   push: (url: Url, as?: Url) => void;
   replace: (url: Url, as?: Url) => void;
   back: () => void;
 } | null>(null);
+
+// const useBrowserRouter2 = create<{
+//   asPath: string;
+//   query: Record<string, any>;
+//   push: (url: Url, as?: Url) => void;
+//   replace: (url: Url, as?: Url) => void;
+//   back: () => void;
+// }>((set, get) => ({
+//   asPath: '',
+//   query: {},
+// }))
 
 export const useBrowserRouter = () => {
   const context = useContext(BrowserRouterContext); //eslint-disable-line
@@ -21,58 +34,65 @@ export const useBrowserRouter = () => {
 };
 
 export function BrowserRouterProvider({ children }: { children: React.ReactNode }) {
-  const parseQuery = (url?: string) => {
+  const router = useRouter();
+
+  const parseQuery = (state?: any) => {
     if (typeof window === 'undefined') return {};
-    const [path, queryString] = (url ?? history.state.url).split('?');
-    return parse(queryString) as Record<string, string | string[]>;
+    const [path, queryString] = (state?.url ?? history.state.url).split('?');
+    return QS.parse(queryString) as Record<string, any>;
   };
-  // const [asPath, setAsPath] = useState<string>('')
-  const [query, setQuery] = useState<Record<string, string | string[]>>(parseQuery());
+
+  const [asPath, setAsPath] = useState<string>(router.asPath);
+  const [query, setQuery] = useState<Record<string, any>>({
+    url: `${router.pathname}?${QS.stringify(router.query)}`,
+  });
 
   useEffect(() => {
-    const listener = () => {
-      setQuery(parseQuery());
+    setQuery(parseQuery());
+    setAsPath(history.state.as);
+  }, [router]);
+
+  useEffect(() => {
+    const popstateFn = (e: PopStateEvent) =>
+      dispatchEvent(new CustomEvent('locationchange', { detail: [e.state] }));
+    const locationChangeFn = (e: Event) => {
+      const event = e as CustomEvent;
+      const state = event.detail[0];
+      setQuery(parseQuery(state));
+      setAsPath(state.as);
     };
-    addEventListener('popstate', listener);
+
+    addEventListener('popstate', popstateFn);
+    addEventListener('locationchange', locationChangeFn);
     return () => {
-      removeEventListener('popstate', listener);
+      removeEventListener('popstate', popstateFn);
+      removeEventListener('locationchange', locationChangeFn);
     };
   }, []);
 
   const goto = (type: 'replace' | 'push', url: Url, as?: Url) => {
-    const cb = type === 'replace' ? history.replaceState : history.pushState;
-
     const _url = resolveHref(Router, url);
     const _as = as ? resolveHref(Router, as) : _url;
 
-    setQuery(parseQuery(_url));
+    const historyState = {
+      ...history.state,
+      url: _url,
+      as: _as,
+    };
 
-    cb(
-      {
-        ...history.state,
-        options: { ...history.state.options },
-        url: _url,
-        as: _as,
-      },
-      '',
-      _as
-    );
+    type === 'replace'
+      ? history.replaceState(historyState, '', _as)
+      : history.pushState(historyState, '', _as);
+
+    window.dispatchEvent(new CustomEvent('locationchange', { detail: [historyState] }));
   };
 
   const push = (url: Url, as?: Url) => goto('push', url, as);
   const replace = (url: Url, as?: Url) => goto('replace', url, as);
   const back = () => history.go(-1);
 
-  // const mutateHistoryState(type: 'push' | 'replace', state:any)
-
-  // TODO - push
-  // TODO - replace
-  // TODO - back
-
-  // function push<T>(url: Url, as?: Url, state?: T) {}
-
   return (
-    <BrowserRouterContext.Provider value={{ push, query, replace, back }}>
+    <BrowserRouterContext.Provider value={{ asPath, push, query, replace, back }}>
       {children}
     </BrowserRouterContext.Provider>
   );

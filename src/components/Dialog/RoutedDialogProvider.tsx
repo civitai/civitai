@@ -1,4 +1,4 @@
-import React, { ComponentProps, useEffect, useMemo, useRef } from 'react';
+import React, { ComponentProps, ComponentType, useEffect, useMemo, useRef } from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import { useRouter } from 'next/router';
 import { dialogs } from './routed-dialog-registry';
@@ -17,7 +17,6 @@ export function RoutedDialogProvider() {
   useEffect(() => {
     router.beforePopState((state) => {
       const previous = prevState.current;
-      console.log({ state, previous });
       if (state.url.includes('dialog') || previous?.url.includes('dialog')) return false;
       return true;
     });
@@ -34,12 +33,13 @@ export function RoutedDialogProvider() {
     const toOpen = names.filter((name) => !openDialogs.includes(name));
 
     for (const name of toOpen) {
-      const sessionState = sessionStorage.getItem(name);
+      const sessionState = sessionStorage.getItem(name as DialogKey);
       const state = sessionState ? JSON.parse(sessionState) : undefined;
+      const Dialog = createBrowserRouterSync(dialogs[name].component);
       dialogStore.trigger({
         id: name,
-        component: dialogs[name].component,
-        props: state,
+        component: Dialog,
+        props: { ...state },
         options: { onClose: () => history.go(-1) },
         type: 'routed-dialog',
       });
@@ -81,7 +81,7 @@ export function RoutedDialogLink<T extends DialogKey>({
     state: routerState,
   } = useMemo(() => {
     return dialog.resolve(browserRouter.query, state);
-  }, [browserRouter.query]); // eslint-disable-line
+  }, []); // eslint-disable-line
 
   const handleClick = (e: any) => {
     e.preventDefault();
@@ -96,15 +96,6 @@ export function RoutedDialogLink<T extends DialogKey>({
 
     browserRouter.push(_url, asPath);
     if (routerState) sessionStorage.setItem(name, JSON.stringify(routerState));
-
-    // const popStateEvent = new PopStateEvent('popstate', {
-    //   state: {
-    //     ...history.state,
-    //     url: `${as}?${QS.stringify(parsedQuery)}`,
-    //     as: href,
-    //   },
-    // });
-    // dispatchEvent(popStateEvent);
   };
 
   const href = typeof asPath === 'string' ? asPath : resolveHref(router, asPath ?? url);
@@ -114,4 +105,11 @@ export function RoutedDialogLink<T extends DialogKey>({
       {children}
     </a>
   );
+}
+
+function createBrowserRouterSync<T extends Record<string, unknown>>(Dialog: ComponentType<T>) {
+  return function BrowserRouterSync(args: ComponentProps<ComponentType<T>>) {
+    const { query } = useBrowserRouter();
+    return <Dialog {...args} {...query} />;
+  };
 }

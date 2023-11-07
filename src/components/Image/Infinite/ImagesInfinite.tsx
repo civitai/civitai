@@ -16,8 +16,9 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { ImageGetInfinite } from '~/types/router';
 import { ImageIngestionProvider } from '~/components/Image/Ingestion/ImageIngestionProvider';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
-type ImagesInfiniteState = {
+type ImageFilters = {
   modelId?: number;
   modelVersionId?: number;
   postId?: number;
@@ -33,6 +34,10 @@ type ImagesInfiniteState = {
   followed?: boolean;
   browsingMode?: BrowsingMode;
 };
+type ImagesInfiniteState = {
+  filters: ImageFilters;
+  images?: ImagesInfiniteModel[];
+};
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
   const context = useContext(ImagesInfiniteContext);
@@ -42,7 +47,7 @@ export const useImagesInfiniteContext = () => {
 
 type ImagesInfiniteProps = {
   withTags?: boolean;
-  filters?: ImagesInfiniteState;
+  filters?: ImageFilters;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
 };
@@ -79,7 +84,7 @@ export default function ImagesInfinite({
 
   return (
     <IsClient>
-      <ImagesInfiniteContext.Provider value={filters}>
+      <ImagesInfiniteContext.Provider value={{ filters, images }}>
         {isLoading ? (
           <Center p="xl">
             <Loader />
