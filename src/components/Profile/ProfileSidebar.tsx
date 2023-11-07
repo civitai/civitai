@@ -62,16 +62,18 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       <RankBadge rank={user.rank} size="lg" withTitle />
       <Stack spacing={0}>
         <Username {...user} cosmetics={equippedCosmetics} size="xl" />
-
-        {profile.location && (
-          <Group spacing="sm" noWrap>
-            <Text color="dimmed" truncate>
-              {profile.location}
-            </Text>
-            <IconMapPin size={16} style={{ flexShrink: 0 }} />
-          </Group>
-        )}
+        <Text color="dimmed" size="sm">
+          Joined {formatDate(user.createdAt)}
+        </Text>
       </Stack>
+      {profile.location && (
+        <Group spacing="sm" noWrap>
+          <Text color="dimmed" truncate>
+            {profile.location}
+          </Text>
+          <IconMapPin size={16} style={{ flexShrink: 0 }} />
+        </Group>
+      )}
       {profile?.bio && (
         <ContentClamp maxHeight={48} style={{ wordWrap: 'break-word' }}>
           {profile.bio}
@@ -184,8 +186,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           <Divider my="sm" />
         </Stack>
       )}
-
-      <Text color="dimmed">Joined {formatDate(user.createdAt)}</Text>
     </Stack>
   );
 }
