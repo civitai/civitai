@@ -128,7 +128,7 @@ export function Reactions({
             compact
             onClick={() => setShowAll((s) => !s)}
           >
-            <Group spacing={2}>
+            <Group spacing={2} noWrap>
               <IconPlus size={16} stroke={2.5} />
               <IconMoodSmile size={18} stroke={2.5} />
             </Group>

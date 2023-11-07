@@ -463,13 +463,17 @@ ImageGuard.Report = function ReportImage({
   return (
     <Group
       spacing={4}
-      sx={{
-        position: 'absolute',
-        top: 5,
-        left: position === 'top-left' ? 5 : undefined,
-        right: position === 'top-right' ? 5 : undefined,
-        zIndex: 8,
-      }}
+      sx={
+        position !== 'static'
+          ? {
+              position: 'absolute',
+              top: 5,
+              left: position === 'top-left' ? 5 : undefined,
+              right: position === 'top-right' ? 5 : undefined,
+              zIndex: 8,
+            }
+          : undefined
+      }
     >
       {NeedsReviewBadge}
       {!!menuItems.length && (

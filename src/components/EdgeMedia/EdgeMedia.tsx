@@ -10,6 +10,7 @@ export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
     controls?: boolean;
     wrapperProps?: React.ComponentPropsWithoutRef<'div'>;
+    contain?: boolean;
   };
 
 export function EdgeMedia({
@@ -27,6 +28,7 @@ export function EdgeMedia({
   children,
   controls,
   wrapperProps,
+  contain,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width });
@@ -83,6 +85,7 @@ export function EdgeMedia({
           style={style}
           controls={controls}
           wrapperProps={wrapperProps}
+          contain={contain}
         />
       );
     case 'audio':
