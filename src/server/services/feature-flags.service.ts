@@ -69,11 +69,11 @@ const featureFlags = createFeatureFlags({
   },
   bounties: ['public'],
   profileOverhaul: {
-    toggleable: false,
-    default: false,
+    toggleable: true,
+    default: true,
     displayName: 'Profile v2 (Beta)',
     description: `An improved user profile experience to boast around.`,
-    availability: ['dev', 'mod'],
+    availability: ['dev', 'mod', 'public'],
   },
 });
 export const featureFlagKeys = Object.keys(featureFlags);

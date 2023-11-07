@@ -37,7 +37,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -77,6 +77,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { env } from '~/env/client.mjs';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+import ProfileLayout from '~/components/Profile/ProfileLayout';
+import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -145,6 +147,7 @@ const useChipStyles = createStyles((theme) => ({
 export function UserImagesPage() {
   const currentUser = useCurrentUser();
   const { classes } = useChipStyles();
+  const features = useFeatureFlags();
 
   const {
     replace,
@@ -169,8 +172,15 @@ export function UserImagesPage() {
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
+  const Wrapper = ({ children }: { children: React.ReactNode }) =>
+    features.profileOverhaul ? (
+      <>{children}</>
+    ) : (
+      <Tabs.Panel value="/images">{children}</Tabs.Panel>
+    );
+
   return (
-    <Tabs.Panel value="/images">
+    <Wrapper>
       <MasonryProvider
         columnWidth={constants.cardSizes.image}
         maxColumnCount={7}
@@ -239,7 +249,7 @@ export function UserImagesPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Tabs.Panel>
+    </Wrapper>
   );
 }
 
@@ -362,26 +372,6 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
 
   // Redirect all users to the creator's models tab if they have uploaded models
   useEffect(() => {
-    if (!features) {
-      return; // Wait for features to be loaded.
-    }
-
-    if (features.profileOverhaul) {
-      // Redirect to the new profile page.
-      let path: string | undefined = '';
-      if (router.pathname !== '/user/[username]') {
-        path = router.pathname.split('/').pop();
-      }
-
-      if (path && !['models', 'images', 'collections', 'articles'].includes(path)) {
-        return; // Avoid changing paths, we might not support this path on new profile
-      }
-
-      router.replace(`/user/${username}/profile/${path ?? ''}`);
-
-      return;
-    }
-
     if (router.pathname !== '/user/[username]') return;
     if (uploads > 0) router.replace(`/user/${username}/models`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -692,9 +682,26 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+function LayoutSelector({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { username } = router.query as { username: string };
+  const features = useFeatureFlags();
+
+  if (features.profileOverhaul) {
+    return (
+      <ProfileLayout username={username}>
+        <ProfileHeader username={username} />
+        {children}
+      </ProfileLayout>
+    );
+  }
+
+  return <NestedLayout>{children}</NestedLayout>;
+}
+
 export const UserProfileLayout = (page: React.ReactElement) => (
   <AppLayout>
-    <NestedLayout>{page}</NestedLayout>
+    <LayoutSelector>{page}</LayoutSelector>
   </AppLayout>
 );
 

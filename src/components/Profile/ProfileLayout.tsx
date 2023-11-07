@@ -50,11 +50,9 @@ export function ProfileLayout({
           <ProfileSidebar username={username} />
         </SidebarLayout.Sidebar>
         <SidebarLayout.Content>
-          <Center>
-            <Container fluid w="100%">
-              {children}
-            </Container>
-          </Center>
+          <Container fluid w="100%">
+            {children}
+          </Container>
         </SidebarLayout.Content>
       </SidebarLayout.Root>
     </>
