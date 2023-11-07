@@ -269,14 +269,15 @@ export const imageMetrics = createMetricProcessor({
           AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
         )
         SELECT
-          imageId,
+          entityId AS imageId,
           sumIf(views, createdDate = current_date()) day,
           sumIf(views, createdDate >= subtractDays(current_date(), 7)) week,
           sumIf(views, createdDate >= subtractDays(current_date(), 30)) month,
           sumIf(views, createdDate >= subtractYears(current_date(), 1)) year,
           sum(views) all_time
-        FROM daily_image_views
-        WHERE imageId IN (select entityId FROM targets)
+        FROM daily_views
+        WHERE entityId IN (select entityId FROM targets)
+          AND entityType = 'Image'
         GROUP BY imageId;
       `,
       format: 'JSONEachRow',

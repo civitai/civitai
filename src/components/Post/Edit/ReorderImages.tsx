@@ -209,11 +209,17 @@ export function ReorderImagesButton({
     canReorder: boolean;
   }) => React.ReactElement;
 }) {
+  const queryUtils = trpc.useContext();
   const id = useEditPostContext((state) => state.id);
   const images = useEditPostContext((state) => state.images);
   const isReordering = useEditPostContext((state) => state.reorder);
   const toggleReorder = useEditPostContext((state) => state.toggleReorder);
-  const { mutate, isLoading } = trpc.post.reorderImages.useMutation();
+  const { mutate, isLoading } = trpc.post.reorderImages.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getAll.invalidate();
+      await queryUtils.image.getInfinite.invalidate();
+    },
+  });
   const previous = usePrevious(images);
 
   const onClick = () => {
