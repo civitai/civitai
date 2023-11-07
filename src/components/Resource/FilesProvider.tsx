@@ -22,6 +22,7 @@ type SchemaError = {
   type?: ZodErrorSchema;
   size?: ZodErrorSchema;
   fp?: ZodErrorSchema;
+  format?: ZodErrorSchema;
 };
 
 export type FileFromContextProps = {
@@ -32,6 +33,7 @@ export type FileFromContextProps = {
   sizeKB?: number;
   size?: 'full' | 'pruned' | null;
   fp?: 'fp16' | 'fp32' | 'bf16' | null;
+  format?: ModelFileFormat | null;
   versionId?: number;
   file?: File;
   uuid: string;
@@ -83,6 +85,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       sizeKB: file.sizeKB,
       size: file.metadata.size,
       fp: file.metadata.fp,
+      format: file.metadata.format,
       versionId: version.id,
       uuid: randomId(),
       modelType: model?.type ?? null,
@@ -99,6 +102,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         type: item.meta?.type,
         size: item.meta?.size,
         fp: item.meta?.fp,
+        format: item.meta?.format,
         versionId: item.meta?.versionId,
       })) as FileFromContextProps[];
     return [...initialFiles, ...uploading].filter(isDefined);
@@ -304,7 +308,15 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     setFiles((state) => [...state, ...toUpload]);
   };
 
-  const handleUpload = async ({ type, size, fp, versionId, file, uuid }: FileFromContextProps) => {
+  const handleUpload = async ({
+    type,
+    size,
+    fp,
+    format,
+    versionId,
+    file,
+    uuid,
+  }: FileFromContextProps) => {
     if (!file || !type) return;
 
     setFiles((state) => {
@@ -319,7 +331,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
-          meta: { versionId, type, size, fp, uuid },
+          meta: { versionId, type, size, fp, format, uuid },
         },
         async ({ meta, size, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {

@@ -56,6 +56,7 @@ export const modelFileSchema = z.object({
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
+  format: z.enum(constants.modelFileFormats).optional(),
   visibility: z.nativeEnum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
 });
