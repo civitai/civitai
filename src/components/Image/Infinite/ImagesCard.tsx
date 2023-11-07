@@ -31,7 +31,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
-  const { classes, cx, theme } = useStyles();
+  const { classes, cx } = useStyles();
   const filters = useImagesInfiniteContext();
   const features = useFeatureFlags();
 
@@ -75,13 +75,13 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                           position="apart"
                           align="start"
                           spacing={4}
-                          sx={{
+                          style={{
                             position: 'absolute',
                             top: 0,
                             left: 0,
                             width: '100%',
                             zIndex: 10,
-                            padding: theme.spacing.sm,
+                            padding: 8,
                           }}
                         >
                           <ImageGuard.ToggleImage position="static" />

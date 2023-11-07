@@ -463,7 +463,7 @@ ImageGuard.Report = function ReportImage({
   return (
     <Group
       spacing={4}
-      sx={
+      style={
         position !== 'static'
           ? {
               position: 'absolute',
