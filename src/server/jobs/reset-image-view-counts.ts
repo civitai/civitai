@@ -14,13 +14,14 @@ export const resetImageViewCounts = createJob(
     const imageViews = await clickhouse.query({
       query: `
         SELECT
-          imageId,
+          entityId as imageId,
           sumIf(views, createdDate = current_date()) day,
           sumIf(views, createdDate >= subtractDays(current_date(), 7)) week,
           sumIf(views, createdDate >= subtractDays(current_date(), 30)) month,
           sumIf(views, createdDate >= subtractYears(current_date(), 1)) year,
           sum(views) all_time
-        FROM daily_image_views
+        FROM daily_views
+        WHERE entityType = 'Image'
         GROUP BY imageId;
       `,
       format: 'JSONEachRow',
