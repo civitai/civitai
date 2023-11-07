@@ -11,7 +11,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { ImageIngestionStatus } from '@prisma/client';
-import { IconInfoCircle } from '@tabler/icons-react';
+import { IconInfoCircle, IconBrush } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
@@ -26,10 +26,14 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { generationPanel } from '~/store/generation.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
   const filters = useImagesInfiniteContext();
+  const features = useFeatureFlags();
 
   const ingestionData = useImageIngestionContext(
     useCallback(
@@ -67,8 +71,42 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                   <ImageGuard.Content>
                     {({ safe }) => (
                       <>
-                        {!isBlocked && <ImageGuard.Report context="image" position="top-right" />}
-                        <ImageGuard.ToggleImage position="top-left" />
+                        <Group
+                          position="apart"
+                          align="start"
+                          spacing={4}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            zIndex: 10,
+                            padding: 8,
+                          }}
+                        >
+                          <ImageGuard.ToggleImage position="static" />
+                          <Stack spacing="xs" ml="auto">
+                            {!isBlocked && <ImageGuard.Report context="image" position="static" />}
+                            {features.imageGeneration && image.meta && (
+                              <HoverActionButton
+                                label="Create"
+                                size={30}
+                                color="white"
+                                variant="filled"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({
+                                    type: 'image',
+                                    id: image.id,
+                                  });
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                          </Stack>
+                        </Group>
                         <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

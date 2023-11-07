@@ -44,6 +44,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   });
 
   const runData = useGenerationStore((state) => state.data);
+  const opened = useGenerationStore((state) => state.opened);
 
   useEffect(() => {
     if (runData) {
@@ -121,9 +122,9 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     }
 
     return () => {
-      generationStore.clearData();
+      if (!opened) generationStore.clearData();
     };
-  }, [runData]); //eslint-disable-line
+  }, [runData, opened]); //eslint-disable-line
 
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {

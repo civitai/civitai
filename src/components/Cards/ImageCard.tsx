@@ -1,5 +1,5 @@
 import { ActionIcon, Group, Stack, UnstyledButton } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons-react';
+import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
@@ -13,12 +13,16 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageGetInfinite } from '~/types/router';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
+import HoverActionButton from './components/HoverActionButton';
+import { generationPanel } from '~/store/generation.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
     aspectRatio: data.width && data.height ? data.width / data.height : 1,
   });
   const router = useRouter();
+  const features = useFeatureFlags();
 
   return (
     <FeedCard>
@@ -34,8 +38,35 @@ export function UnroutedImageCard({ data }: Props) {
 
                 return (
                   <>
-                    <ImageGuard.Report context="image" position="top-right" withinPortal />
-                    <ImageGuard.ToggleImage position="top-left" />
+                    <Group
+                      position="apart"
+                      align="start"
+                      spacing={4}
+                      className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
+                    >
+                      <ImageGuard.ToggleImage className={sharedClasses.chip} position="static" />
+                      <Stack spacing="xs" ml="auto">
+                        <ImageGuard.Report context="image" position="static" withinPortal />
+                        {features.imageGeneration && image.meta && (
+                          <HoverActionButton
+                            label="Create"
+                            size={30}
+                            color="white"
+                            variant="filled"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              generationPanel.open({
+                                type: 'image',
+                                id: image.id,
+                              });
+                            }}
+                          >
+                            <IconBrush stroke={2.5} size={16} />
+                          </HoverActionButton>
+                        )}
+                      </Stack>
+                    </Group>
                     {safe ? (
                       <EdgeMedia
                         src={image.url}
@@ -47,9 +78,10 @@ export function UnroutedImageCard({ data }: Props) {
                             ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                             : DEFAULT_EDGE_IMAGE_WIDTH
                         }
-                        placeholder="empty"
                         className={sharedClasses.image}
+                        wrapperProps={{ style: { height: '100%' } }}
                         loading="lazy"
+                        contain
                       />
                     ) : (
                       <MediaHash {...image} />

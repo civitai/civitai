@@ -48,7 +48,7 @@ import {
 } from '~/server/common/constants';
 import { GenerateFormModel, generationFormShapeSchema } from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { generationStore } from '~/store/generation.store';
+import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -75,6 +75,8 @@ export function GenerateFormView({
   const currentUser = useCurrentUser();
   const { formState } = form;
   const { isSubmitting } = formState;
+
+  const type = useGenerationStore((state) => state.data?.type);
 
   // Might be worth moving this to a context provider or zustand store
   const { requests } = useGetGenerationRequests();
@@ -137,6 +139,12 @@ export function GenerateFormView({
             <Stack spacing={0} h="100%">
               <ScrollArea sx={{ flex: 1 }}>
                 <Stack p="md" pb={0}>
+                  {type === 'remix' && (
+                    <DismissibleAlert
+                      id="image-gen-params"
+                      content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
+                    />
+                  )}
                   <Card {...sharedCardProps}>
                     <Stack>
                       <InputResourceSelect
