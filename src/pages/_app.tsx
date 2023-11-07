@@ -52,6 +52,9 @@ import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvide
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
+import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -157,11 +160,17 @@ function MyApp(props: CustomAppProps) {
                         <CivitaiLinkProvider>
                           <CustomModalsProvider>
                             <NotificationsProvider zIndex={9999}>
-                              <FreezeProvider>
-                                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                              </FreezeProvider>
-                              <GenerationPanel />
-                              <RoutedContextProvider2 />
+                              <BrowserRouterProvider>
+                                <FreezeProvider>
+                                  <TosProvider>
+                                    {getLayout(<Component {...pageProps} />)}
+                                  </TosProvider>
+                                </FreezeProvider>
+                                <GenerationPanel />
+                                <DialogProvider />
+                                <RoutedDialogProvider />
+                                <RoutedContextProvider2 />
+                              </BrowserRouterProvider>
                             </NotificationsProvider>
                           </CustomModalsProvider>
                         </CivitaiLinkProvider>

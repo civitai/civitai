@@ -3,8 +3,10 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 interface DialogSettings<TProps extends Record<string, unknown> = any> {
+  id?: string | number | symbol;
   component: React.ComponentType<TProps>;
   props?: TProps;
+  type?: 'dialog' | 'routed-dialog';
   options?: {
     transitionDuration?: number;
     onClose?: () => void;
@@ -12,13 +14,13 @@ interface DialogSettings<TProps extends Record<string, unknown> = any> {
 }
 
 export interface Dialog extends DialogSettings {
-  id: number;
+  id: string | number | symbol;
 }
 
 type DialogStore = {
   dialogs: Dialog[];
   trigger: (args: DialogSettings) => void;
-  closeById: (id: number) => void;
+  closeById: (id: string | number | symbol) => void;
   closeLatest: () => void;
   closeAll: () => void;
 };
@@ -31,10 +33,12 @@ export const useDialogStore = create<DialogStore>()(
         component: args.component,
         props: args.props,
         options: args.options,
-        id: Date.now(),
+        id: args.id ?? Date.now(),
+        type: args.type ?? 'dialog',
       };
       set((state) => {
-        state.dialogs.push(dialog);
+        const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;
+        if (!exists) state.dialogs.push(dialog);
       });
     },
     closeById: (id) =>

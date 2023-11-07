@@ -1,4 +1,3 @@
-import { usePrevious } from '@dnd-kit/utilities';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 
@@ -16,25 +15,18 @@ export const useDialogContext = () => {
 
 const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
   const [opened, setOpened] = useState(false);
-  const previousOpened = usePrevious(opened);
 
-  const duration = dialog.options?.transitionDuration ?? 150;
   const Dialog = dialog.component;
   const onClose = () => {
-    setOpened(false);
     dialog.options?.onClose?.();
+    dialogStore.closeById(dialog.id);
   };
 
   useEffect(() => {
-    setOpened(true);
+    setTimeout(() => {
+      setOpened(true);
+    }, 50);
   }, []);
-
-  useEffect(() => {
-    if (!opened && previousOpened)
-      setTimeout(() => {
-        dialogStore.closeById(dialog.id);
-      }, duration);
-  }, [opened]); // eslint-disable-line
 
   return (
     <DialogContext.Provider value={{ opened, onClose }}>
@@ -45,11 +37,10 @@ const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
 
 export const DialogProvider = () => {
   const dialogs = useDialogStore((state) => state.dialogs);
-  console.log({ dialogs });
   return (
     <>
-      {dialogs.map((dialog) => (
-        <DialogProviderInner key={dialog.id} dialog={dialog} />
+      {dialogs.map((dialog, i) => (
+        <DialogProviderInner key={i} dialog={dialog} />
       ))}
     </>
   );
