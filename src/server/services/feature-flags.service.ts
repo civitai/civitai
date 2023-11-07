@@ -73,7 +73,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Profile v2 (Beta)',
     description: `An improved user profile experience to boast around.`,
-    availability: ['dev', 'mod', 'public'],
+    availability: ['dev', 'mod', 'founder'],
   },
 });
 export const featureFlagKeys = Object.keys(featureFlags);
