@@ -29,7 +29,12 @@ import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver
 import { useRef, useState } from 'react';
 
 import { FileFromContextProps, useFilesContext } from '~/components/Resource/FilesProvider';
-import { constants, ModelFileType } from '~/server/common/constants';
+import {
+  constants,
+  ModelFileType,
+  ZipModelFileType,
+  zipModelFileTypes,
+} from '~/server/common/constants';
 // import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 // import { ModelVersionById } from '~/types/router';
@@ -226,6 +231,16 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                     {versionFile.fp ?? 'undefined'}
                   </Text>
                 </Stack>
+                {versionFile.name.endsWith('.zip') && (
+                  <Stack spacing={0}>
+                    <Text size="sm" weight="bold">
+                      Format
+                    </Text>
+                    <Text size="sm" color="dimmed">
+                      {versionFile.format ?? 'undefined'}
+                    </Text>
+                  </Stack>
+                )}
               </>
             ) : null}
           </>
@@ -400,6 +415,7 @@ function FileEditForm({
         metadata: {
           fp: versionFile.fp ?? undefined,
           size: versionFile.size ?? undefined,
+          format: versionFile.format ?? undefined,
         },
       });
     }
@@ -485,6 +501,21 @@ function FileEditForm({
             withAsterisk
             withinPortal
           />
+
+          {versionFile.name.endsWith('.zip') && (
+            <Select
+              label="Format"
+              placeholder="Diffusers, Core ML"
+              data={zipModelFileTypes.map((x) => ({ label: x, value: x }))}
+              error={error?.format?._errors[0]}
+              value={versionFile.format ?? null}
+              onChange={(value: ZipModelFileType | null) => {
+                updateFile(versionFile.uuid, { format: value });
+              }}
+              withAsterisk
+              withinPortal
+            />
+          )}
         </>
       )}
       {canManualSave && (
