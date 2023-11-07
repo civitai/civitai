@@ -18,6 +18,10 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
 
+type GenerationMaxValueKey = keyof typeof generation.maxValues;
+const maxValueKeys = Object.keys(generation.maxValues);
+const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
+
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
 
@@ -86,7 +90,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         when setting data, any keys that don't have data will be set to undefined
         this is necessary for 'remix' to work properly.
       */
-      const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
       if (!formData.model)
@@ -103,7 +106,17 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       for (const item of keys) {
         const key = item as keyof typeof formData;
         if (staticKeys.includes(key)) continue; // don't overwrite nsfw
-        form.setValue(key, formData[key]);
+
+        // Make sure we don't exceed max values
+        if (maxValueKeys.includes(key))
+          form.setValue(
+            key,
+            Math.min(
+              formData[key as GenerationMaxValueKey] ?? 0,
+              generation.maxValues[key as GenerationMaxValueKey] ?? 0
+            )
+          );
+        else form.setValue(key, formData[key]);
       }
     }
 
