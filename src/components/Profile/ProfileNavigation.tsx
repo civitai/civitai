@@ -26,8 +26,6 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
 
   const baseUrl = `/user/${username}`;
 
-  console.log(activePath);
-
   const opts: Record<
     string,
     { url: string; icon: React.ReactNode; label?: string; count?: number }
