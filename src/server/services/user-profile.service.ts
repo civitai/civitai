@@ -237,6 +237,12 @@ export const updateUserProfile = async ({
         where: { userId },
         data: {
           ...profile,
+          messageAddedAt:
+            profile.message === undefined || profile.message === current?.profile?.message
+              ? undefined
+              : profile.message
+              ? new Date()
+              : null,
           coverImage:
             coverImage !== undefined && !coverImage?.id
               ? coverImage === null
