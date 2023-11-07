@@ -64,13 +64,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Username {...user} cosmetics={equippedCosmetics} size="xl" />
 
         {profile.location && (
-          <Group spacing="sm">
-            <Text color="dimmed">{profile.location}</Text>
-            <IconMapPin size={16} />
+          <Group spacing="sm" noWrap>
+            <Text color="dimmed" truncate>
+              {profile.location}
+            </Text>
+            <IconMapPin size={16} style={{ flexShrink: 0 }} />
           </Group>
         )}
       </Stack>
-      {profile?.bio && <ContentClamp maxHeight={48}>{profile.bio}</ContentClamp>}
+      {profile?.bio && (
+        <ContentClamp maxHeight={48} style={{ wordWrap: 'break-word' }}>
+          {profile.bio}
+        </ContentClamp>
+      )}
       <Group spacing={4}>
         {sortDomainLinks(user.links).map((link, index) => (
           <ActionIcon

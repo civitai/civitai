@@ -124,7 +124,13 @@ const { openModal, Modal } = createContextModal({
       shouldUnregister: false,
     });
 
-    const [badgeId, nameplateId] = form.watch(['badgeId', 'nameplateId', 'leaderboardShowcase']);
+    const [badgeId, nameplateId, message, bio, location] = form.watch([
+      'badgeId',
+      'nameplateId',
+      'message',
+      'bio',
+      'location',
+    ]);
     const equippedCosmetics = useMemo(
       () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
       [user]
@@ -375,11 +381,26 @@ const { openModal, Modal } = createContextModal({
             </Text>
           </InputSimpleImageUpload>
           <Divider />
-          <InputTextArea name="message" label="Message" maxLength={200} />
+          <Stack spacing={0}>
+            <InputTextArea name="message" label="Message" maxLength={1200} />
+            <Group position="right">
+              <Text size="xs">{message?.length ?? 0}/1200</Text>
+            </Group>
+          </Stack>
           <Divider />
-          <InputTextArea name="bio" label="Bio" maxLength={400} />
+          <Stack spacing={0}>
+            <InputTextArea name="bio" label="Bio" maxLength={400} />
+            <Group position="right">
+              <Text size="xs">{bio?.length ?? 0}/400</Text>
+            </Group>
+          </Stack>
           <Divider />
-          <InputText name="location" label="Location" maxLength={400} />
+          <Stack spacing={0}>
+            <InputText name="location" label="Location" maxLength={100} />
+            <Group position="right">
+              <Text size="xs">{location?.length ?? 0}/100</Text>
+            </Group>
+          </Stack>
           <Divider />
           <InputInlineSocialLinkInput
             name="socialLinks"
