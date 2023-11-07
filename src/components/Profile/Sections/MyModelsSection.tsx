@@ -71,7 +71,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
             </div>
             {!isRefetching && _models.length > MAX_MODELS_DISPLAY && (
               <Button
-                href={`/user/${user.username}/profile/models`}
+                href={`/user/${user.username}/models`}
                 component={NextLink}
                 rel="nofollow"
                 size="md"

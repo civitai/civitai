@@ -72,7 +72,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
           </div>
           {_images.length > MAX_IMAGES_DISPLAY && !isRefetching && (
             <Button
-              href={`/user/${user.username}/profile/images`}
+              href={`/user/${user.username}/images`}
               component={NextLink}
               rel="nofollow"
               size="md"

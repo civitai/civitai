@@ -49,7 +49,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
 
           {_articles.length > MAX_ARTICLES_DISPLAY && (
             <Button
-              href={`/user/${user.username}/profile/articles`}
+              href={`/user/${user.username}/articles`}
               component={NextLink}
               rel="nofollow"
               size="md"
