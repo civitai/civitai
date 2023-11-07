@@ -3,6 +3,7 @@ import React from 'react';
 import {
   IconAssembly,
   IconCategory,
+  IconLayoutList,
   IconPencilMinus,
   IconPhoto,
   IconPlaylistAdd,
@@ -20,15 +21,18 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const { data: userOverview } = trpc.userProfile.overview.useQuery({
     username,
   });
-  const activePath = router.pathname.split('/').pop() || 'profile';
+  const overviewPath = '[username]';
+  const activePath = router.pathname.split('/').pop() || overviewPath;
 
-  const baseUrl = `/user/${username}/profile`;
+  const baseUrl = `/user/${username}`;
+
+  console.log(activePath);
 
   const opts: Record<
     string,
     { url: string; icon: React.ReactNode; label?: string; count?: number }
   > = {
-    profile: {
+    [overviewPath]: {
       url: '/',
       icon: <IconAssembly />,
       label: 'Overview',
@@ -37,6 +41,11 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `/models`,
       icon: <IconCategory />,
       count: userOverview?.modelCount,
+    },
+    posts: {
+      url: `/posts`,
+      icon: <IconLayoutList />,
+      count: userOverview?.postCount,
     },
     images: {
       url: `/images`,

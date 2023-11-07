@@ -1,7 +1,7 @@
-import { Group, Stack, Tabs } from '@mantine/core';
+import { Box, Group, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
@@ -15,9 +15,10 @@ import { constants } from '~/server/common/constants';
 import { ArticleSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { UserProfileLayout } from './';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -49,12 +50,20 @@ export default function UserArticlesPage() {
     selfView ? query.section ?? 'published' : 'published'
   );
   const viewingPublished = section === 'published';
+  const features = useFeatureFlags();
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
+  const Wrapper = ({ children }: { children: React.ReactNode }) =>
+    features.profileOverhaul ? (
+      <Box mt="md">{children}</Box>
+    ) : (
+      <Tabs.Panel value="/articles">{children}</Tabs.Panel>
+    );
+
   return (
-    <Tabs.Panel value="/articles">
+    <Wrapper>
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
@@ -103,7 +112,7 @@ export default function UserArticlesPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Tabs.Panel>
+    </Wrapper>
   );
 }
 

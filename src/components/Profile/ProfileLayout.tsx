@@ -10,7 +10,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { constants } from '~/server/common/constants';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,
@@ -19,6 +19,11 @@ import {
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { IconCloudOff } from '@tabler/icons-react';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+import { Meta } from '~/components/Meta/Meta';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { env } from '~/env/client.mjs';
+import { TrackView } from '~/components/TrackView/TrackView';
 
 export function ProfileLayout({
   username,
@@ -30,6 +35,8 @@ export function ProfileLayout({
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
+
+  const stats = user?.stats;
 
   if (isLoading) {
     return (
@@ -45,6 +52,26 @@ export function ProfileLayout({
 
   return (
     <>
+      {user && stats ? (
+        <Meta
+          title={`${user.username} Creator Profile | Civitai`}
+          description={`Average Rating: ${stats.ratingAllTime.toFixed(1)} (${abbreviateNumber(
+            stats.ratingCountAllTime
+          )}), Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
+            stats.followerCountAllTime
+          )}, Total Likes Received: ${abbreviateNumber(
+            stats.favoriteCountAllTime
+          )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
+          image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
+        />
+      ) : (
+        <Meta
+          title="Creator Profile | Civitai"
+          description="Learn more about this awesome creator on Civitai."
+        />
+      )}
+      {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}
       <SidebarLayout.Root>
         <SidebarLayout.Sidebar>
           <ProfileSidebar username={username} />

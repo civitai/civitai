@@ -1,4 +1,4 @@
-import { Group, Stack, Tabs } from '@mantine/core';
+import { Box, Group, Stack, Tabs } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -12,7 +12,9 @@ import { CollectionSort } from '~/server/common/enums';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
-import { UserProfileLayout } from './';
+import React from 'react';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -32,15 +34,22 @@ export default function UserCollectionsPage() {
   const router = useRouter();
   const { set, ...queryFilters } = useCollectionQueryParams();
   const sort = queryFilters.sort ?? constants.collectionFilterDefaults.sort;
+  const features = useFeatureFlags();
 
   const username = (router.query.username as string) ?? '';
   const { data: creator } = trpc.user.getCreator.useQuery({ username });
 
   // currently not showing any content if the username is undefined
   if (!username || !creator) return <NotFound />;
+  const Wrapper = ({ children }: { children: React.ReactNode }) =>
+    features.profileOverhaul ? (
+      <Box mt="md">{children}</Box>
+    ) : (
+      <Tabs.Panel value="/collections">{children}</Tabs.Panel>
+    );
 
   return (
-    <Tabs.Panel value="/collections">
+    <Wrapper>
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={4}
@@ -62,7 +71,7 @@ export default function UserCollectionsPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Tabs.Panel>
+    </Wrapper>
   );
 }
 
