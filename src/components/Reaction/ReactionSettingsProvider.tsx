@@ -1,7 +1,7 @@
 import { useContext, createContext, ReactNode } from 'react';
 
 type ReactionSettingsState = {
-  displayReactionCount?: boolean;
+  hideReactionCount?: boolean;
 };
 
 const ReactionSettingsContext = createContext<ReactionSettingsState | null>(null);

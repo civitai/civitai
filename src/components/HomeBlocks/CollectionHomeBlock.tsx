@@ -297,7 +297,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             .filter(isDefined)}
         >
           <ReactionSettingsProvider
-            settings={{ displayReactionCount: collection?.mode !== CollectionMode.Contest }}
+            settings={{ hideReactionCount: collection?.mode === CollectionMode.Contest }}
           >
             {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
             {isLoading || loadingPreferences

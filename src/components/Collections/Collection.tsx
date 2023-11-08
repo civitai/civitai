@@ -227,7 +227,7 @@ const ImageCollection = ({
               <ImageCategories />
             </>
           )}
-          <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+          <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
             <ImagesInfinite
               filters={{
                 ...filters,
@@ -293,7 +293,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
             <PostCategories />
           </>
         )}
-        <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+        <ReactionSettingsProvider settings={{ hideReactionCount: !isContestCollection }}>
           <PostsInfinite
             filters={{
               ...filters,

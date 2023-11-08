@@ -225,7 +225,7 @@ function ReactionBadge({
   canClick: boolean;
 }) {
   const color = hasReacted ? 'blue' : 'gray';
-  const { displayReactionCount = true } = useReactionSettingsContext();
+  const { hideReactionCount } = useReactionSettingsContext();
   return (
     <Button
       size="xs"
@@ -248,7 +248,7 @@ function ReactionBadge({
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
-        {displayReactionCount && (
+        {!hideReactionCount && (
           <Text
             sx={(theme) => ({
               color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,

@@ -196,7 +196,7 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      <ReactionSettingsProvider settings={{ displayReactionCount: !hideReactionCount }}>
+      <ReactionSettingsProvider settings={{ hideReactionCount }}>
         {children}
       </ReactionSettingsProvider>
     </ImageDetailContext.Provider>
