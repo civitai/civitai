@@ -12,7 +12,6 @@ export default function ImagePage() {
   const filters = imagesQueryParamSchema.parse(router.query);
 
   if (!imageId) return null;
-  console.log({ imageId });
 
   return (
     <ImageDetailProvider imageId={imageId} filters={filters}>

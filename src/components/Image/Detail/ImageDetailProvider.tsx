@@ -76,7 +76,6 @@ export function ImageDetailProvider({
     }
   );
   const images = initialImages.length > 0 ? initialImages : queryImages;
-  console.log({ postId, queryImages });
 
   const { data: collectionData, isLoading: isLoadingCollection } = trpc.collection.getById.useQuery(
     { id: collectionId as number },

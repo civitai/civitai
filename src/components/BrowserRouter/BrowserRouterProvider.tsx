@@ -3,8 +3,6 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { UrlObject } from 'url';
 import { resolveHref } from 'next/dist/shared/lib/router/router';
 import { QS } from '~/utils/qs';
-import { create } from 'zustand';
-import { removeEmpty, removeEmpty2 } from '~/utils/object-helpers';
 
 type Url = UrlObject | string;
 
@@ -15,17 +13,6 @@ const BrowserRouterContext = createContext<{
   replace: (url: Url, as?: Url) => void;
   back: () => void;
 } | null>(null);
-
-// const useBrowserRouter2 = create<{
-//   asPath: string;
-//   query: Record<string, any>;
-//   push: (url: Url, as?: Url) => void;
-//   replace: (url: Url, as?: Url) => void;
-//   back: () => void;
-// }>((set, get) => ({
-//   asPath: '',
-//   query: {},
-// }))
 
 export const useBrowserRouter = () => {
   const context = useContext(BrowserRouterContext); //eslint-disable-line

@@ -17,9 +17,9 @@ import { InView } from 'react-intersection-observer';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageIngestionContext } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -29,7 +29,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
-  const { images } = useImagesInfiniteContext();
+  const { images } = useImagesContext();
 
   const ingestionData = useImageIngestionContext(
     useCallback(
