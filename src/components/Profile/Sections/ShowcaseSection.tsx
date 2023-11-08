@@ -37,7 +37,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (

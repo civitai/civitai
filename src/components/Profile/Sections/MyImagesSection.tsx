@@ -53,7 +53,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   const isNullState = !isLoading && !images.length;
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (

@@ -51,7 +51,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   const isNullState = !isLoading && !models.length;
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (

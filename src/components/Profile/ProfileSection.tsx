@@ -41,6 +41,21 @@ export const useProfileSectionStyles = createStyles<
     const nullStateRef = getRef('nullState');
 
     return {
+      profileSection: {
+        paddingLeft: theme.spacing.md,
+        paddingRight: theme.spacing.md,
+        paddingTop: theme.spacing.xl,
+        paddingBottom: theme.spacing.xl,
+        marginRight: -theme.spacing.md,
+        marginLeft: -theme.spacing.md,
+
+        '&:nth-of-type(even)': {
+          background:
+            theme.colorScheme === 'dark'
+              ? theme.colors.dark[8]
+              : theme.fn.darken(theme.colors.gray[0], 0.01),
+        },
+      },
       loader: {
         position: 'absolute',
         top: '50%',

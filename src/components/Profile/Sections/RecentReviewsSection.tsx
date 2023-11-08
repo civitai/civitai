@@ -2,6 +2,7 @@ import {
   ProfileSection,
   ProfileSectionPreview,
   ProfileSectionProps,
+  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
 import { IconBrush, IconMessageChatbot, IconPhoto, IconStar, IconX } from '@tabler/icons-react';
@@ -37,13 +38,14 @@ import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/Resou
 import { isNumber } from '~/utils/type-guards';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
-  const theme = useMantineTheme();
   const { ref, inView } = useInView();
   const { data: userRatingsTotal, isLoading: isLoadingTotals } =
     trpc.resourceReview.getUserRatingsTotal.useQuery(
       { username: user.username },
       { enabled: inView }
     );
+  const { classes, theme } = useProfileSectionStyles({});
+
   const { resourceReviews, isLoading } = useQueryResourceReview(
     {
       username: user.username,
@@ -79,7 +81,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
     (!isLoading && !resourceReviews.length) || (!userRatingsTotal && !isLoadingTotals);
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isNullState ? null : isLoading ? (
         <ProfileSectionPreview />
       ) : (
