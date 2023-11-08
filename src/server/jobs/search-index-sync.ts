@@ -37,7 +37,8 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
         };
       },
       {
-        lockExpiration: 30 * 60,
+        // 3hr lock. This can be a long-running job.
+        lockExpiration: 180 * 60,
       }
     ),
   ])
