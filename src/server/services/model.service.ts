@@ -133,6 +133,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     supportsGeneration,
     followed,
     collectionId,
+    fileFormats,
   } = input;
 
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
@@ -274,6 +275,23 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       },
     });
     isPrivate = !permissions.publicCollection;
+  }
+
+  if (!!fileFormats?.length) {
+    AND.push({
+      modelVersions: {
+        some: {
+          files: {
+            some: {
+              type: 'Model',
+              OR: fileFormats.map((format) => ({
+                metadata: { path: ['format'], string_contains: format },
+              })),
+            },
+          },
+        },
+      },
+    });
   }
 
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
