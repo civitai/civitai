@@ -126,7 +126,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: z.coerce.boolean().default(true),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.coerce.boolean().default(true),
-  NEXT_PUBLIC_LOG_TRPC: z.coerce.boolean().default(true)
+  NEXT_PUBLIC_LOG_TRPC: z.coerce.boolean().default(false)
 });
 
 /**
