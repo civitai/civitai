@@ -65,7 +65,7 @@ import { IconTagOff } from '@tabler/icons-react';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { usePrevious } from '@mantine/hooks';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -113,6 +113,7 @@ export default function ResourceSelectModal({
   innerProps: { notIds = [], onSelect, options = {} },
 }: ContextModalProps<ResourceSelectModalProps>) {
   const isMobile = useIsMobile();
+  const features = useFeatureFlags();
 
   const { baseModel, types, canGenerate } = options;
   const baseModelSet = baseModel
@@ -131,6 +132,11 @@ export default function ResourceSelectModal({
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
+  if (!features.sdxlGeneration) {
+    for (const baseModel in baseModelSets.SDXL) {
+      exclude.push(`NOT version.baseModel = ${baseModel}`);
+    }
+  }
 
   const handleSelect = (value: Generation.Resource) => {
     onSelect(value);
