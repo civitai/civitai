@@ -24,13 +24,18 @@ export const useBrowserRouter = () => {
 
 export function BrowserRouterProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { asPath = router.asPath, query = router.query, setState } = useBrowserRouterState();
 
   const parseQuery = (state?: any) => {
-    if (typeof window === 'undefined') return {};
+    if (!state && typeof window === 'undefined') return {};
     const [path, queryString] = (state?.url ?? history.state.url).split('?');
     return QS.parse(queryString) as Record<string, any>;
   };
+
+  const {
+    asPath = router.asPath,
+    query = parseQuery({ url: `${router.pathname}?${QS.stringify(router.query)}` }),
+    setState,
+  } = useBrowserRouterState();
 
   useDidUpdate(() => {
     setState({ asPath: history.state.as, query: parseQuery() });
