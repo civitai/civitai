@@ -41,11 +41,13 @@ export function ImageDetailProvider({
   children,
   imageId,
   images: initialImages = [],
+  hideReactionCount,
   filters,
 }: {
   children: React.ReactElement;
   imageId: number;
   images?: ImagesInfiniteModel[];
+  hideReactionCount?: boolean;
   filters: {
     postId?: number;
     modelId?: number;
@@ -60,12 +62,11 @@ export function ImageDetailProvider({
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
-  const active = browserRouter.query.active === 'true';
-  const closingRef = useRef(false);
+  const active = browserRouter.query.active;
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
   const { postId } = browserRouter.query;
-  const { modelId, modelVersionId, username, reactions, collectionId } = filters;
+  const { modelId, modelVersionId, username, reactions } = filters;
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
@@ -76,13 +77,6 @@ export function ImageDetailProvider({
     }
   );
   const images = initialImages.length > 0 ? initialImages : queryImages;
-
-  const { data: collectionData, isLoading: isLoadingCollection } = trpc.collection.getById.useQuery(
-    { id: collectionId as number },
-    { enabled: !!collectionId }
-  );
-
-  const collection = collectionData?.collection;
 
   const shouldFetchImage =
     !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
@@ -97,7 +91,7 @@ export function ImageDetailProvider({
         { query: { ...browserRouter.query, postId: prefetchedImage.postId } },
         `/images/${imageId}`
       );
-  }, [prefetchedImage]);
+  }, [prefetchedImage]); // eslint-disable-line
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
@@ -105,8 +99,6 @@ export function ImageDetailProvider({
 
   // #region [back button functionality]
   const close = () => {
-    if (closingRef.current) return;
-    closingRef.current = true;
     if (hasHistory) browserRouter.back();
     else {
       const [, queryString] = browserRouter.asPath.split('?');
@@ -120,17 +112,6 @@ export function ImageDetailProvider({
     }
   };
   useHotkeys([['Escape', close]]);
-
-  // useEffect(() => {
-  //   router.events.on('routeChangeStart', handleClosingStart);
-  //   router.events.on('routeChangeComplete', handleClosingEnd);
-
-  //   return () => {
-  //     router.events.off('routeChangeStart', handleClosingStart);
-  //     router.events.off('routeChangeComplete', handleClosingEnd);
-  //   };
-  // }, []); //eslint-disable-line
-  // #endregion
 
   // #region [info toggle]
   const toggleInfo = () => {
@@ -195,7 +176,6 @@ export function ImageDetailProvider({
     : modelId
     ? { entityType: 'model', entityId: modelId }
     : undefined;
-  const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
     <ImageDetailContext.Provider
@@ -216,7 +196,7 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+      <ReactionSettingsProvider settings={{ displayReactionCount: !hideReactionCount }}>
         {children}
       </ReactionSettingsProvider>
     </ImageDetailContext.Provider>

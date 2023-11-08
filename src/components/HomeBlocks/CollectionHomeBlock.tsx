@@ -36,6 +36,8 @@ import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { CollectionMode } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles<string, { count: number; rows: number }>(
   (theme, { count, rows }) => {
@@ -285,29 +287,37 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         {MetaDataTop}
       </Box>
       <div className={classes.grid}>
-        <ReactionSettingsProvider
-          settings={{ displayReactionCount: collection?.mode !== CollectionMode.Contest }}
+        <ImagesProvider
+          hideReactionCount={collection?.mode === CollectionMode.Contest}
+          images={items
+            .map((x) => {
+              if (x.type === 'image') return x.data;
+              return null;
+            })
+            .filter(isDefined)}
         >
-          {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-          {isLoading || loadingPreferences
-            ? Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
-                <AspectRatio ratio={7 / 9} key={index}>
-                  <Skeleton width="100%" />
-                </AspectRatio>
-              ))
-            : items.map((item) => (
-                <Fragment key={item.id}>
-                  {item.type === 'model' && (
-                    <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
-                  )}
-                  {item.type === 'image' && (
-                    <ImageCard data={item.data} collectionId={collection?.id} />
-                  )}
-                  {item.type === 'post' && <PostCard data={item.data} />}
-                  {item.type === 'article' && <ArticleCard data={item.data} />}
-                </Fragment>
-              ))}
-        </ReactionSettingsProvider>
+          <ReactionSettingsProvider
+            settings={{ displayReactionCount: collection?.mode !== CollectionMode.Contest }}
+          >
+            {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+            {isLoading || loadingPreferences
+              ? Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
+                  <AspectRatio ratio={7 / 9} key={index}>
+                    <Skeleton width="100%" />
+                  </AspectRatio>
+                ))
+              : items.map((item) => (
+                  <Fragment key={item.id}>
+                    {item.type === 'model' && (
+                      <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
+                    )}
+                    {item.type === 'image' && <ImageCard data={item.data} />}
+                    {item.type === 'post' && <PostCard data={item.data} />}
+                    {item.type === 'article' && <ArticleCard data={item.data} />}
+                  </Fragment>
+                ))}
+          </ReactionSettingsProvider>
+        </ImagesProvider>
       </div>
     </>
   );

@@ -3,16 +3,16 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 export default function ImageDetailModal({
   imageId,
   images,
+  hideReactionCount,
 }: {
   imageId: number;
-  images?: ImagesInfiniteModel[];
-}) {
+} & ImagesContextState) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
   const filters = imagesQueryParamSchema.parse(query);
@@ -27,7 +27,12 @@ export default function ImageDetailModal({
       padding={0}
       style={{ maxHeight: '100dvh', maxWidth: '100vw' }}
     >
-      <ImageDetailProvider imageId={imageId} filters={filters} images={images}>
+      <ImageDetailProvider
+        imageId={imageId}
+        filters={filters}
+        images={images}
+        hideReactionCount={hideReactionCount}
+      >
         <ImageDetail />
       </ImageDetailProvider>
     </Modal>

@@ -17,6 +17,7 @@ import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.ut
 import { DumbImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 
 const MAX_IMAGES_DISPLAY = 8;
 export const MyImagesSection = ({ user }: ProfileSectionProps) => {
@@ -65,9 +66,11 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             })}
           >
             {!images.length && <ProfileSectionNoResults />}
-            {images.map((image) => (
-              <ImageCard data={image} key={image.id} />
-            ))}
+            <ImagesProvider images={images}>
+              {images.map((image) => (
+                <ImageCard data={image} key={image.id} />
+              ))}
+            </ImagesProvider>
             {isRefetching && <Loader className={classes.loader} />}
           </div>
           {_images.length > MAX_IMAGES_DISPLAY && !isRefetching && (

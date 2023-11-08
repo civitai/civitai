@@ -62,52 +62,55 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
   return (
     <InView rootMargin="600px">
       {({ inView, ref }) => (
-        <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
-          {inView && (
-            <>
-              <ImageGuard
-                images={[image]}
-                render={(image) => (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        <Group
-                          position="apart"
-                          align="start"
-                          spacing={4}
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            width: '100%',
-                            zIndex: 10,
-                            padding: 8,
-                          }}
-                        >
-                          <ImageGuard.ToggleImage position="static" />
-                          <Stack spacing="xs" ml="auto">
-                            {!isBlocked && <ImageGuard.Report context="image" position="static" />}
-                            {features.imageGeneration && image.meta && (
-                              <HoverActionButton
-                                label="Create"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  generationPanel.open({
-                                    type: 'image',
-                                    id: image.id,
-                                  });
-                                }}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
-                          </Stack>
-                        </Group>
-                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+          <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
+            {inView && (
+              <>
+                <ImageGuard
+                  images={[image]}
+                  render={(image) => (
+                    <ImageGuard.Content>
+                      {({ safe }) => (
+                        <>
+                          <Group
+                            position="apart"
+                            align="start"
+                            spacing={4}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              zIndex: 10,
+                              padding: 8,
+                            }}
+                          >
+                            <ImageGuard.ToggleImage position="static" />
+                            <Stack spacing="xs" ml="auto">
+                              {!isBlocked && (
+                                <ImageGuard.Report context="image" position="static" />
+                              )}
+                              {features.imageGeneration && image.meta && (
+                                <HoverActionButton
+                                  label="Create"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    generationPanel.open({
+                                      type: 'image',
+                                      id: image.id,
+                                    });
+                                  }}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
+                            </Stack>
+                          </Group>
+
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                               <MediaHash {...image} />
@@ -124,98 +127,99 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               style={{ width: '100%' }}
                             />
                           )}
-                        </RoutedDialogLink>
-                        {showVotes ? (
-                          <div className={classes.footer}>
-                            <VotableTags entityType="image" entityId={image.id} tags={tags} />
-                          </div>
-                        ) : ingestionData.ingestion !== ImageIngestionStatus.Blocked ? (
-                          isLoading ? (
-                            <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
-                              <Stack spacing={4}>
-                                <Group spacing={8} noWrap>
-                                  <Loader size={20} />
-                                  <Badge size="xs" color="yellow">
-                                    Analyzing
-                                  </Badge>
+
+                          {showVotes ? (
+                            <div className={classes.footer}>
+                              <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                            </div>
+                          ) : ingestionData.ingestion !== ImageIngestionStatus.Blocked ? (
+                            isLoading ? (
+                              <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
+                                <Stack spacing={4}>
+                                  <Group spacing={8} noWrap>
+                                    <Loader size={20} />
+                                    <Badge size="xs" color="yellow">
+                                      Analyzing
+                                    </Badge>
+                                  </Group>
+                                  <Text size="sm" inline>
+                                    This image will be available to the community once processing is
+                                    done.
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : loadingFailed ? (
+                              <Alert className={classes.info} variant="filled" color="yellow">
+                                There are no tags associated with this image yet. Tags will be
+                                assigned to this image soon.
+                              </Alert>
+                            ) : (
+                              <Group className={classes.info} spacing={4} position="apart" noWrap>
+                                <Reactions
+                                  entityId={image.id}
+                                  entityType="image"
+                                  reactions={image.reactions}
+                                  metrics={{
+                                    likeCount: image.stats?.likeCountAllTime,
+                                    dislikeCount: image.stats?.dislikeCountAllTime,
+                                    heartCount: image.stats?.heartCountAllTime,
+                                    laughCount: image.stats?.laughCountAllTime,
+                                    cryCount: image.stats?.cryCountAllTime,
+                                    tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                  }}
+                                  targetUserId={image.user.id}
+                                  readonly={!safe}
+                                  className={classes.reactions}
+                                />
+                                {!image.hideMeta && image.meta && (
+                                  <ImageMetaPopover
+                                    meta={image.meta}
+                                    generationProcess={image.generationProcess ?? undefined}
+                                    imageId={image.id}
+                                  >
+                                    <ActionIcon variant="transparent" size="lg">
+                                      <IconInfoCircle
+                                        color="white"
+                                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                        opacity={0.8}
+                                        strokeWidth={2.5}
+                                        size={26}
+                                      />
+                                    </ActionIcon>
+                                  </ImageMetaPopover>
+                                )}
+                              </Group>
+                            )
+                          ) : (
+                            <Alert
+                              color="red"
+                              variant="filled"
+                              radius={0}
+                              className={classes.info}
+                              title={
+                                <Group spacing={4}>
+                                  <IconInfoCircle />
+                                  <Text inline>TOS Violation</Text>
                                 </Group>
+                              }
+                            >
+                              <Stack align="flex-end" spacing={0}>
                                 <Text size="sm" inline>
-                                  This image will be available to the community once processing is
-                                  done.
+                                  The image you uploaded was determined to violate our TOS and will
+                                  be completely removed from our service.
                                 </Text>
                               </Stack>
-                            </Box>
-                          ) : loadingFailed ? (
-                            <Alert className={classes.info} variant="filled" color="yellow">
-                              There are no tags associated with this image yet. Tags will be
-                              assigned to this image soon.
                             </Alert>
-                          ) : (
-                            <Group className={classes.info} spacing={4} position="apart" noWrap>
-                              <Reactions
-                                entityId={image.id}
-                                entityType="image"
-                                reactions={image.reactions}
-                                metrics={{
-                                  likeCount: image.stats?.likeCountAllTime,
-                                  dislikeCount: image.stats?.dislikeCountAllTime,
-                                  heartCount: image.stats?.heartCountAllTime,
-                                  laughCount: image.stats?.laughCountAllTime,
-                                  cryCount: image.stats?.cryCountAllTime,
-                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                }}
-                                targetUserId={image.user.id}
-                                readonly={!safe}
-                                className={classes.reactions}
-                              />
-                              {!image.hideMeta && image.meta && (
-                                <ImageMetaPopover
-                                  meta={image.meta}
-                                  generationProcess={image.generationProcess ?? undefined}
-                                  imageId={image.id}
-                                >
-                                  <ActionIcon variant="transparent" size="lg">
-                                    <IconInfoCircle
-                                      color="white"
-                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                      opacity={0.8}
-                                      strokeWidth={2.5}
-                                      size={26}
-                                    />
-                                  </ActionIcon>
-                                </ImageMetaPopover>
-                              )}
-                            </Group>
-                          )
-                        ) : (
-                          <Alert
-                            color="red"
-                            variant="filled"
-                            radius={0}
-                            className={classes.info}
-                            title={
-                              <Group spacing={4}>
-                                <IconInfoCircle />
-                                <Text inline>TOS Violation</Text>
-                              </Group>
-                            }
-                          >
-                            <Stack align="flex-end" spacing={0}>
-                              <Text size="sm" inline>
-                                The image you uploaded was determined to violate our TOS and will be
-                                completely removed from our service.
-                              </Text>
-                            </Stack>
-                          </Alert>
-                        )}
-                      </>
-                    )}
-                  </ImageGuard.Content>
-                )}
-              />
-            </>
-          )}
-        </MasonryCard>
+                          )}
+                        </>
+                      )}
+                    </ImageGuard.Content>
+                  )}
+                />
+              </>
+            )}
+          </MasonryCard>
+        </RoutedDialogLink>
       )}
     </InView>
   );
