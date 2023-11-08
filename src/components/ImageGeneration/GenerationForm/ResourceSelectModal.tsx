@@ -97,7 +97,7 @@ const searchClient: InstantSearchProps['searchClient'] = {
 };
 
 const ResourceSelectContext = React.createContext<{
-  onSelect: (value: Generation.Resource) => void;
+  onSelect: (value: Generation.Resource & { image: ResourceSelectData['image'] }) => void;
   canGenerate?: boolean;
 } | null>(null);
 
@@ -308,6 +308,7 @@ function ResourceSelectCard({ index, data }: { index: number; data: ResourceSele
       modelId: data.id,
       modelName: data.name,
       modelType: data.type,
+      image: data.image,
       strength: 1, // TODO - use version recommendations or default to 1
     });
   };

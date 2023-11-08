@@ -14,6 +14,7 @@ import {
   Divider,
   createStyles,
   ScrollArea,
+  Badge,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconArrowAutofitDown } from '@tabler/icons-react';
@@ -118,6 +119,8 @@ export function GenerateFormView({
   // ]);
   // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
+  const additionalResources = form.watch('resources');
+
   return (
     <PersistentForm
       form={form}
@@ -145,29 +148,54 @@ export function GenerateFormView({
                       content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
                     />
                   )}
+                  <InputResourceSelect
+                    name="model"
+                    label="Model"
+                    labelProps={{ mb: 5, style: { fontWeight: 590 } }}
+                    buttonLabel="Add Model"
+                    withAsterisk
+                    options={{
+                      baseModel: supportedBaseModel,
+                      type: ModelType.Checkpoint,
+                      canGenerate: true,
+                    }}
+                  />
+                  <Accordion
+                    classNames={{
+                      item: classes.accordionItem,
+                      control: classes.accordionControl,
+                      content: classes.accordionContent,
+                    }}
+                    variant="contained"
+                    defaultValue="resources"
+                  >
+                    <Accordion.Item value="resources">
+                      <Accordion.Control>
+                        <Group spacing={4}>
+                          <Text size="sm" weight={590}>
+                            Additional Resources
+                          </Text>
+                          {!!additionalResources?.length && (
+                            <Badge style={{ fontWeight: 590 }}>{additionalResources.length}</Badge>
+                          )}
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <InputResourceSelectMultiple
+                          name="resources"
+                          limit={9}
+                          buttonLabel="Add additional resource"
+                          options={{
+                            baseModel: supportedBaseModel,
+                            types: getGenerationConfig(baseModel).additionalResourceTypes,
+                            canGenerate: true,
+                          }}
+                        />
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  </Accordion>
                   <Card {...sharedCardProps}>
                     <Stack>
-                      <InputResourceSelect
-                        name="model"
-                        label="Model"
-                        buttonLabel="Add Model"
-                        withAsterisk
-                        options={{
-                          baseModel: supportedBaseModel,
-                          type: ModelType.Checkpoint,
-                          canGenerate: true,
-                        }}
-                      />
-                      <InputResourceSelectMultiple
-                        name="resources"
-                        limit={9}
-                        buttonLabel="Add additional resource"
-                        options={{
-                          baseModel: supportedBaseModel,
-                          types: getGenerationConfig(baseModel).additionalResourceTypes,
-                          canGenerate: true,
-                        }}
-                      />
                       <Stack spacing={0}>
                         <InputTextArea
                           name="prompt"
@@ -392,7 +420,7 @@ export function GenerateFormView({
   );
 }
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generateButtonContainer: {
     width: '100%',
@@ -447,10 +475,40 @@ const useStyles = createStyles(() => ({
     marginBottom: 5,
     alignItems: 'center',
   },
+  accordionItem: {
+    '&:first-of-type': {
+      borderTopLeftRadius: '8px',
+      borderTopRightRadius: '8px',
+    },
+
+    '&:last-of-type': {
+      borderBottomLeftRadius: '8px',
+      borderBottomRightRadius: '8px',
+    },
+
+    '&[data-active]': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+    },
+  },
+  accordionControl: {
+    padding: '8px 8px 8px 12px',
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+
+    '&[data-active]': {
+      borderRadius: '0 !important',
+      borderBottom: `1px solid ${
+        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+      }`,
+    },
+  },
+  accordionContent: {
+    padding: '8px 12px 12px 12px',
+  },
 }));
 
 const sharedCardProps: Omit<CardProps, 'children'> = {
   withBorder: true,
+  radius: 'md',
 };
 
 const sharedSliderProps: SliderProps = {

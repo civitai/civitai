@@ -1,4 +1,13 @@
-import { Button, Input, InputWrapperProps, Stack } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Divider,
+  Group,
+  Input,
+  InputWrapperProps,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
@@ -59,26 +68,37 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
     return (
       <Input.Wrapper {...inputWrapperProps} ref={ref}>
-        <Stack spacing="xs">
-          {groups.map((group) => {
+        <Stack spacing="md">
+          {groups.map((group, index) => {
             return (
-              <Input.Wrapper key={group.type} label={group.label}>
-                <Stack spacing={4}>
-                  {group.resources.map((resource) => (
-                    <ResourceSelectCard
-                      key={resource.id}
-                      resource={resource}
-                      onUpdate={handleUpdate}
-                      onRemove={handleRemove}
-                    />
-                  ))}
-                </Stack>
-              </Input.Wrapper>
+              <>
+                {index !== 0 && <Divider size={2} />}
+                <Input.Wrapper
+                  key={group.type}
+                  label={
+                    <Text color="dark.2" weight={590}>
+                      {group.label}
+                    </Text>
+                  }
+                  labelProps={{ mb: 8 }}
+                >
+                  <Stack spacing={8}>
+                    {group.resources.map((resource) => (
+                      <ResourceSelectCard
+                        key={resource.id}
+                        resource={resource}
+                        onUpdate={handleUpdate}
+                        onRemove={handleRemove}
+                      />
+                    ))}
+                  </Stack>
+                </Input.Wrapper>
+              </>
             );
           })}
           {canAdd && (
             <Button
-              variant="default"
+              variant="light"
               leftIcon={<IconPlus size={18} />}
               onClick={() =>
                 openResourceSelectModal({

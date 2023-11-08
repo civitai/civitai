@@ -52,7 +52,7 @@ function ResourceSelect({
       {!value ? (
         <div>
           <Button
-            variant="default"
+            variant="light"
             leftIcon={<IconPlus size={18} />}
             fullWidth
             onClick={() =>
