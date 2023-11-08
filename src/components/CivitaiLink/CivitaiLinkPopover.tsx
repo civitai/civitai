@@ -114,7 +114,7 @@ function SupporterHelp() {
 
   return (
     <Text size="xs" ta="center">
-      Are you a support and seeing this message?{' '}
+      Are you a supporter and seeing this message?{' '}
       <Text
         component="span"
         variant="link"

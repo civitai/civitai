@@ -174,7 +174,14 @@ const tagCombos: ComputedTagCombo[] = [
   },
   {
     tag: 'sexual situations',
-    qualifiers: ['undressing', 'downblouse + tongue out', 'ass focus', 'pee', 'peeing'],
+    qualifiers: [
+      'undressing',
+      'downblouse + tongue out',
+      'ass focus',
+      'pee',
+      'peeing',
+      'boob grab|breast grab',
+    ],
     sources: [TagSource.WD14],
   },
 

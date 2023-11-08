@@ -77,7 +77,7 @@ export const constants = {
   ],
   trainingModelTypes: ['Character', 'Style', 'Concept'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
-  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
+  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Core ML', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],
@@ -221,6 +221,9 @@ export const constants = {
     coverImageWidth: 816,
   },
 } as const;
+
+export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers'];
+export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const CAROUSEL_LIMIT = 20;

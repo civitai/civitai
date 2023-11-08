@@ -10,6 +10,7 @@ export const ArticlesSearchIndexSortBy = [
   `${ARTICLES_SEARCH_INDEX}:stats.favoriteCount:desc`,
   `${ARTICLES_SEARCH_INDEX}:stats.viewCount:desc`,
   `${ARTICLES_SEARCH_INDEX}:stats.commentCount:desc`,
+  `${ARTICLES_SEARCH_INDEX}:stats.tippedAmountCount:desc`,
   `${ARTICLES_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 

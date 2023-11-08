@@ -119,7 +119,7 @@ export const moderateImages = async ({
     if (reviewType !== 'reported') {
       await dbWrite.image.updateMany({
         where: { id: { in: ids }, needsReview: { not: null } },
-        data: { nsfw, needsReview: null, ingestion: 'Blocked' },
+        data: { nsfw, needsReview: null, ingestion: 'Blocked', blockedFor: 'moderated' },
       });
     } else {
       const images = await dbRead.image.findMany({

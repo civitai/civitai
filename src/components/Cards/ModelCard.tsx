@@ -335,6 +335,8 @@ export function ModelCard({ data }: Props) {
                                       placeholder="empty"
                                       className={classes.image}
                                       loading="lazy"
+                                      wrapperProps={{ style: { height: '100%' } }}
+                                      contain
                                     />
                                   ) : (
                                     <MediaHash {...data.image} />
@@ -392,7 +394,7 @@ export function ModelCard({ data }: Props) {
                         </Text>
                       </IconBadge>
                     )}
-                    <Group spacing={4} noWrap>
+                    <Group spacing={4}>
                       <IconBadge
                         className={classes.iconBadge}
                         icon={

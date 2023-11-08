@@ -253,7 +253,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {
         data.ingestion = ImageIngestionStatus.Blocked;
-        data.blockedFor = blockedFor.join(',');
+        data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
       }
     }
 

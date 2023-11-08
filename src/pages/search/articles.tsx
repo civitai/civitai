@@ -45,7 +45,8 @@ const RenderFilters = () => {
           { label: 'Most Bookmarked', value: ArticlesSearchIndexSortBy[1] as string },
           { label: 'Most Viewed', value: ArticlesSearchIndexSortBy[2] as string },
           { label: 'Most Discussed', value: ArticlesSearchIndexSortBy[3] as string },
-          { label: 'Newest', value: ArticlesSearchIndexSortBy[4] as string },
+          { label: 'Most Buzz', value: ArticlesSearchIndexSortBy[4] as string },
+          { label: 'Newest', value: ArticlesSearchIndexSortBy[5] as string },
         ]}
       />{' '}
       <SearchableMultiSelectRefinementList
