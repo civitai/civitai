@@ -86,6 +86,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
+import { DISPLAY_BLUR_TOGGLE_UNAUTHED } from '~/server/common/constants';
 
 const HEADER_HEIGHT = 70;
 
@@ -698,7 +699,9 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                   <CivitaiLinkPopover />
                 </>
               )}
-              {currentUser?.showNsfw && <BrowsingModeIcon />}
+              {((DISPLAY_BLUR_TOGGLE_UNAUTHED && !currentUser) || currentUser?.showNsfw) && (
+                <BrowsingModeIcon />
+              )}
               {currentUser && <NotificationBell />}
               {currentUser?.isModerator && <ModerationNav />}
             </Group>
@@ -802,8 +805,15 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                     <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                     {burgerMenuItems}
                   </ScrollArea.Autosize>
-                  {currentUser && (
-                    <Box px="md">
+                  {(DISPLAY_BLUR_TOGGLE_UNAUTHED || currentUser) && (
+                    <Box
+                      px="md"
+                      onClick={
+                        DISPLAY_BLUR_TOGGLE_UNAUTHED && !currentUser
+                          ? () => closeBurger()
+                          : undefined
+                      }
+                    >
                       <BrowsingModeMenu />
                     </Box>
                   )}

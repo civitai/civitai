@@ -407,3 +407,5 @@ export const BUZZ_FEATURE_LIST = [
 
 export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s
 export const STRIPE_PROCESSING_CHECK_INTERVAL = 1000; // 1s
+
+export const DISPLAY_BLUR_TOGGLE_UNAUTHED = true;

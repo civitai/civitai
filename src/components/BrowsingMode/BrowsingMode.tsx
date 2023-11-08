@@ -23,6 +23,8 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { DISPLAY_BLUR_TOGGLE_UNAUTHED } from '~/server/common/constants';
 
 const options = [
   { label: 'Safe', value: BrowsingMode.SFW },
@@ -36,7 +38,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
 
-  if (!currentUser || !browsingMode) return null;
+  if ((!DISPLAY_BLUR_TOGGLE_UNAUTHED && !currentUser) || !browsingMode) return null;
 
   const indicatorColor = {
     [BrowsingMode.SFW]: 'blue',
@@ -69,7 +71,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
           }}
         >
           <ActionIcon>
-            {currentUser.blurNsfw ? <IconEyeOff {...iconProps} /> : <IconEye {...iconProps} />}
+            {currentUser?.blurNsfw ? <IconEyeOff {...iconProps} /> : <IconEye {...iconProps} />}
           </ActionIcon>
         </Indicator>
       </Popover.Target>
@@ -95,50 +97,53 @@ export function BrowsingModeMenu() {
   };
 
   const isMobile = useIsMobile();
-  if (!currentUser?.showNsfw) return null;
+  if (currentUser && !currentUser?.showNsfw) return null;
 
   const browsingModeColor = {
     [BrowsingMode.SFW]: 'blue',
     [BrowsingMode.NSFW]: 'gray',
     [BrowsingMode.All]: 'red',
   }[browsingMode];
-  const showBrowsingMode = currentUser.showNsfw;
+  const showBrowsingMode =
+    (DISPLAY_BLUR_TOGGLE_UNAUTHED && !currentUser) || (currentUser && currentUser.showNsfw);
   const showBlurToggle = !isMobile && showBrowsingMode && browsingMode !== BrowsingMode.SFW;
   return (
-    <Stack spacing={4}>
-      {showBrowsingMode && (
-        <>
-          <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} mb={-4} />
-          <SegmentedControl
-            data={options}
-            value={browsingMode}
-            onChange={handleChange}
-            my={5}
-            size={isMobile ? 'sm' : 'xs'}
-            color={browsingModeColor}
-            styles={(theme) => ({
-              root: {
-                border: `1px solid ${
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                }`,
-                background: 'none',
-              },
-            })}
-          />
-        </>
-      )}
-      {showBlurToggle && (
-        <BlurToggle iconProps={{ size: 20 }}>
-          {({ icon, toggle, blurred }) => (
-            <Group spacing={10}>
-              <Text size="xs" weight={500}>
-                Blur Mature Content
-              </Text>
-              <Switch ml="auto" checked={blurred} onChange={() => toggle()} />
-            </Group>
-          )}
-        </BlurToggle>
-      )}
-    </Stack>
+    <LoginRedirect reason="blur-toggle">
+      <Stack spacing={4}>
+        {showBrowsingMode && (
+          <>
+            <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} mb={-4} />
+            <SegmentedControl
+              data={options}
+              value={browsingMode}
+              onChange={handleChange}
+              my={5}
+              size={isMobile ? 'sm' : 'xs'}
+              color={browsingModeColor}
+              styles={(theme) => ({
+                root: {
+                  border: `1px solid ${
+                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                  }`,
+                  background: 'none',
+                },
+              })}
+            />
+          </>
+        )}
+        {showBlurToggle && (
+          <BlurToggle iconProps={{ size: 20 }}>
+            {({ icon, toggle, blurred }) => (
+              <Group spacing={10}>
+                <Text size="xs" weight={500}>
+                  Blur Mature Content
+                </Text>
+                <Switch ml="auto" checked={blurred} onChange={() => toggle()} />
+              </Group>
+            )}
+          </BlurToggle>
+        )}
+      </Stack>
+    </LoginRedirect>
   );
 }

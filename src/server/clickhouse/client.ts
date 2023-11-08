@@ -133,6 +133,7 @@ export const ActionType = [
   'NotEnoughFunds',
   'PurchaseFunds_Cancel',
   'PurchaseFunds_Confirm',
+  'LoginRedirect',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

@@ -18,7 +18,7 @@ import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
+import { loginRedirectReasons, LoginRedirectReason, trackedReasons } from '~/utils/login-helpers';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { trpc } from '~/utils/trpc';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -26,6 +26,8 @@ import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { useEffect, useRef } from 'react';
 
 export default function Login({ providers }: Props) {
   const router = useRouter();
@@ -43,8 +45,22 @@ export default function Login({ providers }: Props) {
     { userReferralCode: code as string },
     { enabled: !!code }
   );
+  const observedReason = useRef<string | null>(null);
+  const { trackAction } = useTrackEvent();
 
   const redirectReason = loginRedirectReasons[reason];
+
+  useEffect(() => {
+    if (reason && observedReason?.current !== reason && trackedReasons.includes(reason as any)) {
+      // Avoid calling this multiple times.
+      observedReason.current = reason;
+      // no need to await, worse case this is a noop
+      trackAction({
+        type: 'LoginRedirect',
+        reason: reason as (typeof trackedReasons)[number],
+      }).catch(() => undefined);
+    }
+  }, [reason]);
 
   return (
     <>
