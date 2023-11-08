@@ -260,7 +260,17 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, username, source, userReferralCode, ...data } = input;
+  const {
+    id,
+    badgeId,
+    nameplateId,
+    showNsfw,
+    username,
+    source,
+    landingPage,
+    userReferralCode,
+    ...data
+  } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
   if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
@@ -298,11 +308,12 @@ export const updateUserHandler = async ({
     });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
-    if (userReferralCode || source) {
+    if (userReferralCode || source || landingPage) {
       await createUserReferral({
         id: updatedUser.id,
         userReferralCode,
         source,
+        landingPage,
         ip: ctx.ip,
       });
     }

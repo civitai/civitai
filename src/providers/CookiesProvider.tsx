@@ -52,6 +52,7 @@ export const galleryFilterSchema = z.object({
 export const referralsSchema = z.object({
   code: z.string().optional(),
   source: z.string().optional(),
+  landingPage: z.string().optional(),
 });
 
 const CookiesCtx = createContext<CookiesContext | null>(null);
@@ -116,6 +117,7 @@ export function parseCookies(
     referrals: {
       code: cookies?.['ref_code'],
       source: cookies?.['ref_source'],
+      landingPage: cookies?.['ref_landing_page'],
     },
   });
 }
@@ -161,6 +163,7 @@ const zodParse = z
         .object({
           code: z.string(),
           source: z.string(),
+          landingPage: z.string(),
         })
         .partial(),
     })

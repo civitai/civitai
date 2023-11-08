@@ -160,6 +160,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   customAuthOptions.events ??= {};
   customAuthOptions.events.signIn = async (context) => {
     const source = req.cookies['ref_source'] as string;
+    const landingPage = req.cookies['ref_landing_page'] as string;
 
     if (context.isNewUser) {
       const tracker = new Tracker(req, res);
@@ -168,12 +169,13 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
         targetUserId: parseInt(context.user.id),
       });
 
-      if (source) {
+      if (source || landingPage) {
         // Only source will be set via the auth callback.
         // For userReferralCode, the user must finish onboarding.
         await createUserReferral({
           id: parseInt(context.user.id),
           source,
+          landingPage,
         });
       }
     }

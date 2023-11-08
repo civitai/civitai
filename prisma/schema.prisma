@@ -58,6 +58,7 @@ model UserReferral {
   userReferralCodeId Int?
   userReferralCode   UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
   source             String?
+  landingPage        String?
   createdAt          DateTime          @default(now())
   userId             Int               @unique
   user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
