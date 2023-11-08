@@ -219,6 +219,7 @@ export const constants = {
     mobileCoverImageAspectRatio: 4 / 17,
     coverImageHeight: 240,
     coverImageWidth: 816,
+    showcaseItemsLimit: 15,
   },
 } as const;
 

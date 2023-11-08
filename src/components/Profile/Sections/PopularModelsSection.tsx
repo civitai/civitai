@@ -17,7 +17,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   });
   const { models, isLoading } = useQueryModels(
     {
-      limit: 8,
+      limit: 15,
       username: user.username,
       sort: ModelSort.HighestRated,
     },

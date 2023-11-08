@@ -30,9 +30,8 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
 
   const { classes, cx } = useProfileSectionStyles({
     // count: coverImages.length,
-    rowCount: 1,
-    columnCount: 5,
-    widthGrid: 'auto',
+    count: showcaseItems.length,
+    widthCarousel: '280px',
   });
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
@@ -45,7 +44,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
         <ProfileSection title="Showcase" icon={<IconHeart />}>
           <div
             className={cx({
-              [classes.grid]: coverImages.length > 0,
+              [classes.scrollGrid]: coverImages.length > 0,
               [classes.nullState]: !coverImages.length,
               [classes.loading]: isRefetching,
             })}

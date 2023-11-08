@@ -154,7 +154,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               }
 
               return (
-                <HoverCard key={award.id} withArrow width={200} openDelay={500} position="top">
+                <HoverCard key={award.id} withArrow width={200} position="top">
                   <HoverCard.Target>
                     <Box>
                       <EdgeMedia src={url} width={56} />

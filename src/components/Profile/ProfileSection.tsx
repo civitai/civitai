@@ -86,13 +86,6 @@ export const useProfileSectionStyles = createStyles<
         '& > *': {
           scrollSnapAlign: 'center',
         },
-
-        [theme.fn.largerThan('lg')]: {
-          gridTemplateColumns: `repeat(${count}, calc(25% - ${theme.spacing.md}px))`,
-        },
-        [theme.fn.largerThan('xl')]: {
-          gridTemplateColumns: `repeat(${count}, calc(20% - ${theme.spacing.md}px))`,
-        },
       },
       grid: {
         ref: gridRef,

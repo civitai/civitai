@@ -47,6 +47,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   const { classes, cx } = useProfileSectionStyles({
     count: images.length,
     rowCount: 2,
+    widthGrid: '280px',
   });
 
   const isNullState = !isLoading && !images.length;

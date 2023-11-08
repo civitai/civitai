@@ -13,7 +13,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { Button } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 
-const MAX_ARTICLES_DISPLAY = 4;
+const MAX_ARTICLES_DISPLAY = 8;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView();
   const { articles: _articles, isLoading } = useQueryArticles(
@@ -29,8 +29,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
 
   const { classes } = useProfileSectionStyles({
     count: articles.length,
-    rowCount: 2,
-    columnCount: 2,
+    rowCount: 1,
   });
 
   const isNullState = !isLoading && !articles.length;

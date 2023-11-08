@@ -45,6 +45,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   const { classes, cx } = useProfileSectionStyles({
     count: models.length,
     rowCount: 3,
+    widthGrid: '280px',
   });
 
   const isNullState = !isLoading && !models.length;

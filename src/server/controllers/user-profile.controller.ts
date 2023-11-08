@@ -13,6 +13,7 @@ import { Context } from '~/server/createContext';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { entityExists } from '~/server/services/util.service';
+import { constants } from '~/server/common/constants';
 
 export const getUserContentOverviewHandler = async ({ input }: { input: GetUserProfileSchema }) => {
   try {
@@ -86,7 +87,10 @@ export const addEntityToShowcaseHandler = async ({
       return user;
     }
 
-    const updatedShowcaseItems = [input, ...showcaseItems].slice(0, 5);
+    const updatedShowcaseItems = [input, ...showcaseItems].slice(
+      0,
+      constants.profile.showcaseItemsLimit
+    );
 
     return await updateUserProfile({
       userId: ctx.user.id,
