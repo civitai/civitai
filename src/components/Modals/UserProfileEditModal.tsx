@@ -414,15 +414,6 @@ const { openModal, Modal } = createContextModal({
           />
           <Divider />
 
-          {user?.username && (
-            <InputShowcaseItemsInput
-              label="Showcase"
-              username={user.username}
-              description="Select up to 5 models or images that you're most proud of."
-              name="showcaseItems"
-            />
-          )}
-          <Divider />
           {user?.profile && (
             <InputProfileSectionsSettingsInput
               name="profileSectionsSettings"
@@ -430,6 +421,22 @@ const { openModal, Modal } = createContextModal({
               description="Drag diferent sections on your profile in order of your preference"
             />
           )}
+          <Group position="right">
+            <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
+              Save Changes
+            </Button>
+            <CloseButton
+              size="md"
+              radius="xl"
+              variant="transparent"
+              ml="auto"
+              iconSize={20}
+              loading={isLoading || isUpdating}
+              onClick={(e) => {
+                context.close();
+              }}
+            />
+          </Group>
         </Stack>
       </Form>
     );

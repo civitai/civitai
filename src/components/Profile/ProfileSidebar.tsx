@@ -68,10 +68,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       </Stack>
       {profile.location && (
         <Group spacing="sm" noWrap>
+          <IconMapPin size={16} style={{ flexShrink: 0 }} />
           <Text color="dimmed" truncate>
             {profile.location}
           </Text>
-          <IconMapPin size={16} style={{ flexShrink: 0 }} />
         </Group>
       )}
       {profile?.bio && (
@@ -154,7 +154,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               }
 
               return (
-                <HoverCard key={award.id} withArrow width={200} openDelay={250} position="top">
+                <HoverCard key={award.id} withArrow width={200} openDelay={500} position="top">
                   <HoverCard.Target>
                     <Box>
                       <EdgeMedia src={url} width={56} />
