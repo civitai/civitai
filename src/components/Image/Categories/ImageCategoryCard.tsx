@@ -1,5 +1,6 @@
 import { ActionIcon, AspectRatio, Box, createStyles } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -20,12 +21,10 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
             <div className={classes.container}>
               <ImageGuard.Report />
               <ImageGuard.ToggleConnect className={classes.toggle} />
-              <RoutedContextLink
-                modal="imageDetailModal"
-                imageId={image.id}
+              <RoutedDialogLink
+                name="imageDetail"
                 className={classes.link}
-                postId={image.postId}
-                tags={[image.tagId]}
+                state={{ imageId: image.id, filters: { tags: [image.tagId] } }}
               >
                 <AspectRatio
                   ratio={1}
@@ -50,7 +49,7 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
                     />
                   )}
                 </AspectRatio>
-              </RoutedContextLink>
+              </RoutedDialogLink>
 
               <Reactions
                 entityId={image.id}

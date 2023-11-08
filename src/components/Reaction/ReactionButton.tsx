@@ -45,7 +45,7 @@ export const useReactionsStore = ({
   entityId,
 }: Omit<ToggleReactionInput, 'reaction'>) => {
   const key = getReactionKey({ entityType, entityId });
-  return useStore(useCallback((state) => state.reactions[key], [key]));
+  return useStore(useCallback((state) => state.reactions[key] ?? {}, [key]));
 };
 
 export type ReactionButtonProps = ToggleReactionInput & {

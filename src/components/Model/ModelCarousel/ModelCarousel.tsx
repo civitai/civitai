@@ -18,6 +18,7 @@ import { NextLink } from '@mantine/next';
 import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -212,16 +213,7 @@ export function ModelCarousel({
                     <div style={{ width: '100%', position: 'relative' }}>
                       <ImageGuard.ToggleConnect position="top-left" />
                       <ImageGuard.Report />
-                      <RoutedContextLink
-                        modal="imageDetailModal"
-                        imageId={image.id}
-                        modelVersionId={modelVersionId}
-                        prioritizedUserIds={[modelUserId]}
-                        period="AllTime"
-                        sort={ImageSort.MostReactions}
-                        limit={limit}
-                        tags={[]}
-                      >
+                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                         {!safe ? (
                           <AspectRatio
                             ratio={(image.width ?? 1) / (image.height ?? 1)}
@@ -250,7 +242,7 @@ export function ModelCarousel({
                             />
                           </Indicator>
                         )}
-                      </RoutedContextLink>
+                      </RoutedDialogLink>
                       <Reactions
                         entityId={image.id}
                         entityType="image"

@@ -65,10 +65,12 @@ export function RoutedDialogLink<T extends DialogKey>({
   name,
   state,
   children,
+  className,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
   children: React.ReactNode;
+  className?: string;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -95,13 +97,19 @@ export function RoutedDialogLink<T extends DialogKey>({
     _url = `${path}?${QS.stringify(query)}`;
 
     browserRouter.push(_url, asPath);
-    if (routerState) sessionStorage.setItem(name, JSON.stringify(routerState));
+    if (routerState)
+      sessionStorage.setItem(
+        name,
+        JSON.stringify(routerState, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        )
+      );
   };
 
   const href = typeof asPath === 'string' ? asPath : resolveHref(router, asPath ?? url);
 
   return (
-    <a href={href} onClick={handleClick}>
+    <a href={href} onClick={handleClick} className={className}>
       {children}
     </a>
   );

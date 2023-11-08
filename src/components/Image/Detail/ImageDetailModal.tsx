@@ -10,12 +10,14 @@ export default function ImageDetailModal({
   imageId,
   images,
   hideReactionCount,
+  filters,
 }: {
   imageId: number;
+  filters?: Record<string, unknown>;
 } & ImagesContextState) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
-  const filters = imagesQueryParamSchema.parse(query);
+  const queryFilters = imagesQueryParamSchema.parse({ ...filters, ...query });
 
   if (!query.imageId) return null;
 
@@ -29,7 +31,7 @@ export default function ImageDetailModal({
     >
       <ImageDetailProvider
         imageId={imageId}
-        filters={filters}
+        filters={queryFilters}
         images={images}
         hideReactionCount={hideReactionCount}
       >

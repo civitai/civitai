@@ -1,14 +1,5 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import {
-  ActionIcon,
-  createStyles,
-  Group,
-  Paper,
-  Rating,
-  Center,
-  Tooltip,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, createStyles, Group, Paper, Center, Tooltip, Text } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
@@ -26,10 +17,10 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
-import { NextLink } from '@mantine/next';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { StarRating } from '~/components/StartRating/StarRating';
 import Link from 'next/link';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function ImagesAsPostsCard({
   data,
@@ -157,12 +148,10 @@ export function ImagesAsPostsCard({
                         <div className={classes.imageContainer}>
                           <ImageGuard.Report />
                           <ImageGuard.ToggleImage position="top-left" />
-                          <RoutedContextLink
-                            modal="imageDetailModal"
-                            imageId={image.id}
-                            onClick={handleClick}
+                          <RoutedDialogLink
+                            name="imageDetail"
+                            state={{ imageId: image.id, images: [image] }}
                             className={classes.link}
-                            {...linkFilters}
                           >
                             <>
                               <MediaHash {...image} />
@@ -178,7 +167,8 @@ export function ImagesAsPostsCard({
                                 />
                               )}
                             </>
-                          </RoutedContextLink>
+                          </RoutedDialogLink>
+
                           <Reactions
                             entityId={image.id}
                             entityType="image"
@@ -255,12 +245,10 @@ export function ImagesAsPostsCard({
                               <div className={classes.imageContainer}>
                                 <ImageGuard.Report />
                                 <ImageGuard.ToggleConnect position="top-left" />
-                                <RoutedContextLink
-                                  modal="imageDetailModal"
-                                  imageId={image.id}
-                                  onClick={handleClick}
+                                <RoutedDialogLink
+                                  name="imageDetail"
+                                  state={{ imageId: image.id, images: data.images }}
                                   className={classes.link}
-                                  {...linkFilters}
                                 >
                                   <>
                                     <MediaHash {...image} />
@@ -276,7 +264,7 @@ export function ImagesAsPostsCard({
                                       />
                                     )}
                                   </>
-                                </RoutedContextLink>
+                                </RoutedDialogLink>
                                 <Reactions
                                   entityId={image.id}
                                   entityType="image"

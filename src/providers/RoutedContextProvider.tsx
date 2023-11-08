@@ -10,7 +10,6 @@ import useIsClient from '~/hooks/useIsClient';
 import { Freeze } from '~/components/Freeze/Freeze';
 
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
-const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
 const ModelVersionEdit = dynamic(() => import('~/routed-context/modals/ModelVersionEdit'));
@@ -66,31 +65,6 @@ const registry = {
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],
-  },
-  imageDetailModal: {
-    Component: ImageDetailModal,
-    resolve: ({ imageId, ...args }: React.ComponentProps<typeof ImageDetailModal>) => {
-      const slug = Router.query.slug ?? 'placeholder';
-      const postSlug = Router.query.postSlug ?? 'placeholder';
-      const { tags, ...prevRouterParams } = Router.query;
-      return [
-        {
-          query: {
-            ...prevRouterParams,
-            slug,
-            postSlug,
-            imageId,
-            ...args,
-            modal: 'imageDetailModal',
-          },
-        },
-        {
-          pathname: `/images/${imageId}`,
-          // query: args,
-        },
-        { shallow: true },
-      ];
-    },
   },
   resourceReviewModal: {
     Component: ResourceReviewModal,

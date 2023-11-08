@@ -167,7 +167,8 @@ function ImagesHitList() {
           gridTemplateColumns: `repeat(auto-fill, minmax(290px, 1fr))`,
         }}
       >
-        <ImagesProvider images={images}>
+        {/* TODO - fix type issues here. Problem is a type mismatch between ImageSearchIndexRecord and ImageGetInfinite  */}
+        <ImagesProvider images={images as any}>
           {images.map((hit) => (
             <ImageCard key={hit.id} data={hit} />
           ))}

@@ -23,6 +23,7 @@ import { NextLink } from '@mantine/next';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function ResourceReviewCarousel({
   username,
@@ -81,26 +82,7 @@ export function ResourceReviewCarousel({
                       <div style={{ width: '100%', position: 'relative' }}>
                         <ImageGuard.ToggleConnect position="top-left" />
                         <ImageGuard.Report />
-                        <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
-                          {/* {!safe ? (
-                        <AspectRatio
-                          ratio={(image.width ?? 1) / (image.height ?? 1)}
-                          sx={(theme) => ({
-                            width: '100%',
-                            borderRadius: theme.radius.md,
-                            overflow: 'hidden',
-                          })}
-                        >
-                          <MediaHash {...image} />
-                        </AspectRatio>
-                      ) : (
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 450 }}
-                          radius="md"
-                          style={{ width: '100%' }}
-                        />
-                      )} */}
+                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                           <AspectRatio
                             ratio={1}
                             sx={(theme) => ({
@@ -123,7 +105,8 @@ export function ResourceReviewCarousel({
                               />
                             )}
                           </AspectRatio>
-                        </RoutedContextLink>
+                        </RoutedDialogLink>
+
                         <Reactions
                           entityId={image.id}
                           entityType="image"
