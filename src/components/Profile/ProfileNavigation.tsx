@@ -16,12 +16,12 @@ type ProfileNavigationProps = {
   username: string;
 };
 
+const overviewPath = '[username]';
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const { data: userOverview } = trpc.userProfile.overview.useQuery({
     username,
   });
-  const overviewPath = '[username]';
   const activePath = router.pathname.split('/').pop() || overviewPath;
 
   const baseUrl = `/user/${username}`;

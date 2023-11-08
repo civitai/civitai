@@ -57,7 +57,12 @@ export function GenericImageCard({
   })();
 
   return (
-    <FeedCard href={disabled ? undefined : url} aspectRatio="portrait" useCSSAspectRatio>
+    <FeedCard
+      href={disabled ? undefined : url}
+      style={disabled ? { cursor: 'initial' } : undefined}
+      aspectRatio="portrait"
+      useCSSAspectRatio
+    >
       <div className={sharedClasses.root}>
         <ImageGuard
           images={[coverImage]}

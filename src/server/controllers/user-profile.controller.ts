@@ -12,6 +12,7 @@ import {
 import { Context } from '~/server/createContext';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
+import { entityExists } from '~/server/services/util.service';
 
 export const getUserContentOverviewHandler = async ({ input }: { input: GetUserProfileSchema }) => {
   try {
@@ -69,17 +70,10 @@ export const addEntityToShowcaseHandler = async ({
       throw new Error('Invalid entity type. Only models and images are supported right now');
     }
 
-    if (input.entityType === 'Model') {
-      await dbRead.model.findUniqueOrThrow({
-        where: { id: input.entityId },
-      });
-    }
-
-    if (input.entityType === 'Image') {
-      await dbRead.image.findUniqueOrThrow({
-        where: { id: input.entityId },
-      });
-    }
+    await entityExists({
+      entityType: input.entityType,
+      entityId: input.entityId,
+    });
 
     const user = await getUserWithProfile({ id: ctx.user.id });
     const showcaseItems = (user.profile.showcaseItems as ShowcaseItemSchema[]) || [];
