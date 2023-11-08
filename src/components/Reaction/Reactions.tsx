@@ -102,7 +102,7 @@ export function Reactions({
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
 
-  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
+  const supportsBuzzTipping = ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
