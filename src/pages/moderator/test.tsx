@@ -20,8 +20,11 @@ export default function Test() {
         <Countdown endTime={offset} format="short"></Countdown>
         <Button onClick={() => dialogStore.trigger({ component: ModalA })}>Modal</Button>
 
-        <RoutedDialogLink name="imageDetail" state={{ imageId: 1 }}>
-          Route Dialog Link
+        <RoutedDialogLink name="imageDetail" state={{ imageId: 1 }} passHref>
+          <a>
+            <h1>Route Dialog Link</h1>
+            <h2>Heading 2</h2>
+          </a>
         </RoutedDialogLink>
       </Stack>
     </Container>

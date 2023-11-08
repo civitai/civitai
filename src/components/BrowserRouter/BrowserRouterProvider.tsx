@@ -3,6 +3,8 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { UrlObject } from 'url';
 import { resolveHref } from 'next/dist/shared/lib/router/router';
 import { QS } from '~/utils/qs';
+import { create } from 'zustand';
+import { useDidUpdate } from '@mantine/hooks';
 
 type Url = UrlObject | string;
 
@@ -22,6 +24,7 @@ export const useBrowserRouter = () => {
 
 export function BrowserRouterProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const { asPath = router.asPath, query = router.query, setState } = useBrowserRouterState();
 
   const parseQuery = (state?: any) => {
     if (typeof window === 'undefined') return {};
@@ -29,15 +32,9 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     return QS.parse(queryString) as Record<string, any>;
   };
 
-  const [asPath, setAsPath] = useState<string>(router.asPath);
-  const [query, setQuery] = useState<Record<string, any>>({
-    url: `${router.pathname}?${QS.stringify(router.query)}`,
-  });
-
-  useEffect(() => {
-    setQuery(parseQuery());
-    setAsPath(history.state.as);
-  }, [router]);
+  useDidUpdate(() => {
+    setState({ asPath: history.state.as, query: parseQuery() });
+  }, [router]); //eslint-disable-line
 
   useEffect(() => {
     const popstateFn = (e: PopStateEvent) =>
@@ -45,8 +42,7 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     const locationChangeFn = (e: Event) => {
       const event = e as CustomEvent;
       const state = event.detail[0];
-      setQuery(parseQuery(state));
-      setAsPath(state.as);
+      setState({ asPath: state.as, query: parseQuery(state) });
     };
 
     addEventListener('popstate', popstateFn);
@@ -57,30 +53,45 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     };
   }, []);
 
-  const goto = (type: 'replace' | 'push', url: Url, as?: Url) => {
-    const _url = resolveHref(Router, url);
-    const _as = as ? resolveHref(Router, as) : _url;
-
-    const historyState = {
-      ...history.state,
-      url: _url,
-      as: _as,
-    };
-
-    type === 'replace'
-      ? history.replaceState(historyState, '', _as)
-      : history.pushState(historyState, '', _as);
-
-    window.dispatchEvent(new CustomEvent('locationchange', { detail: [historyState] }));
-  };
-
-  const push = (url: Url, as?: Url) => goto('push', url, as);
-  const replace = (url: Url, as?: Url) => goto('replace', url, as);
-  const back = () => history.go(-1);
-
   return (
-    <BrowserRouterContext.Provider value={{ asPath, push, query, replace, back }}>
+    <BrowserRouterContext.Provider value={{ asPath, query, ...browserRouterControls }}>
       {children}
     </BrowserRouterContext.Provider>
   );
 }
+
+const goto = (type: 'replace' | 'push', url: Url, as?: Url) => {
+  const [_url, _urlAs] = resolveHref(Router, url, true);
+  const [, _as] = as ? resolveHref(Router, as, true) : [_url, _urlAs];
+
+  const historyState = {
+    ...history.state,
+    url: _url,
+    as: _as,
+  };
+
+  type === 'replace'
+    ? history.replaceState(historyState, '', _as)
+    : history.pushState(historyState, '', _as);
+
+  window.dispatchEvent(new CustomEvent('locationchange', { detail: [historyState] }));
+};
+
+const browserRouterControls = {
+  push: (url: Url, as?: Url) => goto('push', url, as),
+  replace: (url: Url, as?: Url) => goto('replace', url, as),
+  back: () => history.go(-1),
+};
+
+const useBrowserRouterState = create<{
+  asPath?: string;
+  query?: Record<string, any>;
+  setState: (args: { asPath?: string; query?: Record<string, any> }) => void;
+}>((set) => ({
+  setState: (args) => set(({ setState, ...state }) => ({ ...setState, ...args })),
+}));
+
+export const getBrowserRouter = () => {
+  const { query = Router.query, asPath = Router.asPath } = useBrowserRouterState.getState();
+  return { query, asPath, ...browserRouterControls };
+};

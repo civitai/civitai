@@ -1,11 +1,12 @@
-import React, { ComponentProps, ComponentType, useEffect, useMemo, useRef } from 'react';
+import React, { ComponentProps, ComponentType, cloneElement, useEffect, useRef } from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
-import { useRouter } from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { dialogs } from './routed-dialog-registry';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import {
+  getBrowserRouter,
+  useBrowserRouter,
+} from '~/components/BrowserRouter/BrowserRouterProvider';
 import { resolveHref } from 'next/dist/shared/lib/router/router';
-import { parse } from 'query-string';
-import { QS } from '~/utils/qs';
 
 type DialogKey = keyof typeof dialogs;
 
@@ -53,58 +54,63 @@ export function RoutedDialogProvider() {
   return null;
 }
 
-// export function triggerRoutedDialog<T extends DialogKey>({
-//   name,
-//   state,
-// }: {
-//   name: T;
-//   state: ComponentProps<(typeof dialogs)[T]['component']>;
-// }) {}
+export function triggerRoutedDialog<T extends DialogKey>({
+  name,
+  state,
+}: {
+  name: T;
+  state: ComponentProps<(typeof dialogs)[T]['component']>;
+}) {
+  const browserRouter = getBrowserRouter();
+  const { url, asPath, state: sessionState } = resolveDialog(name, browserRouter.query, state);
 
-export function RoutedDialogLink<T extends DialogKey>({
+  if (sessionState) {
+    sessionStorage.setItem(
+      name,
+      JSON.stringify(sessionState, (key, value) =>
+        typeof value === 'bigint' ? value.toString() : value
+      )
+    );
+  }
+
+  browserRouter.push(url, asPath);
+}
+
+export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean = false>({
   name,
   state,
   children,
   className,
+  passHref,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
-  children: React.ReactNode;
+  passHref?: TPassHref;
   className?: string;
+  children: TPassHref extends true ? React.ReactElement : React.ReactNode;
 }) {
-  const router = useRouter();
   const browserRouter = useBrowserRouter();
-  const dialog = dialogs[name];
-  if (!dialog) throw new Error('invalid dialog name');
-
-  const { url, asPath, state: routerState } = dialog.resolve(browserRouter.query, state); // eslint-disable-line
+  const { url, asPath, state: sessionState } = resolveDialog(name, browserRouter.query, state);
 
   const handleClick = (e: any) => {
     e.preventDefault();
-    let _url = resolveHref(router, url);
-    const [path, queryString] = _url.split('?');
-    const query = {
-      ...parse(queryString),
-      ...browserRouter.query,
-      dialog: ([] as DialogKey[]).concat((browserRouter.query.dialog as any) ?? []).concat(name),
-    };
-    _url = `${path}?${QS.stringify(query)}`;
-
-    if (routerState)
+    if (sessionState)
       sessionStorage.setItem(
         name,
-        JSON.stringify(routerState, (key, value) =>
+        JSON.stringify(sessionState, (key, value) =>
           typeof value === 'bigint' ? value.toString() : value
         )
       );
 
-    browserRouter.push(_url, asPath);
+    browserRouter.push(url, asPath);
   };
 
-  const href = typeof asPath === 'string' ? asPath : resolveHref(router, asPath ?? url);
+  if (passHref) {
+    return cloneElement(children as React.ReactElement, { href: asPath, onClick: handleClick });
+  }
 
   return (
-    <a href={href} onClick={handleClick} className={className}>
+    <a href={asPath} onClick={handleClick} className={className}>
       {children}
     </a>
   );
@@ -115,4 +121,29 @@ function createBrowserRouterSync<T extends Record<string, unknown>>(Dialog: Comp
     const { query } = useBrowserRouter();
     return <Dialog {...args} {...query} />;
   };
+}
+
+function resolveDialog<T extends DialogKey>(
+  name: T,
+  query: Record<string, any>,
+  state: ComponentProps<(typeof dialogs)[T]['component']>
+) {
+  const dialog = dialogs[name];
+  if (!dialog) throw new Error('invalid dialog name');
+  const {
+    url,
+    asPath,
+    state: _state,
+  } = dialog.resolve(
+    {
+      ...query,
+      dialog: ([] as DialogKey[]).concat(query.dialog ?? []).concat(name),
+    },
+    state
+  ); // eslint-disable-line
+
+  const [_url, _urlAs] = resolveHref(Router, url, true);
+  const [, _asPath] = asPath ? resolveHref(Router, asPath, true) : [_url, _urlAs];
+
+  return { url: _url, asPath: _asPath, state: _state };
 }
