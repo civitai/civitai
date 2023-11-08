@@ -30,18 +30,13 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import {
-  arrayMove,
-  horizontalListSortingStrategy,
-  SortableContext,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
+import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
   onChange?: (value: ShowcaseItemSchema[]) => void;
-  username: string;
+  username?: string;
   limit?: number;
 };
 
@@ -52,7 +47,7 @@ const useStyles = createStyles((theme) => ({
     gridGap: 4,
 
     [theme.fn.smallerThan('sm')]: {
-      gridTemplateColumns: `repeat(2, 1fr)`,
+      gridTemplateColumns: `repeat(3, 1fr)`,
     },
   },
   selectedItemRemove: {
@@ -73,7 +68,7 @@ export const ShowcaseItemsInput = ({
   value,
   onChange,
   username,
-  limit = 5,
+  limit = 15,
   ...props
 }: ShowcaseItemsInputProps) => {
   const { classes } = useStyles();
@@ -157,12 +152,14 @@ export const ShowcaseItemsInput = ({
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
-        <QuickSearchDropdown
-          supportedIndexes={['models', 'images']}
-          onItemSelected={onItemSelected}
-          filters={`user.username='${username}'`}
-          dropdownItemLimit={25}
-        />
+        {username && (
+          <QuickSearchDropdown
+            supportedIndexes={['models', 'images']}
+            onItemSelected={onItemSelected}
+            filters={`user.username='${username}'`}
+            dropdownItemLimit={25}
+          />
+        )}
 
         <Paper mt="md">
           <DndContext
@@ -172,7 +169,7 @@ export const ShowcaseItemsInput = ({
           >
             <SortableContext
               items={showcaseItems.map((item) => `${item.entityType}-${item.entityId}`)}
-              strategy={horizontalListSortingStrategy}
+              strategy={rectSortingStrategy}
             >
               {showcaseItems.length > 0 ? (
                 <Box className={classes.selectedItemsGrid}>

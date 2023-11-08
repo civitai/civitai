@@ -4,7 +4,7 @@ import {
   Button,
   Divider,
   Group,
-  HoverCard,
+  Popover,
   Stack,
   Text,
   Tooltip,
@@ -154,20 +154,20 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               }
 
               return (
-                <HoverCard key={award.id} withArrow width={200} position="top">
-                  <HoverCard.Target>
-                    <Box>
+                <Popover key={award.id} withArrow width={200} position="top">
+                  <Popover.Target>
+                    <Box style={{ cursor: 'pointer' }}>
                       <EdgeMedia src={url} width={56} />
                     </Box>
-                  </HoverCard.Target>
-                  <HoverCard.Dropdown>
+                  </Popover.Target>
+                  <Popover.Dropdown>
                     <Stack spacing={0}>
                       <Text size="sm" align="center" weight={500}>
                         {award.name}
                       </Text>
                     </Stack>
-                  </HoverCard.Dropdown>
-                </HoverCard>
+                  </Popover.Dropdown>
+                </Popover>
               );
             })}
             {badges.length > 4 && (

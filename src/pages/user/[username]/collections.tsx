@@ -52,7 +52,7 @@ export default function UserCollectionsPage() {
     <Wrapper>
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
-        maxColumnCount={4}
+        maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
         <MasonryContainer fluid>

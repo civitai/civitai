@@ -124,12 +124,13 @@ const { openModal, Modal } = createContextModal({
       shouldUnregister: false,
     });
 
-    const [badgeId, nameplateId, message, bio, location] = form.watch([
+    const [badgeId, nameplateId, message, bio, location, profileImage] = form.watch([
       'badgeId',
       'nameplateId',
       'message',
       'bio',
       'location',
+      'profileImage',
     ]);
     const equippedCosmetics = useMemo(
       () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
@@ -223,13 +224,15 @@ const { openModal, Modal } = createContextModal({
               />
             </Group>
           </Group>
-          <Divider />
+          <Divider label="Profile" />
           <Stack>
             <ProfilePreview
               user={user}
               badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
+              profileImage={profileImage}
             />
+            <InputProfileImageUpload name="profileImage" label="Edit profile image" />
             <Stack>
               <InputSelect
                 name="nameplateId"
@@ -365,43 +368,8 @@ const { openModal, Modal } = createContextModal({
               clearable
             />
           </Stack>
-          <Divider />
-          <InputProfileImageUpload name="profileImage" label="Edit profile image" />
-          <Divider />
-          <InputSimpleImageUpload
-            name="coverImage"
-            label="Edit cover image"
-            aspectRatio={constants.profile.coverImageAspectRatio}
-            // Im aware ideally this should ideally be 450, but images will look better on a higher res here
-            previewWidth={constants.profile.coverImageWidth}
-          >
-            <Text size="sm" color="dimmed">
-              Suggested resolution: {constants.profile.coverImageWidth}px x{' '}
-              {constants.profile.coverImageHeight}px
-            </Text>
-          </InputSimpleImageUpload>
-          <Divider />
-          <Stack spacing={0}>
-            <InputTextArea name="message" label="Message" maxLength={1200} />
-            <Group position="right">
-              <Text size="xs">{message?.length ?? 0}/1200</Text>
-            </Group>
-          </Stack>
-          <Divider />
-          <Stack spacing={0}>
-            <InputTextArea name="bio" label="Bio" maxLength={400} />
-            <Group position="right">
-              <Text size="xs">{bio?.length ?? 0}/400</Text>
-            </Group>
-          </Stack>
-          <Divider />
-          <Stack spacing={0}>
-            <InputText name="location" label="Location" maxLength={100} />
-            <Group position="right">
-              <Text size="xs">{location?.length ?? 0}/100</Text>
-            </Group>
-          </Stack>
-          <Divider />
+
+          <Divider label="Links" />
           <InputInlineSocialLinkInput
             name="socialLinks"
             label="Social Links"
@@ -412,12 +380,53 @@ const { openModal, Modal } = createContextModal({
             label="Sponsorship Links"
             type={LinkType.Sponsorship}
           />
-          <Divider />
+          <Divider label="Profile Page" />
+          <InputSimpleImageUpload
+            name="coverImage"
+            label="Cover Image"
+            aspectRatio={constants.profile.coverImageAspectRatio}
+            // Im aware ideally this should ideally be 450, but images will look better on a higher res here
+            previewWidth={constants.profile.coverImageWidth}
+          >
+            <Text size="sm" color="dimmed">
+              Suggested resolution: {constants.profile.coverImageWidth}px x{' '}
+              {constants.profile.coverImageHeight}px
+            </Text>
+          </InputSimpleImageUpload>
+          <Stack spacing={0}>
+            <InputTextArea
+              name="message"
+              label="Announcement"
+              description="Have something you want to share with people visiting your profile? Put it here and we'll display it in an alert at the top of your profile pag"
+              maxLength={1200}
+            />
+            <Group position="right">
+              <Text size="xs">{message?.length ?? 0}/1200</Text>
+            </Group>
+          </Stack>
+          <Stack spacing={0}>
+            <InputTextArea name="bio" label="Bio" maxLength={400} />
+            <Group position="right">
+              <Text size="xs">{bio?.length ?? 0}/400</Text>
+            </Group>
+          </Stack>
+          <Stack spacing={0}>
+            <InputText name="location" label="Location" maxLength={100} />
+            <Group position="right">
+              <Text size="xs">{location?.length ?? 0}/100</Text>
+            </Group>
+          </Stack>
+          <InputShowcaseItemsInput
+            name="showcaseItems"
+            label="Showcase Items"
+            limit={constants.profile.showcaseItemsLimit}
+            description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
+          />
 
           {user?.profile && (
             <InputProfileSectionsSettingsInput
               name="profileSectionsSettings"
-              label="Customize profile page"
+              label="Page sections"
               description="Drag diferent sections on your profile in order of your preference"
             />
           )}
@@ -447,14 +456,16 @@ type ProfilePreviewProps = {
   user?: UserWithProfile;
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
+  profileImage?: string;
 };
-function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
+function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
   if (!user) {
     return null;
   }
 
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
+    image: profileImage ?? user.image,
     cosmetics: [],
     deletedAt: null,
   };
@@ -469,7 +480,7 @@ function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
       <Paper p="sm" withBorder>
         <UserAvatar
           user={userWithCosmetics}
-          size="md"
+          size="lg"
           subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
           withUsername
         />

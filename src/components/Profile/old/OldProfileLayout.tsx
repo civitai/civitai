@@ -480,7 +480,6 @@ function LayoutSelector({ children }: { children: React.ReactNode }) {
     return (
       <ProfileLayout username={username}>
         <ProfileHeader username={username} />
-        <Divider my="md" />
         {children}
       </ProfileLayout>
     );
