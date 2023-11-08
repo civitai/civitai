@@ -77,13 +77,7 @@ export function RoutedDialogLink<T extends DialogKey>({
   const dialog = dialogs[name];
   if (!dialog) throw new Error('invalid dialog name');
 
-  const {
-    url,
-    asPath,
-    state: routerState,
-  } = useMemo(() => {
-    return dialog.resolve(browserRouter.query, state);
-  }, []); // eslint-disable-line
+  const { url, asPath, state: routerState } = dialog.resolve(browserRouter.query, state); // eslint-disable-line
 
   const handleClick = (e: any) => {
     e.preventDefault();
@@ -96,7 +90,6 @@ export function RoutedDialogLink<T extends DialogKey>({
     };
     _url = `${path}?${QS.stringify(query)}`;
 
-    browserRouter.push(_url, asPath);
     if (routerState)
       sessionStorage.setItem(
         name,
@@ -104,6 +97,8 @@ export function RoutedDialogLink<T extends DialogKey>({
           typeof value === 'bigint' ? value.toString() : value
         )
       );
+
+    browserRouter.push(_url, asPath);
   };
 
   const href = typeof asPath === 'string' ? asPath : resolveHref(router, asPath ?? url);
