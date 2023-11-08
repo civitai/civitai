@@ -170,7 +170,7 @@ export const ProfileSection = ({ children, title, icon }: Props) => {
   return (
     <Stack spacing="md">
       <Group>
-        <ThemeIcon size="xl" variant="light">
+        <ThemeIcon size="xl" color="dark" variant="default">
           {icon}
         </ThemeIcon>
         <Text size={28} weight={590} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>

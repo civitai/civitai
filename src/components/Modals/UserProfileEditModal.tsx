@@ -60,9 +60,9 @@ const { openModal, Modal } = createContextModal({
       trpc.leaderboard.getLeaderboards.useQuery();
 
     const { mutate, isLoading: isUpdating } = trpc.userProfile.update.useMutation({
-      onSuccess: () => {
+      onSuccess: (data) => {
         if (currentUser) {
-          utils.userProfile.get.invalidate({ username: currentUser.username });
+          utils.userProfile.get.setData({ username: currentUser.username }, data);
         }
         showSuccessNotification({ message: 'Profile updated successfully' });
         context.close();
@@ -456,7 +456,7 @@ type ProfilePreviewProps = {
   user?: UserWithProfile;
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
-  profileImage?: string;
+  profileImage?: string | null;
 };
 function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
   if (!user) {
@@ -465,7 +465,7 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
 
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
-    image: profileImage ?? user.image,
+    image: profileImage || user.image,
     cosmetics: [],
     deletedAt: null,
   };

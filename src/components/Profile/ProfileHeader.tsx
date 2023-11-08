@@ -52,6 +52,8 @@ const useStyles = createStyles((theme) => ({
       width: 'auto',
       marginLeft: '-16px',
       marginRight: '-16px',
+      paddingTop: 2,
+      paddingBottom: 2,
     },
   },
   coverImageWrapper: {
@@ -110,8 +112,8 @@ const useStyles = createStyles((theme) => ({
     '& > div': {
       position: 'relative',
       height: 'auto',
-      top: '-72px', // Half the avatar size.
-      marginBottom: '-36px', // half of top.
+      top: '-36px', // Half the avatar size.
+      marginBottom: '-18px', // half of top.
     },
   },
 }));
@@ -190,7 +192,7 @@ export function ProfileHeader({ username }: { username: string }) {
               {profile.message}
             </ReactMarkdown>
             {profile.messageAddedAt && (
-              <Text color="dimmed">
+              <Text color="dimmed" size="xs">
                 <DaysFromNow date={profile.messageAddedAt} />
               </Text>
             )}

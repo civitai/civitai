@@ -1,4 +1,4 @@
-import { Anchor, Badge, Group, Tabs, Text } from '@mantine/core';
+import { Anchor, Badge, createStyles, Group, Tabs, Text } from '@mantine/core';
 import React from 'react';
 import {
   IconAssembly,
@@ -11,14 +11,48 @@ import {
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
+import ReactMarkdown from 'react-markdown';
+import className = ReactMarkdown.propTypes.className;
 
 type ProfileNavigationProps = {
   username: string;
 };
 
 const overviewPath = '[username]';
+const useStyles = createStyles((theme, _, getRef) => {
+  const selectedRef = getRef('selected');
+  return {
+    tabs: {
+      flexWrap: 'nowrap',
+      overflow: 'auto hidden',
+      paddingBottom: '2px',
+      borderBottom: 0,
+    },
+    selected: {
+      ref: selectedRef,
+    },
+    navigatorBtn: {
+      padding: theme.spacing.md,
+      [theme.fn.smallerThan('md')]: {
+        padding: theme.spacing.sm,
+      },
+    },
+    navigatorBtnIcon: {},
+    navigatorBtnText: {
+      [theme.fn.smallerThan('md')]: {
+        display: 'none',
+
+        [`.${selectedRef} &`]: {
+          display: 'block',
+        },
+      },
+    },
+  };
+});
+
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
+  const { classes, cx } = useStyles();
   const { data: userOverview } = trpc.userProfile.overview.useQuery({
     username,
   });
@@ -64,15 +98,21 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
 
   return (
     <Tabs value={activePath}>
-      <Tabs.List style={{ flexWrap: 'nowrap', overflow: 'auto hidden', paddingBottom: '2px' }}>
+      <Tabs.List className={classes.tabs}>
         {Object.keys(opts).map((key) => {
+          console.log(key === activePath);
           return (
             <Link href={`${baseUrl}${opts[key].url}`} passHref key={key}>
               <Anchor variant="text">
-                <Tabs.Tab value={key}>
+                <Tabs.Tab
+                  value={key}
+                  className={cx(classes.navigatorBtn, { [classes.selected]: key === activePath })}
+                >
                   <Group noWrap>
                     {opts[key].icon}
-                    <Text tt="capitalize">{opts[key]?.label ?? key}</Text>
+                    <Text tt="capitalize" className={classes.navigatorBtnText}>
+                      {opts[key]?.label ?? key}
+                    </Text>
                     {!!opts[key].count && <Badge>{opts[key].count}</Badge>}
                   </Group>
                 </Tabs.Tab>
