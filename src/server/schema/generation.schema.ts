@@ -139,7 +139,7 @@ const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
     .string()
     .refine((val) => generation.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
-  steps: z.coerce.number().min(1).max(generation.maxValues.steps),
+  steps: z.coerce.number().min(10).max(generation.maxValues.steps),
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(generation.maxValues.quantity),
   nsfw: z.boolean().optional(),

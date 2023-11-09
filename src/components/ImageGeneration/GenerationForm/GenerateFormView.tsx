@@ -59,6 +59,8 @@ import {
   usePollGenerationRequests,
 } from '../utils/generationRequestHooks';
 import useIsClient from '~/hooks/useIsClient';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { calculateGenerationBill } from '~/server/common/generation';
 
 export function GenerateFormView({
   form,
@@ -111,13 +113,13 @@ export function GenerateFormView({
   };
   // #endregion
 
-  // const [baseModel, aspectRatio, steps, quantity] = form.watch([
-  //   'baseModel',
-  //   'aspectRatio',
-  //   'steps',
-  //   'quantity',
-  // ]);
-  // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+  const [baseModel, aspectRatio, steps, quantity] = form.watch([
+    'baseModel',
+    'aspectRatio',
+    'steps',
+    'quantity',
+  ]);
+  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   const additionalResources = form.watch('resources');
 
@@ -155,10 +157,10 @@ export function GenerateFormView({
                     buttonLabel="Add Model"
                     withAsterisk
                     options={{
-                      baseModel: supportedBaseModel,
                       type: ModelType.Checkpoint,
                       canGenerate: true,
                     }}
+                    allowRemove={false}
                   />
                   <PersistentAccordion
                     storeKey="generation-form-resources"
@@ -277,7 +279,7 @@ export function GenerateFormView({
                                 <InputNumberSlider
                                   name="steps"
                                   label="Steps"
-                                  min={1}
+                                  min={10}
                                   max={generation.maxValues.steps}
                                   sliderProps={sharedSliderProps}
                                   numberProps={sharedNumberProps}
@@ -312,18 +314,16 @@ export function GenerateFormView({
                                   numberProps={sharedNumberProps}
                                 />
                               )}
-                              {!isSDXL && (
-                                <InputResourceSelect
-                                  name="vae"
-                                  label={getDisplayName(ModelType.VAE)}
-                                  buttonLabel="Add VAE"
-                                  options={{
-                                    baseModel: supportedBaseModel,
-                                    type: ModelType.VAE,
-                                    canGenerate: true,
-                                  }}
-                                />
-                              )}
+                              <InputResourceSelect
+                                name="vae"
+                                label={getDisplayName(ModelType.VAE)}
+                                buttonLabel="Add VAE"
+                                options={{
+                                  baseModel: supportedBaseModel,
+                                  type: ModelType.VAE,
+                                  canGenerate: true,
+                                }}
+                              />
                             </Stack>
                           </Accordion.Panel>
                         </Accordion.Item>
@@ -359,15 +359,27 @@ export function GenerateFormView({
                     </Stack>
                   </Card>
                   <LoginRedirect reason="image-gen" returnUrl="/generate">
-                    <Button
-                      type="submit"
-                      size="lg"
-                      loading={isSubmitting || loading}
-                      className={classes.generateButtonButton}
-                      disabled={disableGenerateButton}
-                    >
-                      Generate
-                    </Button>
+                    {isSDXL ? (
+                      <BuzzTransactionButton
+                        type="submit"
+                        size="lg"
+                        label="Generate"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                        buzzAmount={totalCost}
+                      />
+                    ) : (
+                      <Button
+                        type="submit"
+                        size="lg"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                      >
+                        Generate
+                      </Button>
+                    )}
                   </LoginRedirect>
                   {/* <Tooltip label="Reset" color="dark" withArrow> */}
                   <Button
@@ -390,7 +402,7 @@ export function GenerateFormView({
                 </Text>
               </Stack>
               <GenerationStatusMessage />
-              {isSDXL && (
+              {/* {isSDXL && (
                 <DismissibleAlert
                   id="sdxl-preview"
                   title="SDXL Generation Preview"
@@ -411,7 +423,7 @@ export function GenerateFormView({
                     </Text>
                   }
                 />
-              )}
+              )} */}
             </Stack>
           );
         }}

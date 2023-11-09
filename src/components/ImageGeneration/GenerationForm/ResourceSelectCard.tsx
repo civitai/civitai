@@ -1,7 +1,17 @@
-import { ActionIcon, Badge, Card, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
-import { IconAlertTriangle, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { generationPanel } from '~/store/generation.store';
@@ -11,6 +21,7 @@ type Props = {
   resource: GenerationResourceSchema;
   onUpdate?: (value: GenerationResourceSchema) => void;
   onRemove?: (id: number) => void;
+  onSwap?: VoidFunction;
 };
 
 export const ResourceSelectCard = (props: Props) => {
@@ -19,7 +30,7 @@ export const ResourceSelectCard = (props: Props) => {
   return isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />;
 };
 
-function CheckpointInfo({ resource, onRemove }: Props) {
+function CheckpointInfo({ resource, onRemove, onSwap }: Props) {
   const unavailable = resource.covered === false;
 
   return (
@@ -57,10 +68,19 @@ function CheckpointInfo({ resource, onRemove }: Props) {
             </Text>
           </Stack>
         </Group>
-        {onRemove && (
+        {onRemove ? (
           <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
             <IconX size={20} />
           </ActionIcon>
+        ) : (
+          <Button variant="light" radius="xl" size="sm" onClick={onSwap} compact>
+            <Group spacing={4} noWrap>
+              <IconReplace size={16} />
+              <Text size="sm" weight={500}>
+                Swap
+              </Text>
+            </Group>
+          </Button>
         )}
       </Group>
     </Card>

@@ -30,6 +30,8 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     mode: 'onSubmit',
     defaultValues: {
       ...generation.defaultValues,
+      // Doing it this way to keep ts happy
+      model: { ...generation.defaultValues.model, trainedWords: [] },
       nsfw: currentUser?.showNsfw,
     },
     shouldUnregister: false,
@@ -51,9 +53,12 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const { data, type } = runData;
       const previousData = form.getValues();
       const getFormData = () => {
+        // Omitting model to keep ts happy
+        const { model, ...defaultValues } = generation.defaultValues;
+
         switch (type) {
           case 'remix': // 'remix' will return the formatted generation data as is
-            return { ...generation.defaultValues, ...data };
+            return { ...defaultValues, ...data };
           case 'run': // 'run' will keep previous relevant data and add new resources to existing resources
             const baseModel = data.baseModel as BaseModelSetType | undefined;
             const resources = (previousData.resources ?? []).concat(data.resources ?? []);
@@ -94,6 +99,8 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
       if (!formData.model) {
+        // TODO.generation: We need a better way to handle these cases, having hardcoded values
+        // is not ideal and may lead to bugs in the future.
         const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
         formData.model = hasSdxlResources
           ? {
@@ -103,7 +110,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
               modelId: 101055,
               modelName: 'SD XL',
               modelType: 'Checkpoint',
-              baseModel: 'SDXL',
+              baseModel: 'SDXL 1.0',
               strength: 1,
             }
           : {

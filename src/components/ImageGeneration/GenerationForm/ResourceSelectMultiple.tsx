@@ -7,7 +7,6 @@ import { ResourceSelectOptions } from './resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
-import { ModelType } from '@prisma/client';
 
 type ResourceSelectMultipleProps = {
   limit?: number;
@@ -60,9 +59,10 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
     // Made with copilot :^) -Manuel
     const sortedGroups = [...groups].sort((a, b) => {
-      if (a.type === ModelType.LORA || a.type === ModelType.LoCon) return -1;
-      if (b.type === ModelType.LORA || b.type === ModelType.LoCon) return 1;
-      return 0;
+      const aIndex = options.types?.indexOf(a.type);
+      const bIndex = options.types?.indexOf(b.type);
+      if (aIndex === undefined || bIndex === undefined) return 0;
+      return aIndex - bIndex;
     });
 
     return (
