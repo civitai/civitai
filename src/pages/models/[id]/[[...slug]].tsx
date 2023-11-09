@@ -109,7 +109,6 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { RecommendedResources } from '~/components/Model/Recommended/RecommendedResources';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 
 export const getServerSideProps = createServerSideProps({
