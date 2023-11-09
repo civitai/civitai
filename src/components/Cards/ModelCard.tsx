@@ -288,8 +288,8 @@ export function ModelCard({ data }: Props) {
                                         e.preventDefault();
                                         e.stopPropagation();
                                         generationPanel.open({
-                                          type: 'model',
-                                          id: data.id,
+                                          type: 'modelVersion',
+                                          id: data.version.id,
                                         });
                                       }}
                                     >
