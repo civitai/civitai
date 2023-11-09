@@ -133,6 +133,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     supportsGeneration,
     followed,
     collectionId,
+    fileFormats,
   } = input;
 
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
@@ -276,6 +277,23 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     isPrivate = !permissions.publicCollection;
   }
 
+  if (!!fileFormats?.length) {
+    AND.push({
+      modelVersions: {
+        some: {
+          files: {
+            some: {
+              type: 'Model',
+              OR: fileFormats.map((format) => ({
+                metadata: { path: ['format'], equals: format },
+              })),
+            },
+          },
+        },
+      },
+    });
+  }
+
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
   const where: Prisma.ModelWhereInput = {
     tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
@@ -344,7 +362,12 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 
   const s3 = getS3Client();
   const tasks = modelFiles.map((file) => async () => {
-    await requestScannerTasks({ file, s3, tasks: ['Hash', 'Scan'], lowPriority: true });
+    await requestScannerTasks({
+      file,
+      s3,
+      tasks: ['Hash', 'Scan', 'ParseMetadata'],
+      lowPriority: true,
+    });
   });
 
   await limitConcurrency(tasks, 10);
@@ -1244,12 +1267,3 @@ export const setAssociatedResources = async (
   ]);
 };
 // #endregion
-
-export const getRecommendedResourcesByVersionId = async ({ sourceId }: { sourceId: number }) => {
-  const resources = await dbRead.recommendedResource.findMany({
-    where: { sourceId, source: { status: 'Published' } },
-    select: { resource: { select: { id: true, modelId: true } } },
-  });
-
-  return resources.map(({ resource }) => resource);
-};

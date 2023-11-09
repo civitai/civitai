@@ -295,7 +295,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       }
     };
 
-    if (currency === Currency.BUZZ) {
+    if (currency === Currency.BUZZ && !bounty) {
       conditionalPerformTransaction(data.unitAmount, performTransaction);
     } else {
       performTransaction();

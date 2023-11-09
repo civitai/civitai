@@ -12,7 +12,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { fileId, ...query } = querySchema.parse(req.query);
-  const tasks = query.tasks ?? ['Import', 'Scan', 'Hash'];
+  const tasks = query.tasks ?? ['Import', 'Scan', 'Hash', 'ParseMetadata'];
   const scanResult: ScanResult = req.body;
 
   const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
@@ -33,6 +33,10 @@ export default WebhookEndpoint(async (req, res) => {
     const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
     data.pickleScanMessage = pickleScanMessage;
     if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
+  }
+
+  if (tasks.includes('ParseMetadata')) {
+    data.headerData = scanResult.metadata;
   }
 
   // Update url if we imported/moved the file
@@ -154,6 +158,7 @@ type ScanResult = {
   clamscanExitCode: ScanExitCode;
   clamscanOutput: string;
   hashes: Record<ModelHashType, string>;
+  metadata: MixedObject;
   conversions: Record<'safetensors' | 'ckpt', ConversionResult>;
 };
 

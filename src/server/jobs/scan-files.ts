@@ -56,7 +56,7 @@ type ScannerRequest = {
 export async function requestScannerTasks({
   file: { id: fileId, url: s3Url },
   s3,
-  tasks = ['Scan', 'Hash'],
+  tasks = ['Scan', 'Hash', 'ParseMetadata'],
   lowPriority = false,
 }: ScannerRequest) {
   if (!Array.isArray(tasks)) tasks = [tasks];
@@ -107,5 +107,5 @@ type FileScanRequest = {
   url: string;
 };
 
-export const ScannerTasks = ['Import', 'Hash', 'Scan', 'Convert'] as const;
+export const ScannerTasks = ['Import', 'Hash', 'Scan', 'Convert', 'ParseMetadata'] as const;
 export type ScannerTask = (typeof ScannerTasks)[number];

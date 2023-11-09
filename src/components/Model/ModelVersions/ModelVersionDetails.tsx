@@ -75,6 +75,7 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
+import Link from 'next/link';
 
 export function ModelVersionDetails({
   model,
@@ -685,6 +686,47 @@ export function ModelVersionDetails({
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
+            {version.recommendedResources.length > 0 && (
+              <Accordion.Item value="recommended-resources">
+                <Accordion.Control>Recommended Resources</Accordion.Control>
+                <Accordion.Panel>
+                  <Stack spacing={2}>
+                    {version.recommendedResources.map((resource) => (
+                      <Link
+                        key={resource.id}
+                        href={`/models/${resource.modelId}?modelVersion=${resource.id}`}
+                        passHref
+                      >
+                        <Card
+                          component="a"
+                          radius={0}
+                          py="xs"
+                          sx={(theme) => ({
+                            cursor: 'pointer',
+                            backgroundColor:
+                              theme.colorScheme === 'dark'
+                                ? theme.colors.dark[6]
+                                : theme.colors.gray[0],
+                          })}
+                        >
+                          <Stack spacing={4}>
+                            <Group position="apart" spacing={8} noWrap>
+                              <Text size="xs" weight={500} lineClamp={2}>
+                                {resource.modelName}
+                              </Text>
+                              <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
+                            </Group>
+                            <Text color="dimmed" size="xs">
+                              {resource.name}
+                            </Text>
+                          </Stack>
+                        </Card>
+                      </Link>
+                    ))}
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            )}
             {!model.locked && (
               <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
                 <Accordion.Item value="resource-reviews">

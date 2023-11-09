@@ -25,7 +25,7 @@ export const tempScanFilesMissingHashes = createJob(
     // Prepare to send each file to the scanner for hashing
     const s3 = getS3Client();
     const promises = modelFiles.map(async (file) => {
-      await requestScannerTasks({ file, s3, tasks: ['Hash'], lowPriority: true });
+      await requestScannerTasks({ file, s3, tasks: ['Hash', 'ParseMetadata'], lowPriority: true });
     });
 
     // Split promises into chunks of 50
