@@ -6,19 +6,17 @@ import {
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
-import { IconCategory } from '@tabler/icons-react';
+import { IconArrowRight, IconCategory } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { Button, Center, Group, Loader, Stack } from '@mantine/core';
+import { Button, Loader, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { ModelFilterSchema } from '~/providers/FiltersProvider';
+import Link from 'next/link';
 
-const MAX_MODELS_DISPLAY = 12;
+const MAX_MODELS_DISPLAY = 14; // 2 rows of 7
+
 export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
     delay: 100,
@@ -38,7 +36,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
     {
       ...filters,
       username: user.username,
-      limit: MAX_MODELS_DISPLAY + 1,
+      limit: 2 * MAX_MODELS_DISPLAY,
     },
     { keepPreviousData: true, enabled: inView }
   );
@@ -62,7 +60,24 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
       {isLoading || !inView ? (
         <ProfileSectionPreview />
       ) : (
-        <ProfileSection title="Models" icon={<IconCategory />}>
+        <ProfileSection
+          title="Models"
+          icon={<IconCategory />}
+          action={
+            !isRefetching && (
+              <Link href={`/user/${user.username}/models?sort=${ModelSort.Newest}`} passHref>
+                <Button
+                  h={34}
+                  component="a"
+                  variant="subtle"
+                  rightIcon={<IconArrowRight size={16} />}
+                >
+                  <Text inherit> View all models</Text>
+                </Button>
+              </Link>
+            )
+          }
+        >
           <Stack>
             <div
               className={cx({
@@ -77,18 +92,6 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
               ))}
               {isRefetching && <Loader className={classes.loader} />}
             </div>
-            {!isRefetching && _models.length > MAX_MODELS_DISPLAY && (
-              <Button
-                href={`/user/${user.username}/models`}
-                component={NextLink}
-                rel="nofollow"
-                size="md"
-                display="inline-block"
-                mr="auto"
-              >
-                View all models
-              </Button>
-            )}
           </Stack>
         </ProfileSection>
       )}

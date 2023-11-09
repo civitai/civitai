@@ -222,7 +222,7 @@ export const constants = {
     showcaseItemsLimit: 15,
     bioMaxLength: 400,
     messageMaxLength: 1200,
-    locationMaxLength: 40,
+    locationMaxLength: 30,
   },
 } as const;
 

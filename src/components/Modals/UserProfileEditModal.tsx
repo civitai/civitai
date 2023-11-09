@@ -50,6 +50,7 @@ import { UserWithProfile } from '~/types/router';
 const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
   withCloseButton: false,
+  closeOnEscape: false,
   size: 'xl',
   Element: ({ context }) => {
     const utils = trpc.useContext();
@@ -390,15 +391,11 @@ const { openModal, Modal } = createContextModal({
           <InputSimpleImageUpload
             name="coverImage"
             label="Cover Image"
+            description={`Suggested resolution: ${constants.profile.coverImageWidth}x${constants.profile.coverImageHeight}px`}
             aspectRatio={constants.profile.coverImageAspectRatio}
             // Im aware ideally this should ideally be 450, but images will look better on a higher res here
             previewWidth={constants.profile.coverImageWidth}
-          >
-            <Text size="sm" color="dimmed">
-              Suggested resolution: {constants.profile.coverImageWidth}x
-              {constants.profile.coverImageHeight}px
-            </Text>
-          </InputSimpleImageUpload>
+          />
           <InputTextArea
             name="message"
             description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"

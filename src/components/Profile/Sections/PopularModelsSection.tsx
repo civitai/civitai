@@ -5,11 +5,15 @@ import {
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
-import { IconTrendingUp } from '@tabler/icons-react';
+import { IconArrowRight, IconTrendingUp } from '@tabler/icons-react';
 import React from 'react';
 import { useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import Link from 'next/link';
+import { Button, Text } from '@mantine/core';
+
+const POPULAR_MODELS_DISPLAY = 24;
 
 export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -18,7 +22,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   });
   const { models, isLoading } = useQueryModels(
     {
-      limit: 15,
+      limit: POPULAR_MODELS_DISPLAY,
       username: user.username,
       sort: ModelSort.HighestRated,
     },
@@ -38,7 +42,22 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
       {isLoading || !inView ? (
         <ProfileSectionPreview />
       ) : (
-        <ProfileSection title="Most popular models" icon={<IconTrendingUp />}>
+        <ProfileSection
+          title="Most popular models"
+          icon={<IconTrendingUp />}
+          action={
+            <Link href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
+              <Button
+                h={34}
+                component="a"
+                variant="subtle"
+                rightIcon={<IconArrowRight size={16} />}
+              >
+                <Text inherit> View all models</Text>
+              </Button>
+            </Link>
+          }
+        >
           <div className={classes.scrollGrid}>
             {models.map((model) => (
               <ModelCard data={model} key={model.id} />

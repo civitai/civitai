@@ -64,37 +64,39 @@ export function InlineSocialLinkInput({
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
-        <Paper withBorder p="md">
-          <Stack>
-            {links.map((link, index) => {
-              const isLast = index === links.length - 1;
-              return (
-                <Fragment key={index}>
-                  <Group align="center" noWrap>
-                    <DomainIcon url={link.url} size={24} />
-                    <Text size="sm">{link.url}</Text>
-                    <ActionIcon
-                      variant="outline"
-                      color="red"
-                      size="md"
-                      radius="sm"
-                      ml="auto"
-                      onClick={() => {
-                        setLinks((current) => {
-                          const newLinks = current.filter((_, i) => i !== index);
-                          return newLinks;
-                        });
-                      }}
-                    >
-                      <IconTrash size={16} />
-                    </ActionIcon>
-                  </Group>
-                  {!isLast && <Divider />}
-                </Fragment>
-              );
-            })}
-          </Stack>
-        </Paper>
+        {links.length > 0 && (
+          <Paper withBorder p="sm">
+            <Stack>
+              {links.map((link, index) => {
+                const isLast = index === links.length - 1;
+                return (
+                  <Fragment key={index}>
+                    <Group align="center" noWrap>
+                      <DomainIcon url={link.url} size={24} />
+                      <Text size="sm">{link.url}</Text>
+                      <ActionIcon
+                        variant="outline"
+                        color="red"
+                        size="md"
+                        radius="sm"
+                        ml="auto"
+                        onClick={() => {
+                          setLinks((current) => {
+                            const newLinks = current.filter((_, i) => i !== index);
+                            return newLinks;
+                          });
+                        }}
+                      >
+                        <IconTrash size={16} />
+                      </ActionIcon>
+                    </Group>
+                    {!isLast && <Divider />}
+                  </Fragment>
+                );
+              })}
+            </Stack>
+          </Paper>
+        )}
 
         <Group>
           <TextInput

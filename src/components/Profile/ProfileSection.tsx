@@ -17,6 +17,7 @@ type Props = {
   title: string;
   icon: React.ReactNode;
   children?: React.ReactNode;
+  action?: React.ReactNode;
 };
 
 export type ProfileSectionProps = { user: UserWithProfile & { username: string } };
@@ -41,6 +42,12 @@ export const useProfileSectionStyles = createStyles<
     const nullStateRef = getRef('nullState');
 
     return {
+      title: {
+        fontSize: '32px',
+        [theme.fn.smallerThan('sm')]: {
+          fontSize: '24px',
+        },
+      },
       profileSection: {
         paddingLeft: theme.spacing.md,
         paddingRight: theme.spacing.md,
@@ -195,17 +202,24 @@ export const ProfileSectionPreview = ({
     </Stack>
   );
 };
-export const ProfileSection = ({ children, title, icon }: Props) => {
-  const theme = useMantineTheme();
+export const ProfileSection = ({ children, title, icon, action }: Props) => {
+  const { theme, classes } = useProfileSectionStyles({});
   return (
     <Stack spacing="md">
-      <Group>
-        <ThemeIcon size="xl" color="dark" variant="default">
-          {icon}
-        </ThemeIcon>
-        <Text size={28} weight={590} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
-          {title}
-        </Text>
+      <Group position="apart" align="center">
+        <Group>
+          <ThemeIcon size="xl" color="dark" variant="default">
+            {icon}
+          </ThemeIcon>
+          <Text
+            className={classes.title}
+            weight={590}
+            color={theme.colorScheme === 'dark' ? 'white' : 'black'}
+          >
+            {title}
+          </Text>
+        </Group>
+        {action}
       </Group>
       {children}
     </Stack>

@@ -11,6 +11,8 @@ import {
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 
 type ProfileNavigationProps = {
   username: string;
@@ -65,6 +67,11 @@ const useStyles = createStyles((theme, _, getRef) => {
         padding: theme.spacing.sm,
       },
     },
+    navigatorBtnGroup: {
+      [theme.fn.smallerThan('md')]: {
+        gap: '5px',
+      },
+    },
     navigatorBtnIcon: {},
     navigatorBtnText: {
       [theme.fn.smallerThan('md')]: {
@@ -100,54 +107,37 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     models: {
       url: `/models`,
       icon: <IconCategory />,
-      count: userOverview?.modelCount,
+      count: numberWithCommas(userOverview?.modelCount),
     },
     posts: {
       url: `/posts`,
       icon: <IconLayoutList />,
-      count: userOverview?.postCount,
+      count: numberWithCommas(userOverview?.postCount),
     },
     images: {
       url: `/images`,
       icon: <IconPhoto />,
-      count: userOverview?.imageCount,
+      count: numberWithCommas(userOverview?.imageCount),
     },
     articles: {
       url: `/articles`,
       icon: <IconPencilMinus />,
-      count: userOverview?.articleCount,
+      count: numberWithCommas(userOverview?.articleCount),
     },
     collections: {
       url: `/collections`,
       icon: <IconPlaylistAdd />,
-      count: userOverview?.collectionCount,
+      count: numberWithCommas(userOverview?.collectionCount),
     },
   };
 
   return (
-    <Tabs value={activePath} className={classes.container}>
-      <Tabs.List className={cx(classes.scrollArea, classes.tabs)}>
-        {Object.keys(opts).map((key) => {
-          return (
-            <Link href={`${baseUrl}${opts[key].url}`} passHref key={key}>
-              <Anchor variant="text">
-                <Tabs.Tab
-                  value={key}
-                  className={cx(classes.navigatorBtn, { [classes.selected]: key === activePath })}
-                >
-                  <Group noWrap>
-                    {opts[key].icon}
-                    <Text tt="capitalize" className={classes.navigatorBtnText}>
-                      {opts[key]?.label ?? key}
-                    </Text>
-                    {!!opts[key].count && <Badge>{opts[key].count}</Badge>}
-                  </Group>
-                </Tabs.Tab>
-              </Anchor>
-            </Link>
-          );
-        })}
-      </Tabs.List>
-    </Tabs>
+    <HomeStyleSegmentedControl
+      data={opts}
+      value={activePath}
+      onChange={({ url }) => {
+        router.push(`${baseUrl}${url}`);
+      }}
+    />
   );
 };

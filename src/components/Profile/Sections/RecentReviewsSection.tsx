@@ -5,13 +5,21 @@ import {
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
-import { IconBrush, IconMessageChatbot, IconPhoto, IconStar, IconX } from '@tabler/icons-react';
+import {
+  IconBrush,
+  IconCategory,
+  IconMessageChatbot,
+  IconPhoto,
+  IconStar,
+  IconX,
+} from '@tabler/icons-react';
 import React, { Fragment, useMemo } from 'react';
 import {
   Avatar,
   Badge,
   Button,
   Center,
+  createStyles,
   Grid,
   Group,
   Loader,
@@ -37,7 +45,21 @@ import { trpc } from '~/utils/trpc';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { isNumber } from '~/utils/type-guards';
 
+const useStyles = createStyles((theme) => ({
+  title: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: '24px',
+    },
+  },
+  grid: {
+    [theme.fn.smallerThan('sm')]: {
+      flexDirection: 'column-reverse',
+    },
+  },
+}));
+
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
+  const { classes: sectionClasses } = useStyles();
   const { ref, inView } = useInView({
     delay: 100,
     triggerOnce: true,
@@ -93,7 +115,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-          <Grid>
+          <Grid className={sectionClasses.grid}>
             <Grid.Col sm={12} md={8}>
               <Stack>
                 {resourceReviews.map((review) => {
@@ -110,29 +132,33 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                             : theme.colors.gray[1],
                       }}
                     >
-                      <Group align="flex-start" noWrap>
-                        <UserAvatar user={reviewer} size="md" spacing="xs" linkToProfile />
-
-                        <Stack w="100%">
-                          <Group align="flex-start" position="apart">
-                            <Stack spacing={0}>
-                              <Text>{reviewer.username}</Text>
+                      <Stack>
+                        <Group align="flex-start" position="apart" noWrap>
+                          <UserAvatar
+                            user={reviewer}
+                            withUsername
+                            size="md"
+                            spacing="xs"
+                            linkToProfile
+                            subText={
                               <Text color="dimmed" size="sm">
                                 <DaysFromNow date={review.createdAt} />
                               </Text>
-                            </Stack>
-                            <Badge
-                              radius="xl"
-                              px={8}
-                              py={4}
-                              variant="light"
-                              color="dark"
-                              style={{ height: '24px' }}
-                            >
-                              <Rating value={review.rating} fractions={2} readOnly />
-                            </Badge>
-                          </Group>
-
+                            }
+                          />
+                          <Badge
+                            radius="xl"
+                            px={8}
+                            py={4}
+                            variant="light"
+                            color={theme.colorScheme === 'dark' ? 'dark' : 'gray'}
+                            style={{ height: '24px' }}
+                            ml="auto"
+                          >
+                            <Rating value={review.rating} fractions={2} readOnly />
+                          </Badge>
+                        </Group>
+                        <Stack w="100%">
                           {review.details && (
                             <ContentClamp maxHeight={300}>
                               <RenderHtml
@@ -153,7 +179,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                 style={{ height: '26px' }}
                               >
                                 <Group spacing={2}>
-                                  <IconBrush size={15} />
+                                  <IconCategory size={15} />
                                   <span>{review.model.name}</span>
                                 </Group>
                               </Button>
@@ -168,7 +194,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                             )}
                           </Group>
                         </Stack>
-                      </Group>
+                      </Stack>
                     </Paper>
                   );
                 })}

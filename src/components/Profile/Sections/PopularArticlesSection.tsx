@@ -5,13 +5,14 @@ import {
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
-import { IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';
+import { IconArrowRight, IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ArticleSort } from '~/server/common/enums';
 import { useQueryArticles } from '~/components/Article/article.utils';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { Button } from '@mantine/core';
+import { Button, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 
 const MAX_ARTICLES_DISPLAY = 8;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
@@ -46,25 +47,27 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
       {isLoading || !inView ? (
         <ProfileSectionPreview />
       ) : (
-        <ProfileSection title="Most popular articles" icon={<IconPencilMinus />}>
+        <ProfileSection
+          title="Most popular articles"
+          icon={<IconPencilMinus />}
+          action={
+            <Link href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`} passHref>
+              <Button
+                h={34}
+                component="a"
+                variant="subtle"
+                rightIcon={<IconArrowRight size={16} />}
+              >
+                <Text inherit> View all Articles</Text>
+              </Button>
+            </Link>
+          }
+        >
           <div className={classes.grid}>
             {articles.map((article) => (
               <ArticleCard data={article} aspectRatio="flat" key={article.id} useCSSAspectRatio />
             ))}
           </div>
-
-          {_articles.length > MAX_ARTICLES_DISPLAY && (
-            <Button
-              href={`/user/${user.username}/articles`}
-              component={NextLink}
-              rel="nofollow"
-              size="md"
-              display="inline-block"
-              mr="auto"
-            >
-              View all Articles
-            </Button>
-          )}
         </ProfileSection>
       )}
     </div>
