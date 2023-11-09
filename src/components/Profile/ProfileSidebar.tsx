@@ -43,11 +43,12 @@ const mapSize: Record<
     icons: number;
     badges: number;
     bio: number;
+    badgeCount: number;
   }
 > = {
   mobile: {
     avatar: 72,
-    icons: 18,
+    icons: 24,
     username: 'sm',
     text: 'sm',
     spacing: 4,
@@ -55,6 +56,7 @@ const mapSize: Record<
     rankBadge: 'md',
     badges: 40,
     bio: 24,
+    badgeCount: 7,
   },
   desktop: {
     avatar: 144,
@@ -66,6 +68,7 @@ const mapSize: Record<
     rankBadge: 'xl',
     badges: 56,
     bio: 48,
+    badgeCount: 4,
   },
 };
 
@@ -116,6 +119,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       leftIcon={isMobile ? undefined : <IconRss size={16} />}
       size={sizeOpts.button}
       sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      variant={isMobile ? 'filled' : undefined}
     />
   );
 
@@ -205,7 +209,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             Badges
           </Text>
           <Group spacing="xs">
-            {(showAllBadges ? badges : badges.slice(0, 4)).map((award) => {
+            {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
               const data = (award.data ?? {}) as { url?: string };
               const url = (data.url ?? '') as string;
 
@@ -230,7 +234,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                 </Popover>
               );
             })}
-            {badges.length > 4 && (
+            {badges.length > sizeOpts.badgeCount && (
               <Button
                 color="gray"
                 variant="light"
