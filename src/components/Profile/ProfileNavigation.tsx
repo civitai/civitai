@@ -97,7 +97,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
 
   const opts: Record<
     string,
-    { url: string; icon: React.ReactNode; label?: string; count?: number }
+    { url: string; icon: React.ReactNode; label?: string; count?: number | string }
   > = {
     [overviewPath]: {
       url: '/',
