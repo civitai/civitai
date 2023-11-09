@@ -188,7 +188,11 @@ export function ProfileHeader({ username }: { username: string }) {
             <IconBellFilled />
           </ThemeIcon>
           <Stack spacing={0}>
-            <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+            <ReactMarkdown
+              allowedElements={['a', 'p']}
+              unwrapDisallowed
+              className="markdown-content"
+            >
               {profile.message}
             </ReactMarkdown>
             {profile.messageAddedAt && (

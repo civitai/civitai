@@ -31,7 +31,7 @@ import {
   InputProfileSectionsSettingsInput,
   InputSelect,
 } from '~/libs/form';
-import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
+import { ProfileSectionSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
@@ -124,14 +124,21 @@ const { openModal, Modal } = createContextModal({
       shouldUnregister: false,
     });
 
-    const [badgeId, nameplateId, message, bio, location, profileImage] = form.watch([
-      'badgeId',
-      'nameplateId',
-      'message',
-      'bio',
-      'location',
-      'profileImage',
-    ]);
+    const [badgeId, nameplateId, message, bio, location, profileImage, profileSectionsSettings] =
+      form.watch([
+        'badgeId',
+        'nameplateId',
+        'message',
+        'bio',
+        'location',
+        'profileImage',
+        'profileSectionsSettings',
+      ]);
+    const displayShowcase = useMemo(() => {
+      const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
+      console.log(sections);
+      return !!sections.find((s) => s.key === 'showcase' && s.enabled);
+    }, [profileSectionsSettings]);
     const equippedCosmetics = useMemo(
       () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
       [user]
@@ -393,34 +400,45 @@ const { openModal, Modal } = createContextModal({
               {constants.profile.coverImageHeight}px
             </Text>
           </InputSimpleImageUpload>
-          <Stack spacing={0}>
-            <InputTextArea
-              name="message"
-              label="Announcement"
-              description="Have something you want to share with people visiting your profile? Put it here and we'll display it in an alert at the top of your profile pag"
-              maxLength={1200}
-            />
-            <Group position="right">
-              <Text size="xs">{message?.length ?? 0}/1200</Text>
-            </Group>
-          </Stack>
-          <Stack spacing={0}>
-            <InputTextArea name="bio" label="Bio" maxLength={400} />
-            <Group position="right">
-              <Text size="xs">{bio?.length ?? 0}/400</Text>
-            </Group>
-          </Stack>
-          <Stack spacing={0}>
-            <InputText name="location" label="Location" maxLength={100} />
-            <Group position="right">
-              <Text size="xs">{location?.length ?? 0}/100</Text>
-            </Group>
-          </Stack>
-          <InputShowcaseItemsInput
-            name="showcaseItems"
-            label="Showcase Items"
-            limit={constants.profile.showcaseItemsLimit}
-            description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
+          <InputTextArea
+            name="message"
+            description="Have something you want to share with people visiting your profile? Put it here and we'll display it in an alert at the top of your profile page"
+            maxLength={constants.profile.messageMaxLength}
+            labelProps={{ style: { width: '100%' } }}
+            label={
+              <Group position="apart">
+                <Text>Announcement</Text>
+                <Text size="xs">
+                  {message?.length ?? 0}/{constants.profile.messageMaxLength}
+                </Text>
+              </Group>
+            }
+          />
+          <InputTextArea
+            name="bio"
+            labelProps={{ style: { width: '100%' } }}
+            label={
+              <Group position="apart">
+                <Text>Bio</Text>
+                <Text size="xs">
+                  {bio?.length ?? 0}/{constants.profile.bioMaxLength}
+                </Text>
+              </Group>
+            }
+            maxLength={constants.profile.bioMaxLength}
+          />
+          <InputText
+            name="location"
+            labelProps={{ style: { width: '100%' } }}
+            label={
+              <Group position="apart">
+                <Text>Location</Text>
+                <Text size="xs">
+                  {location?.length ?? 0}/{constants.profile.locationMaxLength}
+                </Text>
+              </Group>
+            }
+            maxLength={constants.profile.locationMaxLength}
           />
 
           {user?.profile && (
@@ -430,21 +448,18 @@ const { openModal, Modal } = createContextModal({
               description="Drag diferent sections on your profile in order of your preference"
             />
           )}
-          <Group position="right">
+          {displayShowcase && (
+            <InputShowcaseItemsInput
+              name="showcaseItems"
+              label="Showcase Items"
+              limit={constants.profile.showcaseItemsLimit}
+              description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
+            />
+          )}
+          <Group position="right" align="flex-end">
             <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
               Save Changes
             </Button>
-            <CloseButton
-              size="md"
-              radius="xl"
-              variant="transparent"
-              ml="auto"
-              iconSize={20}
-              loading={isLoading || isUpdating}
-              onClick={(e) => {
-                context.close();
-              }}
-            />
           </Group>
         </Stack>
       </Form>

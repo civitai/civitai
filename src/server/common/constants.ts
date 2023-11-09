@@ -220,6 +220,9 @@ export const constants = {
     coverImageHeight: 240,
     coverImageWidth: 816,
     showcaseItemsLimit: 15,
+    bioMaxLength: 400,
+    messageMaxLength: 1200,
+    locationMaxLength: 40,
   },
 } as const;
 
