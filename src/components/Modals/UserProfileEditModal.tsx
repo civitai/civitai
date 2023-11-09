@@ -271,6 +271,16 @@ const { openModal, Modal } = createContextModal({
                 }
                 clearable
               />
+              <InputSelect
+                label="Showcase Leaderboard"
+                placeholder="Select a leaderboard"
+                description="Choose which leaderboard badge to display on your profile card"
+                name="leaderboardShowcase"
+                data={leaderboardOptions}
+                disabled={loadingLeaderboards}
+                searchable
+                clearable
+              />
             </Stack>
             <Group spacing={4}>
               <Input.Label>Featured Badge</Input.Label>
@@ -356,17 +366,6 @@ const { openModal, Modal } = createContextModal({
                 </Center>
               </Paper>
             )}
-
-            <InputSelect
-              label="Showcase Leaderboard"
-              placeholder="Select a leaderboard"
-              description="Choose which leaderboard badge to display on your profile card"
-              name="leaderboardShowcase"
-              data={leaderboardOptions}
-              disabled={loadingLeaderboards}
-              searchable
-              clearable
-            />
           </Stack>
 
           <Divider label="Links" />
@@ -389,7 +388,7 @@ const { openModal, Modal } = createContextModal({
             previewWidth={constants.profile.coverImageWidth}
           >
             <Text size="sm" color="dimmed">
-              Suggested resolution: {constants.profile.coverImageWidth}px x{' '}
+              Suggested resolution: {constants.profile.coverImageWidth}x
               {constants.profile.coverImageHeight}px
             </Text>
           </InputSimpleImageUpload>
@@ -397,7 +396,7 @@ const { openModal, Modal } = createContextModal({
             <InputTextArea
               name="message"
               label="Announcement"
-              description="Have something you want to share with people visiting your profile? Put it here and we'll display it in an alert at the top of your profile pag"
+              description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"
               maxLength={1200}
             />
             <Group position="right">
