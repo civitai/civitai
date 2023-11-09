@@ -12,7 +12,10 @@ import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({
+    delay: 100,
+    triggerOnce: true,
+  });
   const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
   const {
     data: coverImages = [],
@@ -30,17 +33,21 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
 
   const { classes, cx } = useProfileSectionStyles({
     // count: coverImages.length,
-    rowCount: 1,
-    columnCount: 5,
-    widthGrid: 'auto',
+    count: showcaseItems.length,
+    rowCount: 2,
+    widthGrid: '280px',
   });
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
+  if (isNullState && inView) {
+    return null;
+  }
+
   return (
-    <div ref={ref}>
-      {isNullState ? null : isLoading ? (
-        <ProfileSectionPreview />
+    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+      {isLoading || !inView ? (
+        <ProfileSectionPreview rowCount={2} />
       ) : (
         <ProfileSection title="Showcase" icon={<IconHeart />}>
           <div
@@ -55,7 +62,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
                 image={image}
                 entityId={image.entityId}
                 entityType={image.entityType}
-                key={image.id}
+                key={`${image.entityType}-${image.entityId}`}
               />
             ))}
           </div>

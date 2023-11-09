@@ -54,6 +54,7 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -213,6 +214,13 @@ export function ModelCategoryCard({
       />,
     ]);
   }
+
+  if (currentUser?.id === user.id) {
+    contextMenuItems = contextMenuItems.concat([
+      <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
+    ]);
+  }
+
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
       <HideModelButton key="hide-model" as="menu-item" modelId={id} />,

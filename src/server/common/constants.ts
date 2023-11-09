@@ -216,9 +216,13 @@ export const constants = {
   },
   profile: {
     coverImageAspectRatio: 5 / 17,
-    mobileCoverImageAspectRatio: 12 / 17,
+    mobileCoverImageAspectRatio: 4 / 17,
     coverImageHeight: 240,
     coverImageWidth: 816,
+    showcaseItemsLimit: 32,
+    bioMaxLength: 400,
+    messageMaxLength: 1200,
+    locationMaxLength: 30,
   },
 } as const;
 

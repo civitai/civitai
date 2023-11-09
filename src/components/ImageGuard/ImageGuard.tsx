@@ -22,6 +22,7 @@ import {
   IconEye,
   IconEyeOff,
   IconFlag,
+  IconHeart,
   IconLock,
   IconPencil,
   IconPlus,
@@ -49,6 +50,8 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
+import { showSuccessNotification } from '~/utils/notifications';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 
 export type ImageGuardConnect = {
   entityType:
@@ -305,6 +308,7 @@ ImageGuard.Report = function ReportImage({
   withinPortal?: boolean;
   context?: 'post' | 'image';
 }) {
+  const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -323,6 +327,7 @@ ImageGuard.Report = function ReportImage({
     });
     setNeedsReview(null);
   };
+
   // if (!showReportNsfw) return null;
 
   const handleClick = (e: React.SyntheticEvent) => {
@@ -446,6 +451,15 @@ ImageGuard.Report = function ReportImage({
     defaultMenuItems.push({
       key: 'hide-image-button',
       component: <HideImageButton key="hide-image-button" as="menu-item" imageId={image.id} />,
+    });
+  }
+
+  if (isOwner && context === 'image') {
+    defaultMenuItems.push({
+      key: 'add-image-to-showcase',
+      component: (
+        <AddToShowcaseMenuItem key="add-image-to-showcase" entityType="Image" entityId={image.id} />
+      ),
     });
   }
 

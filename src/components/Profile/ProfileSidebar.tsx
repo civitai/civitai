@@ -1,8 +1,11 @@
 import {
   ActionIcon,
+  Box,
   Button,
   Divider,
   Group,
+  MantineSize,
+  Popover,
   Stack,
   Text,
   Tooltip,
@@ -25,15 +28,59 @@ import React, { useMemo, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
+import { Username } from '~/components/User/Username';
+import { useIsMobile } from '~/hooks/useIsMobile';
+
+const mapSize: Record<
+  'mobile' | 'desktop',
+  {
+    avatar: number;
+    username: MantineSize;
+    text: MantineSize;
+    spacing: MantineSize | number;
+    button: MantineSize;
+    rankBadge: MantineSize;
+    icons: number;
+    badges: number;
+    bio: number;
+    badgeCount: number;
+  }
+> = {
+  mobile: {
+    avatar: 72,
+    icons: 24,
+    username: 'sm',
+    text: 'sm',
+    spacing: 4,
+    button: 'sm',
+    rankBadge: 'md',
+    badges: 40,
+    bio: 24,
+    badgeCount: 7,
+  },
+  desktop: {
+    avatar: 144,
+    icons: 24,
+    username: 'xl',
+    text: 'md',
+    spacing: 'md',
+    button: 'md',
+    rankBadge: 'xl',
+    badges: 56,
+    bio: 48,
+    badgeCount: 4,
+  },
+};
 
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
+  const isMobile = useIsMobile({ breakpoint: 'sm' });
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
   const isCurrentUser = currentUser?.id === user?.id;
-  const theme = useMantineTheme();
   const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
+  const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
 
   const badges = useMemo(
     () =>
@@ -51,23 +98,75 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const { profile, stats } = user;
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
+  const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
+  const editProfileBtn = isCurrentUser && (
+    <Button
+      leftIcon={isMobile ? undefined : <IconPencilMinus size={16} />}
+      size={sizeOpts.button}
+      onClick={() => {
+        openUserProfileEditModal({});
+      }}
+      sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      radius="xl"
+      fullWidth
+    >
+      Edit profile
+    </Button>
+  );
+  const followUserBtn = !isCurrentUser && (
+    <FollowUserButton
+      userId={user.id}
+      leftIcon={isMobile ? undefined : <IconRss size={16} />}
+      size={sizeOpts.button}
+      sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      variant={isMobile ? 'filled' : undefined}
+    />
+  );
+
+  const tipBuzzBtn = (
+    <TipBuzzButton
+      toUserId={user.id}
+      size={sizeOpts.button}
+      variant={isMobile ? 'filled' : 'light'}
+      color="yellow.7"
+      label="Tip buzz"
+      sx={{ fontSize: '14px', fontWeight: 590 }}
+    />
+  );
 
   return (
-    <Stack className={className}>
-      <UserAvatar user={user} size="xl" radius="md" />
-      <RankBadge rank={user.rank} size="lg" withTitle />
-      <Stack spacing={0}>
-        <Text weight={700} size={24} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
-          {user.username}
-        </Text>
-        {profile.location && (
-          <Group spacing="sm">
-            <Text color="dimmed">{profile.location}</Text>
-            <IconMapPin size={16} />
+    <Stack className={className} spacing={sizeOpts.spacing}>
+      <Group noWrap position="apart">
+        <UserAvatar avatarSize={sizeOpts.avatar} user={user} size={sizeOpts.username} radius="md" />
+        {isMobile && (
+          <Group>
+            {editProfileBtn}
+            {followUserBtn}
+            {tipBuzzBtn}
           </Group>
         )}
+      </Group>
+      <RankBadge rank={user.rank} size={sizeOpts.rankBadge} withTitle />
+      <Stack spacing={0}>
+        <Username {...user} cosmetics={equippedCosmetics} size="xl" />
+        <Text color="dimmed" size="sm">
+          Joined {formatDate(user.createdAt)}
+        </Text>
       </Stack>
-      {profile?.bio && <ContentClamp maxHeight={48}>{profile.bio}</ContentClamp>}
+
+      {profile.location && (
+        <Group spacing="sm" noWrap>
+          <IconMapPin size={16} style={{ flexShrink: 0 }} />
+          <Text color="dimmed" truncate size={sizeOpts.text}>
+            {profile.location}
+          </Text>
+        </Group>
+      )}
+      {profile?.bio && (
+        <ContentClamp maxHeight={sizeOpts.bio} style={{ wordWrap: 'break-word' }}>
+          {profile.bio}
+        </ContentClamp>
+      )}
       <Group spacing={4}>
         {sortDomainLinks(user.links).map((link, index) => (
           <ActionIcon
@@ -78,36 +177,18 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             rel="nofollow noreferrer"
             size={24}
           >
-            <DomainIcon domain={link.domain} size={24} />
+            <DomainIcon domain={link.domain} size={sizeOpts.icons} />
           </ActionIcon>
         ))}
       </Group>
-      <Group grow>
-        {isCurrentUser && (
-          <Button
-            leftIcon={<IconPencilMinus size={16} />}
-            size="md"
-            onClick={() => {
-              openUserProfileEditModal({});
-            }}
-            sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-            radius="xl"
-            fullWidth
-          >
-            Edit profile
-          </Button>
-        )}
-        {!isCurrentUser && (
-          <FollowUserButton
-            userId={user.id}
-            leftIcon={<IconRss size={16} />}
-            size="md"
-            sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-          />
-        )}
-      </Group>
+      {!isMobile && (
+        <Group grow>
+          {editProfileBtn}
+          {followUserBtn}
+        </Group>
+      )}
 
-      <Divider my="sm" />
+      <Divider my={sizeOpts.spacing} />
 
       {shouldDisplayStats && (
         <UserStats
@@ -117,24 +198,18 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           downloads={stats.downloadCountAllTime}
         />
       )}
-      <TipBuzzButton
-        toUserId={user.id}
-        size="md"
-        variant="light"
-        color="yellow.7"
-        label="Tip buzz"
-        sx={{ fontSize: '14px', fontWeight: 590 }}
-      />
 
-      {(!isCurrentUser || shouldDisplayStats) && <Divider my="sm" />}
+      {!isMobile && tipBuzzBtn}
+
+      {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 
       {badges.length > 0 && (
-        <Stack>
-          <Text size="md" color="dimmed" weight={590}>
+        <Stack spacing={sizeOpts.spacing}>
+          <Text size={sizeOpts.text} color="dimmed" weight={590}>
             Badges
           </Text>
           <Group spacing="xs">
-            {(showAllBadges ? badges : badges.slice(0, 4)).map((award) => {
+            {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
               const data = (award.data ?? {}) as { url?: string };
               const url = (data.url ?? '') as string;
 
@@ -143,12 +218,23 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               }
 
               return (
-                <Tooltip key={award.id} label={award.name} withinPortal>
-                  <EdgeMedia src={url} width={56} />
-                </Tooltip>
+                <Popover key={award.id} withArrow width={200} position="top">
+                  <Popover.Target>
+                    <Box style={{ cursor: 'pointer' }}>
+                      <EdgeMedia src={url} width={sizeOpts.badges} />
+                    </Box>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack spacing={0}>
+                      <Text size="sm" align="center" weight={500}>
+                        {award.name}
+                      </Text>
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
               );
             })}
-            {badges.length > 4 && (
+            {badges.length > sizeOpts.badgeCount && (
               <Button
                 color="gray"
                 variant="light"
@@ -161,11 +247,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               </Button>
             )}
           </Group>
-          <Divider my="sm" />
         </Stack>
       )}
-
-      <Text color="dimmed">Joined {formatDate(user.createdAt)}</Text>
     </Stack>
   );
 }

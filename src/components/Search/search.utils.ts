@@ -241,7 +241,7 @@ export const applyUserPreferencesCollections = <
         return true;
       }) as T['images'];
 
-      if (!filteredImages?.length) return null;
+      if (!filteredImages?.length && !x.image) return null;
 
       return {
         ...x,
