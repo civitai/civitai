@@ -58,6 +58,7 @@ import {
   usePollGenerationRequests,
 } from '../utils/generationRequestHooks';
 import useIsClient from '~/hooks/useIsClient';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function GenerateFormView({
   form,
@@ -75,6 +76,7 @@ export function GenerateFormView({
   const currentUser = useCurrentUser();
   const { formState } = form;
   const { isSubmitting } = formState;
+  const features = useFeatureFlags();
 
   const type = useGenerationStore((state) => state.data?.type);
 
@@ -131,8 +133,7 @@ export function GenerateFormView({
       <BaseModelProvider getBaseModels={getBaseModels}>
         {({ baseModel, baseModels }) => {
           const isSDXL = baseModel === 'SDXL';
-          const disableGenerateButton =
-            reachedRequestLimit || (isSDXL && !(currentUser?.isMember || currentUser?.isModerator));
+          const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
           const [supportedBaseModel] = baseModels;
 
           return (
@@ -362,28 +363,6 @@ export function GenerateFormView({
                 </Text>
               </Stack>
               <GenerationStatusMessage />
-              {isSDXL && (
-                <DismissibleAlert
-                  id="sdxl-preview"
-                  title="SDXL Generation Preview"
-                  content={
-                    <Text>
-                      SDXL is currently in early preview. You must be{' '}
-                      <Text
-                        component="a"
-                        td="underline"
-                        href="/pricing"
-                        variant="link"
-                        target="_blank"
-                      >
-                        a Supporter
-                      </Text>{' '}
-                      to generate SDXL images. LoRA support has been postponed. Stay tuned for more
-                      updates.
-                    </Text>
-                  }
-                />
-              )}
             </Stack>
           );
         }}
