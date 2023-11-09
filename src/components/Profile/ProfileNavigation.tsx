@@ -128,7 +128,6 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     <Tabs value={activePath} className={classes.container}>
       <Tabs.List className={cx(classes.scrollArea, classes.tabs)}>
         {Object.keys(opts).map((key) => {
-          console.log(key === activePath);
           return (
             <Link href={`${baseUrl}${opts[key].url}`} passHref key={key}>
               <Anchor variant="text">
