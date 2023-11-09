@@ -49,6 +49,7 @@ const modelFilterSchema = z.object({
   view: viewModeSchema.default('feed'),
   supportsGeneration: z.boolean().optional(),
   followed: z.boolean().optional(),
+  fileFormats: z.enum(constants.modelFileFormats).array().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;

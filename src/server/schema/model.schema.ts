@@ -91,6 +91,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   followed: z.boolean().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
+  fileFormats: z.enum(constants.modelFileFormats).array().optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
