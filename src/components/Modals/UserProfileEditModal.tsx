@@ -396,6 +396,7 @@ const { openModal, Modal } = createContextModal({
             previewWidth={constants.profile.coverImageWidth}
           />
           <InputTextArea
+            autosize
             name="message"
             description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"
             maxLength={constants.profile.messageMaxLength}
@@ -420,6 +421,7 @@ const { openModal, Modal } = createContextModal({
                 </Text>
               </Group>
             }
+            autosize
             maxLength={constants.profile.bioMaxLength}
           />
           <InputText

@@ -79,7 +79,7 @@ export function HomeStyleSegmentedControl({
     label: (
       <Link href={value.url} passHref>
         <Anchor variant="text">
-          <Group align="center" spacing={8} onClick={() => onChange(value)} noWrap>
+          <Group align="center" spacing={8} noWrap>
             <ThemeIcon
               size={30}
               color={activePath === key ? theme.colors.dark[7] : 'transparent'}
@@ -125,6 +125,6 @@ type DataItem = {
 type Props = {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   value: string;
-  onChange: (item: DataItem) => void;
+  onChange?: (item: DataItem) => void;
   data: Record<string, DataItem>;
 } & Omit<SegmentedControlProps, 'data' | 'value' | 'onChange'>;

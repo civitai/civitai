@@ -219,7 +219,7 @@ export const constants = {
     mobileCoverImageAspectRatio: 4 / 17,
     coverImageHeight: 240,
     coverImageWidth: 816,
-    showcaseItemsLimit: 15,
+    showcaseItemsLimit: 32,
     bioMaxLength: 400,
     messageMaxLength: 1200,
     locationMaxLength: 30,

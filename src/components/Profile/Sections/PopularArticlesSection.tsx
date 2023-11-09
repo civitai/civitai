@@ -14,7 +14,7 @@ import { Button, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import Link from 'next/link';
 
-const MAX_ARTICLES_DISPLAY = 8;
+const MAX_ARTICLES_DISPLAY = 32;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
     delay: 100,

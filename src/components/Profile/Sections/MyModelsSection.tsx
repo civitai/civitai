@@ -15,7 +15,7 @@ import { Button, Loader, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import Link from 'next/link';
 
-const MAX_MODELS_DISPLAY = 14; // 2 rows of 7
+const MAX_MODELS_DISPLAY = 32; // 2 rows of 7
 
 export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -45,7 +45,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
 
   const { classes, cx } = useProfileSectionStyles({
     count: models.length,
-    rowCount: 3,
+    rowCount: 2,
     widthGrid: '280px',
   });
 
@@ -58,7 +58,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isLoading || !inView ? (
-        <ProfileSectionPreview />
+        <ProfileSectionPreview rowCount={2} />
       ) : (
         <ProfileSection
           title="Models"

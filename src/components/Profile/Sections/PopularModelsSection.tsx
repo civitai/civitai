@@ -13,7 +13,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import Link from 'next/link';
 import { Button, Text } from '@mantine/core';
 
-const POPULAR_MODELS_DISPLAY = 24;
+const POPULAR_MODELS_DISPLAY = 32;
 
 export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -29,7 +29,11 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
     { keepPreviousData: true, enabled: inView }
   );
 
-  const { classes } = useProfileSectionStyles({ count: models.length });
+  const { classes } = useProfileSectionStyles({
+    count: models.length,
+    rowCount: 2,
+    widthGrid: '280px',
+  });
 
   const isNullState = !isLoading && !models.length;
 
@@ -40,7 +44,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isLoading || !inView ? (
-        <ProfileSectionPreview />
+        <ProfileSectionPreview rowCount={2} />
       ) : (
         <ProfileSection
           title="Most popular models"
@@ -58,7 +62,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
             </Link>
           }
         >
-          <div className={classes.scrollGrid}>
+          <div className={classes.grid}>
             {models.map((model) => (
               <ModelCard data={model} key={model.id} />
             ))}

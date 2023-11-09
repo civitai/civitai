@@ -15,7 +15,7 @@ import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.ut
 import { ImageCard } from '~/components/Cards/ImageCard';
 import Link from 'next/link';
 
-const MAX_IMAGES_DISPLAY = 14; // 2 rows of 7
+const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
 export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -60,7 +60,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
       {isLoading || !inView ? (
-        <ProfileSectionPreview />
+        <ProfileSectionPreview rowCount={2} />
       ) : (
         <ProfileSection
           title="Images"

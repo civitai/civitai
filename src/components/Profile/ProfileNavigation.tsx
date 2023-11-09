@@ -100,44 +100,36 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     { url: string; icon: React.ReactNode; label?: string; count?: number | string }
   > = {
     [overviewPath]: {
-      url: '/',
+      url: `${baseUrl}/`,
       icon: <IconAssembly />,
       label: 'Overview',
     },
     models: {
-      url: `/models`,
+      url: `${baseUrl}/models`,
       icon: <IconCategory />,
       count: numberWithCommas(userOverview?.modelCount),
     },
     posts: {
-      url: `/posts`,
+      url: `${baseUrl}/posts`,
       icon: <IconLayoutList />,
       count: numberWithCommas(userOverview?.postCount),
     },
     images: {
-      url: `/images`,
+      url: `${baseUrl}/images`,
       icon: <IconPhoto />,
       count: numberWithCommas(userOverview?.imageCount),
     },
     articles: {
-      url: `/articles`,
+      url: `${baseUrl}/articles`,
       icon: <IconPencilMinus />,
       count: numberWithCommas(userOverview?.articleCount),
     },
     collections: {
-      url: `/collections`,
+      url: `${baseUrl}/collections`,
       icon: <IconPlaylistAdd />,
       count: numberWithCommas(userOverview?.collectionCount),
     },
   };
 
-  return (
-    <HomeStyleSegmentedControl
-      data={opts}
-      value={activePath}
-      onChange={({ url }) => {
-        router.push(`${baseUrl}${url}`);
-      }}
-    />
-  );
+  return <HomeStyleSegmentedControl data={opts} value={activePath} />;
 };
