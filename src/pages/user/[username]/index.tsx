@@ -129,7 +129,7 @@ function ProfileOverview() {
 
   if (isLoading || isLoadingOverview) {
     return (
-      <Center>
+      <Center mt="md">
         <Loader />
       </Center>
     );
