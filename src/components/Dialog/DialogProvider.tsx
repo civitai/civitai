@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import OneKeyMap from '@essentials/one-key-map';
+import trieMemoize from 'trie-memoize';
 
 type DialogState = {
   opened: boolean;
@@ -40,8 +42,12 @@ export const DialogProvider = () => {
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <DialogProviderInner key={i} dialog={dialog} />
+        <div key={dialog.id.toString()}>{createRenderElement(dialog)}</div>
       ))}
     </>
   );
 };
+
+const createRenderElement = trieMemoize([WeakMap], (dialog) => (
+  <DialogProviderInner dialog={dialog} />
+));
