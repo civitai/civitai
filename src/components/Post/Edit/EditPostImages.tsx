@@ -126,7 +126,7 @@ function ImageController({
     useCallback((state) => state.pending[id] ?? { attempts: 0, success: false }, [id])
   );
   const isBlocked = data?.ingestion === ImageIngestionStatus.Blocked;
-  const isLoading = pending.attempts < 5 && !pending.success;
+  const isLoading = pending.attempts < 30 && !pending.success;
   const loadingFailed = !isLoading && !data;
 
   return (

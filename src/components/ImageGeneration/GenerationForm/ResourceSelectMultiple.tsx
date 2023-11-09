@@ -1,4 +1,4 @@
-import { Button, Input, InputWrapperProps, Stack } from '@mantine/core';
+import { Button, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
@@ -57,28 +57,46 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
       if (_values.length !== value.length) onChange?.(_values.length ? _values : undefined);
     }, [value]); //eslint-disable-line
 
+    // Made with copilot :^) -Manuel
+    const sortedGroups = [...groups].sort((a, b) => {
+      const aIndex = options.types?.indexOf(a.type);
+      const bIndex = options.types?.indexOf(b.type);
+      if (aIndex === undefined || bIndex === undefined) return 0;
+      return aIndex - bIndex;
+    });
+
     return (
       <Input.Wrapper {...inputWrapperProps} ref={ref}>
-        <Stack spacing="xs">
-          {groups.map((group) => {
+        <Stack spacing="md">
+          {sortedGroups.map((group, index) => {
             return (
-              <Input.Wrapper key={group.type} label={group.label}>
-                <Stack spacing={4}>
-                  {group.resources.map((resource) => (
-                    <ResourceSelectCard
-                      key={resource.id}
-                      resource={resource}
-                      onUpdate={handleUpdate}
-                      onRemove={handleRemove}
-                    />
-                  ))}
-                </Stack>
-              </Input.Wrapper>
+              <React.Fragment key={group.type}>
+                {index !== 0 && <Divider />}
+                <Input.Wrapper
+                  label={
+                    <Text color="dark.2" weight={590}>
+                      {group.label}
+                    </Text>
+                  }
+                  labelProps={{ mb: 8 }}
+                >
+                  <Stack spacing={8}>
+                    {group.resources.map((resource) => (
+                      <ResourceSelectCard
+                        key={resource.id}
+                        resource={resource}
+                        onUpdate={handleUpdate}
+                        onRemove={handleRemove}
+                      />
+                    ))}
+                  </Stack>
+                </Input.Wrapper>
+              </React.Fragment>
             );
           })}
           {canAdd && (
             <Button
-              variant="default"
+              variant="light"
               leftIcon={<IconPlus size={18} />}
               onClick={() =>
                 openResourceSelectModal({

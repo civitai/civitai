@@ -14,6 +14,7 @@ import {
   Divider,
   createStyles,
   ScrollArea,
+  Badge,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconArrowAutofitDown } from '@tabler/icons-react';
@@ -28,7 +29,6 @@ import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/Res
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   InputNumber,
   InputNumberSlider,
@@ -48,7 +48,7 @@ import {
 } from '~/server/common/constants';
 import { GenerateFormModel, generationFormShapeSchema } from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { generationStore } from '~/store/generation.store';
+import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -58,6 +58,9 @@ import {
   usePollGenerationRequests,
 } from '../utils/generationRequestHooks';
 import useIsClient from '~/hooks/useIsClient';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { calculateGenerationBill } from '~/server/common/generation';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function GenerateFormView({
   form,
@@ -72,9 +75,11 @@ export function GenerateFormView({
 }) {
   const isClient = useIsClient();
   const { classes } = useStyles();
-  const currentUser = useCurrentUser();
   const { formState } = form;
   const { isSubmitting } = formState;
+  const features = useFeatureFlags();
+
+  const type = useGenerationStore((state) => state.data?.type);
 
   // Might be worth moving this to a context provider or zustand store
   const { requests } = useGetGenerationRequests();
@@ -108,13 +113,15 @@ export function GenerateFormView({
   };
   // #endregion
 
-  // const [baseModel, aspectRatio, steps, quantity] = form.watch([
-  //   'baseModel',
-  //   'aspectRatio',
-  //   'steps',
-  //   'quantity',
-  // ]);
-  // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+  const [baseModel, aspectRatio, steps, quantity] = form.watch([
+    'baseModel',
+    'aspectRatio',
+    'steps',
+    'quantity',
+  ]);
+  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+
+  const additionalResources = form.watch('resources');
 
   return (
     <PersistentForm
@@ -129,37 +136,67 @@ export function GenerateFormView({
       <BaseModelProvider getBaseModels={getBaseModels}>
         {({ baseModel, baseModels }) => {
           const isSDXL = baseModel === 'SDXL';
-          const disableGenerateButton =
-            reachedRequestLimit || (isSDXL && !(currentUser?.isMember || currentUser?.isModerator));
+          const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
           const [supportedBaseModel] = baseModels;
 
           return (
             <Stack spacing={0} h="100%">
               <ScrollArea sx={{ flex: 1 }}>
                 <Stack p="md" pb={0}>
+                  {type === 'remix' && (
+                    <DismissibleAlert
+                      id="image-gen-params"
+                      content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
+                    />
+                  )}
+                  <InputResourceSelect
+                    name="model"
+                    label="Model"
+                    labelProps={{ mb: 5, style: { fontWeight: 590 } }}
+                    buttonLabel="Add Model"
+                    withAsterisk
+                    options={{
+                      type: ModelType.Checkpoint,
+                      canGenerate: true,
+                    }}
+                    allowRemove={false}
+                  />
+                  <PersistentAccordion
+                    storeKey="generation-form-resources"
+                    classNames={{
+                      item: classes.accordionItem,
+                      control: classes.accordionControl,
+                      content: classes.accordionContent,
+                    }}
+                    variant="contained"
+                  >
+                    <Accordion.Item value="resources">
+                      <Accordion.Control>
+                        <Group spacing={4}>
+                          <Text size="sm" weight={590}>
+                            Additional Resources
+                          </Text>
+                          {!!additionalResources?.length && (
+                            <Badge style={{ fontWeight: 590 }}>{additionalResources.length}</Badge>
+                          )}
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <InputResourceSelectMultiple
+                          name="resources"
+                          limit={9}
+                          buttonLabel="Add additional resource"
+                          options={{
+                            baseModel: supportedBaseModel,
+                            types: getGenerationConfig(baseModel).additionalResourceTypes,
+                            canGenerate: true,
+                          }}
+                        />
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  </PersistentAccordion>
                   <Card {...sharedCardProps}>
                     <Stack>
-                      <InputResourceSelect
-                        name="model"
-                        label="Model"
-                        buttonLabel="Add Model"
-                        withAsterisk
-                        options={{
-                          baseModel: supportedBaseModel,
-                          type: ModelType.Checkpoint,
-                          canGenerate: true,
-                        }}
-                      />
-                      <InputResourceSelectMultiple
-                        name="resources"
-                        limit={9}
-                        buttonLabel="Add additional resource"
-                        options={{
-                          baseModel: supportedBaseModel,
-                          types: getGenerationConfig(baseModel).additionalResourceTypes,
-                          canGenerate: true,
-                        }}
-                      />
                       <Stack spacing={0}>
                         <InputTextArea
                           name="prompt"
@@ -241,7 +278,7 @@ export function GenerateFormView({
                                 <InputNumberSlider
                                   name="steps"
                                   label="Steps"
-                                  min={1}
+                                  min={10}
                                   max={generation.maxValues.steps}
                                   sliderProps={sharedSliderProps}
                                   numberProps={sharedNumberProps}
@@ -276,18 +313,16 @@ export function GenerateFormView({
                                   numberProps={sharedNumberProps}
                                 />
                               )}
-                              {!isSDXL && (
-                                <InputResourceSelect
-                                  name="vae"
-                                  label={getDisplayName(ModelType.VAE)}
-                                  buttonLabel="Add VAE"
-                                  options={{
-                                    baseModel: supportedBaseModel,
-                                    type: ModelType.VAE,
-                                    canGenerate: true,
-                                  }}
-                                />
-                              )}
+                              <InputResourceSelect
+                                name="vae"
+                                label={getDisplayName(ModelType.VAE)}
+                                buttonLabel="Add VAE"
+                                options={{
+                                  baseModel: supportedBaseModel,
+                                  type: ModelType.VAE,
+                                  canGenerate: true,
+                                }}
+                              />
                             </Stack>
                           </Accordion.Panel>
                         </Accordion.Item>
@@ -323,15 +358,27 @@ export function GenerateFormView({
                     </Stack>
                   </Card>
                   <LoginRedirect reason="image-gen" returnUrl="/generate">
-                    <Button
-                      type="submit"
-                      size="lg"
-                      loading={isSubmitting || loading}
-                      className={classes.generateButtonButton}
-                      disabled={disableGenerateButton}
-                    >
-                      Generate
-                    </Button>
+                    {isSDXL ? (
+                      <BuzzTransactionButton
+                        type="submit"
+                        size="lg"
+                        label="Generate"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                        buzzAmount={totalCost}
+                      />
+                    ) : (
+                      <Button
+                        type="submit"
+                        size="lg"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                      >
+                        Generate
+                      </Button>
+                    )}
                   </LoginRedirect>
                   {/* <Tooltip label="Reset" color="dark" withArrow> */}
                   <Button
@@ -354,28 +401,6 @@ export function GenerateFormView({
                 </Text>
               </Stack>
               <GenerationStatusMessage />
-              {isSDXL && (
-                <DismissibleAlert
-                  id="sdxl-preview"
-                  title="SDXL Generation Preview"
-                  content={
-                    <Text>
-                      SDXL is currently in early preview. You must be{' '}
-                      <Text
-                        component="a"
-                        td="underline"
-                        href="/pricing"
-                        variant="link"
-                        target="_blank"
-                      >
-                        a Supporter
-                      </Text>{' '}
-                      to generate SDXL images. LoRA support has been postponed. Stay tuned for more
-                      updates.
-                    </Text>
-                  }
-                />
-              )}
             </Stack>
           );
         }}
@@ -384,7 +409,7 @@ export function GenerateFormView({
   );
 }
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generateButtonContainer: {
     width: '100%',
@@ -439,10 +464,40 @@ const useStyles = createStyles(() => ({
     marginBottom: 5,
     alignItems: 'center',
   },
+  accordionItem: {
+    '&:first-of-type': {
+      borderTopLeftRadius: '8px',
+      borderTopRightRadius: '8px',
+    },
+
+    '&:last-of-type': {
+      borderBottomLeftRadius: '8px',
+      borderBottomRightRadius: '8px',
+    },
+
+    '&[data-active]': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+    },
+  },
+  accordionControl: {
+    padding: '8px 8px 8px 12px',
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+
+    '&[data-active]': {
+      borderRadius: '0 !important',
+      borderBottom: `1px solid ${
+        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+      }`,
+    },
+  },
+  accordionContent: {
+    padding: '8px 12px 12px 12px',
+  },
 }));
 
 const sharedCardProps: Omit<CardProps, 'children'> = {
   withBorder: true,
+  radius: 'md',
 };
 
 const sharedSliderProps: SliderProps = {

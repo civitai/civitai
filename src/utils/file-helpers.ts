@@ -20,12 +20,19 @@ const unscannedFile = {
 };
 
 export function prepareFile(file: ModelFileInput) {
+  let format: ModelFileFormat = 'Other';
+  if (file.type === 'Model') {
+    const includeFileFormat = file.name.endsWith('.zip');
+    if (includeFileFormat && file.metadata?.format) format = file.metadata.format;
+    else format = getModelFileFormat(file.name);
+  }
+
   return {
     ...file,
     ...(file.id ? {} : unscannedFile), // Only set unscannedFile on new files
     metadata: {
       ...file.metadata,
-      format: file.type === 'Model' ? getModelFileFormat(file.name) : 'Other',
+      format,
     },
   };
 }

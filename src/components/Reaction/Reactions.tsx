@@ -33,6 +33,7 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
 
 const availableReactions: Partial<Record<ToggleReactionInput['entityType'], ReviewReactions[]>> = {
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
+  bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
 };
 
 export function PostReactions({
@@ -102,7 +103,7 @@ export function Reactions({
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
 
-  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
+  const supportsBuzzTipping = ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -128,7 +129,7 @@ export function Reactions({
             compact
             onClick={() => setShowAll((s) => !s)}
           >
-            <Group spacing={2}>
+            <Group spacing={2} noWrap>
               <IconPlus size={16} stroke={2.5} />
               <IconMoodSmile size={18} stroke={2.5} />
             </Group>

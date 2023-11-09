@@ -65,7 +65,7 @@ import { IconTagOff } from '@tabler/icons-react';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { usePrevious } from '@mantine/hooks';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -97,7 +97,7 @@ const searchClient: InstantSearchProps['searchClient'] = {
 };
 
 const ResourceSelectContext = React.createContext<{
-  onSelect: (value: Generation.Resource) => void;
+  onSelect: (value: Generation.Resource & { image: ResourceSelectData['image'] }) => void;
   canGenerate?: boolean;
 } | null>(null);
 
@@ -113,6 +113,7 @@ export default function ResourceSelectModal({
   innerProps: { notIds = [], onSelect, options = {} },
 }: ContextModalProps<ResourceSelectModalProps>) {
   const isMobile = useIsMobile();
+  const features = useFeatureFlags();
 
   const { baseModel, types, canGenerate } = options;
   const baseModelSet = baseModel
@@ -131,6 +132,11 @@ export default function ResourceSelectModal({
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
+  if (!features.sdxlGeneration) {
+    for (const baseModel in baseModelSets.SDXL) {
+      exclude.push(`NOT version.baseModel = ${baseModel}`);
+    }
+  }
 
   const handleSelect = (value: Generation.Resource) => {
     onSelect(value);
@@ -302,6 +308,7 @@ function ResourceSelectCard({ index, data }: { index: number; data: ResourceSele
       modelId: data.id,
       modelName: data.name,
       modelType: data.type,
+      image: data.image,
       strength: 1, // TODO - use version recommendations or default to 1
     });
   };

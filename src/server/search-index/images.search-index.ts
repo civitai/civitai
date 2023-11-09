@@ -29,6 +29,7 @@ import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.sc
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { chunk } from 'lodash-es';
+import { withRetries } from '~/server/utils/errorHandling';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -169,30 +170,32 @@ const onFetchItemsToIndex = async ({
   take?: number;
   isIndexUpdate?: boolean;
 }) => {
-  const offset = queryProps.cursor || -1;
-  console.log(
-    `onFetchItemsToIndex :: fetching starting for ${indexName} range (Ids):`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    ' filters:',
-    whereOr
-  );
+  return withRetries(
+    async () => {
+      const offset = queryProps.cursor || -1;
+      console.log(
+        `onFetchItemsToIndex :: fetching starting for ${indexName} range (Ids):`,
+        offset,
+        offset + READ_BATCH_SIZE - 1,
+        ' filters:',
+        whereOr
+      );
 
-  const WHERE = [
-    Prisma.sql`i."id" > ${offset}`,
-    Prisma.sql`i."postId" IS NOT NULL`,
-    Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
-    Prisma.sql`i."tosViolation" = false`,
-    Prisma.sql`i."type" = 'image'`,
-    Prisma.sql`i."needsReview" IS NULL`,
-    Prisma.sql`p."publishedAt" IS NOT NULL`,
-  ];
+      const WHERE = [
+        Prisma.sql`i."id" > ${offset}`,
+        Prisma.sql`i."postId" IS NOT NULL`,
+        Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+        Prisma.sql`i."tosViolation" = false`,
+        Prisma.sql`i."type" = 'image'`,
+        Prisma.sql`i."needsReview" IS NULL`,
+        Prisma.sql`p."publishedAt" IS NOT NULL`,
+      ];
 
-  if (whereOr) {
-    WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
-  }
+      if (whereOr) {
+        WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
+      }
 
-  const images = await db.$queryRaw<ImageForSearchIndex[]>`
+      const images = await db.$queryRaw<ImageForSearchIndex[]>`
   WITH target AS MATERIALIZED (
     SELECT
     i."id",
@@ -283,32 +286,32 @@ const onFetchItemsToIndex = async ({
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t`;
 
-  // Avoids hitting the DB without data.
-  if (images.length === 0) {
-    return [];
-  }
+      // Avoids hitting the DB without data.
+      if (images.length === 0) {
+        return [];
+      }
 
-  const rawTags = await db.imageTag.findMany({
-    where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
-    select: {
-      imageId: true,
-      tagId: true,
-      tagName: true,
-    },
-  });
+      const rawTags = await db.imageTag.findMany({
+        where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
+        select: {
+          imageId: true,
+          tagId: true,
+          tagName: true,
+        },
+      });
 
-  console.log(
-    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    'filters:',
-    whereOr
-  );
+      console.log(
+        `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
+        offset,
+        offset + READ_BATCH_SIZE - 1,
+        'filters:',
+        whereOr
+      );
 
-  // No need for this to ever happen during reset or re-index.
-  if (isIndexUpdate) {
-    // Determine if we need to update the model index based on any of these images
-    const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
+      // No need for this to ever happen during reset or re-index.
+      if (isIndexUpdate) {
+        // Determine if we need to update the model index based on any of these images
+        const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
     SELECT
       m.id "modelId"
     FROM "Image" i
@@ -318,35 +321,39 @@ const onFetchItemsToIndex = async ({
     WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
   `;
 
-    const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
+        const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
 
-    await modelsSearchIndex.queueUpdate(
-      affectedModelIds.map((id) => ({
-        id: id,
-        action: SearchIndexUpdateQueueAction.Update,
-      }))
-    );
-  }
+        await modelsSearchIndex.queueUpdate(
+          affectedModelIds.map((id) => ({
+            id: id,
+            action: SearchIndexUpdateQueueAction.Update,
+          }))
+        );
+      }
 
-  const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
-    const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
-    const tags = rawTags
-      .filter((rt) => rt.imageId === imageRecord.id)
-      .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
+      const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
+        const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
+        const tags = rawTags
+          .filter((rt) => rt.imageId === imageRecord.id)
+          .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
 
-    return {
-      ...imageRecord,
-      meta: parsed.success ? parsed.data : {},
-      user: {
-        ...user,
-        cosmetics: (cosmetics || []).map((cosmetic) => ({ cosmetic })),
-      },
-      tags,
-      reactions: [],
-    };
-  });
+        return {
+          ...imageRecord,
+          meta: parsed.success ? parsed.data : {},
+          user: {
+            ...user,
+            cosmetics: (cosmetics || []).map((cosmetic) => ({ cosmetic })),
+          },
+          tags,
+          reactions: [],
+        };
+      });
 
-  return indexReadyRecords;
+      return indexReadyRecords;
+    },
+    3,
+    1500
+  );
 };
 
 const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {

@@ -294,8 +294,8 @@ export function ModelCard({ data }: Props) {
                                         e.preventDefault();
                                         e.stopPropagation();
                                         generationPanel.open({
-                                          type: 'model',
-                                          id: data.id,
+                                          type: 'modelVersion',
+                                          id: data.version.id,
                                         });
                                       }}
                                     >
@@ -341,6 +341,8 @@ export function ModelCard({ data }: Props) {
                                       placeholder="empty"
                                       className={classes.image}
                                       loading="lazy"
+                                      wrapperProps={{ style: { height: '100%' } }}
+                                      contain
                                     />
                                   ) : (
                                     <MediaHash {...data.image} />

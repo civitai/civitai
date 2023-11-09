@@ -52,6 +52,7 @@ import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvide
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
+import { IsClientProvider } from '~/providers/IsClientProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -141,7 +142,7 @@ function MyApp(props: CustomAppProps) {
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
   ) : (
-    <>
+    <IsClientProvider>
       <ClientHistoryStore />
       <RegisterCatchNavigation />
       <RouterTransition />
@@ -174,7 +175,7 @@ function MyApp(props: CustomAppProps) {
           </SignalProvider>
         </FeatureFlagsProvider>
       </SessionProvider>
-    </>
+    </IsClientProvider>
   );
 
   return (

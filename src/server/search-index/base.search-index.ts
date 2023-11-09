@@ -1,7 +1,7 @@
 import { getJobDate } from '~/server/jobs/job';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { swapIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, swapIndex } from '~/server/meilisearch/util';
 import { chunk } from 'lodash-es';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
@@ -12,12 +12,14 @@ export function createSearchIndexUpdateProcessor({
   onIndexUpdate,
   onIndexSetup,
   updateInterval = DEFAULT_UPDATE_INTERVAL,
+  primaryKey = 'id',
 }: {
   indexName: string;
   swapIndexName: string;
   onIndexUpdate: SearchIndexProcessorContext;
   onIndexSetup: SearchIndexSetupProcessorContext;
   updateInterval?: number;
+  primaryKey?: string;
 }) {
   return {
     indexName,
@@ -56,7 +58,8 @@ export function createSearchIndexUpdateProcessor({
      */
     async reset() {
       // First, setup and init both indexes - Swap requires both indexes to be created:
-      await onIndexSetup({ indexName });
+      // In order to swap, the base index must exist. because of this, we need to create or get it.
+      await getOrCreateIndex(indexName, { primaryKey });
       await onIndexSetup({ indexName: swapIndexName });
 
       // Now, fill in the "swap" with new content:

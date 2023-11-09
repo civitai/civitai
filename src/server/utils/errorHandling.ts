@@ -144,9 +144,22 @@ export function handleLogError(e: Error) {
   else console.error(error);
 }
 
-export function withRetries<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+async function sleep(timeout: number) {
+  return new Promise((resolve) => setTimeout(resolve, timeout));
+}
+
+export function withRetries<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  retryTimeout?: number
+): Promise<T> {
   return fn().catch((error: Error) => {
     if (retries > 0) {
+      if (retryTimeout) {
+        return sleep(retryTimeout).then(() => {
+          return withRetries(fn, retries - 1, retryTimeout);
+        });
+      }
       return withRetries(fn, retries - 1);
     } else {
       throw error;

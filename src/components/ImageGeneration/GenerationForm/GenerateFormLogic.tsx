@@ -18,6 +18,10 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
 
+type GenerationMaxValueKey = keyof typeof generation.maxValues;
+const maxValueKeys = Object.keys(generation.maxValues);
+const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
+
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
 
@@ -26,6 +30,8 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     mode: 'onSubmit',
     defaultValues: {
       ...generation.defaultValues,
+      // Doing it this way to keep ts happy
+      model: { ...generation.defaultValues.model, trainedWords: [] },
       nsfw: currentUser?.showNsfw,
     },
     shouldUnregister: false,
@@ -40,15 +46,19 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   });
 
   const runData = useGenerationStore((state) => state.data);
+  const opened = useGenerationStore((state) => state.opened);
 
   useEffect(() => {
     if (runData) {
       const { data, type } = runData;
       const previousData = form.getValues();
       const getFormData = () => {
+        // Omitting model to keep ts happy
+        const { model, ...defaultValues } = generation.defaultValues;
+
         switch (type) {
           case 'remix': // 'remix' will return the formatted generation data as is
-            return { ...generation.defaultValues, ...data };
+            return { ...defaultValues, ...data };
           case 'run': // 'run' will keep previous relevant data and add new resources to existing resources
             const baseModel = data.baseModel as BaseModelSetType | undefined;
             const resources = (previousData.resources ?? []).concat(data.resources ?? []);
@@ -86,31 +96,55 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         when setting data, any keys that don't have data will be set to undefined
         this is necessary for 'remix' to work properly.
       */
-      const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
-      if (!formData.model)
-        formData.model = {
-          id: 128713,
-          name: '8',
-          trainedWords: [],
-          modelId: 4384,
-          modelName: 'DreamShaper',
-          modelType: 'Checkpoint',
-          baseModel: 'SD 1.5',
-          strength: 1,
-        };
+      if (!formData.model) {
+        // TODO.generation: We need a better way to handle these cases, having hardcoded values
+        // is not ideal and may lead to bugs in the future.
+        const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
+        formData.model = hasSdxlResources
+          ? {
+              id: 128078,
+              name: 'v1.0 VAE fix',
+              trainedWords: [],
+              modelId: 101055,
+              modelName: 'SD XL',
+              modelType: 'Checkpoint',
+              baseModel: 'SDXL 1.0',
+              strength: 1,
+            }
+          : {
+              id: 128713,
+              name: '8',
+              trainedWords: [],
+              modelId: 4384,
+              modelName: 'DreamShaper',
+              modelType: 'Checkpoint',
+              baseModel: 'SD 1.5',
+              strength: 1,
+            };
+      }
       for (const item of keys) {
         const key = item as keyof typeof formData;
         if (staticKeys.includes(key)) continue; // don't overwrite nsfw
-        form.setValue(key, formData[key]);
+
+        // Make sure we don't exceed max values
+        if (maxValueKeys.includes(key))
+          form.setValue(
+            key,
+            Math.min(
+              formData[key as GenerationMaxValueKey] ?? 0,
+              generation.maxValues[key as GenerationMaxValueKey] ?? 0
+            )
+          );
+        else form.setValue(key, formData[key]);
       }
     }
 
     return () => {
-      generationStore.clearData();
+      if (!opened) generationStore.clearData();
     };
-  }, [runData]); //eslint-disable-line
+  }, [runData, opened]); //eslint-disable-line
 
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {

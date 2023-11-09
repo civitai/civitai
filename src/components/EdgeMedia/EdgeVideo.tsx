@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 type VideoProps = React.DetailedHTMLProps<
   React.VideoHTMLAttributes<HTMLVideoElement>,
   HTMLVideoElement
-> & { wrapperProps?: React.ComponentPropsWithoutRef<'div'> };
+> & { wrapperProps?: React.ComponentPropsWithoutRef<'div'>; contain?: boolean };
 
 export function EdgeVideo({
   src,
@@ -13,6 +13,7 @@ export function EdgeVideo({
   controls,
   style,
   wrapperProps,
+  contain,
   ...props
 }: VideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null);
@@ -31,7 +32,7 @@ export function EdgeVideo({
   return (
     // extra div wrapper to prevent positioning errors of parent components that make their child absolute
     <div {...wrapperProps}>
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', height: contain ? '100%' : 'auto' }}>
         <video
           ref={ref}
           muted={muted}

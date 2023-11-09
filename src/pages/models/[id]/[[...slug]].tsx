@@ -972,14 +972,6 @@ export default function ModelDetailsV2({
           ownerId={model.user.id}
         />
       )}
-      {/* TODO.manuel: Move this to the ModelVersionDetails */}
-      {/* {canLoadBelowTheFold && model.supportsRecommendedResources && (
-        <RecommendedResources
-          sourceId={latestVersion.id}
-          label="Recommended Resources"
-          ownerId={model.user.id}
-        />
-      )} */}
       {canLoadBelowTheFold &&
         (!model.locked ? (
           <Container size="xl" my="xl">

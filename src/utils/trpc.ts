@@ -6,6 +6,7 @@ import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
 import { isAuthed } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { env } from '~/env/client.mjs';
 
 const url = '/api/trpc';
 
@@ -34,7 +35,9 @@ export const trpc = createTRPCNext<AppRouter>({
       links: [
         authedCacheBypassLink,
         loggerLink({
-          enabled: (opts) => isDev || (opts.direction === 'down' && opts.result instanceof Error),
+          enabled: (opts) =>
+            (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
+            (opts.direction === 'down' && opts.result instanceof Error),
         }),
         splitLink({
           condition: (op) => op.context.skipBatch === true,

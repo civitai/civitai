@@ -77,7 +77,7 @@ export const constants = {
   ],
   trainingModelTypes: ['Character', 'Style', 'Concept'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
-  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
+  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Core ML', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],
@@ -226,6 +226,9 @@ export const constants = {
   },
 } as const;
 
+export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers'];
+export type ZipModelFileType = (typeof zipModelFileTypes)[number];
+
 export const POST_IMAGE_LIMIT = 20;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
@@ -321,6 +324,15 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+    model: {
+      id: 128713,
+      name: '8',
+      modelId: 4384,
+      modelName: 'DreamShaper',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 1.5',
+      strength: 1,
+    },
   },
   maxValues: {
     seed: 4294967295,
@@ -328,27 +340,23 @@ export const generation = {
     quantity: 10,
     clipSkip: 10,
   },
-  settingsCost: {
-    base: 0,
-    quantity: 1,
-    steps: 40,
-    width: 512,
-    height: 512,
-    baseModel: {
-      SD1: 1,
-      SDXL: 8,
-    },
-  },
 } as const;
 
 export const generationConfig = {
   SD1: {
-    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion, ModelType.LoCon],
+    additionalResourceTypes: [ModelType.LORA, ModelType.LoCon, ModelType.TextualInversion],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
       { label: 'Portrait', width: 512, height: 768 },
     ],
+    costs: {
+      base: 0,
+      quantity: 1,
+      steps: 40,
+      width: 512,
+      height: 512,
+    },
   },
   SDXL: {
     additionalResourceTypes: [ModelType.LORA],
@@ -357,6 +365,13 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
+    costs: {
+      base: 4,
+      quantity: 1,
+      steps: 40,
+      width: 1024,
+      height: 1024,
+    },
   },
 };
 
