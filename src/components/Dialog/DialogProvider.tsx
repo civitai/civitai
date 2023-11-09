@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
-import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 
 type DialogState = {

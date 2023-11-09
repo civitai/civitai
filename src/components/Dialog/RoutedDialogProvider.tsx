@@ -3,6 +3,7 @@ import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
 import { dialogs } from './routed-dialog-registry';
 import {
+  setUsingNextRouter,
   getBrowserRouter,
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -13,19 +14,34 @@ type DialogKey = keyof typeof dialogs;
 export function RoutedDialogProvider() {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
-  const prevState = useRef<{ url: string; as: string }>();
+  const prevState = useRef<{ url: string; as: string; pathname: string }>();
 
   useEffect(() => {
     router.beforePopState((state) => {
       const previous = prevState.current;
-      if (state.url.includes('dialog') || previous?.url.includes('dialog')) return false;
+      setUsingNextRouter(true);
+
+      // it's magic...
+      if (!state.url.includes('dialog') && router.pathname !== state.url.split('?')[0]) {
+        state.options.scroll = false;
+        return true;
+      }
+      if (state.url.includes('dialog') || previous?.url.includes('dialog')) {
+        setUsingNextRouter(false);
+        return false;
+      }
+      state.options.scroll = undefined;
       return true;
     });
   }, [router]);
 
   useEffect(() => {
     const names = ([] as DialogKey[]).concat((browserRouter.query.dialog as any) ?? []);
-    prevState.current = { url: history.state.url, as: history.state.as };
+    prevState.current = {
+      url: history.state.url,
+      as: history.state.as,
+      pathname: history.state.url.split('?')[0],
+    };
     const openDialogs = useDialogStore
       .getState()
       .dialogs.filter((x) => x.type === 'routed-dialog')
@@ -139,7 +155,7 @@ function resolveDialog<T extends DialogKey>(
       ...query,
       dialog: ([] as DialogKey[]).concat(query.dialog ?? []).concat(name),
     },
-    state
+    { ...state, as: typeof history !== 'undefined' ? history.state.as : undefined }
   ); // eslint-disable-line
 
   const [_url, _urlAs] = resolveHref(Router, url, true);

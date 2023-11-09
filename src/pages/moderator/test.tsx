@@ -1,7 +1,6 @@
 import { Box, Button, Container, Modal, Stack, Title } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
 import { useState } from 'react';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';

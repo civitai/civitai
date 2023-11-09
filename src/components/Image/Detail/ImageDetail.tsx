@@ -38,17 +38,19 @@ import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CollectionType, NsfwLevel } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { env } from '~/env/client.mjs';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import Link from 'next/link';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
   const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
+  const { query } = useBrowserRouter();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -133,9 +135,10 @@ export function ImageDetail() {
             >
               <Group position="apart" spacing={8}>
                 <Group spacing={8}>
-                  {image.postId && (
-                    <RoutedContextLink modal="postDetailModal" postId={image.postId}>
+                  {!query.postId && image.postId && (
+                    <Link href={`/posts/${image.postId}`} passHref>
                       <Button
+                        component="a"
                         size="md"
                         radius="xl"
                         color="gray"
@@ -147,7 +150,7 @@ export function ImageDetail() {
                           <Text size="xs">View post</Text>
                         </Group>
                       </Button>
-                    </RoutedContextLink>
+                    </Link>
                   )}
                   <Button
                     size="md"

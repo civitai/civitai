@@ -1,12 +1,15 @@
 import Router, { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef } from 'react';
 import { UrlObject } from 'url';
 import { resolveHref } from 'next/dist/shared/lib/router/router';
 import { QS } from '~/utils/qs';
 import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
+import { v4 as uuidv4 } from 'uuid';
 
 type Url = UrlObject | string;
+
+type BrowserRouterState = { asPath: string; query: Record<string, any> };
 
 const BrowserRouterContext = createContext<{
   asPath: string;
@@ -24,6 +27,7 @@ export const useBrowserRouter = () => {
 
 export function BrowserRouterProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const stateRef = useRef<BrowserRouterState>();
 
   const parseQuery = (state?: any) => {
     if (!state && typeof window === 'undefined') return {};
@@ -47,7 +51,8 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     const locationChangeFn = (e: Event) => {
       const event = e as CustomEvent;
       const state = event.detail[0];
-      setState({ asPath: state.as, query: parseQuery(state) });
+      stateRef.current = { asPath: state.as, query: parseQuery(state) };
+      if (!usingNextRouter) setState(stateRef.current);
     };
 
     addEventListener('popstate', popstateFn);
@@ -57,6 +62,27 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       removeEventListener('locationchange', locationChangeFn);
     };
   }, []);
+
+  // const handleRouteChangeStart = () => {
+
+  // };
+
+  const handleRouteChangeComplete = () => {
+    if (stateRef.current && stateRef.current?.asPath === history.state.as)
+      setState(stateRef.current);
+
+    setUsingNextRouter(false);
+  };
+
+  useEffect(() => {
+    // router.events.on('routeChangeStart', handleRouteChangeStart);
+    router.events.on('routeChangeComplete', handleRouteChangeComplete);
+
+    return () => {
+      // router.events.off('routeChangeStart', handleRouteChangeStart);
+      router.events.off('routeChangeComplete', handleRouteChangeComplete);
+    };
+  }, []); //eslint-disable-line
 
   return (
     <BrowserRouterContext.Provider value={{ asPath, query, ...browserRouterControls }}>
@@ -71,6 +97,7 @@ const goto = (type: 'replace' | 'push', url: Url, as?: Url) => {
 
   const historyState = {
     ...history.state,
+    // options: { ...history.state.options, key: uuidv4() },
     url: _url,
     as: _as,
   };
@@ -93,10 +120,15 @@ const useBrowserRouterState = create<{
   query?: Record<string, any>;
   setState: (args: { asPath?: string; query?: Record<string, any> }) => void;
 }>((set) => ({
-  setState: (args) => set(({ setState, ...state }) => ({ ...setState, ...args })),
+  setState: (args) => set(({ setState, ...state }) => ({ ...state, ...args })),
 }));
 
 export const getBrowserRouter = () => {
   const { query = Router.query, asPath = Router.asPath } = useBrowserRouterState.getState();
   return { query, asPath, ...browserRouterControls };
+};
+
+let usingNextRouter = false;
+export const setUsingNextRouter = (value: boolean) => {
+  usingNextRouter = value;
 };
