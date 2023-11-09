@@ -93,17 +93,30 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       */
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
-      if (!formData.model)
-        formData.model = {
-          id: 128713,
-          name: '8',
-          trainedWords: [],
-          modelId: 4384,
-          modelName: 'DreamShaper',
-          modelType: 'Checkpoint',
-          baseModel: 'SD 1.5',
-          strength: 1,
-        };
+      if (!formData.model) {
+        const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
+        formData.model = hasSdxlResources
+          ? {
+              id: 128078,
+              name: 'v1.0 VAE fix',
+              trainedWords: [],
+              modelId: 101055,
+              modelName: 'SD XL',
+              modelType: 'Checkpoint',
+              baseModel: 'SDXL',
+              strength: 1,
+            }
+          : {
+              id: 128713,
+              name: '8',
+              trainedWords: [],
+              modelId: 4384,
+              modelName: 'DreamShaper',
+              modelType: 'Checkpoint',
+              baseModel: 'SD 1.5',
+              strength: 1,
+            };
+      }
       for (const item of keys) {
         const key = item as keyof typeof formData;
         if (staticKeys.includes(key)) continue; // don't overwrite nsfw

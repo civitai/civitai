@@ -160,14 +160,14 @@ export function GenerateFormView({
                       canGenerate: true,
                     }}
                   />
-                  <Accordion
+                  <PersistentAccordion
+                    storeKey="generation-form-resources"
                     classNames={{
                       item: classes.accordionItem,
                       control: classes.accordionControl,
                       content: classes.accordionContent,
                     }}
                     variant="contained"
-                    defaultValue="resources"
                   >
                     <Accordion.Item value="resources">
                       <Accordion.Control>
@@ -193,7 +193,7 @@ export function GenerateFormView({
                         />
                       </Accordion.Panel>
                     </Accordion.Item>
-                  </Accordion>
+                  </PersistentAccordion>
                   <Card {...sharedCardProps}>
                     <Stack>
                       <Stack spacing={0}>

@@ -9,6 +9,7 @@ import {
 } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
+import { imageSchema } from './image.schema';
 
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -51,6 +52,7 @@ export const generationResourceSchema = z.object({
   strength: z.number().optional(),
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
+  image: imageSchema.optional(),
 
   // navigation props
   covered: z.boolean().optional(),

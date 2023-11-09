@@ -4,12 +4,12 @@ import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
-import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel } from '~/store/generation.store';
+import { GenerationResourceSchema } from '~/server/schema/generation.schema';
 
 type Props = {
-  resource: Generation.Resource;
-  onUpdate?: (value: Generation.Resource) => void;
+  resource: GenerationResourceSchema;
+  onUpdate?: (value: GenerationResourceSchema) => void;
   onRemove?: (id: number) => void;
 };
 
@@ -35,11 +35,11 @@ function CheckpointInfo({ resource, onRemove }: Props) {
                 </Text>
               </Group>
             </ThemeIcon>
-          ) : (
+          ) : resource.image ? (
             <Paper radius="sm" mr={8} style={{ overflow: 'hidden' }} w={64} h={64}>
               <EdgeMedia type="image" src={resource.image?.url} width={64} />
             </Paper>
-          )}
+          ) : null}
           <Stack spacing={2}>
             <Text
               component={NextLink}
@@ -73,8 +73,8 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
   const unavailable = resource.covered === false;
 
   return (
-    <Stack spacing={6}>
-      <Group spacing="xs" position="apart" noWrap>
+    <Group spacing="xs" position="apart" noWrap>
+      <Stack spacing={4} w="100%">
         <Group spacing={4} noWrap>
           {unavailable && (
             <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
@@ -98,30 +98,32 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
           >
             {resource.modelName}
           </Text>
-          <Badge size="sm" color="dark.5" variant="filled">
-            {resource.name}
-          </Badge>
+          {resource.modelName.toLowerCase() !== resource.name.toLowerCase() && (
+            <Badge size="sm" color="dark.5" variant="filled" miw="42px">
+              {resource.name}
+            </Badge>
+          )}
         </Group>
-        {onRemove && (
-          <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
-            <IconX size={20} />
-          </ActionIcon>
+        {/* LORA */}
+        {hasStrength && onUpdate && !unavailable && (
+          <Group spacing="xs" align="center">
+            <NumberSlider
+              value={resource.strength}
+              onChange={(strength) => onUpdate({ ...resource, strength })}
+              min={resource.minStrength ?? -1}
+              max={resource.maxStrength ?? 2}
+              step={0.05}
+              sx={{ flex: 1 }}
+              reverse
+            />
+          </Group>
         )}
-      </Group>
-      {/* LORA */}
-      {hasStrength && onUpdate && !unavailable && (
-        <Group spacing="xs" align="center">
-          <NumberSlider
-            value={resource.strength}
-            onChange={(strength) => onUpdate({ ...resource, strength })}
-            min={resource.minStrength ?? -1}
-            max={resource.maxStrength ?? 2}
-            step={0.05}
-            sx={{ flex: 1 }}
-            reverse
-          />
-        </Group>
+      </Stack>
+      {onRemove && (
+        <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+          <IconX size={20} />
+        </ActionIcon>
       )}
-    </Stack>
+    </Group>
   );
 }

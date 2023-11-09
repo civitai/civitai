@@ -1,13 +1,4 @@
-import {
-  Badge,
-  Button,
-  Divider,
-  Group,
-  Input,
-  InputWrapperProps,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Button, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
@@ -16,6 +7,7 @@ import { ResourceSelectOptions } from './resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
+import { ModelType } from '@prisma/client';
 
 type ResourceSelectMultipleProps = {
   limit?: number;
@@ -66,15 +58,21 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
       if (_values.length !== value.length) onChange?.(_values.length ? _values : undefined);
     }, [value]); //eslint-disable-line
 
+    // Made with copilot :^) -Manuel
+    const sortedGroups = [...groups].sort((a, b) => {
+      if (a.type === ModelType.LORA || a.type === ModelType.LoCon) return -1;
+      if (b.type === ModelType.LORA || b.type === ModelType.LoCon) return 1;
+      return 0;
+    });
+
     return (
       <Input.Wrapper {...inputWrapperProps} ref={ref}>
         <Stack spacing="md">
-          {groups.map((group, index) => {
+          {sortedGroups.map((group, index) => {
             return (
-              <>
-                {index !== 0 && <Divider size={2} />}
+              <React.Fragment key={group.type}>
+                {index !== 0 && <Divider />}
                 <Input.Wrapper
-                  key={group.type}
                   label={
                     <Text color="dark.2" weight={590}>
                       {group.label}
@@ -93,7 +91,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
                     ))}
                   </Stack>
                 </Input.Wrapper>
-              </>
+              </React.Fragment>
             );
           })}
           {canAdd && (
