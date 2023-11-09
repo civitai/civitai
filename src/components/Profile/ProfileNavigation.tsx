@@ -11,8 +11,6 @@ import {
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import ReactMarkdown from 'react-markdown';
-import className = ReactMarkdown.propTypes.className;
 
 type ProfileNavigationProps = {
   username: string;
@@ -22,6 +20,36 @@ const overviewPath = '[username]';
 const useStyles = createStyles((theme, _, getRef) => {
   const selectedRef = getRef('selected');
   return {
+    container: {
+      position: 'relative',
+      '&:hover': {
+        [`& .${getRef('scrollArea')}`]: {
+          '&::-webkit-scrollbar': {
+            opacity: 1,
+          },
+          '&::-webkit-scrollbar-thumb': {
+            backgroundColor:
+              theme.colorScheme === 'dark'
+                ? theme.fn.rgba(theme.white, 0.5)
+                : theme.fn.rgba(theme.black, 0.5),
+          },
+        },
+      },
+    },
+    scrollArea: {
+      ref: getRef('scrollArea'),
+      overflow: 'auto',
+      scrollSnapType: 'x mandatory',
+      '&::-webkit-scrollbar': {
+        background: 'transparent',
+        opacity: 0,
+        height: 8,
+      },
+      '&::-webkit-scrollbar-thumb': {
+        borderRadius: 4,
+      },
+    },
+
     tabs: {
       flexWrap: 'nowrap',
       overflow: 'auto hidden',
@@ -97,8 +125,8 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   };
 
   return (
-    <Tabs value={activePath}>
-      <Tabs.List className={classes.tabs}>
+    <Tabs value={activePath} className={classes.container}>
+      <Tabs.List className={cx(classes.scrollArea, classes.tabs)}>
         {Object.keys(opts).map((key) => {
           console.log(key === activePath);
           return (

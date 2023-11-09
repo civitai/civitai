@@ -1,4 +1,4 @@
-import { Box, Group, Stack, Tabs } from '@mantine/core';
+import { Box, Center, Group, Loader, Stack, Tabs } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -37,16 +37,26 @@ export default function UserCollectionsPage() {
   const features = useFeatureFlags();
 
   const username = (router.query.username as string) ?? '';
-  const { data: creator } = trpc.user.getCreator.useQuery({ username });
+  const { data: creator, isLoading } = trpc.user.getCreator.useQuery({ username });
 
   // currently not showing any content if the username is undefined
-  if (!username || !creator) return <NotFound />;
+  if (!username || (!creator && !isLoading)) return <NotFound />;
   const Wrapper = ({ children }: { children: React.ReactNode }) =>
     features.profileOverhaul ? (
       <Box mt="md">{children}</Box>
     ) : (
       <Tabs.Panel value="/collections">{children}</Tabs.Panel>
     );
+
+  if (isLoading) {
+    return (
+      <Wrapper>
+        <Center>
+          <Loader />
+        </Center>
+      </Wrapper>
+    );
+  }
 
   return (
     <Wrapper>
@@ -65,7 +75,7 @@ export default function UserCollectionsPage() {
               />
             </Group>
             <CollectionsInfinite
-              filters={{ ...queryFilters, sort, userId: creator.id }}
+              filters={{ ...queryFilters, sort, userId: creator?.id }}
               enabled={!!creator}
             />
           </Stack>

@@ -15,7 +15,10 @@ import { NextLink } from '@mantine/next';
 
 const MAX_ARTICLES_DISPLAY = 8;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({
+    delay: 100,
+    triggerOnce: true,
+  });
   const { articles: _articles, isLoading } = useQueryArticles(
     {
       limit: MAX_ARTICLES_DISPLAY + 1,
@@ -34,9 +37,13 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !articles.length;
 
+  if (isNullState && inView) {
+    return null;
+  }
+
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isNullState ? null : isLoading ? (
+      {isLoading || !inView ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Most popular articles" icon={<IconPencilMinus />}>

@@ -38,7 +38,10 @@ import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/Resou
 import { isNumber } from '~/utils/type-guards';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({
+    delay: 100,
+    triggerOnce: true,
+  });
   const { data: userRatingsTotal, isLoading: isLoadingTotals } =
     trpc.resourceReview.getUserRatingsTotal.useQuery(
       { username: user.username },
@@ -80,9 +83,13 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
   const isNullState =
     (!isLoading && !resourceReviews.length) || (!userRatingsTotal && !isLoadingTotals);
 
+  if (isNullState && inView) {
+    return null;
+  }
+
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isNullState ? null : isLoading ? (
+      {isLoading || !inView ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Recent Reviews" icon={<IconStar />}>

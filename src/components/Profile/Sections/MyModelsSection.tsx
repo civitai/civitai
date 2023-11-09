@@ -20,7 +20,10 @@ import { ModelFilterSchema } from '~/providers/FiltersProvider';
 
 const MAX_MODELS_DISPLAY = 12;
 export const MyModelsSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({
+    delay: 100,
+    triggerOnce: true,
+  });
 
   const { filters } = useDumbModelFilters({
     period: 'AllTime',
@@ -50,9 +53,13 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !models.length;
 
+  if (isNullState && inView) {
+    return null;
+  }
+
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isNullState ? null : isLoading ? (
+      {isLoading || !inView ? (
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Models" icon={<IconCategory />}>
