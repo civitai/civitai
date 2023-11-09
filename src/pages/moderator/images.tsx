@@ -38,6 +38,7 @@ import { immer } from 'zustand/middleware/immer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import PromptHighlight from '~/components/Image/PromptHighlight/PromptHighlight';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -417,7 +418,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
   return (
     <Card
       shadow="sm"
-      p="xs"
+      p={0}
       sx={{ opacity: !image.needsReview && !pendingReport ? 0.2 : undefined }}
       withBorder
     >
@@ -511,7 +512,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
         />
       </Card.Section>
       {hasReport && (
-        <Stack spacing={8} pt="xs">
+        <Stack spacing={8} p="xs">
           <Group position="apart" noWrap>
             <Stack spacing={2}>
               <Text size="xs" color="dimmed" inline>
@@ -543,6 +544,19 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
               : null}
           </ContentClamp>
         </Stack>
+      )}
+      {image.needsReview === 'minor' && (
+        <PromptHighlight prompt={image.meta?.prompt}>
+          {({ includesInappropriate, html }) =>
+            !includesInappropriate ? (
+              <></>
+            ) : (
+              <Card.Section p="xs">
+                <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
+              </Card.Section>
+            )
+          }
+        </PromptHighlight>
       )}
     </Card>
   );

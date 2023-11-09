@@ -25,8 +25,6 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
   if (nsfw) {
     const { found, age } = includesMinor(meta.prompt);
     if (found) return { blockedFor: [`${age} year old`], success: false };
-    if (includesInappropriate(meta.prompt, true))
-      return { blockedFor: ['Inappropriate minor content'], success: false };
   }
 
   const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
