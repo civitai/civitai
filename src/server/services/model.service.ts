@@ -362,7 +362,12 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 
   const s3 = getS3Client();
   const tasks = modelFiles.map((file) => async () => {
-    await requestScannerTasks({ file, s3, tasks: ['Hash', 'Scan'], lowPriority: true });
+    await requestScannerTasks({
+      file,
+      s3,
+      tasks: ['Hash', 'Scan', 'ParseMetadata'],
+      lowPriority: true,
+    });
   });
 
   await limitConcurrency(tasks, 10);
