@@ -137,7 +137,6 @@ const { openModal, Modal } = createContextModal({
       ]);
     const displayShowcase = useMemo(() => {
       const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
-      console.log(sections);
       return !!sections.find((s) => s.key === 'showcase' && s.enabled);
     }, [profileSectionsSettings]);
     const equippedCosmetics = useMemo(
