@@ -1,5 +1,7 @@
 import {
+  ActionIcon,
   Button,
+  Divider,
   Group,
   Input,
   InputWrapperProps,
@@ -9,8 +11,8 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { useState } from 'react';
-import { IconTrash } from '@tabler/icons-react';
+import { Fragment, useState } from 'react';
+import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useDidUpdate } from '@mantine/hooks';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { zc } from '~/utils/schema-helpers';
@@ -62,27 +64,37 @@ export function InlineSocialLinkInput({
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
-        {links.map((link, index) => (
-          <Group key={index} align="center" noWrap>
-            <DomainIcon url={link.url} size={24} />
-            <Text size="sm">{link.url}</Text>
-            <Button
-              variant="light"
-              color="red"
-              size="xs"
-              radius="sm"
-              ml="auto"
-              onClick={() => {
-                setLinks((current) => {
-                  const newLinks = current.filter((_, i) => i !== index);
-                  return newLinks;
-                });
-              }}
-            >
-              <IconTrash size={16} />
-            </Button>
-          </Group>
-        ))}
+        <Paper withBorder p="md">
+          <Stack>
+            {links.map((link, index) => {
+              const isLast = index === links.length - 1;
+              return (
+                <Fragment key={index}>
+                  <Group align="center" noWrap>
+                    <DomainIcon url={link.url} size={24} />
+                    <Text size="sm">{link.url}</Text>
+                    <ActionIcon
+                      variant="outline"
+                      color="red"
+                      size="md"
+                      radius="sm"
+                      ml="auto"
+                      onClick={() => {
+                        setLinks((current) => {
+                          const newLinks = current.filter((_, i) => i !== index);
+                          return newLinks;
+                        });
+                      }}
+                    >
+                      <IconTrash size={16} />
+                    </ActionIcon>
+                  </Group>
+                  {!isLast && <Divider />}
+                </Fragment>
+              );
+            })}
+          </Stack>
+        </Paper>
 
         <Group>
           <TextInput
@@ -95,9 +107,16 @@ export function InlineSocialLinkInput({
               root: { flex: 1 },
             }}
           />
-          <Button onClick={onAddLink} size="sm" radius="sm">
-            Add
-          </Button>
+          <ActionIcon
+            variant="filled"
+            color="blue"
+            size="lg"
+            radius="sm"
+            ml="auto"
+            onClick={onAddLink}
+          >
+            <IconPlus size={16} />
+          </ActionIcon>
         </Group>
       </Stack>
     </Input.Wrapper>
