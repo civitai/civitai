@@ -285,7 +285,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
             some: {
               type: 'Model',
               OR: fileFormats.map((format) => ({
-                metadata: { path: ['format'], string_contains: format },
+                metadata: { path: ['format'], equals: format },
               })),
             },
           },
