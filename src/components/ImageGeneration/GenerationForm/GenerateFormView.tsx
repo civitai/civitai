@@ -29,7 +29,6 @@ import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/Res
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   InputNumber,
   InputNumberSlider,
@@ -76,7 +75,6 @@ export function GenerateFormView({
 }) {
   const isClient = useIsClient();
   const { classes } = useStyles();
-  const currentUser = useCurrentUser();
   const { formState } = form;
   const { isSubmitting } = formState;
   const features = useFeatureFlags();
