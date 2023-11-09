@@ -44,6 +44,8 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ReactMarkdown from 'react-markdown';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -188,13 +190,16 @@ export function ProfileHeader({ username }: { username: string }) {
             <IconBellFilled />
           </ThemeIcon>
           <Stack spacing={0}>
-            <ReactMarkdown
-              allowedElements={['a', 'p']}
-              unwrapDisallowed
-              className="markdown-content"
-            >
-              {profile.message}
-            </ReactMarkdown>
+            <Text>
+              <ReactMarkdown
+                rehypePlugins={[rehypeRaw, remarkGfm]}
+                allowedElements={['a', 'p']}
+                unwrapDisallowed
+                className="markdown-content"
+              >
+                {profile.message}
+              </ReactMarkdown>
+            </Text>
             {profile.messageAddedAt && (
               <Text color="dimmed" size="xs">
                 <DaysFromNow date={profile.messageAddedAt} />
