@@ -25,7 +25,7 @@ import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageGenerationSchema, ImageMetaProps } from '~/server/schema/image.schema';
 
 const READ_BATCH_SIZE = 250; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -148,6 +148,11 @@ type CollectionImageRaw = {
   id: number;
   image: ImageProps | null;
   src: string | null;
+};
+
+const parseImageMeta = (meta: ImageMetaProps) => {
+  const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
+  return parsed?.success ? parsed.data : {};
 };
 
 const onFetchItemsToIndex = async ({
@@ -388,7 +393,7 @@ const onFetchItemsToIndex = async ({
     const collectionImage = image
       ? {
           ...image,
-          meta: image.meta as ImageMetaProps,
+          meta: parseImageMeta(image.meta as ImageMetaProps),
           tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
         }
       : null;
@@ -398,6 +403,7 @@ const onFetchItemsToIndex = async ({
       .filter(isDefined)
       .map((i) => ({
         ...i,
+        meta: parseImageMeta(i.meta as ImageMetaProps),
         tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
       }));
 
