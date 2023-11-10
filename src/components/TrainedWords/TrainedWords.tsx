@@ -1,10 +1,16 @@
-import { CopyButton, Tooltip, Badge, Group } from '@mantine/core';
+import { CopyButton, Tooltip, Badge, Group, BadgeProps } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { ModelFileType } from '~/server/common/constants';
 
-export function TrainedWords({ trainedWords = [], files = [], type, limit = 10 }: Props) {
+export function TrainedWords({
+  trainedWords = [],
+  files = [],
+  type,
+  limit = 10,
+  badgeProps,
+}: Props) {
   const [showAll, setShowAll] = useState(false);
 
   const words = useMemo(() => {
@@ -20,7 +26,7 @@ export function TrainedWords({ trainedWords = [], files = [], type, limit = 10 }
   return (
     <Group spacing={4}>
       {words.map((word, index) => (
-        <TrainingWordBadge key={index} word={word} />
+        <TrainingWordBadge key={index} word={word} {...badgeProps} />
       ))}
       {trainedWords.length > limit && !showAll && (
         <Badge
@@ -42,11 +48,12 @@ type Props = {
   files?: { type: string }[];
   type: ModelType;
   limit?: number;
+  badgeProps?: BadgeProps;
 };
 
-export function TrainingWordBadge({ word }: { word: string }) {
+export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: string }) {
   return (
-    <CopyButton value={word}>
+    <CopyButton value={word.trim()}>
       {({ copy, copied }) => (
         <Tooltip label="Copied!" opened={copied}>
           <Badge
@@ -56,6 +63,7 @@ export function TrainingWordBadge({ word }: { word: string }) {
             sx={{ cursor: 'pointer', height: 'auto' }}
             onClick={copy}
             pr={2}
+            {...badgeProps}
           >
             <Group spacing={5} align="center" noWrap sx={{ whiteSpace: 'normal' }}>
               {word}

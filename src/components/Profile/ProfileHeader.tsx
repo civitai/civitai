@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  AspectRatio,
   Button,
   createStyles,
   Divider,
@@ -46,6 +47,8 @@ import ReactMarkdown from 'react-markdown';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -57,6 +60,11 @@ const useStyles = createStyles((theme) => ({
       paddingTop: 2,
       paddingBottom: 2,
     },
+  },
+  coverImageNSFWActions: {
+    maxHeight: '30vh',
+    height: '100%',
+    width: '100%',
   },
   coverImageWrapper: {
     maxHeight: '30vh',
@@ -126,6 +134,25 @@ export function ProfileHeader({ username }: { username: string }) {
   });
   const isMobile = useIsMobile();
   const { classes, cx } = useStyles();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+  const currentUser = useCurrentUser();
+
+  const coverImage = useMemo(() => {
+    if (isLoadingHidden || !user?.profile?.coverImage) return null;
+    const coverImage = user.profile.coverImage;
+
+    if (user.id === currentUser?.id) return coverImage;
+
+    if (hiddenImages.get(coverImage.id)) return null;
+    for (const tag of coverImage.tags ?? []) {
+      if (hiddenTags.get(tag.id)) return null;
+    }
+    return coverImage;
+  }, [user, hiddenImages, hiddenTags, isLoadingHidden]);
 
   if (!user) {
     return null;
@@ -134,7 +161,7 @@ export function ProfileHeader({ username }: { username: string }) {
   const { profile, stats } = user;
 
   const renderCoverImage = () => {
-    if (!profile?.coverImage) {
+    if (!coverImage) {
       return null;
     }
 
@@ -142,18 +169,15 @@ export function ProfileHeader({ username }: { username: string }) {
       <div className={classes.coverImageWrapper}>
         <div className={classes.coverImage}>
           <ImageGuard
-            images={[profile.coverImage]}
-            connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
+            images={[coverImage]}
+            connect={{ entityId: coverImage.id, entityType: 'user' }}
             render={(image) => {
               return (
                 <ImageGuard.Content>
                   {({ safe }) => (
-                    <div style={{ width: '100%' }}>
-                      <ImageGuard.ToggleConnect position="top-left" />
-                      <ImageGuard.Report />
-
+                    <>
                       {!safe ? (
-                        <MediaHash {...image} />
+                        <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                       ) : (
                         <ImagePreview
                           image={image}
@@ -162,7 +186,11 @@ export function ProfileHeader({ username }: { username: string }) {
                           style={{ width: '100%' }}
                         />
                       )}
-                    </div>
+                      <div className={classes.coverImageNSFWActions}>
+                        <ImageGuard.ToggleConnect position="top-left" />
+                        <ImageGuard.Report />
+                      </div>
+                    </>
                   )}
                 </ImageGuard.Content>
               );
@@ -219,7 +247,7 @@ export function ProfileHeader({ username }: { username: string }) {
         {renderCoverImage()}
         <div
           className={cx(classes.profileSection, {
-            [classes.profileSectionWithCoverImage]: !!profile?.coverImage,
+            [classes.profileSectionWithCoverImage]: !!coverImage,
           })}
         >
           <ProfileSidebar username={username} />

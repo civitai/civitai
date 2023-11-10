@@ -15,9 +15,10 @@ import {
   createStyles,
   ScrollArea,
   Badge,
+  CopyButton,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconAlertTriangle, IconArrowAutofitDown } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
@@ -61,6 +62,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 
 export function GenerateFormView({
   form,
@@ -122,6 +124,7 @@ export function GenerateFormView({
   const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   const additionalResources = form.watch('resources');
+  const trainedWords = additionalResources?.flatMap((resource) => resource.trainedWords) ?? [];
 
   return (
     <PersistentForm
@@ -224,6 +227,41 @@ export function GenerateFormView({
                             Apply Parameters
                           </Button>
                         )}
+                        {trainedWords.length > 0 ? (
+                          <Stack spacing={8} mt={showFillForm ? 'md' : 8}>
+                            <Text color="dimmed" size="xs" weight={590}>
+                              Trigger words
+                            </Text>
+                            <TrainedWords
+                              type="LORA"
+                              trainedWords={trainedWords}
+                              badgeProps={{ style: { textTransform: 'none' } }}
+                            />
+                            <CopyButton value={trainedWords.join(' ')}>
+                              {({ copied, copy }) => (
+                                <Group position="left">
+                                  <Button
+                                    variant="subtle"
+                                    size="xs"
+                                    color={copied ? 'green' : 'blue.5'}
+                                    onClick={copy}
+                                    compact
+                                  >
+                                    {copied ? (
+                                      <Group spacing={4}>
+                                        Copied <IconCheck size={14} />
+                                      </Group>
+                                    ) : (
+                                      <Group spacing={4}>
+                                        Copy all <IconCopy size={14} />
+                                      </Group>
+                                    )}
+                                  </Button>
+                                </Group>
+                              )}
+                            </CopyButton>
+                          </Stack>
+                        ) : null}
                       </Stack>
 
                       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
