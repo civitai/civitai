@@ -10,6 +10,8 @@ type ReferralsState = {
   code?: string;
   source?: string;
   landingPage?: string;
+  loginRedirectReason?: string;
+  setLoginRedirectReason?: (reason: string) => void;
 };
 
 const ReferralsContext = createContext<ReferralsState | null>(null);
@@ -33,6 +35,9 @@ export const ReferralsProvider = ({ children }: { children: React.ReactNode }) =
   const [code, setCode] = useState<string | undefined>(referrals.code);
   const [source, setSource] = useState<string | undefined>(referrals.source);
   const [landingPage, setLandingPage] = useState<string | undefined>(referrals.landingPage);
+  const [loginRedirectReason, _setLoginRedirectReason] = useState<string | undefined>(
+    referrals.loginRedirectReason
+  );
 
   useEffect(() => {
     if (result.success && !user?.referral) {
@@ -61,12 +66,18 @@ export const ReferralsProvider = ({ children }: { children: React.ReactNode }) =
     }
   }, [result.success, user]);
 
+  const setLoginRedirectReason = (reason: string) => {
+    setCookie('ref_login_redirect_reason', reason, dayjs().add(5, 'day').toDate());
+    _setLoginRedirectReason(reason);
+  };
+
   return (
     <ReferralsContext.Provider
       value={{
         code,
         source,
         landingPage,
+        setLoginRedirectReason,
       }}
     >
       {children}

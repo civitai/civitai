@@ -730,7 +730,7 @@ function ImageGuardPopover({ children, nsfw }: { children: React.ReactElement; n
               </Text>
             </Group>
 
-            <Link href={`/login?returnUrl=${router.asPath}`}>
+            <Link href={`/login?returnUrl=${router.asPath}&reason=blur-toggle`}>
               <Button size="xs">Login</Button>
             </Link>
           </Stack>

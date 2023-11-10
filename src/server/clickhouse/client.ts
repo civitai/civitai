@@ -219,7 +219,12 @@ export class Tracker {
     return this.track('partnerEvents', values);
   }
 
-  public userActivity(values: { type: UserActivityType; targetUserId: number }) {
+  public userActivity(values: {
+    type: UserActivityType;
+    targetUserId: number;
+    source?: string;
+    landingPage?: string;
+  }) {
     return this.track('userActivities', values);
   }
 

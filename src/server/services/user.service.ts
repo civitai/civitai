@@ -790,12 +790,14 @@ export const createUserReferral = async ({
   userReferralCode,
   source,
   landingPage,
+  loginRedirectReason,
   ip,
 }: {
   id: number;
   userReferralCode?: string;
   source?: string;
   landingPage?: string;
+  loginRedirectReason?: string;
   ip?: string;
 }) => {
   const user = await dbRead.user.findUniqueOrThrow({
@@ -818,7 +820,7 @@ export const createUserReferral = async ({
     await userReferredReward.apply({ refereeId, referrerId }, ip);
   };
 
-  if (userReferralCode || source || landingPage) {
+  if (userReferralCode || source || landingPage || loginRedirectReason) {
     // Confirm userReferralCode is valid:
     const referralCode = !!userReferralCode
       ? await dbRead.userReferralCode.findFirst({
@@ -826,7 +828,7 @@ export const createUserReferral = async ({
         })
       : null;
 
-    if (!referralCode && !source && !landingPage) {
+    if (!referralCode && !source && !landingPage && !loginRedirectReason) {
       return;
     }
 
@@ -848,6 +850,7 @@ export const createUserReferral = async ({
           userId: id,
           source,
           landingPage,
+          loginRedirectReason,
           userReferralCodeId: referralCode?.id ?? undefined,
         },
       });

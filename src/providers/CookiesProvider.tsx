@@ -53,6 +53,7 @@ export const referralsSchema = z.object({
   code: z.string().optional(),
   source: z.string().optional(),
   landingPage: z.string().optional(),
+  loginRedirectReason: z.string().optional(),
 });
 
 const CookiesCtx = createContext<CookiesContext | null>(null);
@@ -118,6 +119,7 @@ export function parseCookies(
       code: cookies?.['ref_code'],
       source: cookies?.['ref_source'],
       landingPage: cookies?.['ref_landing_page'],
+      loginRedirectReason: cookies?.['ref_login_redirect_reason'],
     },
   });
 }
@@ -164,6 +166,7 @@ const zodParse = z
           code: z.string(),
           source: z.string(),
           landingPage: z.string(),
+          loginRedirectReason: z.string(),
         })
         .partial(),
     })

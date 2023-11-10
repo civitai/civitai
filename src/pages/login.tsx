@@ -112,7 +112,9 @@ export default function Login({ providers }: Props) {
                         <SocialButton
                           key={provider.name}
                           provider={provider.id as BuiltInProviderType}
-                          onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                          onClick={() => {
+                            signIn(provider.id, { callbackUrl: returnUrl });
+                          }}
                         />
                       );
                     })

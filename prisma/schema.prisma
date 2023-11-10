@@ -54,15 +54,16 @@ model SessionInvalidation {
 }
 
 model UserReferral {
-  id                 Int               @id @default(autoincrement())
-  userReferralCodeId Int?
-  userReferralCode   UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
-  source             String?
-  landingPage        String?
-  createdAt          DateTime          @default(now())
-  userId             Int               @unique
-  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  note               String?
+  id                  Int               @id @default(autoincrement())
+  userReferralCodeId  Int?
+  userReferralCode    UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
+  source              String?
+  landingPage         String?
+  loginRedirectReason String?
+  createdAt           DateTime          @default(now())
+  userId              Int               @unique
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note                String?
 }
 
 model UserReferralCode {
