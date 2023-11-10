@@ -18,10 +18,16 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { isDefined } from '~/utils/type-guards';
+import { create } from 'zustand';
 
 type GenerationMaxValueKey = keyof typeof generation.maxValues;
 const maxValueKeys = Object.keys(generation.maxValues);
 const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
+
+export const useTempGenerateStore = create<{
+  baseModel?: string;
+  hasResources?: boolean;
+}>(() => ({}));
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -29,13 +35,11 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const form = useForm<GenerateFormModel>({
     resolver: zodResolver(generateFormSchema),
     mode: 'onSubmit',
+    shouldUnregister: false,
     defaultValues: {
       ...generation.defaultValues,
-      // Doing it this way to keep ts happy
-      model: { ...generation.defaultValues.model, trainedWords: [] },
       nsfw: currentUser?.showNsfw,
     },
-    shouldUnregister: false,
   });
 
   const { conditionalPerformTransaction } = useBuzzTransaction({

@@ -20,7 +20,7 @@ import {
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -63,6 +63,8 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { isDefined } from '~/utils/type-guards';
+import { useTempGenerateStore } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 
 export function GenerateFormView({
   form,
@@ -115,16 +117,47 @@ export function GenerateFormView({
   };
   // #endregion
 
-  const [baseModel, aspectRatio, steps, quantity] = form.watch([
-    'baseModel',
-    'aspectRatio',
-    'steps',
-    'quantity',
-  ]);
+  const baseModel = useTempGenerateStore((state) =>
+    state.baseModel
+      ? Object.entries(baseModelSets).find(([, baseModels]) =>
+          baseModels.includes(state.baseModel as BaseModel)
+        )?.[0]
+      : undefined
+  );
+  const hasResources = useTempGenerateStore((state) => state.hasResources);
+
+  const [aspectRatio, steps, quantity] = form.watch(['aspectRatio', 'steps', 'quantity']);
   const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   const additionalResources = form.watch('resources');
   const trainedWords = additionalResources?.flatMap((resource) => resource.trainedWords) ?? [];
+
+  useEffect(() => {
+    setTimeout(() => {
+      const values = form.getValues();
+      const resources = [...(values.resources ?? []), ...[values.vae].filter(isDefined)];
+      useTempGenerateStore.setState({
+        baseModel: values.model?.baseModel,
+        hasResources: !!resources?.length,
+      });
+    }, 0);
+
+    const subscription = form.watch((data, { name, type }) => {
+      console.log({ data });
+      const resources = [...(data.resources ?? []), ...[data.vae].filter(isDefined)];
+
+      useTempGenerateStore.setState({
+        baseModel: data.model?.baseModel,
+        hasResources: !!resources?.length,
+      });
+    });
+    return () => subscription.unsubscribe();
+  }, []); //eslint-disable-line
+
+  const isSDXL = baseModel === 'SDXL';
+  const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
+
+  console.log({ baseModel });
 
   return (
     <PersistentForm
@@ -136,313 +169,298 @@ export function GenerateFormView({
       storage={typeof window !== 'undefined' ? window.localStorage : undefined}
       schema={generationFormShapeSchema.deepPartial()}
     >
-      <BaseModelProvider getBaseModels={getBaseModels}>
-        {({ baseModel, baseModels }) => {
-          const isSDXL = baseModel === 'SDXL';
-          const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
-          const [supportedBaseModel] = baseModels;
-
-          return (
-            <Stack spacing={0} h="100%">
-              <ScrollArea sx={{ flex: 1 }}>
-                <Stack p="md" pb={0}>
-                  {/* {type === 'remix' && (
+      <Stack spacing={0} h="100%">
+        <ScrollArea sx={{ flex: 1 }}>
+          <Stack p="md" pb={0}>
+            {/* {type === 'remix' && (
                     <DismissibleAlert
                       id="image-gen-params"
                       content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
                     />
                   )} */}
-                  <InputResourceSelect
-                    name="model"
-                    label="Model"
-                    labelProps={{ mb: 5, style: { fontWeight: 590 } }}
-                    buttonLabel="Add Model"
-                    withAsterisk
+            <InputResourceSelect
+              name="model"
+              label="Model"
+              labelProps={{ mb: 5, style: { fontWeight: 590 } }}
+              buttonLabel="Add Model"
+              withAsterisk
+              options={{
+                baseModel: hasResources ? baseModel : undefined,
+                type: ModelType.Checkpoint,
+                canGenerate: true,
+              }}
+              allowRemove={false}
+            />
+            <PersistentAccordion
+              storeKey="generation-form-resources"
+              classNames={{
+                item: classes.accordionItem,
+                control: classes.accordionControl,
+                content: classes.accordionContent,
+              }}
+              variant="contained"
+            >
+              <Accordion.Item value="resources">
+                <Accordion.Control>
+                  <Group spacing={4}>
+                    <Text size="sm" weight={590}>
+                      Additional Resources
+                    </Text>
+                    {!!additionalResources?.length && (
+                      <Badge style={{ fontWeight: 590 }}>{additionalResources.length}</Badge>
+                    )}
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <InputResourceSelectMultiple
+                    name="resources"
+                    limit={9}
+                    buttonLabel="Add additional resource"
                     options={{
-                      type: ModelType.Checkpoint,
+                      baseModel: baseModel,
+                      types: getGenerationConfig(baseModel).additionalResourceTypes,
                       canGenerate: true,
                     }}
-                    allowRemove={false}
                   />
-                  <PersistentAccordion
-                    storeKey="generation-form-resources"
-                    classNames={{
-                      item: classes.accordionItem,
-                      control: classes.accordionControl,
-                      content: classes.accordionContent,
+                </Accordion.Panel>
+              </Accordion.Item>
+            </PersistentAccordion>
+            <Card {...sharedCardProps}>
+              <Stack>
+                <Stack spacing={0}>
+                  <InputTextArea
+                    name="prompt"
+                    label="Prompt"
+                    withAsterisk
+                    autosize
+                    styles={
+                      showFillForm
+                        ? { input: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } }
+                        : undefined
+                    }
+                    onPaste={(event) => {
+                      const text = event.clipboardData.getData('text/plain');
+                      if (text) setShowFillForm(text.includes('Steps:'));
                     }}
-                    variant="contained"
-                  >
-                    <Accordion.Item value="resources">
-                      <Accordion.Control>
-                        <Group spacing={4}>
-                          <Text size="sm" weight={590}>
-                            Additional Resources
-                          </Text>
-                          {!!additionalResources?.length && (
-                            <Badge style={{ fontWeight: 590 }}>{additionalResources.length}</Badge>
-                          )}
+                  />
+                  {showFillForm && (
+                    <Button
+                      variant="light"
+                      onClick={handleParsePrompt}
+                      leftIcon={<IconArrowAutofitDown size={16} />}
+                      sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                      fullWidth
+                    >
+                      Apply Parameters
+                    </Button>
+                  )}
+                  {trainedWords.length > 0 ? (
+                    <Stack spacing={8} mt={showFillForm ? 'md' : 8}>
+                      <Text color="dimmed" size="xs" weight={590}>
+                        Trigger words
+                      </Text>
+                      <TrainedWords
+                        type="LORA"
+                        trainedWords={trainedWords}
+                        badgeProps={{ style: { textTransform: 'none' } }}
+                      />
+                      <CopyButton value={trainedWords.join(' ')}>
+                        {({ copied, copy }) => (
+                          <Group position="left">
+                            <Button
+                              variant="subtle"
+                              size="xs"
+                              color={copied ? 'green' : 'blue.5'}
+                              onClick={copy}
+                              compact
+                            >
+                              {copied ? (
+                                <Group spacing={4}>
+                                  Copied <IconCheck size={14} />
+                                </Group>
+                              ) : (
+                                <Group spacing={4}>
+                                  Copy all <IconCopy size={14} />
+                                </Group>
+                              )}
+                            </Button>
+                          </Group>
+                        )}
+                      </CopyButton>
+                    </Stack>
+                  ) : null}
+                </Stack>
+
+                <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+                {!isSDXL && <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />}
+              </Stack>
+            </Card>
+            <Card {...sharedCardProps} style={{ overflow: 'visible' }}>
+              <Stack>
+                <Stack spacing={0}>
+                  <Input.Label>Aspect Ratio</Input.Label>
+                  <InputSegmentedControl
+                    name="aspectRatio"
+                    data={getAspectRatioControls(baseModel)}
+                  />
+                </Stack>
+                <PersistentAccordion
+                  storeKey="generation-form-advanced"
+                  variant="filled"
+                  styles={(theme) => ({
+                    content: {
+                      padding: 0,
+                    },
+                    item: {
+                      overflow: 'hidden',
+                      border: 'none',
+                      background: 'transparent',
+                    },
+                    control: {
+                      padding: 0,
+                      paddingBottom: theme.spacing.xs,
+                    },
+                  })}
+                >
+                  <Accordion.Item value="advanced">
+                    <Accordion.Control>
+                      <Divider
+                        label="Advanced"
+                        labelPosition="left"
+                        labelProps={{ size: 'sm', weight: 500 }}
+                      />
+                    </Accordion.Control>
+                    <Accordion.Panel>
+                      <Stack>
+                        <InputSelect name="sampler" label="Sampler" data={generation.samplers} />
+                        <Group position="apart">
+                          <InputNumberSlider
+                            name="steps"
+                            label="Steps"
+                            min={10}
+                            max={generation.maxValues.steps}
+                            sliderProps={sharedSliderProps}
+                            numberProps={sharedNumberProps}
+                          />
+                          <InputNumberSlider
+                            name="cfgScale"
+                            label="CFG Scale"
+                            min={1}
+                            max={isSDXL ? 10 : 30}
+                            step={0.5}
+                            precision={1}
+                            sliderProps={sharedSliderProps}
+                            numberProps={sharedNumberProps}
+                          />
                         </Group>
-                      </Accordion.Control>
-                      <Accordion.Panel>
-                        <InputResourceSelectMultiple
-                          name="resources"
-                          limit={9}
-                          buttonLabel="Add additional resource"
+                        <InputSeed
+                          name="seed"
+                          label="Seed"
+                          min={1}
+                          max={generation.maxValues.seed}
+                        />
+                        {!isSDXL && (
+                          <InputNumberSlider
+                            name="clipSkip"
+                            label="Clip Skip"
+                            min={1}
+                            max={generation.maxValues.clipSkip}
+                            sliderProps={{
+                              ...sharedSliderProps,
+                              marks: clipSkipMarks,
+                            }}
+                            numberProps={sharedNumberProps}
+                          />
+                        )}
+                        <InputResourceSelect
+                          name="vae"
+                          label={getDisplayName(ModelType.VAE)}
+                          buttonLabel="Add VAE"
                           options={{
-                            baseModel: supportedBaseModel,
-                            types: getGenerationConfig(baseModel).additionalResourceTypes,
+                            baseModel: baseModel,
+                            type: ModelType.VAE,
                             canGenerate: true,
                           }}
                         />
-                      </Accordion.Panel>
-                    </Accordion.Item>
-                  </PersistentAccordion>
-                  <Card {...sharedCardProps}>
-                    <Stack>
-                      <Stack spacing={0}>
-                        <InputTextArea
-                          name="prompt"
-                          label="Prompt"
-                          withAsterisk
-                          autosize
-                          styles={
-                            showFillForm
-                              ? { input: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } }
-                              : undefined
-                          }
-                          onPaste={(event) => {
-                            const text = event.clipboardData.getData('text/plain');
-                            if (text) setShowFillForm(text.includes('Steps:'));
-                          }}
-                        />
-                        {showFillForm && (
-                          <Button
-                            variant="light"
-                            onClick={handleParsePrompt}
-                            leftIcon={<IconArrowAutofitDown size={16} />}
-                            sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
-                            fullWidth
-                          >
-                            Apply Parameters
-                          </Button>
-                        )}
-                        {trainedWords.length > 0 ? (
-                          <Stack spacing={8} mt={showFillForm ? 'md' : 8}>
-                            <Text color="dimmed" size="xs" weight={590}>
-                              Trigger words
-                            </Text>
-                            <TrainedWords
-                              type="LORA"
-                              trainedWords={trainedWords}
-                              badgeProps={{ style: { textTransform: 'none' } }}
-                            />
-                            <CopyButton value={trainedWords.join(' ')}>
-                              {({ copied, copy }) => (
-                                <Group position="left">
-                                  <Button
-                                    variant="subtle"
-                                    size="xs"
-                                    color={copied ? 'green' : 'blue.5'}
-                                    onClick={copy}
-                                    compact
-                                  >
-                                    {copied ? (
-                                      <Group spacing={4}>
-                                        Copied <IconCheck size={14} />
-                                      </Group>
-                                    ) : (
-                                      <Group spacing={4}>
-                                        Copy all <IconCopy size={14} />
-                                      </Group>
-                                    )}
-                                  </Button>
-                                </Group>
-                              )}
-                            </CopyButton>
-                          </Stack>
-                        ) : null}
                       </Stack>
-
-                      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
-                      {!isSDXL && (
-                        <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-                      )}
-                    </Stack>
-                  </Card>
-                  <Card {...sharedCardProps} style={{ overflow: 'visible' }}>
-                    <Stack>
-                      <Stack spacing={0}>
-                        <Input.Label>Aspect Ratio</Input.Label>
-                        <InputSegmentedControl
-                          name="aspectRatio"
-                          data={getAspectRatioControls(baseModel)}
-                        />
-                      </Stack>
-                      <PersistentAccordion
-                        storeKey="generation-form-advanced"
-                        variant="filled"
-                        styles={(theme) => ({
-                          content: {
-                            padding: 0,
-                          },
-                          item: {
-                            overflow: 'hidden',
-                            border: 'none',
-                            background: 'transparent',
-                          },
-                          control: {
-                            padding: 0,
-                            paddingBottom: theme.spacing.xs,
-                          },
-                        })}
-                      >
-                        <Accordion.Item value="advanced">
-                          <Accordion.Control>
-                            <Divider
-                              label="Advanced"
-                              labelPosition="left"
-                              labelProps={{ size: 'sm', weight: 500 }}
-                            />
-                          </Accordion.Control>
-                          <Accordion.Panel>
-                            <Stack>
-                              <InputSelect
-                                name="sampler"
-                                label="Sampler"
-                                data={generation.samplers}
-                              />
-                              <Group position="apart">
-                                <InputNumberSlider
-                                  name="steps"
-                                  label="Steps"
-                                  min={10}
-                                  max={generation.maxValues.steps}
-                                  sliderProps={sharedSliderProps}
-                                  numberProps={sharedNumberProps}
-                                />
-                                <InputNumberSlider
-                                  name="cfgScale"
-                                  label="CFG Scale"
-                                  min={1}
-                                  max={isSDXL ? 10 : 30}
-                                  step={0.5}
-                                  precision={1}
-                                  sliderProps={sharedSliderProps}
-                                  numberProps={sharedNumberProps}
-                                />
-                              </Group>
-                              <InputSeed
-                                name="seed"
-                                label="Seed"
-                                min={1}
-                                max={generation.maxValues.seed}
-                              />
-                              {!isSDXL && (
-                                <InputNumberSlider
-                                  name="clipSkip"
-                                  label="Clip Skip"
-                                  min={1}
-                                  max={generation.maxValues.clipSkip}
-                                  sliderProps={{
-                                    ...sharedSliderProps,
-                                    marks: clipSkipMarks,
-                                  }}
-                                  numberProps={sharedNumberProps}
-                                />
-                              )}
-                              <InputResourceSelect
-                                name="vae"
-                                label={getDisplayName(ModelType.VAE)}
-                                buttonLabel="Add VAE"
-                                options={{
-                                  baseModel: supportedBaseModel,
-                                  type: ModelType.VAE,
-                                  canGenerate: true,
-                                }}
-                              />
-                            </Stack>
-                          </Accordion.Panel>
-                        </Accordion.Item>
-                      </PersistentAccordion>
-                    </Stack>
-                  </Card>
-                  {/* <Card {...sharedCardProps}>
+                    </Accordion.Panel>
+                  </Accordion.Item>
+                </PersistentAccordion>
+              </Stack>
+            </Card>
+            {/* <Card {...sharedCardProps}>
           <Stack>
             <Text>TODO.hires</Text>
           </Stack>
         </Card> */}
-                </Stack>
-              </ScrollArea>
-              <Stack spacing={4} p="md">
-                <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
-                  <Card withBorder className={classes.generateButtonQuantity} p={0}>
-                    <Stack spacing={0}>
-                      <Text
-                        size="xs"
-                        color="dimmed"
-                        weight={500}
-                        ta="center"
-                        className={classes.generateButtonQuantityText}
-                      >
-                        Quantity
-                      </Text>
-                      <InputNumber
-                        name="quantity"
-                        min={1}
-                        max={generation.maxValues.quantity}
-                        className={classes.generateButtonQuantityInput}
-                      />
-                    </Stack>
-                  </Card>
-                  <LoginRedirect reason="image-gen" returnUrl="/generate">
-                    {isSDXL ? (
-                      <BuzzTransactionButton
-                        type="submit"
-                        size="lg"
-                        label="Generate"
-                        loading={isSubmitting || loading}
-                        className={classes.generateButtonButton}
-                        disabled={disableGenerateButton}
-                        buzzAmount={totalCost}
-                      />
-                    ) : (
-                      <Button
-                        type="submit"
-                        size="lg"
-                        loading={isSubmitting || loading}
-                        className={classes.generateButtonButton}
-                        disabled={disableGenerateButton}
-                      >
-                        Generate
-                      </Button>
-                    )}
-                  </LoginRedirect>
-                  {/* <Tooltip label="Reset" color="dark" withArrow> */}
-                  <Button
-                    onClick={() => form.reset()}
-                    variant="outline"
-                    className={classes.generateButtonReset}
-                    px="xs"
-                  >
-                    {/* <IconX size={20} strokeWidth={3} /> */}
-                    Clear All
-                  </Button>
-                  {/* </Tooltip> */}
-                </Group>
-                <Text size="xs" color="dimmed">
-                  {reachedRequestLimit
-                    ? 'You have reached the request limit. Please wait until your current requests are finished.'
-                    : `You can queue ${
-                        constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
-                      } more jobs`}
+          </Stack>
+        </ScrollArea>
+        <Stack spacing={4} p="md">
+          <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
+            <Card withBorder className={classes.generateButtonQuantity} p={0}>
+              <Stack spacing={0}>
+                <Text
+                  size="xs"
+                  color="dimmed"
+                  weight={500}
+                  ta="center"
+                  className={classes.generateButtonQuantityText}
+                >
+                  Quantity
                 </Text>
+                <InputNumber
+                  name="quantity"
+                  min={1}
+                  max={generation.maxValues.quantity}
+                  className={classes.generateButtonQuantityInput}
+                />
               </Stack>
-              <GenerationStatusMessage />
-            </Stack>
-          );
-        }}
-      </BaseModelProvider>
+            </Card>
+            <LoginRedirect reason="image-gen" returnUrl="/generate">
+              {isSDXL ? (
+                <BuzzTransactionButton
+                  type="submit"
+                  size="lg"
+                  label="Generate"
+                  loading={isSubmitting || loading}
+                  className={classes.generateButtonButton}
+                  disabled={disableGenerateButton}
+                  buzzAmount={totalCost}
+                />
+              ) : (
+                <Button
+                  type="submit"
+                  size="lg"
+                  loading={isSubmitting || loading}
+                  className={classes.generateButtonButton}
+                  disabled={disableGenerateButton}
+                >
+                  Generate
+                </Button>
+              )}
+            </LoginRedirect>
+            {/* <Tooltip label="Reset" color="dark" withArrow> */}
+            <Button
+              onClick={() => form.reset()}
+              variant="outline"
+              className={classes.generateButtonReset}
+              px="xs"
+            >
+              {/* <IconX size={20} strokeWidth={3} /> */}
+              Clear All
+            </Button>
+            {/* </Tooltip> */}
+          </Group>
+          <Text size="xs" color="dimmed">
+            {reachedRequestLimit
+              ? 'You have reached the request limit. Please wait until your current requests are finished.'
+              : `You can queue ${
+                  constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
+                } more jobs`}
+          </Text>
+        </Stack>
+        <GenerationStatusMessage />
+      </Stack>
     </PersistentForm>
   );
 }
@@ -548,6 +566,15 @@ const sharedNumberProps: NumberInputProps = {
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
 const getBaseModels = (data: DeepPartial<GenerateFormModel>) => {
+  const modelBaseModel = data.model?.baseModel;
+  const resourcesBaseModels = [
+    ...new Set(
+      [...(data.resources ?? []), ...[data.vae].filter(isDefined)]
+        .map((x) => x?.baseModel)
+        .filter(isDefined)
+    ),
+  ];
+
   const baseModels: string[] = [];
   let baseModel: BaseModelSetType | undefined;
   const defaultResource = data.model ?? data.resources?.[0] ?? data.vae;
