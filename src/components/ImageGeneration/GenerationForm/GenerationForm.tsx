@@ -12,7 +12,8 @@ import { useEffect } from 'react';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { baseModelSets, constants } from '~/server/common/constants';
+import { baseModelSets } from '~/server/common/constants';
+import { isDefined } from '~/utils/type-guards';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const defaultValues = useGetInitialFormData() ?? {};
@@ -25,19 +26,41 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   });
 
   useEffect(() => {
+    setTimeout(() => {
+      useGenerationFormStore.setState((data) => ({ ...data, ...form.getValues() }));
+    }, 0);
     const subscription = form.watch((value) => {
       useGenerationFormStore.setState((data) => ({ ...data, ...(value as GenerationFormSchema) }));
     });
     return () => subscription.unsubscribe();
   }, []);
 
+  // #region [derived state]
   const totalCost = useGenerationFormStore(({ baseModel, aspectRatio, steps, quantity }) =>
     calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
   );
-  const baseModel = useGenerationFormStore(({ model, resources, vae }) => {
-    const resource = model ?? resources?.[0] ?? vae;
-    // const test = Object.entries(baseModelSets).find(([,baseModels]))
+
+  const { baseModel, hasResources } = useGenerationFormStore(({ model, resources, vae }) => {
+    const allResources = [...(resources ?? []), ...[vae].filter(isDefined)];
+    const baseModel = model?.baseModel
+      ? Object.entries(baseModelSets).find(([, baseModels]) =>
+          baseModels.includes(model.baseModel as any)
+        )?.[0]
+      : undefined;
+
+    return {
+      baseModel,
+      hasResources: !!allResources.length,
+    };
   });
+
+  const additionalResourcesCount = useGenerationFormStore((state) =>
+    state.resources ? state.resources.length : 0
+  );
+  const trainedWords = useGenerationFormStore(({ resources }) =>
+    resources?.flatMap((x) => x.trainedWords)
+  );
+  // #endregion
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
@@ -46,6 +69,8 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       )}. Buy or earn more buzz to perform this action.`,
     performTransactionOnPurchase: true,
   });
+
+  const isSDXL = baseModel === 'SDXL';
 
   return <></>;
 };

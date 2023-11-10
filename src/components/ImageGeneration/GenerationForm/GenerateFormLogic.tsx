@@ -172,7 +172,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     const performTransaction = async () => {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
-        params,
+        params: { ...params, baseModel: useTempGenerateStore.getState().baseModel },
       });
 
       onSuccess?.();
