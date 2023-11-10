@@ -164,7 +164,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     if (vae) _resources.push(vae);
 
     const totalCost = calculateGenerationBill(data);
-    console.log({ ...params, baseModel: useTempGenerateStore.getState().baseModel });
     const performTransaction = async () => {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
