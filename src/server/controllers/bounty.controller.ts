@@ -202,6 +202,8 @@ export const getBountyEntriesHandler = async ({
       type: 'BountyEntry',
       imagesPerId: 4,
       include: ['tags'],
+      isModerator: ctx.user?.isModerator,
+      userId: ctx.user?.id,
     });
 
     const files = await getFilesByEntity({

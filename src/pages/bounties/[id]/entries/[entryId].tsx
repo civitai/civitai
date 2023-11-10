@@ -701,9 +701,14 @@ export function BountyEntryCarousel({
 
   if (!current) {
     return (
-      <Center>
-        <Alert>Due to your filter settings, we could not display any images from this entry</Alert>
-      </Center>
+      <div ref={setRef} className={cx(classes.root, className)}>
+        <Center>
+          <Alert>
+            Sorry, it looks like this entry has no images have no entries we can display. This can
+            happen due to your filter settings or when the images have been marked for review.
+          </Alert>
+        </Center>
+      </div>
     );
   }
 
