@@ -7,24 +7,20 @@ import { trpc } from '~/utils/trpc';
 export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
   const user = useCurrentUser();
   const [isLoading, setIsLoading] = useState(false);
-  if (!user)
-    return (
-      <ActionIcon onClick={() => console.log('hey')}>
-        <IconEyeOff />
-      </ActionIcon>
-    );
 
   const { mutate } = trpc.user.update.useMutation({
     onMutate() {
       setIsLoading(true);
     },
     async onSuccess() {
-      user.refresh();
+      user?.refresh();
     },
     onSettled() {
       setIsLoading(false);
     },
   });
+
+  if (!user) return null;
 
   const icon = user.blurNsfw ? <IconEyeOff {...iconProps} /> : <IconEye {...iconProps} />;
   const toggle = (setTo?: boolean) => mutate({ id: user.id, blurNsfw: setTo ?? !user.blurNsfw });
