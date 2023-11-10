@@ -123,7 +123,6 @@ export default function ResourceSelectModal({
         ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
       )?.[1]
     : undefined;
-  console.log({ baseModel, baseModelSet });
 
   const filters: string[] = [];
   if (types) filters.push(`(${types.map((type) => `type = ${type}`).join(' OR ')})`);
