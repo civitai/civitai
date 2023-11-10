@@ -99,6 +99,8 @@ const searchClient: InstantSearchProps['searchClient'] = {
 const ResourceSelectContext = React.createContext<{
   onSelect: (value: Generation.Resource & { image: ResourceSelectData['image'] }) => void;
   canGenerate?: boolean;
+  baseModel?: string;
+  baseModelSet?: string[];
 } | null>(null);
 
 const useResourceSelectContext = () => {
@@ -121,6 +123,7 @@ export default function ResourceSelectModal({
         ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
       )?.[1]
     : undefined;
+  console.log({ baseModel, baseModelSet });
 
   const filters: string[] = [];
   if (types) filters.push(`(${types.map((type) => `type = ${type}`).join(' OR ')})`);
@@ -145,7 +148,7 @@ export default function ResourceSelectModal({
 
   return (
     <ResourceSelectContext.Provider
-      value={{ onSelect: handleSelect, canGenerate: options.canGenerate }}
+      value={{ onSelect: handleSelect, canGenerate: options.canGenerate, baseModel, baseModelSet }}
     >
       <InstantSearch searchClient={searchClient} indexName={MODELS_SEARCH_INDEX}>
         <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
@@ -283,16 +286,19 @@ type ResourceSelectData = ReturnType<
 function ResourceSelectCard({ index, data }: { index: number; data: ResourceSelectData }) {
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const { onSelect, canGenerate } = useResourceSelectContext();
+  const { onSelect, canGenerate, baseModel, baseModelSet } = useResourceSelectContext();
   const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
         ? data.image.width / data.image.height
         : 1,
   });
-  const versions = data.versions.filter((x) =>
-    canGenerate !== undefined ? x.canGenerate === canGenerate : true
-  );
+  const versions = data.versions.filter((x) => {
+    if (canGenerate === undefined) return true;
+    return (
+      x.canGenerate === canGenerate && (baseModelSet ? baseModelSet?.includes(x.baseModel) : true)
+    );
+  });
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
 
   const handleSelect = () => {
