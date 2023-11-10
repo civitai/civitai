@@ -52,7 +52,7 @@ export const generationResourceSchema = z.object({
   strength: z.number().optional(),
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
-  image: imageSchema.optional(),
+  image: imageSchema.omit({ meta: true }).optional(),
 
   // navigation props
   covered: z.boolean().optional(),
