@@ -351,7 +351,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <Group className={classes.userActions} spacing={8} noWrap>
                             <TipBuzzButton toUserId={user.id} size="md" compact />
                             <FollowUserButton userId={user.id} size="md" compact />
-                            <UserContextMenu username={user.username} />
+                            {user.username && <UserContextMenu username={user.username} />}
                           </Group>
                         </Group>
                         <Group spacing={8}>
