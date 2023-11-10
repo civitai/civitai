@@ -13,6 +13,7 @@ function ResourceSelect({
   buttonLabel,
   buttonProps,
   options = {},
+  allowRemove = true,
   ...inputWrapperProps
 }: {
   value?: Generation.Resource;
@@ -24,13 +25,12 @@ function ResourceSelect({
     type?: ModelType;
     canGenerate?: boolean;
   };
+  allowRemove?: boolean;
 } & Omit<InputWrapperProps, 'children'>) {
   const { type } = options;
   const _value = type && type !== value?.modelType ? undefined : value;
-  const canAdd = !_value;
 
   const handleAdd = (resource: Generation.Resource) => {
-    if (!canAdd) return;
     onChange?.(resource);
   };
 
@@ -40,6 +40,17 @@ function ResourceSelect({
 
   const handleUpdate = (resource: Generation.Resource) => {
     onChange?.(resource);
+  };
+
+  const handleOpenResourceSearch = () => {
+    openResourceSelectModal({
+      title: buttonLabel,
+      onSelect: handleAdd,
+      options: {
+        ...options,
+        types: type ? [type] : undefined,
+      },
+    });
   };
 
   // removes resources that have unsupported types
@@ -52,26 +63,22 @@ function ResourceSelect({
       {!value ? (
         <div>
           <Button
-            variant="default"
+            variant="light"
             leftIcon={<IconPlus size={18} />}
             fullWidth
-            onClick={() =>
-              openResourceSelectModal({
-                title: buttonLabel,
-                onSelect: handleAdd,
-                options: {
-                  ...options,
-                  types: type ? [type] : undefined,
-                },
-              })
-            }
+            onClick={handleOpenResourceSearch}
             {...buttonProps}
           >
             {buttonLabel}
           </Button>
         </div>
       ) : (
-        <ResourceSelectCard resource={value} onUpdate={handleUpdate} onRemove={handleRemove} />
+        <ResourceSelectCard
+          resource={value}
+          onUpdate={handleUpdate}
+          onRemove={allowRemove ? handleRemove : undefined}
+          onSwap={handleOpenResourceSearch}
+        />
       )}
     </Input.Wrapper>
   );

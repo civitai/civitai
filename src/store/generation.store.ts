@@ -45,8 +45,13 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (!input) return;
         const data = await getGenerationData(input);
-        const type = input.type === 'model' ? 'run' : input.type === 'image' ? 'remix' : 'random';
-        if (data) get().setData({ type, data });
+        const type =
+          input.type === 'model' || input.type === 'modelVersion'
+            ? 'run'
+            : input.type === 'image'
+            ? 'remix'
+            : 'random';
+        if (data) get().setData({ type, data: { ...data } });
       },
       close: () =>
         set((state) => {

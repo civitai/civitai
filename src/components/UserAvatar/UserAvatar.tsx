@@ -39,6 +39,7 @@ export function UserAvatar({
   subTextSize,
   includeAvatar = true,
   radius = 'xl',
+  avatarSize,
 }: Props) {
   const currentUser = useCurrentUser();
 
@@ -57,14 +58,14 @@ export function UserAvatar({
             src={
               user.image && !userDeleted
                 ? getEdgeUrl(user.image, {
-                    width: 96,
+                    width: typeof avatarSize === 'number' ? avatarSize : 96,
                     anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
                   })
                 : undefined
             }
             alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
             radius={radius || 'xl'}
-            size={size}
+            size={avatarSize ?? size}
             imageProps={{ loading: 'lazy' }}
             sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
             {...avatarProps}
@@ -143,4 +144,5 @@ type Props = {
   subTextSize?: MantineSize;
   includeAvatar?: boolean;
   radius?: MantineSize;
+  avatarSize?: MantineSize | number;
 };

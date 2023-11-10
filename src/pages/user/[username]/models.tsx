@@ -1,6 +1,6 @@
-import { Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
+import { Box, Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -17,8 +17,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
-
-import { UserProfileLayout } from './';
+import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
@@ -42,8 +41,15 @@ export default function UserModelsPage() {
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
+  const Wrapper = ({ children }: { children: React.ReactNode }) =>
+    features.profileOverhaul ? (
+      <Box mt="md">{children}</Box>
+    ) : (
+      <Tabs.Panel value="/models">{children}</Tabs.Panel>
+    );
+
   return (
-    <Tabs.Panel value="/models">
+    <Wrapper>
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
@@ -101,7 +107,7 @@ export default function UserModelsPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Tabs.Panel>
+    </Wrapper>
   );
 }
 
@@ -119,6 +125,7 @@ function ContentToggle({
     { label: 'Draft', value: 'draft' },
   ];
   if (features.imageTrainingResults) tabs.push({ label: 'Training', value: 'training' });
+
   return (
     <SegmentedControl
       {...props}

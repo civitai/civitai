@@ -14,9 +14,12 @@ import {
   Divider,
   createStyles,
   ScrollArea,
+  Badge,
+  CopyButton,
+  Anchor,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconAlertTriangle, IconArrowAutofitDown } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
@@ -28,7 +31,6 @@ import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/Res
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   InputNumber,
   InputNumberSlider,
@@ -58,6 +60,11 @@ import {
   usePollGenerationRequests,
 } from '../utils/generationRequestHooks';
 import useIsClient from '~/hooks/useIsClient';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { calculateGenerationBill } from '~/server/common/generation';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function GenerateFormView({
   form,
@@ -72,9 +79,10 @@ export function GenerateFormView({
 }) {
   const isClient = useIsClient();
   const { classes } = useStyles();
-  const currentUser = useCurrentUser();
   const { formState } = form;
   const { isSubmitting } = formState;
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   const type = useGenerationStore((state) => state.data?.type);
 
@@ -110,6 +118,7 @@ export function GenerateFormView({
   };
   // #endregion
 
+  // TODO.generation: Uncomment this out by next week when we start charging for sdxl generation
   // const [baseModel, aspectRatio, steps, quantity] = form.watch([
   //   'baseModel',
   //   'aspectRatio',
@@ -117,6 +126,9 @@ export function GenerateFormView({
   //   'quantity',
   // ]);
   // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+
+  const additionalResources = form.watch('resources');
+  const trainedWords = additionalResources?.flatMap((resource) => resource.trainedWords) ?? [];
 
   return (
     <PersistentForm
@@ -131,43 +143,68 @@ export function GenerateFormView({
       <BaseModelProvider getBaseModels={getBaseModels}>
         {({ baseModel, baseModels }) => {
           const isSDXL = baseModel === 'SDXL';
-          const disableGenerateButton =
-            reachedRequestLimit || (isSDXL && !(currentUser?.isMember || currentUser?.isModerator));
+          const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
           const [supportedBaseModel] = baseModels;
 
           return (
             <Stack spacing={0} h="100%">
               <ScrollArea sx={{ flex: 1 }}>
                 <Stack p="md" pb={0}>
-                  {type === 'remix' && (
+                  {/* {type === 'remix' && (
                     <DismissibleAlert
                       id="image-gen-params"
                       content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
                     />
-                  )}
+                  )} */}
+                  <InputResourceSelect
+                    name="model"
+                    label="Model"
+                    labelProps={{ mb: 5, style: { fontWeight: 590 } }}
+                    buttonLabel="Add Model"
+                    withAsterisk
+                    options={{
+                      type: ModelType.Checkpoint,
+                      baseModel: supportedBaseModel,
+                      canGenerate: true,
+                    }}
+                    allowRemove={false}
+                  />
+                  <PersistentAccordion
+                    storeKey="generation-form-resources"
+                    classNames={{
+                      item: classes.accordionItem,
+                      control: classes.accordionControl,
+                      content: classes.accordionContent,
+                    }}
+                    variant="contained"
+                  >
+                    <Accordion.Item value="resources">
+                      <Accordion.Control>
+                        <Group spacing={4}>
+                          <Text size="sm" weight={590}>
+                            Additional Resources
+                          </Text>
+                          {!!additionalResources?.length && (
+                            <Badge style={{ fontWeight: 590 }}>{additionalResources.length}</Badge>
+                          )}
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <InputResourceSelectMultiple
+                          name="resources"
+                          limit={9}
+                          buttonLabel="Add additional resource"
+                          options={{
+                            baseModel: supportedBaseModel,
+                            types: getGenerationConfig(baseModel).additionalResourceTypes,
+                            canGenerate: true,
+                          }}
+                        />
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  </PersistentAccordion>
                   <Card {...sharedCardProps}>
                     <Stack>
-                      <InputResourceSelect
-                        name="model"
-                        label="Model"
-                        buttonLabel="Add Model"
-                        withAsterisk
-                        options={{
-                          baseModel: supportedBaseModel,
-                          type: ModelType.Checkpoint,
-                          canGenerate: true,
-                        }}
-                      />
-                      <InputResourceSelectMultiple
-                        name="resources"
-                        limit={9}
-                        buttonLabel="Add additional resource"
-                        options={{
-                          baseModel: supportedBaseModel,
-                          types: getGenerationConfig(baseModel).additionalResourceTypes,
-                          canGenerate: true,
-                        }}
-                      />
                       <Stack spacing={0}>
                         <InputTextArea
                           name="prompt"
@@ -195,6 +232,41 @@ export function GenerateFormView({
                             Apply Parameters
                           </Button>
                         )}
+                        {trainedWords.length > 0 ? (
+                          <Stack spacing={8} mt={showFillForm ? 'md' : 8}>
+                            <Text color="dimmed" size="xs" weight={590}>
+                              Trigger words
+                            </Text>
+                            <TrainedWords
+                              type="LORA"
+                              trainedWords={trainedWords}
+                              badgeProps={{ style: { textTransform: 'none' } }}
+                            />
+                            <CopyButton value={trainedWords.join(' ')}>
+                              {({ copied, copy }) => (
+                                <Group position="left">
+                                  <Button
+                                    variant="subtle"
+                                    size="xs"
+                                    color={copied ? 'green' : 'blue.5'}
+                                    onClick={copy}
+                                    compact
+                                  >
+                                    {copied ? (
+                                      <Group spacing={4}>
+                                        Copied <IconCheck size={14} />
+                                      </Group>
+                                    ) : (
+                                      <Group spacing={4}>
+                                        Copy all <IconCopy size={14} />
+                                      </Group>
+                                    )}
+                                  </Button>
+                                </Group>
+                              )}
+                            </CopyButton>
+                          </Stack>
+                        ) : null}
                       </Stack>
 
                       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
@@ -249,7 +321,7 @@ export function GenerateFormView({
                                 <InputNumberSlider
                                   name="steps"
                                   label="Steps"
-                                  min={1}
+                                  min={10}
                                   max={generation.maxValues.steps}
                                   sliderProps={sharedSliderProps}
                                   numberProps={sharedNumberProps}
@@ -284,18 +356,16 @@ export function GenerateFormView({
                                   numberProps={sharedNumberProps}
                                 />
                               )}
-                              {!isSDXL && (
-                                <InputResourceSelect
-                                  name="vae"
-                                  label={getDisplayName(ModelType.VAE)}
-                                  buttonLabel="Add VAE"
-                                  options={{
-                                    baseModel: supportedBaseModel,
-                                    type: ModelType.VAE,
-                                    canGenerate: true,
-                                  }}
-                                />
-                              )}
+                              <InputResourceSelect
+                                name="vae"
+                                label={getDisplayName(ModelType.VAE)}
+                                buttonLabel="Add VAE"
+                                options={{
+                                  baseModel: supportedBaseModel,
+                                  type: ModelType.VAE,
+                                  canGenerate: true,
+                                }}
+                              />
                             </Stack>
                           </Accordion.Panel>
                         </Accordion.Item>
@@ -331,6 +401,28 @@ export function GenerateFormView({
                     </Stack>
                   </Card>
                   <LoginRedirect reason="image-gen" returnUrl="/generate">
+                    {/* TODO.generation: Uncomment this out by next week */}
+                    {/* {isSDXL ? (
+                      <BuzzTransactionButton
+                        type="submit"
+                        size="lg"
+                        label="Generate"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                        buzzAmount={totalCost}
+                      />
+                    ) : (
+                      <Button
+                        type="submit"
+                        size="lg"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                      >
+                        Generate
+                      </Button>
+                    )} */}
                     <Button
                       type="submit"
                       size="lg"
@@ -362,24 +454,39 @@ export function GenerateFormView({
                 </Text>
               </Stack>
               <GenerationStatusMessage />
+              {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
               {isSDXL && (
                 <DismissibleAlert
-                  id="sdxl-preview"
-                  title="SDXL Generation Preview"
+                  id="sdxl-free-preview"
+                  title="Free SDXL Generations!"
                   content={
                     <Text>
-                      SDXL is currently in early preview. You must be{' '}
-                      <Text
-                        component="a"
-                        td="underline"
-                        href="/pricing"
-                        variant="link"
+                      To celebrate{' '}
+                      <Anchor
+                        href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
+                        target="_blank"
+                        span
+                      >
+                        Civitai&apos;s Birthday
+                      </Anchor>{' '}
+                      we&apos;re letting everyone use SDXL for free!{' '}
+                      <Anchor
+                        href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
+                        rel="noopener nofollow"
+                      >
+                        After that it will cost ⚡3 Buzz per image
+                      </Anchor>
+                      . Complete our{' '}
+                      <Anchor
+                        href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
+                          currentUser?.username ?? 'Unauthed'
+                        }`}
+                        rel="noopener nofollow"
                         target="_blank"
                       >
-                        a Supporter
-                      </Text>{' '}
-                      to generate SDXL images. LoRA support has been postponed. Stay tuned for more
-                      updates.
+                        SDXL generation survey
+                      </Anchor>{' '}
+                      to let us know how we did.
                     </Text>
                   }
                 />
@@ -392,7 +499,7 @@ export function GenerateFormView({
   );
 }
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generateButtonContainer: {
     width: '100%',
@@ -447,10 +554,40 @@ const useStyles = createStyles(() => ({
     marginBottom: 5,
     alignItems: 'center',
   },
+  accordionItem: {
+    '&:first-of-type': {
+      borderTopLeftRadius: '8px',
+      borderTopRightRadius: '8px',
+    },
+
+    '&:last-of-type': {
+      borderBottomLeftRadius: '8px',
+      borderBottomRightRadius: '8px',
+    },
+
+    '&[data-active]': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+    },
+  },
+  accordionControl: {
+    padding: '8px 8px 8px 12px',
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+
+    '&[data-active]': {
+      borderRadius: '0 !important',
+      borderBottom: `1px solid ${
+        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+      }`,
+    },
+  },
+  accordionContent: {
+    padding: '8px 12px 12px 12px',
+  },
 }));
 
 const sharedCardProps: Omit<CardProps, 'children'> = {
   withBorder: true,
+  radius: 'md',
 };
 
 const sharedSliderProps: SliderProps = {

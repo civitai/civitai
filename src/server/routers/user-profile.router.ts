@@ -1,10 +1,15 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
+  addEntityToShowcaseHandler,
   getUserContentOverviewHandler,
   getUserProfileHandler,
   updateUserProfileHandler,
 } from '~/server/controllers/user-profile.controller';
-import { getUserProfileSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
+import {
+  getUserProfileSchema,
+  showcaseItemSchema,
+  userProfileUpdateSchema,
+} from '~/server/schema/user-profile.schema';
 
 export const userProfileRouter = router({
   get: publicProcedure
@@ -19,4 +24,8 @@ export const userProfileRouter = router({
     .use(isFlagProtected('profileOverhaul'))
     .input(userProfileUpdateSchema)
     .mutation(updateUserProfileHandler),
+  addEntityToShowcase: protectedProcedure
+    .use(isFlagProtected('profileOverhaul'))
+    .input(showcaseItemSchema)
+    .mutation(addEntityToShowcaseHandler),
 });

@@ -19,6 +19,7 @@ export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'>
   precision?: number;
   sliderProps?: Omit<SliderProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
   numberProps?: Omit<NumberInputProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
+  reverse?: boolean;
 };
 
 export function NumberSlider({
@@ -30,6 +31,7 @@ export function NumberSlider({
   precision: initialPrecision,
   sliderProps,
   numberProps,
+  reverse,
   ...inputWrapperProps
 }: NumberSliderProps) {
   const { classes, cx } = useStyles();
@@ -91,7 +93,7 @@ export function NumberSlider({
 
   return (
     <Input.Wrapper {...inputWrapperProps} className={cx(classes.fill, inputWrapperProps.className)}>
-      <Group spacing="xs">
+      <Group spacing="xs" style={reverse ? { flexDirection: 'row-reverse' } : undefined}>
         <Slider
           {...sliderProps}
           className={cx(classes.fill, sliderProps?.className)}

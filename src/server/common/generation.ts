@@ -1,6 +1,5 @@
 import { GenerateFormModel } from '~/server/schema/generation.schema';
-import { generation, GenerationBaseModel, getGenerationConfig } from '~/server/common/constants';
-import { isNumber } from '~/utils/type-guards';
+import { generation, getGenerationConfig } from '~/server/common/constants';
 
 export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
   const {
@@ -10,18 +9,11 @@ export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
     baseModel = 'SD1',
   } = data;
 
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const aspectRatioNum = Number(
-    isNumber(aspectRatio) ? aspectRatio : generation.defaultValues.aspectRatio
-  );
-  const { width, height } = aspectRatios[aspectRatioNum];
+  const { aspectRatios, costs } = getGenerationConfig(baseModel);
+  const aspectRatioPosition = Number(aspectRatio);
+  const { width, height } = aspectRatios[aspectRatioPosition];
 
   return Math.ceil(
-    generation.settingsCost.base *
-      generation.settingsCost.baseModel[baseModel as GenerationBaseModel] *
-      (width / generation.settingsCost.width) *
-      (height / generation.settingsCost.height) *
-      (steps / generation.settingsCost.steps) *
-      quantity
+    costs.base * (width / costs.width) * (height / costs.height) * (steps / costs.steps) * quantity
   );
 };

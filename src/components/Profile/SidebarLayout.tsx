@@ -19,7 +19,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       transition: 'transform 200ms ease',
       zIndex: 1,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      paddingBottom: 'calc(2 * var(--mantine-header-height, 50px))',
+      paddingBottom: 'calc(var(--mantine-header-height, 50px))',
 
       [theme.fn.smallerThan('sm')]: {
         display: 'none',

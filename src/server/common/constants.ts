@@ -215,10 +215,14 @@ export const constants = {
     minTipAmount: 50,
   },
   profile: {
-    coverImageAspectRatio: 5 / 17,
-    mobileCoverImageAspectRatio: 12 / 17,
-    coverImageHeight: 240,
-    coverImageWidth: 816,
+    coverImageAspectRatio: 1 / 4,
+    mobileCoverImageAspectRatio: 1 / 4,
+    coverImageHeight: 400,
+    coverImageWidth: 1600,
+    showcaseItemsLimit: 32,
+    bioMaxLength: 400,
+    messageMaxLength: 1200,
+    locationMaxLength: 30,
   },
 } as const;
 
@@ -320,6 +324,15 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+    model: {
+      id: 128713,
+      name: '8',
+      modelId: 4384,
+      modelName: 'DreamShaper',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 1.5',
+      strength: 1,
+    },
   },
   maxValues: {
     seed: 4294967295,
@@ -327,27 +340,23 @@ export const generation = {
     quantity: 10,
     clipSkip: 10,
   },
-  settingsCost: {
-    base: 0,
-    quantity: 1,
-    steps: 40,
-    width: 512,
-    height: 512,
-    baseModel: {
-      SD1: 1,
-      SDXL: 8,
-    },
-  },
 } as const;
 
 export const generationConfig = {
   SD1: {
-    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion, ModelType.LoCon],
+    additionalResourceTypes: [ModelType.LORA, ModelType.LoCon, ModelType.TextualInversion],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
       { label: 'Portrait', width: 512, height: 768 },
     ],
+    costs: {
+      base: 0,
+      quantity: 1,
+      steps: 40,
+      width: 512,
+      height: 512,
+    },
   },
   SDXL: {
     additionalResourceTypes: [ModelType.LORA],
@@ -356,6 +365,15 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
+    costs: {
+      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // base: 4,
+      base: 0,
+      quantity: 1,
+      steps: 40,
+      width: 1024,
+      height: 1024,
+    },
   },
 };
 

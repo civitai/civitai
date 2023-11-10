@@ -73,4 +73,6 @@ export const userProfileUpdateSchema = z.object({
     )
     .optional(),
   badgeId: z.number().nullish(),
+  nameplateId: z.number().nullish(),
+  leaderboardShowcase: z.string().nullish(),
 });

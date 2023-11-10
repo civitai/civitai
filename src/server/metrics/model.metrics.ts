@@ -93,15 +93,15 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
       const affectedModelVersionsResponse = await ch.query({
         query: `
           SELECT
-              mve.modelVersionId AS modelVersionId,
-              SUM(if(mve.time >= subtractDays(now(), 1), 1, null)) AS downloads24Hours,
-              SUM(if(mve.time >= subtractDays(now(), 7), 1, null)) AS downloads1Week,
-              SUM(if(mve.time >= subtractMonths(now(), 1), 1, null)) AS downloads1Month,
-              SUM(if(mve.time >= subtractYears(now(), 1), 1, null)) AS downloads1Year,
-              COUNT() AS downloadsAll
-          FROM modelVersionUniqueDownloads mve
-          WHERE mve.modelVersionId IN (${batch.join(',')})
-          GROUP BY mve.modelVersionId
+            modelVersionId,
+            uniqMergeIf(users_state, createdDate = current_date()) day,
+            uniqMergeIf(users_state, createdDate >= subtractDays(current_date(),7)) week,
+            uniqMergeIf(users_state, createdDate >= subtractMonths(current_date(),1)) month,
+            uniqMergeIf(users_state, createdDate >= subtractYears(current_date(),1)) year,
+            uniqMerge(users_state) all_time
+          FROM daily_downloads_unique
+          WHERE modelVersionId IN (${batch.join(',')})
+          GROUP BY 1
         `,
         format: 'JSONEachRow',
       });
@@ -109,11 +109,11 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
       const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
         {
           modelVersionId: number;
-          downloads24Hours: string;
-          downloads1Week: string;
-          downloads1Month: string;
-          downloads1Year: string;
-          downloadsAll: string;
+          day: string;
+          week: string;
+          month: string;
+          year: string;
+          all_time: string;
         }
       ];
 
@@ -133,11 +133,11 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
                   tf.timeframe,
                   CAST(
                     CASE
-                      WHEN tf.timeframe = 'Day' THEN mvs::json->>'downloads24Hours'
-                      WHEN tf.timeframe = 'Week' THEN mvs::json->>'downloads1Week'
-                      WHEN tf.timeframe = 'Month' THEN mvs::json->>'downloads1Month'
-                      WHEN tf.timeframe = 'Year' THEN mvs::json->>'downloads1Year'
-                      WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'downloadsAll'
+                      WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                      WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                      WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                      WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                      WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
                     END
                   AS int) as downloads
               FROM json_array_elements(${batchJson}::json) mvs

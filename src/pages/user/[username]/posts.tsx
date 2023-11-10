@@ -1,6 +1,6 @@
-import { Group, Stack, Tabs } from '@mantine/core';
+import { Box, Group, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
@@ -12,11 +12,12 @@ import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 
-import { UserProfileLayout } from './';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -46,11 +47,19 @@ export default function UserPostsPage() {
     selfView ? query.section ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
+  const features = useFeatureFlags();
 
   if (!query.username) return <NotFound />;
 
+  const Wrapper = ({ children }: { children: React.ReactNode }) =>
+    features.profileOverhaul ? (
+      <Box mt="md">{children}</Box>
+    ) : (
+      <Tabs.Panel value="/posts">{children}</Tabs.Panel>
+    );
+
   return (
-    <Tabs.Panel value="/posts">
+    <Wrapper>
       <MasonryProvider
         columnWidth={constants.cardSizes.image}
         maxColumnCount={7}
@@ -88,7 +97,7 @@ export default function UserPostsPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Tabs.Panel>
+    </Wrapper>
   );
 }
 

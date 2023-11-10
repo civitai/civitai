@@ -573,6 +573,7 @@ model ModelVersionEngagement {
 enum ModelHashType {
   AutoV1
   AutoV2
+  AutoV3
   SHA256
   CRC32
   BLAKE3
@@ -632,6 +633,7 @@ model ModelFile {
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
+  headerData        Json?
   visibility        ModelFileVisibility @default(Public)
   dataPurged        Boolean             @default(false)
 

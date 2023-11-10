@@ -52,7 +52,7 @@ import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Announcements } from '~/components/Announcements/Announcements';
@@ -109,7 +109,7 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { RecommendedResources } from '~/components/Model/Recommended/RecommendedResources';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -737,6 +737,13 @@ export default function ModelDetailsV2({
                         }
                       />
                     )}
+                    {isOwner && (
+                      <AddToShowcaseMenuItem
+                        key="add-to-showcase"
+                        entityType="Model"
+                        entityId={model.id}
+                      />
+                    )}
                     {(!currentUser || !isOwner || isModerator) && (
                       <LoginRedirect reason="report-model">
                         <Menu.Item
@@ -964,14 +971,6 @@ export default function ModelDetailsV2({
           ownerId={model.user.id}
         />
       )}
-      {/* TODO.manuel: Move this to the ModelVersionDetails */}
-      {/* {canLoadBelowTheFold && model.supportsRecommendedResources && (
-        <RecommendedResources
-          sourceId={latestVersion.id}
-          label="Recommended Resources"
-          ownerId={model.user.id}
-        />
-      )} */}
       {canLoadBelowTheFold &&
         (!model.locked ? (
           <Container size="xl" my="xl">

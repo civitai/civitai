@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  AspectRatio,
   Button,
   createStyles,
   Divider,
@@ -44,6 +45,10 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ReactMarkdown from 'react-markdown';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -52,6 +57,29 @@ const useStyles = createStyles((theme) => ({
       width: 'auto',
       marginLeft: '-16px',
       marginRight: '-16px',
+      paddingTop: 2,
+      paddingBottom: 2,
+    },
+  },
+  coverImageNSFWActions: {
+    height: '100%',
+    width: '100%',
+  },
+  coverImageWrapper: {
+    overflow: 'hidden',
+    borderRadius: theme.radius.md,
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    [theme.fn.smallerThan('sm')]: {
+      width: 'auto',
+      marginLeft: '-16px',
+      marginRight: '-16px',
+      maxHeight: 'auto',
+      borderRadius: 0,
+      display: 'block',
     },
   },
   coverImage: {
@@ -60,12 +88,9 @@ const useStyles = createStyles((theme) => ({
     overflow: 'hidden',
     height: 0,
     paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
-    borderRadius: theme.radius.md,
 
     [theme.fn.smallerThan('sm')]: {
       width: 'auto',
-      marginLeft: '-16px',
-      marginRight: '-16px',
       borderRadius: 0,
       paddingBottom: `${(constants.profile.mobileCoverImageAspectRatio * 100).toFixed(3)}%`,
 
@@ -94,9 +119,9 @@ const useStyles = createStyles((theme) => ({
 
     '& > div': {
       position: 'relative',
-      top: '-44px',
       height: 'auto',
-      marginBottom: '-22px',
+      top: '-36px', // Half the avatar size.
+      marginBottom: '-18px', // half of top.
     },
   },
 }));
@@ -107,6 +132,25 @@ export function ProfileHeader({ username }: { username: string }) {
   });
   const isMobile = useIsMobile();
   const { classes, cx } = useStyles();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+  const currentUser = useCurrentUser();
+
+  const coverImage = useMemo(() => {
+    if (isLoadingHidden || !user?.profile?.coverImage) return null;
+    const coverImage = user.profile.coverImage;
+
+    if (user.id === currentUser?.id) return coverImage;
+
+    if (hiddenImages.get(coverImage.id)) return null;
+    for (const tag of coverImage.tags ?? []) {
+      if (hiddenTags.get(tag.id)) return null;
+    }
+    return coverImage;
+  }, [user, hiddenImages, hiddenTags, isLoadingHidden]);
 
   if (!user) {
     return null;
@@ -115,39 +159,42 @@ export function ProfileHeader({ username }: { username: string }) {
   const { profile, stats } = user;
 
   const renderCoverImage = () => {
-    if (!profile?.coverImage) {
+    if (!coverImage) {
       return null;
     }
 
     return (
-      <div className={classes.coverImage}>
-        <ImageGuard
-          images={[profile.coverImage]}
-          connect={{ entityId: profile.coverImage.id, entityType: 'user' }}
-          render={(image) => {
-            return (
-              <ImageGuard.Content>
-                {({ safe }) => (
-                  <div style={{ width: '100%' }}>
-                    <ImageGuard.ToggleConnect position="top-left" />
-                    <ImageGuard.Report />
-
-                    {!safe ? (
-                      <MediaHash {...image} />
-                    ) : (
-                      <ImagePreview
-                        image={image}
-                        edgeImageProps={{ width: 816 }}
-                        radius="md"
-                        style={{ width: '100%' }}
-                      />
-                    )}
-                  </div>
-                )}
-              </ImageGuard.Content>
-            );
-          }}
-        />
+      <div className={classes.coverImageWrapper}>
+        <div className={classes.coverImage}>
+          <ImageGuard
+            images={[coverImage]}
+            connect={{ entityId: coverImage.id, entityType: 'user' }}
+            render={(image) => {
+              return (
+                <ImageGuard.Content>
+                  {({ safe }) => (
+                    <>
+                      {!safe ? (
+                        <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                      ) : (
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{ width: 1200 }}
+                          radius="md"
+                          style={{ width: '100%' }}
+                        />
+                      )}
+                      <div className={classes.coverImageNSFWActions}>
+                        <ImageGuard.ToggleConnect position="top-left" />
+                        <ImageGuard.Report />
+                      </div>
+                    </>
+                  )}
+                </ImageGuard.Content>
+              );
+            }}
+          />
+        </div>
       </div>
     );
   };
@@ -169,11 +216,18 @@ export function ProfileHeader({ username }: { username: string }) {
             <IconBellFilled />
           </ThemeIcon>
           <Stack spacing={0}>
-            <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
-              {profile.message}
-            </ReactMarkdown>
+            <Text>
+              <ReactMarkdown
+                rehypePlugins={[rehypeRaw, remarkGfm]}
+                allowedElements={['a', 'p']}
+                unwrapDisallowed
+                className="markdown-content"
+              >
+                {profile.message}
+              </ReactMarkdown>
+            </Text>
             {profile.messageAddedAt && (
-              <Text color="dimmed">
+              <Text color="dimmed" size="xs">
                 <DaysFromNow date={profile.messageAddedAt} />
               </Text>
             )}
@@ -191,7 +245,7 @@ export function ProfileHeader({ username }: { username: string }) {
         {renderCoverImage()}
         <div
           className={cx(classes.profileSection, {
-            [classes.profileSectionWithCoverImage]: !!profile?.coverImage,
+            [classes.profileSectionWithCoverImage]: !!coverImage,
           })}
         >
           <ProfileSidebar username={username} />

@@ -17,6 +17,7 @@ type Props = {
   title: string;
   icon: React.ReactNode;
   children?: React.ReactNode;
+  action?: React.ReactNode;
 };
 
 export type ProfileSectionProps = { user: UserWithProfile & { username: string } };
@@ -41,6 +42,41 @@ export const useProfileSectionStyles = createStyles<
     const nullStateRef = getRef('nullState');
 
     return {
+      title: {
+        fontSize: '32px',
+        [theme.fn.smallerThan('sm')]: {
+          fontSize: '24px',
+        },
+      },
+      profileSection: {
+        paddingLeft: theme.spacing.md,
+        paddingRight: theme.spacing.md,
+        paddingTop: theme.spacing.xl,
+        paddingBottom: theme.spacing.xl,
+        marginRight: -theme.spacing.md,
+        marginLeft: -theme.spacing.md,
+
+        '&:nth-of-type(even)': {
+          background:
+            theme.colorScheme === 'dark'
+              ? theme.colors.dark[8]
+              : theme.fn.darken(theme.colors.gray[0], 0.01),
+        },
+
+        '&:hover': {
+          [`& .${scrollGridRef}, & .${gridRef}`]: {
+            '&::-webkit-scrollbar': {
+              opacity: 1,
+            },
+            '&::-webkit-scrollbar-thumb': {
+              backgroundColor:
+                theme.colorScheme === 'dark'
+                  ? theme.fn.rgba(theme.white, 0.5)
+                  : theme.fn.rgba(theme.black, 0.5),
+            },
+          },
+        },
+      },
       loader: {
         position: 'absolute',
         top: '50%',
@@ -72,7 +108,7 @@ export const useProfileSectionStyles = createStyles<
         display: 'grid',
         columnGap: theme.spacing.md,
         gridAutoRows: 0,
-        overflow: 'hidden',
+        overflowY: 'hidden',
         gridAutoFlow: 'column',
         gridTemplateColumns: `repeat(${count}, ${widthCarousel})`,
         gridTemplateRows: 'auto',
@@ -83,15 +119,17 @@ export const useProfileSectionStyles = createStyles<
         paddingLeft: theme.spacing.md,
         paddingBottom: theme.spacing.md,
 
-        '& > *': {
-          scrollSnapAlign: 'center',
+        '&::-webkit-scrollbar': {
+          background: 'transparent',
+          opacity: 0,
+          height: 8,
+        },
+        '&::-webkit-scrollbar-thumb': {
+          borderRadius: 4,
         },
 
-        [theme.fn.largerThan('lg')]: {
-          gridTemplateColumns: `repeat(${count}, calc(25% - ${theme.spacing.md}px))`,
-        },
-        [theme.fn.largerThan('xl')]: {
-          gridTemplateColumns: `repeat(${count}, calc(20% - ${theme.spacing.md}px))`,
+        '& > *': {
+          scrollSnapAlign: 'center',
         },
       },
       grid: {
@@ -103,6 +141,15 @@ export const useProfileSectionStyles = createStyles<
         gridAutoRows: 0,
         overflow: 'hidden',
         marginTop: -theme.spacing.md,
+
+        '&::-webkit-scrollbar': {
+          background: 'transparent',
+          opacity: 0,
+          height: 8,
+        },
+        '&::-webkit-scrollbar-thumb': {
+          borderRadius: 4,
+        },
 
         '& > *': {
           marginTop: theme.spacing.md,
@@ -129,43 +176,50 @@ export const useProfileSectionStyles = createStyles<
 
 export const ProfileSectionPreview = ({
   rowCount = 1,
-  columnCount = 4,
+  columnCount = 7,
 }: {
   rowCount?: number;
   columnCount?: number;
 }) => {
+  const { classes } = useProfileSectionStyles({
+    count: columnCount * rowCount,
+    rowCount,
+    widthGrid: '280px',
+  });
+
   return (
-    <Stack spacing="md" w="100%">
+    <Stack spacing="md" w="100%" style={{ overflow: 'hidden' }}>
       <Skeleton width="33%" height={22} />
-      <Grid>
-        {Array.from({ length: rowCount }).map((_, i) => {
+      <div className={classes.grid}>
+        {Array.from({ length: rowCount * columnCount }).map((_, i) => {
           return (
-            <Group key={i} spacing={0} noWrap w="100%">
-              {Array.from({ length: columnCount }).map((_, j) => {
-                return (
-                  <Grid.Col xs={11} md={12 / columnCount} key={j}>
-                    <AspectRatio ratio={7 / 9}>
-                      <Skeleton width="100%" />
-                    </AspectRatio>
-                  </Grid.Col>
-                );
-              })}
-            </Group>
+            <AspectRatio key={i} ratio={7 / 9}>
+              <Skeleton width="100%" />
+            </AspectRatio>
           );
         })}
-      </Grid>
+      </div>
     </Stack>
   );
 };
-export const ProfileSection = ({ children, title, icon }: Props) => {
-  const theme = useMantineTheme();
+export const ProfileSection = ({ children, title, icon, action }: Props) => {
+  const { theme, classes } = useProfileSectionStyles({});
   return (
     <Stack spacing="md">
-      <Group>
-        <Text size={28} weight={590} color={theme.colorScheme === 'dark' ? 'white' : 'black'}>
-          {title}
-        </Text>
-        {icon}
+      <Group position="apart" align="center">
+        <Group>
+          <ThemeIcon size="xl" color="dark" variant="default">
+            {icon}
+          </ThemeIcon>
+          <Text
+            className={classes.title}
+            weight={590}
+            color={theme.colorScheme === 'dark' ? 'white' : 'black'}
+          >
+            {title}
+          </Text>
+        </Group>
+        {action}
       </Group>
       {children}
     </Stack>
