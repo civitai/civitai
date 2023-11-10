@@ -40,7 +40,7 @@ export default function Login({ providers }: Props) {
     returnUrl: string;
     reason: LoginRedirectReason;
   };
-  const { code } = useReferralsContext();
+  const { code, setLoginRedirectReason } = useReferralsContext();
   const { data: referrer } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: code as string },
     { enabled: !!code }
@@ -51,16 +51,25 @@ export default function Login({ providers }: Props) {
   const redirectReason = loginRedirectReasons[reason];
 
   useEffect(() => {
-    if (reason && observedReason?.current !== reason && trackedReasons.includes(reason as any)) {
-      // Avoid calling this multiple times.
-      observedReason.current = reason;
+    if (
+      setLoginRedirectReason &&
+      reason &&
+      observedReason?.current !== reason &&
+      trackedReasons.includes(reason as any)
+    ) {
       // no need to await, worse case this is a noop
       trackAction({
         type: 'LoginRedirect',
         reason: reason as (typeof trackedReasons)[number],
       }).catch(() => undefined);
+
+      // Set the reason in the context so that it can be stored in the DB once the user signs up.
+      setLoginRedirectReason(reason);
+
+      // Safeguard to calling this multiple times.
+      observedReason.current = reason;
     }
-  }, [reason]);
+  }, [reason, setLoginRedirectReason]);
 
   return (
     <>
