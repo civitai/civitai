@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   BulkDeleteGeneratedImagesInput,
@@ -14,11 +13,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
-  throwDbError,
   throwNotFoundError,
   throwRateLimitError,
+  withRetries,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { ModelType, Prisma } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -36,12 +35,11 @@ import {
   Sampler,
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { chunk, uniqBy } from 'lodash-es';
+import { uniqBy } from 'lodash-es';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
-import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 
 export function parseModelVersionId(assetId: string) {
@@ -377,21 +375,20 @@ export const createGenerationRequest = async ({
     aspectRatio: params.aspectRatio,
   });
 
-  let buzzTransaction;
-
-  if (totalCost > 0) {
-    buzzTransaction = await createBuzzTransaction({
-      fromAccountId: userId,
-      type: TransactionType.Generation,
-      amount: totalCost,
-      details: {
-        resources,
-        params,
-      },
-      toAccountId: 0,
-      description: 'Image generation',
-    });
-  }
+  const buzzTransaction =
+    totalCost > 0
+      ? await createBuzzTransaction({
+          fromAccountId: userId,
+          type: TransactionType.Generation,
+          amount: totalCost,
+          details: {
+            resources,
+            params,
+          },
+          toAccountId: 0,
+          description: 'Image generation',
+        })
+      : undefined;
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
@@ -409,12 +406,17 @@ export const createGenerationRequest = async ({
   }
 
   if (!response.ok) {
+    if (buzzTransaction) {
+      await withRetries(async () =>
+        refundTransaction(
+          buzzTransaction.transactionId,
+          'Refund due to an error submitting the training job.'
+        )
+      );
+    }
+
     const message = await response.json();
     throw throwBadRequestError(message);
-    // TODO.luis: Refund buzz. Once brett stuff is merged.
-    if (buzzTransaction) {
-      //refund
-    }
   }
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);

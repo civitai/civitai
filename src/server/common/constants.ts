@@ -366,7 +366,9 @@ export const generationConfig = {
       { label: 'Portrait', width: 832, height: 1216 },
     ],
     costs: {
-      base: 4,
+      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // base: 4,
+      base: 0,
       quantity: 1,
       steps: 40,
       width: 1024,

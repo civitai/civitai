@@ -16,6 +16,7 @@ import {
   ScrollArea,
   Badge,
   CopyButton,
+  Anchor,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
@@ -142,6 +143,8 @@ export function GenerateFormView({
           const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
           const [supportedBaseModel] = baseModels;
 
+          console.log(supportedBaseModel);
+
           return (
             <Stack spacing={0} h="100%">
               <ScrollArea sx={{ flex: 1 }}>
@@ -160,6 +163,7 @@ export function GenerateFormView({
                     withAsterisk
                     options={{
                       type: ModelType.Checkpoint,
+                      baseModel: supportedBaseModel,
                       canGenerate: true,
                     }}
                     allowRemove={false}
@@ -396,7 +400,8 @@ export function GenerateFormView({
                     </Stack>
                   </Card>
                   <LoginRedirect reason="image-gen" returnUrl="/generate">
-                    {isSDXL ? (
+                    {/* TODO.generation: Uncomment this out by next week */}
+                    {/* {isSDXL ? (
                       <BuzzTransactionButton
                         type="submit"
                         size="lg"
@@ -416,7 +421,16 @@ export function GenerateFormView({
                       >
                         Generate
                       </Button>
-                    )}
+                    )} */}
+                    <Button
+                      type="submit"
+                      size="lg"
+                      loading={isSubmitting || loading}
+                      className={classes.generateButtonButton}
+                      disabled={disableGenerateButton}
+                    >
+                      Generate
+                    </Button>
                   </LoginRedirect>
                   {/* <Tooltip label="Reset" color="dark" withArrow> */}
                   <Button
@@ -439,6 +453,33 @@ export function GenerateFormView({
                 </Text>
               </Stack>
               <GenerationStatusMessage />
+              {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
+              {isSDXL && (
+                <DismissibleAlert
+                  id="sdxl-free-preview"
+                  title="Free SDXL Generations!"
+                  content={
+                    <Text>
+                      To celebrate{' '}
+                      <Anchor
+                        href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
+                        target="_blank"
+                        span
+                      >
+                        Civitai&apos;s Birthday
+                      </Anchor>{' '}
+                      we&apos;re letting everyone use SDXL for free!{' '}
+                      <Anchor
+                        href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
+                        rel="noopener nofollow"
+                      >
+                        After that it will cost ⚡3 Buzz per image
+                      </Anchor>
+                      .
+                    </Text>
+                  }
+                />
+              )}
             </Stack>
           );
         }}
