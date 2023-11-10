@@ -164,6 +164,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
     if (context.isNewUser) {
+      console.log('NEW USER!!', { source, landingPage, loginRedirectReason });
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
