@@ -24,7 +24,6 @@ import { BrowsingMode } from '~/server/common/enums';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { DISPLAY_BLUR_TOGGLE_UNAUTHED } from '~/server/common/constants';
 
 const options = [
   { label: 'Safe', value: BrowsingMode.SFW },
@@ -38,7 +37,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
 
-  if ((!DISPLAY_BLUR_TOGGLE_UNAUTHED && !currentUser) || !browsingMode) return null;
+  if (!currentUser || !browsingMode) return null;
 
   const indicatorColor = {
     [BrowsingMode.SFW]: 'blue',
@@ -104,8 +103,7 @@ export function BrowsingModeMenu() {
     [BrowsingMode.NSFW]: 'gray',
     [BrowsingMode.All]: 'red',
   }[browsingMode];
-  const showBrowsingMode =
-    (DISPLAY_BLUR_TOGGLE_UNAUTHED && !currentUser) || (currentUser && currentUser.showNsfw);
+  const showBrowsingMode = currentUser?.showNsfw;
   const showBlurToggle = !isMobile && showBrowsingMode && browsingMode !== BrowsingMode.SFW;
   return (
     <LoginRedirect reason="blur-toggle">
