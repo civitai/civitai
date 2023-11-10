@@ -26,6 +26,7 @@ import {
   Tabs,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
@@ -64,53 +65,18 @@ import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 
-function NestedLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const { username } = router.query as { username: string };
-  const currentUser = useCurrentUser();
-  const { classes, theme } = useStyles();
+export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useContext();
-  const features = useFeatureFlags();
-
+  const currentUser = useCurrentUser();
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
-
-  const { models: uploads } = user?._count ?? { models: 0 };
-  const stats = user?.stats;
   const isMod = currentUser && currentUser.isModerator;
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
-
   const removeContentMutation = trpc.user.removeAllContent.useMutation({
     onSuccess() {
       invalidateModeratedContent(queryUtils);
     },
   });
-  const toggleMuteMutation = trpc.user.toggleMute.useMutation({
-    async onMutate() {
-      await queryUtils.user.getCreator.cancel({ username });
-
-      const prevUser = queryUtils.user.getCreator.getData({ username });
-      queryUtils.user.getCreator.setData({ username }, () =>
-        prevUser
-          ? {
-              ...prevUser,
-              muted: !prevUser.muted,
-            }
-          : undefined
-      );
-
-      return { prevUser };
-    },
-    onError(_error, _vars, context) {
-      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
-      showErrorNotification({
-        error: new Error('Unable to mute user, please try again.'),
-      });
-    },
-  });
-  const handleToggleMute = () => {
-    if (user) toggleMuteMutation.mutate({ id: user.id });
-  };
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
       await queryUtils.user.getCreator.cancel({ username });
@@ -134,6 +100,36 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
       });
     },
   });
+
+  const toggleMuteMutation = trpc.user.toggleMute.useMutation({
+    async onMutate() {
+      await queryUtils.user.getCreator.cancel({ username });
+
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
+        prevUser
+          ? {
+              ...prevUser,
+              muted: !prevUser.muted,
+            }
+          : undefined
+      );
+
+      return { prevUser };
+    },
+    onError(_error, _vars, context) {
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      showErrorNotification({
+        error: new Error('Unable to mute user, please try again.'),
+      });
+    },
+  });
+
+  const theme = useMantineTheme();
+
+  const handleToggleMute = () => {
+    if (user) toggleMuteMutation.mutate({ id: user.id });
+  };
   const handleToggleBan = () => {
     if (user) {
       if (user.bannedAt) toggleBanMutation.mutate({ id: user.id });
@@ -157,6 +153,107 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
       onConfirm: () => removeContentMutation.mutate({ id: user.id }),
     });
   };
+
+  if (userLoading || !user) {
+    return null;
+  }
+
+  return (
+    <Menu position="left" withinPortal>
+      <Menu.Target>
+        <ActionIcon
+          loading={removeContentMutation.isLoading}
+          size={30}
+          radius="xl"
+          color="gray"
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          ml="auto"
+        >
+          <IconDotsVertical size={16} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <>
+          {isMod && (
+            <>
+              {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
+                <Menu.Item
+                  component="a"
+                  target="_blank"
+                  icon={<IconInfoCircle size={14} stroke={1.5} />}
+                  href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
+                >
+                  Lookup User
+                </Menu.Item>
+              )}
+              <Menu.Item
+                color={user.bannedAt ? 'green' : 'red'}
+                icon={
+                  !user.bannedAt ? (
+                    <IconBan size={14} stroke={1.5} />
+                  ) : (
+                    <IconArrowBackUp size={14} stroke={1.5} />
+                  )
+                }
+                onClick={handleToggleBan}
+              >
+                {user.bannedAt ? 'Restore user' : 'Ban user'}
+              </Menu.Item>
+              <Menu.Item
+                color="red"
+                icon={<IconTrash size={14} stroke={1.5} />}
+                onClick={handleRemoveContent}
+              >
+                Remove all content
+              </Menu.Item>
+              <Menu.Item
+                icon={
+                  user.muted ? (
+                    <IconMicrophone size={14} stroke={1.5} />
+                  ) : (
+                    <IconMicrophoneOff size={14} stroke={1.5} />
+                  )
+                }
+                onClick={handleToggleMute}
+              >
+                {user.muted ? 'Unmute user' : 'Mute user'}
+              </Menu.Item>
+            </>
+          )}
+          {isSameUser && (
+            <Menu.Item component={NextLink} href={`/user/${user.username}/manage-categories`}>
+              Manage model categories
+            </Menu.Item>
+          )}
+          <HideUserButton as="menu-item" userId={user.id} />
+          <LoginRedirect reason="report-user">
+            <Menu.Item
+              icon={<IconFlag size={14} stroke={1.5} />}
+              onClick={() =>
+                openContext('report', {
+                  entityType: ReportEntity.User,
+                  entityId: user.id,
+                })
+              }
+            >
+              Report
+            </Menu.Item>
+          </LoginRedirect>
+        </>
+      </Menu.Dropdown>
+    </Menu>
+  );
+};
+function NestedLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { username } = router.query as { username: string };
+  const { classes } = useStyles();
+  const features = useFeatureFlags();
+
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
+
+  const { models: uploads } = user?._count ?? { models: 0 };
+  const stats = user?.stats;
 
   // Redirect all users to the creator's models tab if they have uploaded models
   useEffect(() => {
@@ -254,92 +351,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <Group className={classes.userActions} spacing={8} noWrap>
                             <TipBuzzButton toUserId={user.id} size="md" compact />
                             <FollowUserButton userId={user.id} size="md" compact />
-                            <Menu position="left" withinPortal>
-                              <Menu.Target>
-                                <ActionIcon
-                                  loading={removeContentMutation.isLoading}
-                                  size={30}
-                                  radius="xl"
-                                  color="gray"
-                                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                                  ml="auto"
-                                >
-                                  <IconDotsVertical size={16} />
-                                </ActionIcon>
-                              </Menu.Target>
-                              <Menu.Dropdown>
-                                <>
-                                  {isMod && (
-                                    <>
-                                      {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
-                                        <Menu.Item
-                                          component="a"
-                                          target="_blank"
-                                          icon={<IconInfoCircle size={14} stroke={1.5} />}
-                                          href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
-                                        >
-                                          Lookup User
-                                        </Menu.Item>
-                                      )}
-                                      <Menu.Item
-                                        color={user.bannedAt ? 'green' : 'red'}
-                                        icon={
-                                          !user.bannedAt ? (
-                                            <IconBan size={14} stroke={1.5} />
-                                          ) : (
-                                            <IconArrowBackUp size={14} stroke={1.5} />
-                                          )
-                                        }
-                                        onClick={handleToggleBan}
-                                      >
-                                        {user.bannedAt ? 'Restore user' : 'Ban user'}
-                                      </Menu.Item>
-                                      <Menu.Item
-                                        color="red"
-                                        icon={<IconTrash size={14} stroke={1.5} />}
-                                        onClick={handleRemoveContent}
-                                      >
-                                        Remove all content
-                                      </Menu.Item>
-                                      <Menu.Item
-                                        icon={
-                                          user.muted ? (
-                                            <IconMicrophone size={14} stroke={1.5} />
-                                          ) : (
-                                            <IconMicrophoneOff size={14} stroke={1.5} />
-                                          )
-                                        }
-                                        onClick={handleToggleMute}
-                                      >
-                                        {user.muted ? 'Unmute user' : 'Mute user'}
-                                      </Menu.Item>
-                                    </>
-                                  )}
-                                  {isSameUser && (
-                                    <Menu.Item
-                                      component={NextLink}
-                                      href={`/user/${user.username}/manage-categories`}
-                                    >
-                                      Manage model categories
-                                    </Menu.Item>
-                                  )}
-                                  <HideUserButton as="menu-item" userId={user.id} />
-                                  <LoginRedirect reason="report-user">
-                                    <Menu.Item
-                                      icon={<IconFlag size={14} stroke={1.5} />}
-                                      onClick={() =>
-                                        openContext('report', {
-                                          entityType: ReportEntity.User,
-                                          entityId: user.id,
-                                        })
-                                      }
-                                    >
-                                      Report
-                                    </Menu.Item>
-                                  </LoginRedirect>
-                                </>
-                              </Menu.Dropdown>
-                            </Menu>
+                            <UserContextMenu username={user.username} />
                           </Group>
                         </Group>
                         <Group spacing={8}>

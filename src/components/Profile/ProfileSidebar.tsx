@@ -30,6 +30,7 @@ import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditMod
 import { CosmeticType } from '@prisma/client';
 import { Username } from '~/components/User/Username';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -129,7 +130,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       size={sizeOpts.button}
       variant={isMobile ? 'filled' : 'light'}
       color="yellow.7"
-      label="Tip buzz"
+      label="Tip"
       sx={{ fontSize: '14px', fontWeight: 590 }}
     />
   );
@@ -137,12 +138,21 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   return (
     <Stack className={className} spacing={sizeOpts.spacing}>
       <Group noWrap position="apart">
-        <UserAvatar avatarSize={sizeOpts.avatar} user={user} size={sizeOpts.username} radius="md" />
+        <Group align="flex-start" position="apart" w={!isMobile ? '100%' : undefined}>
+          <UserAvatar
+            avatarSize={sizeOpts.avatar}
+            user={user}
+            size={sizeOpts.username}
+            radius="md"
+          />
+          {!isMobile && <UserContextMenu username={username} />}
+        </Group>
         {isMobile && (
-          <Group>
+          <Group noWrap spacing={4}>
             {editProfileBtn}
             {followUserBtn}
             {tipBuzzBtn}
+            <UserContextMenu username={username} />
           </Group>
         )}
       </Group>
