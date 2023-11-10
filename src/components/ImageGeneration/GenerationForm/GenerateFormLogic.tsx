@@ -98,10 +98,12 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       */
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
+      const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
+      if (hasSdxlResources) formData.nsfw = false;
+
       if (!formData.model) {
         // TODO.generation: We need a better way to handle these cases, having hardcoded values
         // is not ideal and may lead to bugs in the future.
-        const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
         formData.model = hasSdxlResources
           ? {
               id: 128078,
@@ -124,6 +126,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
               strength: 1,
             };
       }
+
       for (const item of keys) {
         const key = item as keyof typeof formData;
         if (staticKeys.includes(key)) continue; // don't overwrite nsfw

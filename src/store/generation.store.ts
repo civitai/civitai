@@ -51,8 +51,7 @@ export const useGenerationStore = create<GenerationState>()(
             : input.type === 'image'
             ? 'remix'
             : 'random';
-        const { data: prevData } = get().data || {};
-        if (data) get().setData({ type, data: { ...prevData, ...data } });
+        if (data) get().setData({ type, data: { ...data } });
       },
       close: () =>
         set((state) => {
