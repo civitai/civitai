@@ -25,7 +25,6 @@ import React, { useEffect, useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -146,7 +145,6 @@ export function GenerateFormView({
     }, 0);
 
     const subscription = form.watch((data, { name, type }) => {
-      console.log({ data });
       const resources = [...(data.resources ?? []), ...[data.vae].filter(isDefined)];
 
       useTempGenerateStore.setState({
@@ -159,8 +157,6 @@ export function GenerateFormView({
 
   const isSDXL = baseModel === 'SDXL';
   const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
-
-  console.log({ baseModel });
 
   return (
     <PersistentForm
@@ -493,7 +489,7 @@ export function GenerateFormView({
                   href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
                   rel="noopener nofollow"
                 >
-                  After that it will cost ⚡3 Buzz per image
+                  After that it will cost a minimum of⚡3 Buzz per image
                 </Anchor>
                 . Complete our{' '}
                 <Anchor
