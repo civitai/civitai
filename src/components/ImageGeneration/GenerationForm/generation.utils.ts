@@ -58,3 +58,8 @@ export const useGetInitialFormData = () => {
     };
   }, [isClient, currentUser]);
 };
+
+export const useTempGenerateStore = create<{
+  baseModel?: string;
+  hasResources?: boolean;
+}>(() => ({}));

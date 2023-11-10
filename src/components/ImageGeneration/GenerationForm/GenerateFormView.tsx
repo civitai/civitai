@@ -64,8 +64,14 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { isDefined } from '~/utils/type-guards';
-import { useTempGenerateStore } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useTempGenerateStore } from './generation.utils';
+
+function getBaseModelFromSet(baseModel = 'SD 1.5') {
+  return Object.entries(baseModelSets).find(([, baseModels]) =>
+    baseModels.includes(baseModel as BaseModel)
+  )?.[0];
+}
 
 export function GenerateFormView({
   form,
@@ -120,11 +126,7 @@ export function GenerateFormView({
   // #endregion
 
   const baseModel = useTempGenerateStore((state) =>
-    state.baseModel
-      ? Object.entries(baseModelSets).find(([, baseModels]) =>
-          baseModels.includes(state.baseModel as BaseModel)
-        )?.[0]
-      : undefined
+    state.baseModel ? getBaseModelFromSet(state.baseModel) : undefined
   );
   const hasResources = useTempGenerateStore((state) => state.hasResources);
 
@@ -139,16 +141,16 @@ export function GenerateFormView({
       const values = form.getValues();
       const resources = [...(values.resources ?? []), ...[values.vae].filter(isDefined)];
       useTempGenerateStore.setState({
-        baseModel: values.model?.baseModel,
+        baseModel: getBaseModelFromSet(values.model?.baseModel),
         hasResources: !!resources?.length,
       });
     }, 0);
 
-    const subscription = form.watch((data, { name, type }) => {
+    const subscription = form.watch((data) => {
       const resources = [...(data.resources ?? []), ...[data.vae].filter(isDefined)];
 
       useTempGenerateStore.setState({
-        baseModel: data.model?.baseModel,
+        baseModel: getBaseModelFromSet(data.model?.baseModel),
         hasResources: !!resources?.length,
       });
     });
@@ -480,7 +482,7 @@ export function GenerateFormView({
                 <Anchor
                   href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
                   target="_blank"
-                  span
+                  underline
                 >
                   Civitai&apos;s Birthday
                 </Anchor>{' '}
@@ -488,6 +490,7 @@ export function GenerateFormView({
                 <Anchor
                   href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
                   rel="noopener nofollow"
+                  underline
                 >
                   After that it will cost a minimum of⚡3 Buzz per image
                 </Anchor>
@@ -498,6 +501,7 @@ export function GenerateFormView({
                   }`}
                   rel="noopener nofollow"
                   target="_blank"
+                  underline
                 >
                   SDXL generation survey
                 </Anchor>{' '}

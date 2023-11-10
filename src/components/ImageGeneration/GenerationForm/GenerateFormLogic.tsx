@@ -18,16 +18,11 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { isDefined } from '~/utils/type-guards';
-import { create } from 'zustand';
+import { useTempGenerateStore } from './generation.utils';
 
 type GenerationMaxValueKey = keyof typeof generation.maxValues;
 const maxValueKeys = Object.keys(generation.maxValues);
 const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
-
-export const useTempGenerateStore = create<{
-  baseModel?: string;
-  hasResources?: boolean;
-}>(() => ({}));
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -169,6 +164,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     if (vae) _resources.push(vae);
 
     const totalCost = calculateGenerationBill(data);
+    console.log({ ...params, baseModel: useTempGenerateStore.getState().baseModel });
     const performTransaction = async () => {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
