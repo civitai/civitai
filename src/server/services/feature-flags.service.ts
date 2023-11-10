@@ -20,7 +20,7 @@ const featureFlags = createFeatureFlags({
   stripe: ['mod'],
   imageTraining: ['dev', 'mod', 'founder'],
   imageTrainingResults: ['user'],
-  sdxlGeneration: ['dev', 'mod', 'founder'],
+  sdxlGeneration: ['public'],
   imageGeneration: {
     toggleable: true,
     default: true,
