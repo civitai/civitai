@@ -62,12 +62,10 @@ const useStyles = createStyles((theme) => ({
     },
   },
   coverImageNSFWActions: {
-    maxHeight: '30vh',
     height: '100%',
     width: '100%',
   },
   coverImageWrapper: {
-    maxHeight: '30vh',
     overflow: 'hidden',
     borderRadius: theme.radius.md,
     position: 'relative',
