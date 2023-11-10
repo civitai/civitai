@@ -133,7 +133,6 @@ export function SimpleImageUpload({
                     width: '100%',
                     overflow: 'hidden',
                     height: 0,
-                    // 5 / 17 aspect ratio
                     paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
                     borderRadius: theme.radius.md,
 

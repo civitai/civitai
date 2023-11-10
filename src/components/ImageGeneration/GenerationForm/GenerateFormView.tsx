@@ -16,6 +16,7 @@ import {
   ScrollArea,
   Badge,
   CopyButton,
+  Anchor,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
@@ -65,6 +66,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { isDefined } from '~/utils/type-guards';
 import { useTempGenerateStore } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function GenerateFormView({
   form,
@@ -82,6 +84,7 @@ export function GenerateFormView({
   const { formState } = form;
   const { isSubmitting } = formState;
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   const type = useGenerationStore((state) => state.data?.type);
 
@@ -126,8 +129,8 @@ export function GenerateFormView({
   );
   const hasResources = useTempGenerateStore((state) => state.hasResources);
 
-  const [aspectRatio, steps, quantity] = form.watch(['aspectRatio', 'steps', 'quantity']);
-  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+  // const [aspectRatio, steps, quantity] = form.watch(['aspectRatio', 'steps', 'quantity']);
+  // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   const additionalResources = form.watch('resources');
   const trainedWords = additionalResources?.flatMap((resource) => resource.trainedWords) ?? [];
@@ -417,27 +420,37 @@ export function GenerateFormView({
               </Stack>
             </Card>
             <LoginRedirect reason="image-gen" returnUrl="/generate">
-              {isSDXL ? (
-                <BuzzTransactionButton
-                  type="submit"
-                  size="lg"
-                  label="Generate"
-                  loading={isSubmitting || loading}
-                  className={classes.generateButtonButton}
-                  disabled={disableGenerateButton}
-                  buzzAmount={totalCost}
-                />
-              ) : (
-                <Button
-                  type="submit"
-                  size="lg"
-                  loading={isSubmitting || loading}
-                  className={classes.generateButtonButton}
-                  disabled={disableGenerateButton}
-                >
-                  Generate
-                </Button>
-              )}
+              {/* TODO.generation: Uncomment this out by next week */}
+              {/* {isSDXL ? (
+                      <BuzzTransactionButton
+                        type="submit"
+                        size="lg"
+                        label="Generate"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                        buzzAmount={totalCost}
+                      />
+                    ) : (
+                      <Button
+                        type="submit"
+                        size="lg"
+                        loading={isSubmitting || loading}
+                        className={classes.generateButtonButton}
+                        disabled={disableGenerateButton}
+                      >
+                        Generate
+                      </Button>
+                    )} */}
+              <Button
+                type="submit"
+                size="lg"
+                loading={isSubmitting || loading}
+                className={classes.generateButtonButton}
+                disabled={disableGenerateButton}
+              >
+                Generate
+              </Button>
             </LoginRedirect>
             {/* <Tooltip label="Reset" color="dark" withArrow> */}
             <Button
@@ -460,6 +473,43 @@ export function GenerateFormView({
           </Text>
         </Stack>
         <GenerationStatusMessage />
+        {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
+        {isSDXL && (
+          <DismissibleAlert
+            id="sdxl-free-preview"
+            title="Free SDXL Generations!"
+            content={
+              <Text>
+                To celebrate{' '}
+                <Anchor
+                  href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
+                  target="_blank"
+                  span
+                >
+                  Civitai&apos;s Birthday
+                </Anchor>{' '}
+                we&apos;re letting everyone use SDXL for free!{' '}
+                <Anchor
+                  href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
+                  rel="noopener nofollow"
+                >
+                  After that it will cost ⚡3 Buzz per image
+                </Anchor>
+                . Complete our{' '}
+                <Anchor
+                  href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
+                    currentUser?.username ?? 'Unauthed'
+                  }`}
+                  rel="noopener nofollow"
+                  target="_blank"
+                >
+                  SDXL generation survey
+                </Anchor>{' '}
+                to let us know how we did.
+              </Text>
+            }
+          />
+        )}
       </Stack>
     </PersistentForm>
   );

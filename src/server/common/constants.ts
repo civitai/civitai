@@ -215,10 +215,10 @@ export const constants = {
     minTipAmount: 50,
   },
   profile: {
-    coverImageAspectRatio: 5 / 17,
-    mobileCoverImageAspectRatio: 4 / 17,
-    coverImageHeight: 240,
-    coverImageWidth: 816,
+    coverImageAspectRatio: 1 / 4,
+    mobileCoverImageAspectRatio: 1 / 4,
+    coverImageHeight: 400,
+    coverImageWidth: 1600,
     showcaseItemsLimit: 32,
     bioMaxLength: 400,
     messageMaxLength: 1200,
@@ -366,7 +366,9 @@ export const generationConfig = {
       { label: 'Portrait', width: 832, height: 1216 },
     ],
     costs: {
-      base: 4,
+      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // base: 4,
+      base: 0,
       quantity: 1,
       steps: 40,
       width: 1024,
