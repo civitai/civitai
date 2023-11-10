@@ -2,10 +2,15 @@ import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
 } from './../schema/user.schema';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   ArticleEngagementType,
   BountyEngagementType,
+  CosmeticSource,
   ModelEngagementType,
   OnboardingStep,
   Prisma,
@@ -45,6 +50,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
+import dayjs from 'dayjs';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -857,4 +863,26 @@ export const createUserReferral = async ({
       }
     }
   }
+};
+
+export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
+  const cosmetic = await dbRead.cosmetic.findUnique({
+    where: { id, source: CosmeticSource.Claim },
+    select: { id: true, availableStart: true, availableEnd: true },
+  });
+  if (!cosmetic) return null;
+  if (!dayjs().isBetween(cosmetic.availableStart, cosmetic.availableEnd)) return null;
+
+  const userCosmetic = await dbRead.userCosmetic.findFirst({
+    where: { userId, cosmeticId: cosmetic.id },
+  });
+  if (userCosmetic) throw throwConflictError('You already have this cosmetic');
+
+  await dbWrite.userCosmetic.create({
+    data: { userId, cosmeticId: cosmetic.id },
+  });
+
+  await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return cosmetic;
 };

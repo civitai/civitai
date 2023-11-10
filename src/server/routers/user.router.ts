@@ -20,6 +20,7 @@ import {
   reportProhibitedRequestHandler,
   userByReferralCodeHandler,
   userRewardDetailsHandler,
+  claimCosmeticHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -121,4 +122,5 @@ export const userRouter = router({
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
   userRewardDetails: protectedProcedure.query(userRewardDetailsHandler),
+  claimCosmetic: protectedProcedure.input(getByIdSchema).mutation(claimCosmeticHandler),
 });
