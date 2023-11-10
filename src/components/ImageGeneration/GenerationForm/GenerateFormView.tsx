@@ -125,9 +125,7 @@ export function GenerateFormView({
   };
   // #endregion
 
-  const baseModel = useTempGenerateStore((state) =>
-    state.baseModel ? getBaseModelFromSet(state.baseModel) : undefined
-  );
+  const baseModel = useTempGenerateStore((state) => state.baseModel);
   const hasResources = useTempGenerateStore((state) => state.hasResources);
 
   // const [aspectRatio, steps, quantity] = form.watch(['aspectRatio', 'steps', 'quantity']);
