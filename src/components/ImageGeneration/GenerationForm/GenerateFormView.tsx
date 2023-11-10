@@ -143,12 +143,12 @@ export function GenerateFormView({
             <Stack spacing={0} h="100%">
               <ScrollArea sx={{ flex: 1 }}>
                 <Stack p="md" pb={0}>
-                  {type === 'remix' && (
+                  {/* {type === 'remix' && (
                     <DismissibleAlert
                       id="image-gen-params"
                       content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
                     />
-                  )}
+                  )} */}
                   <InputResourceSelect
                     name="model"
                     label="Model"

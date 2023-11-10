@@ -17,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
+import { isDefined } from '~/utils/type-guards';
 
 type GenerationMaxValueKey = keyof typeof generation.maxValues;
 const maxValueKeys = Object.keys(generation.maxValues);
@@ -153,7 +154,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     }
 
     const { model, resources = [], vae, ...params } = data;
-    const _resources = [model, ...resources].map((resource) => {
+    const _resources = [...[model].filter(isDefined), ...resources].map((resource) => {
       if (resource.modelType === ModelType.TextualInversion)
         return { ...resource, triggerWord: resource.trainedWords[0] };
       return resource;
