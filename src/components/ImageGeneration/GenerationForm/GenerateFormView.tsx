@@ -64,6 +64,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function GenerateFormView({
   form,
@@ -81,6 +82,7 @@ export function GenerateFormView({
   const { formState } = form;
   const { isSubmitting } = formState;
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   const type = useGenerationStore((state) => state.data?.type);
 
@@ -116,13 +118,14 @@ export function GenerateFormView({
   };
   // #endregion
 
-  const [baseModel, aspectRatio, steps, quantity] = form.watch([
-    'baseModel',
-    'aspectRatio',
-    'steps',
-    'quantity',
-  ]);
-  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+  // TODO.generation: Uncomment this out by next week when we start charging for sdxl generation
+  // const [baseModel, aspectRatio, steps, quantity] = form.watch([
+  //   'baseModel',
+  //   'aspectRatio',
+  //   'steps',
+  //   'quantity',
+  // ]);
+  // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   const additionalResources = form.watch('resources');
   const trainedWords = additionalResources?.flatMap((resource) => resource.trainedWords) ?? [];
@@ -142,8 +145,6 @@ export function GenerateFormView({
           const isSDXL = baseModel === 'SDXL';
           const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
           const [supportedBaseModel] = baseModels;
-
-          console.log(supportedBaseModel);
 
           return (
             <Stack spacing={0} h="100%">
@@ -475,7 +476,17 @@ export function GenerateFormView({
                       >
                         After that it will cost ⚡3 Buzz per image
                       </Anchor>
-                      .
+                      . Complete our{' '}
+                      <Anchor
+                        href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
+                          currentUser?.username ?? 'Unauthed'
+                        }`}
+                        rel="noopener nofollow"
+                        target="_blank"
+                      >
+                        SDXL generation survey
+                      </Anchor>{' '}
+                      to let us know how we did.
                     </Text>
                   }
                 />

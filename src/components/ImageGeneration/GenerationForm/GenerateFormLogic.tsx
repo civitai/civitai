@@ -102,8 +102,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
       if (hasSdxlResources) formData.nsfw = false;
 
-      console.log({ formData, hasSdxlResources });
-
       if (!formData.model) {
         // TODO.generation: We need a better way to handle these cases, having hardcoded values
         // is not ideal and may lead to bugs in the future.
