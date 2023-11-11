@@ -123,6 +123,7 @@ export default function ResourceSelectModal({
           `(${baseModels
             .map((baseModel) => `(type = ${type} AND version.baseModel = '${baseModel}')`)
             .join(' OR ')})`
+          //TODO - use IN instead of OR
         );
     }
     filters.push(`(${innerFilter.join(' OR ')})`);
