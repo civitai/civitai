@@ -129,6 +129,7 @@ const formatGenerationData = (
     params?.width && params.height
       ? getClosestAspectRatio(params?.width, params?.height, params?.baseModel)
       : undefined;
+
   if (params?.sampler)
     params.sampler = generation.samplers.includes(params.sampler as any)
       ? params.sampler
@@ -172,8 +173,8 @@ const formatGenerationData = (
 };
 
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? baseModel === 'SDXL' ? 1024 : 512;
-  height = height ?? baseModel === 'SDXL' ? 1024 : 512;
+  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
+  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
   const ratios = aspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);
