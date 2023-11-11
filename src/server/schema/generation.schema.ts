@@ -45,7 +45,7 @@ export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = z.object({
   id: z.number(),
   name: z.string(),
-  trainedWords: z.string().array(),
+  trainedWords: z.string().array().default([]),
   modelId: z.number(),
   modelName: z.string(),
   modelType: z.nativeEnum(ModelType),
