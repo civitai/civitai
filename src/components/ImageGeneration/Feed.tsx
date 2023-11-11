@@ -309,7 +309,7 @@ const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
     gridTemplateRows: 'masonry',
-    gridTemplateColumns: 'repeat(3, 1fr)',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(345px, 1fr))',
     gap: theme.spacing.xs,
 
     [`@media(max-width: ${theme.breakpoints.xs}px)`]: {

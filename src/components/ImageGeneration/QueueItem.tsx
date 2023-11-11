@@ -12,6 +12,7 @@ import {
   Tooltip,
   SimpleGrid,
   TooltipProps,
+  createStyles,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -49,6 +50,7 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
+  const { classes } = useStyle();
   const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
@@ -209,17 +211,11 @@ export function QueueItem({ request }: Props) {
           grouped
         />
         {!failed && !!request.images?.length && (
-          <SimpleGrid
-            spacing="xs"
-            breakpoints={[
-              { maxWidth: 'sm', cols: 2 },
-              { minWidth: 'sm', cols: 4 },
-            ]}
-          >
+          <div className={classes.grid}>
             {request.images.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />
             ))}
-          </SimpleGrid>
+          </div>
         )}
       </Stack>
       <Card.Section
@@ -254,3 +250,30 @@ type Props = {
   request: Generation.Request;
   // id: number;
 };
+
+const useStyle = createStyles((theme) => ({
+  grid: {
+    display: 'grid',
+    gap: theme.spacing.xs,
+    gridTemplateColumns: 'repeat(2, 1fr)', // default for larger screens, max 6 columns
+
+    // [`@media (max-width: ${theme.breakpoints.xl}px)`]: {
+    //   gridTemplateColumns: 'repeat(4, 1fr)', // 4 columns for screens smaller than xl
+    // },
+    [`@media (min-width: ${theme.breakpoints.md}px)`]: {
+      gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
+    },
+    [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
+      gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
+    },
+    [`@media (min-width: ${theme.breakpoints.xl}px)`]: {
+      gridTemplateColumns: 'repeat(4, 1fr)', // 5 columns for screens smaller than xl
+    },
+    [`@media (min-width: 1600px)`]: {
+      gridTemplateColumns: 'repeat(5, 1fr)', // 5 columns for screens smaller than xl
+    },
+    [`@media (min-width: 1900px)`]: {
+      gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 300px))',
+    },
+  },
+}));
