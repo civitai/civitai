@@ -31,10 +31,12 @@ export function GeneratedImage({
     <AspectRatio ratio={request.params.width / request.params.height}>
       <Card
         p={0}
+        onClick={handleImageClick}
         sx={(theme) => ({
           position: 'relative',
           boxShadow:
             '0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+          cursor: 'pointer',
           [`&::after`]: {
             content: '""',
             display: 'block',
@@ -78,12 +80,7 @@ export function GeneratedImage({
           </Center>
         ) : (
           // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-          <img
-            alt=""
-            src={image.url}
-            onClick={handleImageClick}
-            style={{ cursor: 'pointer', zIndex: 2, width: '100%' }}
-          />
+          <img alt="" src={image.url} style={{ zIndex: 2, width: '100%' }} />
         )}
       </Card>
     </AspectRatio>
