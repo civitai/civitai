@@ -135,31 +135,34 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
         image={getEdgeUrl(cosmeticImage, { width: 256 })}
       />
       <Container size="xs" mb="lg">
-        <Stack>
-          <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
-            <Group spacing="xs" noWrap position="center">
-              <Title order={2}>{`🎉 You've received a badge! 🎉`}</Title>
-            </Group>
-          </Alert>
+        <Stack spacing={0}>
+          <Center>
+            <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
+              <Group spacing="xs" noWrap position="center">
+                <Text size="md" weight={500}>{`🎉 You've received a badge! 🎉`}</Text>
+              </Group>
+            </Alert>
+          </Center>
           <Center
             sx={{
               animationName: `${enterFall}, ${jelloVertical}`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,
               animationIterationCount: '1, 1',
-              height: 256,
             }}
+            h={256}
+            my="lg"
           >
             <EdgeMedia src={(cosmetic.data as MixedObject).url} width={256} />
           </Center>
-          <Title order={1} align="center">
+          <Title order={1} align="center" mb={5}>
             {cosmetic.name}
           </Title>
-          <Text size="lg" align="center" mb="lg">
+          <Text size="lg" align="center">
             {cosmetic.description}
           </Text>
 
-          <Center>
+          <Center mt="xl">
             {!cosmeticAvailable ? (
               <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
                 <Group spacing="xs" noWrap position="center">
