@@ -48,8 +48,10 @@ import {
   completeOnboardStepSchema,
 } from '~/server/schema/user.schema';
 import {
+  equipCosmetic,
   getUserArticleEngagements,
   getUserBountyEngagements,
+  cosmeticStatus,
   removeAllContent,
 } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -122,5 +124,11 @@ export const userRouter = router({
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
   userRewardDetails: protectedProcedure.query(userRewardDetailsHandler),
+  cosmeticStatus: protectedProcedure
+    .input(getByIdSchema)
+    .query(({ ctx, input }) => cosmeticStatus({ userId: ctx.user.id, id: input.id })),
   claimCosmetic: protectedProcedure.input(getByIdSchema).mutation(claimCosmeticHandler),
+  equipCosmetic: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(({ ctx, input }) => equipCosmetic({ userId: ctx.user.id, id: input.id })),
 });

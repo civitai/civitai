@@ -886,3 +886,30 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
 
   return cosmetic;
 };
+
+export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
+  const userCosmetic = await dbRead.userCosmetic.findFirst({
+    where: { userId, cosmeticId: id },
+    select: { obtainedAt: true, equippedAt: true },
+  });
+  return userCosmetic ?? { obtainedAt: null, equippedAt: null };
+}
+
+export async function equipCosmetic({ id, userId }: { id: number; userId: number }) {
+  const userCosmetic = await dbRead.userCosmetic.findFirst({
+    where: { userId, cosmeticId: id },
+    select: { obtainedAt: true },
+  });
+  if (!userCosmetic) throw new Error("You don't have that cosmetic");
+
+  await dbWrite.$transaction([
+    dbWrite.userCosmetic.updateMany({
+      where: { userId, equippedAt: { not: null } },
+      data: { equippedAt: null },
+    }),
+    dbWrite.userCosmetic.updateMany({
+      where: { userId, cosmeticId: id },
+      data: { equippedAt: new Date() },
+    }),
+  ]);
+}
