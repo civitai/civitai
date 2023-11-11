@@ -188,7 +188,7 @@ export function QueueItem({ request }: Props) {
           </Group>
         </Group>
       </Card.Section>
-      <Stack py="xs" spacing={8}>
+      <Stack py="xs" spacing={8} className={classes.container}>
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
             {prompt}
@@ -260,20 +260,23 @@ const useStyle = createStyles((theme) => ({
     // [`@media (max-width: ${theme.breakpoints.xl}px)`]: {
     //   gridTemplateColumns: 'repeat(4, 1fr)', // 4 columns for screens smaller than xl
     // },
-    [`@media (min-width: ${theme.breakpoints.md}px)`]: {
+    [`@container (min-width: 400px)`]: {
       gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
     },
-    [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
-      gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
-    },
-    [`@media (min-width: ${theme.breakpoints.xl}px)`]: {
+    [`@container (min-width: 600px)`]: {
       gridTemplateColumns: 'repeat(4, 1fr)', // 5 columns for screens smaller than xl
     },
-    [`@media (min-width: 1600px)`]: {
+    [`@container (min-width: 1200px)`]: {
       gridTemplateColumns: 'repeat(5, 1fr)', // 5 columns for screens smaller than xl
     },
-    [`@media (min-width: 1900px)`]: {
+    [`@container (min-width: 1900px)`]: {
       gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 300px))',
     },
+  },
+  asSidebar: {
+    gridTemplateColumns: 'repeat(2, 1fr)',
+  },
+  container: {
+    containerType: 'inline-size',
   },
 }));
