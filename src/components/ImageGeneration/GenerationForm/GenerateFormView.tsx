@@ -263,7 +263,7 @@ export function GenerateFormView({
                         trainedWords={trainedWords}
                         badgeProps={{ style: { textTransform: 'none' } }}
                       />
-                      <CopyButton value={trainedWords.join(' ')}>
+                      <CopyButton value={trainedWords.join(', ')}>
                         {({ copied, copy }) => (
                           <Group position="left">
                             <Button
