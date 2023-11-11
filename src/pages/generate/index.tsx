@@ -83,9 +83,9 @@ export default function GeneratePage() {
         <GenerateFormLogic />
       </div>
       <div className={classes.content}>
-        <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray">
+        <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray" mb="md">
           <Tabs.List p="md" mt={-16} className={classes.tabList}>
-            <Container size="md" sx={{ width: '100%' }}>
+            <Container fluid sx={{ width: '100%' }}>
               <Group position="apart">
                 <Group align="flex-start">
                   <Tabs.Tab value="queue">Queue</Tabs.Tab>
@@ -95,11 +95,11 @@ export default function GeneratePage() {
               </Group>
             </Container>
           </Tabs.List>
-          <Container size="md" p={0}>
+          <Container fluid px={0}>
             <Tabs.Panel value="queue">
               <Queue {...result} />
             </Tabs.Panel>
-            <Tabs.Panel value="feed">
+            <Tabs.Panel value="feed" p="md">
               <Feed {...result} />
             </Tabs.Panel>
           </Container>

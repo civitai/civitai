@@ -58,7 +58,7 @@ export default function GenerationTabs({}) {
         </FloatingFeedActions>
       ),
       render: () => (
-        <Stack spacing={0}>
+        <Stack spacing={0} p="md">
           <Feed {...result} />
         </Stack>
       ),
