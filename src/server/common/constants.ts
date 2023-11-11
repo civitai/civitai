@@ -342,9 +342,19 @@ export const generation = {
   },
 } as const;
 
+export type ResourceFilter = {
+  type: ModelType;
+  baseModelSet?: BaseModelSetType;
+  baseModels?: BaseModel[];
+};
 export const generationConfig = {
   SD1: {
-    additionalResourceTypes: [ModelType.LORA, ModelType.LoCon, ModelType.TextualInversion],
+    // additionalResourceTypes: [{ type: ModelType.LORA, baseModel: 'SD1' }],
+    additionalResourceTypes: [
+      { type: ModelType.LORA, baseModelSet: 'SD1' },
+      { type: ModelType.LoCon, baseModelSet: 'SD1' },
+      { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
+    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
@@ -359,7 +369,10 @@ export const generationConfig = {
     },
   },
   SDXL: {
-    additionalResourceTypes: [ModelType.LORA],
+    additionalResourceTypes: [
+      { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
+    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },

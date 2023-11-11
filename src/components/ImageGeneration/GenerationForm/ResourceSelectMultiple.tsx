@@ -18,7 +18,8 @@ type ResourceSelectMultipleProps = {
 
 const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
   ({ limit, value = [], onChange, buttonLabel, options = {}, ...inputWrapperProps }, ref) => {
-    const { types } = options;
+    // const { types } = options;
+    const types = options.resources?.map((x) => x.type);
 
     // _types used to set up groups
     const _types = types ?? [...new Set(value?.map((x) => x.modelType))];
@@ -59,8 +60,8 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
     // Made with copilot :^) -Manuel
     const sortedGroups = [...groups].sort((a, b) => {
-      const aIndex = options.types?.indexOf(a.type);
-      const bIndex = options.types?.indexOf(b.type);
+      const aIndex = types?.indexOf(a.type);
+      const bIndex = types?.indexOf(b.type);
       if (aIndex === undefined || bIndex === undefined) return 0;
       return aIndex - bIndex;
     });
@@ -102,7 +103,6 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
                 openResourceSelectModal({
                   title: buttonLabel,
                   onSelect: handleAdd,
-                  notIds: _values.map((x) => x.id),
                   options,
                 })
               }

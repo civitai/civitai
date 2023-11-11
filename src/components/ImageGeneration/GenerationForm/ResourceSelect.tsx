@@ -1,9 +1,9 @@
 import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
-import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
+import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -20,15 +20,11 @@ function ResourceSelect({
   onChange?: (value?: Generation.Resource) => void;
   buttonLabel: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
-  options?: {
-    baseModel?: string;
-    type?: ModelType;
-    canGenerate?: boolean;
-  };
+  options?: ResourceSelectOptions;
   allowRemove?: boolean;
 } & Omit<InputWrapperProps, 'children'>) {
-  const { type } = options;
-  const _value = type && type !== value?.modelType ? undefined : value;
+  const types = options.resources?.map((x) => x.type);
+  const _value = types && value && !types.includes(value.modelType) ? undefined : value;
 
   const handleAdd = (resource: Generation.Resource) => {
     onChange?.(resource);
@@ -46,10 +42,7 @@ function ResourceSelect({
     openResourceSelectModal({
       title: buttonLabel,
       onSelect: handleAdd,
-      options: {
-        ...options,
-        types: type ? [type] : undefined,
-      },
+      options,
     });
   };
 

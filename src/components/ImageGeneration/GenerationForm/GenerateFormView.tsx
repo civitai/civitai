@@ -65,13 +65,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTempGenerateStore } from './generation.utils';
-
-function getBaseModelFromSet(baseModel = 'SD 1.5') {
-  return Object.entries(baseModelSets).find(([, baseModels]) =>
-    baseModels.includes(baseModel as BaseModel)
-  )?.[0];
-}
+import { getBaseModelSetKey, useTempGenerateStore } from './generation.utils';
 
 export function GenerateFormView({
   form,
@@ -139,7 +133,7 @@ export function GenerateFormView({
       const values = form.getValues();
       const resources = [...(values.resources ?? []), ...[values.vae].filter(isDefined)];
       useTempGenerateStore.setState({
-        baseModel: getBaseModelFromSet(values.model?.baseModel),
+        baseModel: getBaseModelSetKey(values.model?.baseModel),
         hasResources: !!resources?.length,
       });
     }, 0);
@@ -148,7 +142,7 @@ export function GenerateFormView({
       const resources = [...(data.resources ?? []), ...[data.vae].filter(isDefined)];
 
       useTempGenerateStore.setState({
-        baseModel: getBaseModelFromSet(data.model?.baseModel),
+        baseModel: data.model?.baseModel ? getBaseModelSetKey(data.model?.baseModel) : undefined,
         hasResources: !!resources?.length,
       });
     });
@@ -157,6 +151,7 @@ export function GenerateFormView({
 
   const isSDXL = baseModel === 'SDXL';
   const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
+  const test = getGenerationConfig(baseModel).additionalResourceTypes.map((x) => ({ ...x }));
 
   return (
     <PersistentForm
@@ -184,9 +179,13 @@ export function GenerateFormView({
               buttonLabel="Add Model"
               withAsterisk
               options={{
-                baseModel: hasResources ? baseModel : undefined,
-                type: ModelType.Checkpoint,
                 canGenerate: true,
+                resources: [
+                  {
+                    type: ModelType.Checkpoint,
+                    baseModelSet: hasResources ? baseModel : undefined,
+                  },
+                ],
               }}
               allowRemove={false}
             />
@@ -216,9 +215,8 @@ export function GenerateFormView({
                     limit={9}
                     buttonLabel="Add additional resource"
                     options={{
-                      baseModel: baseModel,
-                      types: getGenerationConfig(baseModel).additionalResourceTypes,
                       canGenerate: true,
+                      resources: getGenerationConfig(baseModel).additionalResourceTypes,
                     }}
                   />
                 </Accordion.Panel>
@@ -376,9 +374,8 @@ export function GenerateFormView({
                           label={getDisplayName(ModelType.VAE)}
                           buttonLabel="Add VAE"
                           options={{
-                            baseModel: baseModel,
-                            type: ModelType.VAE,
                             canGenerate: true,
+                            resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
                           }}
                         />
                       </Stack>

@@ -5,18 +5,16 @@ import { GenerateFormModel, generateFormSchema } from '~/server/schema/generatio
 import {
   GenerationFormSchema,
   generationFormSchema,
+  useDerivedGenerationState,
   useGenerationFormStore,
   useGetInitialFormData,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useEffect } from 'react';
-import { calculateGenerationBill } from '~/server/common/generation';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { baseModelSets } from '~/server/common/constants';
-import { isDefined } from '~/utils/type-guards';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
-  const defaultValues = useGetInitialFormData() ?? {};
+  const defaultValues = useGetInitialFormData();
 
   const form = useForm<GenerationFormSchema>({
     resolver: zodResolver(generationFormSchema),
@@ -35,32 +33,8 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // #region [derived state]
-  const totalCost = useGenerationFormStore(({ baseModel, aspectRatio, steps, quantity }) =>
-    calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
-  );
-
-  const { baseModel, hasResources } = useGenerationFormStore(({ model, resources, vae }) => {
-    const allResources = [...(resources ?? []), ...[vae].filter(isDefined)];
-    const baseModel = model?.baseModel
-      ? Object.entries(baseModelSets).find(([, baseModels]) =>
-          baseModels.includes(model.baseModel as any)
-        )?.[0]
-      : undefined;
-
-    return {
-      baseModel,
-      hasResources: !!allResources.length,
-    };
-  });
-
-  const additionalResourcesCount = useGenerationFormStore((state) =>
-    state.resources ? state.resources.length : 0
-  );
-  const trainedWords = useGenerationFormStore(({ resources }) =>
-    resources?.flatMap((x) => x.trainedWords)
-  );
-  // #endregion
+  const { totalCost, baseModel, hasResources, trainedWords, additionalResourcesCount, isSDXL } =
+    useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
@@ -70,7 +44,13 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     performTransactionOnPurchase: true,
   });
 
-  const isSDXL = baseModel === 'SDXL';
+  const handleReset = (data?: GenerationFormSchema) => form.reset(data ?? defaultValues);
+
+  // TODO - handle parse prompt from clipboard
+  // TODO - display survey logic
+  // TODO - get generation requests
+  // TODO - poll any pending generation requests
+  // TODO - disable generate button logic
 
   return <></>;
 };
