@@ -134,6 +134,15 @@ export function throwInsufficientFundsError(message: string | null = null, error
   });
 }
 
+export function throwConflictError(message: string | null = null, error?: unknown) {
+  message ??= 'There was a conflict with your request';
+  throw new TRPCError({
+    code: 'CONFLICT',
+    message,
+    cause: error,
+  });
+}
+
 export function handleLogError(e: Error) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)

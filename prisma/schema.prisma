@@ -1772,6 +1772,7 @@ enum CosmeticSource {
   Purchase
   Event
   Membership
+  Claim
 }
 
 model Cosmetic {

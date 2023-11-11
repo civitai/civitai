@@ -36,6 +36,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
   acceptTOS,
+  claimCosmetic,
   createUserReferral,
   deleteUser,
   getCreators,
@@ -956,6 +957,27 @@ export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<C
 
     // sort by `onDemand` first
     return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const claimCosmeticHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = input;
+    const { id: userId } = ctx.user;
+    const cosmetic = await claimCosmetic({ id, userId });
+    if (!cosmetic) throw throwNotFoundError(`No cosmetic with id ${id}`);
+
+    // TODO: track with clickhouse?
+
+    return cosmetic;
   } catch (error) {
     throw throwDbError(error);
   }
