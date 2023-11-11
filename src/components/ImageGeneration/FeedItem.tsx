@@ -84,11 +84,10 @@ export function FeedItem({
               backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.3),
             }
           : undefined,
+        alignSelf: 'flex-start',
       })}
     >
-      <AspectRatio ratio={1}>
-        <GeneratedImage request={request} image={image} />
-      </AspectRatio>
+      <GeneratedImage request={request} image={image} />
       <Checkbox
         sx={(theme) => ({
           position: 'absolute',

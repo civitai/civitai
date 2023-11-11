@@ -308,9 +308,9 @@ type FloatingActionsProps = {
 const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: theme.spacing.md,
-    padding: theme.spacing.md,
+    gridTemplateRows: 'masonry',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: theme.spacing.xs,
 
     [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
       gridTemplateColumns: '1fr 1fr',
