@@ -148,7 +148,9 @@ const formatGenerationData = (
     return { ...formData, baseModel, model, resources };
   } else {
     // const aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
-    const additionalResourceTypes = getGenerationConfig(params?.baseModel).additionalResourceTypes;
+    const additionalResourceTypes = getGenerationConfig(
+      params?.baseModel
+    ).additionalResourceTypes.map((x) => x.type);
     const additionalResources = resources.filter((x) =>
       additionalResourceTypes.includes(x.modelType as any)
     );
