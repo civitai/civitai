@@ -82,7 +82,10 @@ export function Feed({
   const { classes } = useStyles();
 
   return (
-    <Stack sx={{ position: 'relative', flex: 1, overflow: 'hidden' }} spacing={0}>
+    <Stack
+      sx={{ position: 'relative', flex: 1, overflow: 'hidden', containerType: 'inline-size' }}
+      spacing={0}
+    >
       {/* <div className={classes.searchPanel}>
         <HoverCard withArrow>
           <HoverCard.Target>
@@ -309,11 +312,11 @@ const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
     gridTemplateRows: 'masonry',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(345px, 1fr))',
     gap: theme.spacing.xs,
+    gridTemplateColumns: '1fr 1fr',
 
-    [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
-      gridTemplateColumns: '1fr 1fr',
+    [`@container (min-width: 600px)`]: {
+      gridTemplateColumns: 'repeat(auto-fit, minmax(345px, 1fr))',
     },
   },
   searchPanel: {
