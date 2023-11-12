@@ -260,17 +260,14 @@ const useStyle = createStyles((theme) => ({
     // [`@media (max-width: ${theme.breakpoints.xl}px)`]: {
     //   gridTemplateColumns: 'repeat(4, 1fr)', // 4 columns for screens smaller than xl
     // },
-    [`@container (min-width: 400px)`]: {
+    [`@container (min-width: 530px)`]: {
       gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
     },
-    [`@container (min-width: 600px)`]: {
+    [`@container (min-width: 900px)`]: {
       gridTemplateColumns: 'repeat(4, 1fr)', // 5 columns for screens smaller than xl
     },
     [`@container (min-width: 1200px)`]: {
-      gridTemplateColumns: 'repeat(5, 1fr)', // 5 columns for screens smaller than xl
-    },
-    [`@container (min-width: 1900px)`]: {
-      gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 300px))',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',
     },
   },
   asSidebar: {

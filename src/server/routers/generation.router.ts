@@ -51,6 +51,7 @@ export const generationRouter = router({
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(({ input }) => checkResourcesCoverage(input)),
   getStatusMessage: publicProcedure
     .use(edgeCacheIt({ ttl: 60 }))

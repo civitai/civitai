@@ -315,8 +315,14 @@ const useStyles = createStyles((theme) => ({
     gap: theme.spacing.xs,
     gridTemplateColumns: '1fr 1fr',
 
-    [`@container (min-width: 600px)`]: {
-      gridTemplateColumns: 'repeat(auto-fit, minmax(345px, 1fr))',
+    [`@container (min-width: 530px)`]: {
+      gridTemplateColumns: 'repeat(3, 1fr)',
+    },
+    [`@container (min-width: 900px)`]: {
+      gridTemplateColumns: 'repeat(4, 1fr)',
+    },
+    [`@container (min-width: 1200px)`]: {
+      gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',
     },
   },
   searchPanel: {
