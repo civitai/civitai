@@ -425,3 +425,14 @@ export const BUZZ_FEATURE_LIST = [
 
 export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s
 export const STRIPE_PROCESSING_CHECK_INTERVAL = 1000; // 1s
+
+export const CacheTTL = {
+  xs: 60 * 60 * 1,
+  sm: 60 * 60 * 3,
+  md: 60 * 60 * 10,
+  lg: 60 * 60 * 30,
+  hour: 60 * 60 * 1,
+  day: 60 * 60 * 24 * 1,
+  week: 60 * 60 * 24 * 7 * 1,
+  month: 60 * 60 * 24 * 30 * 1,
+} as const;

@@ -55,6 +55,7 @@ import {
   isImageResource,
 } from './../schema/image.schema';
 import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { purgeCache } from '~/server/cloudflare/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1384,6 +1385,8 @@ export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: 
       where: { id },
     });
     if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
+
+    purgeCache({ tags: [`image-resources-${id}`] });
 
     return resource;
   } catch (error) {
