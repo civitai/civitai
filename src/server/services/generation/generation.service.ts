@@ -41,6 +41,7 @@ import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
+import { redis } from '~/server/redis/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -185,6 +186,42 @@ export const getGenerationResources = async ({
   }));
 };
 
+const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+const getResourceData = async (modelVersionIds: number[]) => {
+  const results = new Set<GenerationResourceSelect>();
+  const cacheJsons = await redis.hmGet('generation:resource-data', modelVersionIds.map(String));
+  const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
+  const cache = Object.fromEntries(cacheArray.map((x) => [x.id, x]));
+
+  const cacheCutoff = Date.now() - CACHE_TTL;
+  const cacheMisses = new Set<number>();
+  for (const id of modelVersionIds) {
+    const cached = cache[id];
+    if (cached && cached.cachedAt > cacheCutoff) results.add(cached);
+    else cacheMisses.add(id);
+  }
+
+  // If we have cache misses, we need to fetch from the DB
+  if (cacheMisses.size > 0) {
+    const dbResults = await dbRead.modelVersion.findMany({
+      where: { id: { in: [...cacheMisses] } },
+      select: generationResourceSelect,
+    });
+
+    const toCache: Record<string, string> = {};
+    const cachedAt = Date.now();
+    for (const result of dbResults) {
+      results.add(result);
+      toCache[result.id] = JSON.stringify({ ...result, cachedAt });
+    }
+
+    // then cache the results
+    await redis.hSet('generation:resource-data', toCache);
+  }
+
+  return [...results];
+};
+
 const baseModelSetsEntries = Object.entries(baseModelSets);
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
@@ -194,10 +231,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
     )
     .filter((x) => x !== null) as number[];
 
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: generationResourceSelect,
-  });
+  const modelVersions = await getResourceData(modelVersionIds);
 
   const checkpoint = modelVersions.find((x) => x.model.type === 'Checkpoint');
   const baseModel = checkpoint
