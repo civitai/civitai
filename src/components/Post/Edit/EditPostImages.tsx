@@ -65,7 +65,10 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
 
   useEffect(() => {
     const files = postImageTransmitter.getData();
-    if (files) handleDrop(files.splice(0, max));
+    if (files) {
+      // console.log({ files, max });
+      handleDrop(files);
+    }
   }, []);
 
   return (

@@ -218,7 +218,7 @@ const getResourceData = async (modelVersionIds: number[]) => {
     }
 
     // then cache the results
-    await redis.hSet('generation:resource-data', toCache);
+    if (Object.keys(toCache).length > 0) await redis.hSet('generation:resource-data', toCache);
   }
 
   return [...results];
