@@ -226,17 +226,17 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
       await queryUtils.bounty.getInfinite.invalidate();
     },
     onError(error) {
-      if (error instanceof TRPCClientError) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
         const parsedError = JSON.parse(error.message);
         showErrorNotification({
-          title: 'Failed to create bounty',
-          error: new Error(
-            Array.isArray(parsedError) ? parsedError[0].message : parsedError.message
-          ),
+          title: 'Failed to save bounty',
+          error: parsedError,
         });
-      } else {
+      } catch (e) {
+        // Report old error as is:
         showErrorNotification({
-          title: 'Failed to create bounty',
+          title: 'Failed to save bounty',
           error: new Error(error.message),
         });
       }
