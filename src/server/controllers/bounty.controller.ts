@@ -154,7 +154,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       images: images.map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
-        metadata: image?.metadata as any,
+        metadata: image?.metadata as MixedObject,
       })),
       tags: bounty.tags.map(({ tag }) => tag),
       files,

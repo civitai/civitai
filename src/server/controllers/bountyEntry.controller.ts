@@ -75,7 +75,7 @@ export const getBountyEntryHandler = async ({
       images: images.map((i) => ({
         ...i,
         meta: i.meta as ImageMetaProps,
-        metadata: i.metadata as any,
+        metadata: i.metadata as MixedObject,
       })),
       files,
       fileCount: files.length,

@@ -2020,13 +2020,14 @@ export const updateEntityImages = async ({
   images,
   userId,
 }: {
-  tx: Prisma.TransactionClient;
+  tx?: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
   images: ImageUploadProps[];
   userId: number;
 }) => {
-  const connections = await tx.imageConnection.findMany({
+  const dbClient = tx ?? dbWrite;
+  const connections = await dbClient.imageConnection.findMany({
     select: { imageId: true },
     where: {
       entityId,
@@ -2035,7 +2036,7 @@ export const updateEntityImages = async ({
   });
 
   // Delete any images that are no longer in the list.
-  await tx.imageConnection.deleteMany({
+  await dbClient.imageConnection.deleteMany({
     where: {
       entityId,
       entityType,
@@ -2051,7 +2052,7 @@ export const updateEntityImages = async ({
   const links = [...newLinkedImages.map((i) => i.id)];
 
   if (newImages.length > 0) {
-    await tx.image.createMany({
+    await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...image,
         meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -2060,7 +2061,7 @@ export const updateEntityImages = async ({
       })),
     });
 
-    const imageRecords = await tx.image.findMany({
+    const imageRecords = await dbClient.image.findMany({
       select: { id: true, url: true, type: true, width: true, height: true },
       where: {
         url: { in: newImages.map((i) => i.url) },
@@ -2080,7 +2081,7 @@ export const updateEntityImages = async ({
 
   if (links.length > 0) {
     // Create any new files.
-    await tx.imageConnection.createMany({
+    await dbClient.imageConnection.createMany({
       data: links.filter(isDefined).map((id) => ({
         imageId: id,
         entityId,
