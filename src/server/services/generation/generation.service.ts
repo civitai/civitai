@@ -188,6 +188,8 @@ export const getGenerationResources = async ({
 
 const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 const getResourceData = async (modelVersionIds: number[]) => {
+  if (modelVersionIds.length === 0) return [];
+
   const results = new Set<GenerationResourceSelect>();
   const cacheJsons = await redis.hmGet('generation:resource-data', modelVersionIds.map(String));
   const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
