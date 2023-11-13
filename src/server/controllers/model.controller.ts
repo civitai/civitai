@@ -31,6 +31,7 @@ import {
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
+  ModelByHashesInput,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
@@ -1169,3 +1170,22 @@ export const getAssociatedResourcesCardDataHandler = async ({
   }
 };
 // #endregion
+export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesInput }) => {
+  const { hashes } = input;
+
+  const modelsByHashes = await dbRead.$queryRaw<
+    { userId: number; modelId: number; hash: string }[]
+  >`
+      SELECT
+        m."userId",
+        m."id",
+        mfh."hash"
+      FROM "ModelFileHash" mfh
+      JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
+      JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
+      JOIN "Model" m ON mv."modelId" = m.id
+      WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))});
+    `;
+
+  return modelsByHashes;
+};
