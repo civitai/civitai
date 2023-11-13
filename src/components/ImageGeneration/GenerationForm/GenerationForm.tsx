@@ -82,7 +82,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const defaultValues = {
     ...generation.defaultValues,
     nsfw: nsfw ?? currentUser?.showNsfw,
-    quantity,
+    quantity: quantity ?? generation.defaultValues.quantity,
   };
 
   const form = useForm<GenerateFormModel>({
