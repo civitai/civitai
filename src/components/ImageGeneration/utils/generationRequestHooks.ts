@@ -59,11 +59,11 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
     }
   );
 
-  useEffect(() => {
-    if (!!requestIds?.length) {
-      debouncer(refetch);
-    }
-  }, [requestIds]); //eslint-disable-line
+  // useEffect(() => {
+  //   if (!!requestIds?.length) {
+  //     debouncer(refetch);
+  //   }
+  // }, [requestIds]); //eslint-disable-line
 
   // update requests with newly polled values
   useEffect(() => {

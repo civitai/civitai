@@ -11,7 +11,13 @@ import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/g
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import { uniqBy } from 'lodash-es';
-import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelSetType,
+  baseModelSets,
+  generation,
+  generationConfig,
+} from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -19,12 +25,13 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { isDefined } from '~/utils/type-guards';
 import { useTempGenerateStore } from './generation.utils';
+import { Generation } from '~/server/services/generation/generation.types';
 
 type GenerationMaxValueKey = keyof typeof generation.maxValues;
 const maxValueKeys = Object.keys(generation.maxValues);
 const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
 
-export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
+export function GenerateFormLogic() {
   const currentUser = useCurrentUser();
 
   const form = useForm<GenerateFormModel>({
@@ -104,27 +111,9 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       if (!formData.model) {
         // TODO.generation: We need a better way to handle these cases, having hardcoded values
         // is not ideal and may lead to bugs in the future.
-        formData.model = hasSdxlResources
-          ? {
-              id: 128078,
-              name: 'v1.0 VAE fix',
-              trainedWords: [],
-              modelId: 101055,
-              modelName: 'SD XL',
-              modelType: 'Checkpoint',
-              baseModel: 'SDXL 1.0',
-              strength: 1,
-            }
-          : {
-              id: 128713,
-              name: '8',
-              trainedWords: [],
-              modelId: 4384,
-              modelName: 'DreamShaper',
-              modelType: 'Checkpoint',
-              baseModel: 'SD 1.5',
-              strength: 1,
-            };
+        formData.model = (
+          hasSdxlResources ? generationConfig.SDXL.checkpoint : generationConfig.SD1.checkpoint
+        ) as Generation.Resource;
       }
 
       for (const item of keys) {
@@ -170,7 +159,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         params: { ...params, baseModel: useTempGenerateStore.getState().baseModel },
       });
 
-      onSuccess?.();
       generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'
     };
 

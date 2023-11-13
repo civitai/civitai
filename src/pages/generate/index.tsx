@@ -16,6 +16,7 @@ import React from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Feed, FloatingFeedActions } from '~/components/ImageGeneration/Feed';
 import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
+import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -80,7 +81,7 @@ export default function GeneratePage() {
   return (
     <>
       <div className={classes.sidebar}>
-        <GenerateFormLogic />
+        <GenerationForm />
       </div>
       <div className={classes.content}>
         <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray" mb="md">

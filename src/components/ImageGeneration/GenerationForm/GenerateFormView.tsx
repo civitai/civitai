@@ -47,7 +47,11 @@ import {
   getGenerationConfig,
   constants,
 } from '~/server/common/constants';
-import { GenerateFormModel, generationFormShapeSchema } from '~/server/schema/generation.schema';
+import {
+  GenerateFormModel,
+  generateFormSchema,
+  generationFormShapeSchema,
+} from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
@@ -151,7 +155,6 @@ export function GenerateFormView({
 
   const isSDXL = baseModel === 'SDXL';
   const disableGenerateButton = reachedRequestLimit || (isSDXL && !features.sdxlGeneration);
-  const test = getGenerationConfig(baseModel).additionalResourceTypes.map((x) => ({ ...x }));
 
   return (
     <PersistentForm
@@ -161,7 +164,7 @@ export function GenerateFormView({
       style={{ height: '100%', width: '100%' }}
       name="generation-form"
       storage={typeof window !== 'undefined' ? window.localStorage : undefined}
-      schema={generationFormShapeSchema.deepPartial()}
+      schema={generateFormSchema.deepPartial()}
     >
       <Stack spacing={0} h="100%">
         <ScrollArea sx={{ flex: 1 }}>

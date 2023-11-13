@@ -19,6 +19,7 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
+import { Generation } from '~/server/services/generation/generation.types';
 
 export const constants = {
   modelFilterDefaults: {
@@ -332,7 +333,8 @@ export const generation = {
       modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
       strength: 1,
-    },
+      trainedWords: [],
+    } as Generation.Resource,
   },
   maxValues: {
     seed: 4294967295,
@@ -367,6 +369,16 @@ export const generationConfig = {
       width: 512,
       height: 512,
     },
+    checkpoint: {
+      id: 128713,
+      name: '8',
+      trainedWords: [],
+      modelId: 4384,
+      modelName: 'DreamShaper',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 1.5',
+      strength: 1,
+    } as Generation.Resource,
   },
   SDXL: {
     additionalResourceTypes: [
@@ -387,6 +399,16 @@ export const generationConfig = {
       width: 1024,
       height: 1024,
     },
+    checkpoint: {
+      id: 128078,
+      name: 'v1.0 VAE fix',
+      trainedWords: [],
+      modelId: 101055,
+      modelName: 'SD XL',
+      modelType: 'Checkpoint',
+      baseModel: 'SDXL 1.0',
+      strength: 1,
+    } as Generation.Resource,
   },
 };
 
