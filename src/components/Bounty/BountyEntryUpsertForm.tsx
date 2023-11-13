@@ -143,8 +143,6 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
       })),
     ];
 
-    console.log([...bountyEntryImages, ...filteredImages]);
-
     bountyEntryUpsertMutation.mutate(
       { ...data, bountyId: bounty.id, images: [...bountyEntryImages, ...filteredImages], files },
       {
