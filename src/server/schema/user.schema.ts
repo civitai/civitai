@@ -71,6 +71,7 @@ export const userUpdateSchema = z.object({
   leaderboardShowcase: z.string().nullish(),
   userReferralCode: z.string().optional(),
   source: z.string().optional(),
+  landingPage: z.string().optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 

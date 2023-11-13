@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ActionType } from '../clickhouse/client';
+import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
 
 export const addViewSchema = z.object({
   type: z.enum([
@@ -98,6 +99,10 @@ const purchaseFundsConfirmSchema = z.object({
     })
     .optional(),
 });
+const loginRedirectSchema = z.object({
+  type: z.literal('LoginRedirect'),
+  reason: z.enum(trackedReasons),
+});
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -111,4 +116,5 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   notEnoughFundsSchema,
   purchaseFundsCancelSchema,
   purchaseFundsConfirmSchema,
+  loginRedirectSchema,
 ]);

@@ -133,6 +133,7 @@ export const ActionType = [
   'NotEnoughFunds',
   'PurchaseFunds_Cancel',
   'PurchaseFunds_Confirm',
+  'LoginRedirect',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -218,7 +219,12 @@ export class Tracker {
     return this.track('partnerEvents', values);
   }
 
-  public userActivity(values: { type: UserActivityType; targetUserId: number }) {
+  public userActivity(values: {
+    type: UserActivityType;
+    targetUserId: number;
+    source?: string;
+    landingPage?: string;
+  }) {
     return this.track('userActivities', values);
   }
 

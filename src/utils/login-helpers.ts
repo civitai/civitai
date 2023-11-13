@@ -26,9 +26,12 @@ export const loginRedirectReasons = {
   'perform-action': 'You need to be logged in to perform this action',
   'purchase-buzz': 'You need to be logged in to purchase Buzz',
   'image-gen': 'You need to be logged in to generate images',
+  'blur-toggle': 'Displaying NSFW content requires you to be logged in',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
+
+export const trackedReasons = ['image-gen', 'train-model', 'blur-toggle'] as const;
 
 export function getLoginLink({
   returnUrl,

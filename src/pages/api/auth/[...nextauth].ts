@@ -160,20 +160,26 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   customAuthOptions.events ??= {};
   customAuthOptions.events.signIn = async (context) => {
     const source = req.cookies['ref_source'] as string;
+    const landingPage = req.cookies['ref_landing_page'] as string;
+    const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
     if (context.isNewUser) {
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
         targetUserId: parseInt(context.user.id),
+        source,
+        landingPage,
       });
 
-      if (source) {
+      if (source || landingPage || loginRedirectReason) {
         // Only source will be set via the auth callback.
         // For userReferralCode, the user must finish onboarding.
         await createUserReferral({
           id: parseInt(context.user.id),
           source,
+          landingPage,
+          loginRedirectReason,
         });
       }
     }
