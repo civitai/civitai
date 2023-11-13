@@ -145,6 +145,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       userId: user?.id,
       isModerator: user?.isModerator,
     });
+
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
@@ -152,7 +153,8 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       details: bounty.details as BountyDetailsSchema,
       images: images.map((image) => ({
         ...image,
-        meta: image?.meta as ImageMetaProps | null,
+        meta: (image?.meta ?? {}) as ImageMetaProps,
+        metadata: image?.metadata as any,
       })),
       tags: bounty.tags.map(({ tag }) => tag),
       files,
@@ -306,7 +308,10 @@ export const updateBountyHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const updated = await updateBountyById(input);
+    const updated = await updateBountyById({
+      ...input,
+      userId: ctx.user.id,
+    });
     if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background

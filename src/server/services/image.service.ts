@@ -56,6 +56,7 @@ import {
 } from './../schema/image.schema';
 import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
+import { BaseFileSchema } from '~/server/schema/file.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2010,4 +2011,81 @@ export const getEntityCoverImage = async ({
     ...i,
     tags: tagsVar?.filter((x) => x.imageId === i.id),
   }));
+};
+
+export const updateEntityImages = async ({
+  tx,
+  entityId,
+  entityType,
+  images,
+  userId,
+}: {
+  tx: Prisma.TransactionClient;
+  entityId: number;
+  entityType: string;
+  images: ImageUploadProps[];
+  userId: number;
+}) => {
+  const connections = await tx.imageConnection.findMany({
+    select: { imageId: true },
+    where: {
+      entityId,
+      entityType,
+    },
+  });
+
+  // Delete any images that are no longer in the list.
+  await tx.imageConnection.deleteMany({
+    where: {
+      entityId,
+      entityType,
+      imageId: { notIn: images.map((i) => i.id).filter(isDefined) },
+    },
+  });
+
+  const newImages = images.filter((x) => !x.id);
+  const newLinkedImages = images.filter(
+    (x) => !!x.id && !connections.find((c) => c.imageId === x.id)
+  );
+
+  const links = [...newLinkedImages.map((i) => i.id)];
+
+  if (newImages.length > 0) {
+    await tx.image.createMany({
+      data: newImages.map((image) => ({
+        ...image,
+        meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+        userId,
+        resources: undefined,
+      })),
+    });
+
+    const imageRecords = await tx.image.findMany({
+      select: { id: true, url: true, type: true, width: true, height: true },
+      where: {
+        url: { in: newImages.map((i) => i.url) },
+        ingestion: ImageIngestionStatus.Pending,
+        userId,
+      },
+    });
+
+    links.push(...imageRecords.map((i) => i.id));
+
+    // Process the new images just in case:
+    const batches = chunk(imageRecords, 50);
+    for (const batch of batches) {
+      await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+    }
+  }
+
+  if (links.length > 0) {
+    // Create any new files.
+    await tx.imageConnection.createMany({
+      data: links.filter(isDefined).map((id) => ({
+        imageId: id,
+        entityId,
+        entityType,
+      })),
+    });
+  }
 };

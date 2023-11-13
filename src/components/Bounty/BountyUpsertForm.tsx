@@ -94,7 +94,6 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 };
 
 const formSchema = upsertBountyInputSchema
-  .omit({ images: true })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
   })
@@ -175,7 +174,6 @@ const useStyles = createStyles((theme) => ({
 
 const tzOffset = dayjs().utcOffset();
 
-// TODO.bounty: add support for editing images
 export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const router = useRouter();
   const { classes } = useStyles();
@@ -218,6 +216,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         !!bounty &&
         bounty.files.length > 0 &&
         bounty.files.every((f) => f.metadata?.ownRights === true),
+      images: !!bounty ? bounty.images ?? [] : [],
     },
     shouldUnregister: false,
   });
@@ -248,6 +247,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const expiresAt = form.watch('expiresAt');
   const files = form.watch('files');
+  const bountyImages = form.watch('images') ?? [];
 
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
@@ -275,11 +275,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const { upsertBounty, upserting } = useMutateBounty({ bountyId: bounty?.id });
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
-    const filteredImages = bounty
-      ? (bounty.images as any) // TODO.bounty: correctly type images, using any to not lose too much time
-      : imageFiles
-          .filter((file) => file.status === 'success')
-          .map(({ id, url, ...file }) => ({ ...file, url: id }));
+    const completedUploads = imageFiles
+      .filter((file) => file.status === 'success')
+      .map(({ id, url, ...file }) => ({ ...file, url: id }));
+
+    const filteredImages = bounty ? [...bountyImages, ...completedUploads] : completedUploads;
 
     const performTransaction = async () => {
       try {
@@ -304,6 +304,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
   const alreadyStarted = !!bounty && bounty.startsAt < new Date();
+  const images = [...bountyImages, ...imageFiles];
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -383,100 +384,129 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   withAsterisk
                   stickyToolbar
                 />
-
+                <Input.Wrapper
+                  label="Example Images"
+                  description="Please add at least 1 reference image to your bounty. This will serve as a reference point for Hunters and will also be used as your cover image."
+                  descriptionProps={{ mb: 5 }}
+                  withAsterisk
+                >
+                  <ImageDropzone
+                    label="Drag & drop images here or click to browse"
+                    onDrop={handleDropImages}
+                    count={imageFiles.length}
+                    accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+                  />
+                </Input.Wrapper>
+                {images.length > 0 && (
+                  <SimpleGrid
+                    spacing="sm"
+                    breakpoints={[
+                      { minWidth: 'xs', cols: 1 },
+                      { minWidth: 'sm', cols: 3 },
+                      {
+                        minWidth: 'md',
+                        cols: images.length > 3 ? 4 : images.length,
+                      },
+                    ]}
+                  >
+                    {bountyImages.map((image) => (
+                      <Paper
+                        key={image.id}
+                        radius="sm"
+                        p={0}
+                        sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                        withBorder
+                      >
+                        <EdgeMedia
+                          placeholder="empty"
+                          src={image.url}
+                          alt={undefined}
+                          style={{ objectFit: 'cover', height: '100%' }}
+                        />
+                        <div style={{ position: 'absolute', top: 12, right: 12 }}>
+                          <ActionIcon
+                            variant="filled"
+                            size="lg"
+                            color="red"
+                            onClick={() => {
+                              form.setValue(
+                                'images',
+                                bountyImages.filter((i) => i.id !== image.id)
+                              );
+                            }}
+                          >
+                            <IconTrash size={26} strokeWidth={2.5} />
+                          </ActionIcon>
+                        </div>
+                        {image.meta && (
+                          <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                            <ImageMetaPopover meta={image.meta}>
+                              <ActionIcon variant="light" color="dark" size="lg">
+                                <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                          </div>
+                        )}
+                      </Paper>
+                    ))}
+                    {imageFiles
+                      .slice()
+                      .reverse()
+                      .map((file) => (
+                        <Paper
+                          key={file.id}
+                          radius="sm"
+                          p={0}
+                          sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                          withBorder
+                        >
+                          {file.status === 'success' ? (
+                            <>
+                              <EdgeMedia
+                                placeholder="empty"
+                                src={file.id}
+                                alt={file.name ?? undefined}
+                                style={{ objectFit: 'cover', height: '100%' }}
+                              />
+                              <div style={{ position: 'absolute', top: 12, right: 12 }}>
+                                <ActionIcon
+                                  variant="filled"
+                                  size="lg"
+                                  color="red"
+                                  onClick={() => removeImage(file.id)}
+                                >
+                                  <IconTrash size={26} strokeWidth={2.5} />
+                                </ActionIcon>
+                              </div>
+                              {file.type === 'image' && (
+                                <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                                  <ImageMetaPopover meta={file.meta}>
+                                    <ActionIcon variant="light" color="dark" size="lg">
+                                      <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                                    </ActionIcon>
+                                  </ImageMetaPopover>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <MediaHash {...file} />
+                              <Progress
+                                size="xl"
+                                value={file.progress}
+                                label={`${Math.floor(file.progress)}%`}
+                                color={file.progress < 100 ? 'blue' : 'green'}
+                                striped
+                                animate
+                              />
+                            </>
+                          )}
+                        </Paper>
+                      ))}
+                  </SimpleGrid>
+                )}
                 {!alreadyStarted && (
                   <>
-                    {!bounty && (
-                      <>
-                        <Input.Wrapper
-                          label="Example Images"
-                          description="Please add at least 1 reference image to your bounty. This will serve as a reference point for Hunters and will also be used as your cover image."
-                          descriptionProps={{ mb: 5 }}
-                          withAsterisk
-                        >
-                          <ImageDropzone
-                            label="Drag & drop images here or click to browse"
-                            onDrop={handleDropImages}
-                            count={imageFiles.length}
-                            accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-                          />
-                        </Input.Wrapper>
-                        {imageFiles.length > 0 && (
-                          <SimpleGrid
-                            spacing="sm"
-                            breakpoints={[
-                              { minWidth: 'xs', cols: 1 },
-                              { minWidth: 'sm', cols: 3 },
-                              {
-                                minWidth: 'md',
-                                cols: imageFiles.length > 3 ? 4 : imageFiles.length,
-                              },
-                            ]}
-                          >
-                            {imageFiles
-                              .slice()
-                              .reverse()
-                              .map((file) => (
-                                <Paper
-                                  key={file.id}
-                                  radius="sm"
-                                  p={0}
-                                  sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
-                                  withBorder
-                                >
-                                  {file.status === 'success' ? (
-                                    <>
-                                      <EdgeMedia
-                                        placeholder="empty"
-                                        src={file.id}
-                                        alt={file.name ?? undefined}
-                                        style={{ objectFit: 'cover', height: '100%' }}
-                                      />
-                                      <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                                        <ActionIcon
-                                          variant="filled"
-                                          size="lg"
-                                          color="red"
-                                          onClick={() => removeImage(file.id)}
-                                        >
-                                          <IconTrash size={26} strokeWidth={2.5} />
-                                        </ActionIcon>
-                                      </div>
-                                      {file.type === 'image' && (
-                                        <div
-                                          style={{ position: 'absolute', bottom: 12, right: 12 }}
-                                        >
-                                          <ImageMetaPopover meta={file.meta}>
-                                            <ActionIcon variant="light" color="dark" size="lg">
-                                              <IconInfoCircle
-                                                color="white"
-                                                strokeWidth={2.5}
-                                                size={26}
-                                              />
-                                            </ActionIcon>
-                                          </ImageMetaPopover>
-                                        </div>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <>
-                                      <MediaHash {...file} />
-                                      <Progress
-                                        size="xl"
-                                        value={file.progress}
-                                        label={`${Math.floor(file.progress)}%`}
-                                        color={file.progress < 100 ? 'blue' : 'green'}
-                                        striped
-                                        animate
-                                      />
-                                    </>
-                                  )}
-                                </Paper>
-                              ))}
-                          </SimpleGrid>
-                        )}
-                      </>
-                    )}
                     <Stack>
                       <Group spacing="md" grow>
                         <InputDatePicker

@@ -2,7 +2,7 @@ import { BountyEntryMode, BountyMode, BountyType, Currency, MetricTimeframe } fr
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
@@ -60,7 +60,9 @@ export const createBountyInputSchema = z.object({
   poi: z.boolean().optional(),
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
+  images: z
+    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).optional() }))
+    .min(1, 'At least one example image must be uploaded'),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
@@ -75,6 +77,7 @@ export const updateBountyInputSchema = createBountyInputSchema
     poi: true,
     nsfw: true,
     ownRights: true,
+    images: true,
   })
   .extend({
     id: z.number(),
