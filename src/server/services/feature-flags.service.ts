@@ -20,7 +20,7 @@ const featureFlags = createFeatureFlags({
   stripe: ['mod'],
   imageTraining: ['dev', 'mod', 'founder'],
   imageTrainingResults: ['user'],
-  sdxlGeneration: ['dev', 'mod', 'founder'],
+  sdxlGeneration: ['public'],
   imageGeneration: {
     toggleable: true,
     default: true,
@@ -70,11 +70,11 @@ const featureFlags = createFeatureFlags({
   },
   bounties: ['public'],
   profileOverhaul: {
-    toggleable: false,
-    default: false,
+    toggleable: true,
+    default: true,
     displayName: 'Profile v2 (Beta)',
     description: `An improved user profile experience to boast around.`,
-    availability: ['dev', 'mod'],
+    availability: ['public'],
   },
 });
 export const featureFlagKeys = Object.keys(featureFlags);

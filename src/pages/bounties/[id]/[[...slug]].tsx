@@ -913,7 +913,8 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             </Tooltip>
             {hiddenItems > 0 && (
               <Text color="dimmed">
-                {hiddenItems.toLocaleString()} entries have been hidden due to your settings.
+                {hiddenItems.toLocaleString()} entries have been hidden due to your settings or due
+                to lack of images
               </Text>
             )}
           </Group>

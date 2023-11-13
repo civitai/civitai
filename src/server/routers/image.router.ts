@@ -1,4 +1,4 @@
-import { applyBrowsingMode } from './../middleware.trpc';
+import { applyBrowsingMode, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
   getImageDetailHandler,
@@ -37,6 +37,7 @@ import {
   ingestImageById,
   removeImageResource,
 } from '~/server/services/image.service';
+import { CacheTTL } from '~/server/common/constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -86,7 +87,15 @@ export const imageRouter = router({
     .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getImageSchema).query(getImageHandler),
-  getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),
+  getResources: publicProcedure
+    .input(getByIdSchema)
+    .use(
+      edgeCacheIt({
+        ttl: CacheTTL.month, // Cache is purged on remove resource
+        tags: (i) => ['image-resources', `image-resources-${i.id}`],
+      })
+    )
+    .query(getImageResourcesHandler),
   removeResource: protectedProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeImageResource({ ...input, user: ctx.user })),

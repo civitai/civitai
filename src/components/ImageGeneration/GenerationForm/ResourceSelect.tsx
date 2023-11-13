@@ -1,9 +1,9 @@
 import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
-import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
+import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -13,24 +13,20 @@ function ResourceSelect({
   buttonLabel,
   buttonProps,
   options = {},
+  allowRemove = true,
   ...inputWrapperProps
 }: {
   value?: Generation.Resource;
   onChange?: (value?: Generation.Resource) => void;
   buttonLabel: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
-  options?: {
-    baseModel?: string;
-    type?: ModelType;
-    canGenerate?: boolean;
-  };
+  options?: ResourceSelectOptions;
+  allowRemove?: boolean;
 } & Omit<InputWrapperProps, 'children'>) {
-  const { type } = options;
-  const _value = type && type !== value?.modelType ? undefined : value;
-  const canAdd = !_value;
+  const types = options.resources?.map((x) => x.type);
+  const _value = types && value && !types.includes(value.modelType) ? undefined : value;
 
   const handleAdd = (resource: Generation.Resource) => {
-    if (!canAdd) return;
     onChange?.(resource);
   };
 
@@ -40,6 +36,14 @@ function ResourceSelect({
 
   const handleUpdate = (resource: Generation.Resource) => {
     onChange?.(resource);
+  };
+
+  const handleOpenResourceSearch = () => {
+    openResourceSelectModal({
+      title: buttonLabel,
+      onSelect: handleAdd,
+      options,
+    });
   };
 
   // removes resources that have unsupported types
@@ -52,26 +56,22 @@ function ResourceSelect({
       {!value ? (
         <div>
           <Button
-            variant="default"
+            variant="light"
             leftIcon={<IconPlus size={18} />}
             fullWidth
-            onClick={() =>
-              openResourceSelectModal({
-                title: buttonLabel,
-                onSelect: handleAdd,
-                options: {
-                  ...options,
-                  types: type ? [type] : undefined,
-                },
-              })
-            }
+            onClick={handleOpenResourceSearch}
             {...buttonProps}
           >
             {buttonLabel}
           </Button>
         </div>
       ) : (
-        <ResourceSelectCard resource={value} onUpdate={handleUpdate} onRemove={handleRemove} />
+        <ResourceSelectCard
+          resource={value}
+          onUpdate={handleUpdate}
+          onRemove={allowRemove ? handleRemove : undefined}
+          onSwap={handleOpenResourceSearch}
+        />
       )}
     </Input.Wrapper>
   );

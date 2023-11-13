@@ -36,6 +36,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
   acceptTOS,
+  claimCosmetic,
   createUserReferral,
   deleteUser,
   getCreators,
@@ -260,7 +261,17 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, username, source, userReferralCode, ...data } = input;
+  const {
+    id,
+    badgeId,
+    nameplateId,
+    showNsfw,
+    username,
+    source,
+    landingPage,
+    userReferralCode,
+    ...data
+  } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
   if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
@@ -298,11 +309,12 @@ export const updateUserHandler = async ({
     });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
-    if (userReferralCode || source) {
+    if (userReferralCode || source || landingPage) {
       await createUserReferral({
         id: updatedUser.id,
         userReferralCode,
         source,
+        landingPage,
         ip: ctx.ip,
       });
     }
@@ -956,6 +968,27 @@ export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<C
 
     // sort by `onDemand` first
     return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const claimCosmeticHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = input;
+    const { id: userId } = ctx.user;
+    const cosmetic = await claimCosmetic({ id, userId });
+    if (!cosmetic) throw throwNotFoundError(`No cosmetic with id ${id}`);
+
+    // TODO: track with clickhouse?
+
+    return cosmetic;
   } catch (error) {
     throw throwDbError(error);
   }

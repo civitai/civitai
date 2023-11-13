@@ -16,6 +16,7 @@ import React from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Feed, FloatingFeedActions } from '~/components/ImageGeneration/Feed';
 import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
+import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -80,12 +81,12 @@ export default function GeneratePage() {
   return (
     <>
       <div className={classes.sidebar}>
-        <GenerateFormLogic />
+        <GenerationForm />
       </div>
       <div className={classes.content}>
-        <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray">
+        <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray" mb="md">
           <Tabs.List p="md" mt={-16} className={classes.tabList}>
-            <Container size="md" sx={{ width: '100%' }}>
+            <Container fluid sx={{ width: '100%' }}>
               <Group position="apart">
                 <Group align="flex-start">
                   <Tabs.Tab value="queue">Queue</Tabs.Tab>
@@ -95,11 +96,11 @@ export default function GeneratePage() {
               </Group>
             </Container>
           </Tabs.List>
-          <Container size="md" p={0}>
+          <Container fluid px={0}>
             <Tabs.Panel value="queue">
               <Queue {...result} />
             </Tabs.Panel>
-            <Tabs.Panel value="feed">
+            <Tabs.Panel value="feed" p="md">
               <Feed {...result} />
             </Tabs.Panel>
           </Container>

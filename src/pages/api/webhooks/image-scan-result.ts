@@ -9,7 +9,7 @@ import {
   TagTarget,
   TagType,
 } from '@prisma/client';
-import { auditMetaData } from '~/utils/metadata/audit';
+import { auditMetaData, includesInappropriate } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
@@ -228,9 +228,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
+    const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
     let reviewKey: string | null = null;
-    if (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) reviewKey = 'minor';
-    else if (nsfw) {
+    if (
+      includesInappropriate(prompt, nsfw) ||
+      (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw))
+    ) {
+      reviewKey = 'minor';
+    } else if (nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
         SELECT
           COUNT(*) > 0 "poi"
@@ -241,7 +246,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       `;
       if (poi) reviewKey = 'poi';
     }
-    const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
 
     const data: Prisma.ImageUpdateInput = {
       scannedAt: new Date(),
@@ -250,6 +254,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     };
 
     if (nsfw && prompt) {
+      // Determine if we need to block the image
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {
         data.ingestion = ImageIngestionStatus.Blocked;

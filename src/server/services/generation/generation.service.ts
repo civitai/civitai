@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   BulkDeleteGeneratedImagesInput,
@@ -14,11 +13,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
-  throwDbError,
   throwNotFoundError,
   throwRateLimitError,
+  withRetries,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { ModelType, Prisma } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -36,13 +35,13 @@ import {
   Sampler,
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { chunk, uniqBy } from 'lodash-es';
+import { uniqBy } from 'lodash-es';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
-import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
+import { redis } from '~/server/redis/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -187,6 +186,44 @@ export const getGenerationResources = async ({
   }));
 };
 
+const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+const getResourceData = async (modelVersionIds: number[]) => {
+  if (modelVersionIds.length === 0) return [];
+
+  const results = new Set<GenerationResourceSelect>();
+  const cacheJsons = await redis.hmGet('generation:resource-data', modelVersionIds.map(String));
+  const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
+  const cache = Object.fromEntries(cacheArray.map((x) => [x.id, x]));
+
+  const cacheCutoff = Date.now() - CACHE_TTL;
+  const cacheMisses = new Set<number>();
+  for (const id of modelVersionIds) {
+    const cached = cache[id];
+    if (cached && cached.cachedAt > cacheCutoff) results.add(cached);
+    else cacheMisses.add(id);
+  }
+
+  // If we have cache misses, we need to fetch from the DB
+  if (cacheMisses.size > 0) {
+    const dbResults = await dbRead.modelVersion.findMany({
+      where: { id: { in: [...cacheMisses] } },
+      select: generationResourceSelect,
+    });
+
+    const toCache: Record<string, string> = {};
+    const cachedAt = Date.now();
+    for (const result of dbResults) {
+      results.add(result);
+      toCache[result.id] = JSON.stringify({ ...result, cachedAt });
+    }
+
+    // then cache the results
+    if (Object.keys(toCache).length > 0) await redis.hSet('generation:resource-data', toCache);
+  }
+
+  return [...results];
+};
+
 const baseModelSetsEntries = Object.entries(baseModelSets);
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
@@ -196,10 +233,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
     )
     .filter((x) => x !== null) as number[];
 
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: generationResourceSelect,
-  });
+  const modelVersions = await getResourceData(modelVersionIds);
 
   const checkpoint = modelVersions.find((x) => x.model.type === 'Checkpoint');
   const baseModel = checkpoint
@@ -321,7 +355,7 @@ export const createGenerationRequest = async ({
   // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
 
   const additionalNetworks = resources
-    .filter((x) => additionalResourceTypes.includes(x.modelType as any))
+    .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
     .reduce((acc, { id, modelType, ...rest }) => {
       acc[`@civitai/${id}`] = { type: modelType, ...rest };
       return acc;
@@ -377,21 +411,20 @@ export const createGenerationRequest = async ({
     aspectRatio: params.aspectRatio,
   });
 
-  let buzzTransaction;
-
-  if (totalCost > 0) {
-    buzzTransaction = await createBuzzTransaction({
-      fromAccountId: userId,
-      type: TransactionType.Generation,
-      amount: totalCost,
-      details: {
-        resources,
-        params,
-      },
-      toAccountId: 0,
-      description: 'Image generation',
-    });
-  }
+  const buzzTransaction =
+    totalCost > 0
+      ? await createBuzzTransaction({
+          fromAccountId: userId,
+          type: TransactionType.Generation,
+          amount: totalCost,
+          details: {
+            resources,
+            params,
+          },
+          toAccountId: 0,
+          description: 'Image generation',
+        })
+      : undefined;
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
@@ -409,12 +442,17 @@ export const createGenerationRequest = async ({
   }
 
   if (!response.ok) {
+    if (buzzTransaction) {
+      await withRetries(async () =>
+        refundTransaction(
+          buzzTransaction.transactionId,
+          'Refund due to an error submitting the training job.'
+        )
+      );
+    }
+
     const message = await response.json();
     throw throwBadRequestError(message);
-    // TODO.luis: Refund buzz. Once brett stuff is merged.
-    if (buzzTransaction) {
-      //refund
-    }
   }
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);

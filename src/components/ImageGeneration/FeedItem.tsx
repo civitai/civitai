@@ -8,7 +8,7 @@ import {
   Tooltip,
   TooltipProps,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
@@ -40,10 +40,14 @@ export function FeedItem({
   // onCheckboxClick,
   onCreateVariantClick,
 }: Props) {
-  const [opened, { toggle, close }] = useDisclosure();
   const selected = generationImageSelect.useSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
+  const [showActions, setShowActions] = useSessionStorage<boolean>({
+    key: 'showAllReactions',
+    defaultValue: false,
+  });
 
+  const toggle = () => setShowActions((prev) => !prev);
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
@@ -84,11 +88,10 @@ export function FeedItem({
               backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.3),
             }
           : undefined,
+        alignSelf: 'flex-start',
       })}
     >
-      <AspectRatio ratio={1}>
-        <GeneratedImage request={request} image={image} />
-      </AspectRatio>
+      <GeneratedImage request={request} image={image} />
       <Checkbox
         sx={(theme) => ({
           position: 'absolute',
@@ -100,7 +103,7 @@ export function FeedItem({
         onChange={(event) => {
           toggleSelect(event.target.checked);
           // onCheckboxClick({ image, checked: event.target.checked });
-          close();
+          setShowActions(false);
         }}
       />
       {!selected && (
@@ -116,21 +119,29 @@ export function FeedItem({
             zIndex: 3,
           })}
         >
-          <Card p={0} withBorder>
+          <Card
+            p={0}
+            sx={{
+              backdropFilter: 'blur(3px)',
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              boxShadow:
+                'inset 0px 0px 1px 1px rgba(255,255,255,0.1), 0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            }}
+          >
             <Group spacing={0} noWrap>
-              <ActionIcon size="md" variant="light" p={4} onClick={toggle} radius={0}>
+              <ActionIcon size="lg" variant="light" p={4} onClick={toggle} radius={0}>
                 <IconBolt />
               </ActionIcon>
-              {opened && (
+              {showActions && (
                 <Group spacing={0} noWrap>
                   <Tooltip {...tooltipProps} label="Generate">
-                    <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
+                    <ActionIcon size="lg" p={4} variant="light" radius={0} onClick={handleGenerate}>
                       <IconPlayerPlayFilled />
                     </ActionIcon>
                   </Tooltip>
                   <Tooltip {...tooltipProps} label="Delete">
                     <ActionIcon
-                      size="md"
+                      size="lg"
                       p={4}
                       color="red"
                       radius={0}
@@ -144,11 +155,12 @@ export function FeedItem({
                   <Tooltip {...tooltipProps} label="Create variant">
                     <span>
                       <ActionIcon
-                        size="md"
+                        size="lg"
                         p={4}
                         variant="light"
                         onClick={() => onCreateVariantClick(image)}
                         radius={0}
+                        style={{ background: 'none', border: 'none' }}
                         disabled
                       >
                         <IconArrowsShuffle />
@@ -157,7 +169,14 @@ export function FeedItem({
                   </Tooltip>
                   <Tooltip {...tooltipProps} label="Upscale">
                     <span>
-                      <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
+                      <ActionIcon
+                        size="lg"
+                        p={4}
+                        variant="light"
+                        radius={0}
+                        style={{ background: 'none', border: 'none' }}
+                        disabled
+                      >
                         <IconWindowMaximize />
                       </ActionIcon>
                     </span>

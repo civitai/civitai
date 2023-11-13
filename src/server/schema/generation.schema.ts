@@ -9,6 +9,7 @@ import {
 } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
+import { imageSchema } from './image.schema';
 
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -44,13 +45,14 @@ export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = z.object({
   id: z.number(),
   name: z.string(),
-  trainedWords: z.string().array(),
+  trainedWords: z.string().array().default([]),
   modelId: z.number(),
   modelName: z.string(),
   modelType: z.nativeEnum(ModelType),
   strength: z.number().optional(),
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
+  image: imageSchema.omit({ meta: true }).optional(),
 
   // navigation props
   covered: z.boolean().optional(),
@@ -105,7 +107,7 @@ export const blockedRequest = (() => {
   };
 })();
 
-const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
+const sharedGenerationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
@@ -137,11 +139,12 @@ const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
     .string()
     .refine((val) => generation.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
-  steps: z.coerce.number().min(1).max(generation.maxValues.steps),
+  steps: z.coerce.number().min(10).max(generation.maxValues.steps),
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(generation.maxValues.quantity),
   nsfw: z.boolean().optional(),
   baseModel: z.string().optional(),
+  aspectRatio: z.string(),
 });
 
 export const generationFormShapeSchema = baseGenerationParamsSchema.extend({

@@ -82,7 +82,10 @@ export function Feed({
   const { classes } = useStyles();
 
   return (
-    <Stack sx={{ position: 'relative', flex: 1, overflow: 'hidden' }} spacing={0}>
+    <Stack
+      sx={{ position: 'relative', flex: 1, overflow: 'hidden', containerType: 'inline-size' }}
+      spacing={0}
+    >
       {/* <div className={classes.searchPanel}>
         <HoverCard withArrow>
           <HoverCard.Target>
@@ -308,12 +311,18 @@ type FloatingActionsProps = {
 const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: theme.spacing.md,
-    padding: theme.spacing.md,
+    gridTemplateRows: 'masonry',
+    gap: theme.spacing.xs,
+    gridTemplateColumns: '1fr 1fr',
 
-    [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
-      gridTemplateColumns: '1fr 1fr',
+    [`@container (min-width: 530px)`]: {
+      gridTemplateColumns: 'repeat(3, 1fr)',
+    },
+    [`@container (min-width: 900px)`]: {
+      gridTemplateColumns: 'repeat(4, 1fr)',
+    },
+    [`@container (min-width: 1200px)`]: {
+      gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',
     },
   },
   searchPanel: {

@@ -28,6 +28,7 @@ const noCheckFlagIndex = argv.indexOf('--no-check');
 const noCheck = noCheckFlagIndex > -1;
 if (noCheck) {
   argv.splice(noCheckFlagIndex, 1);
+  modifiedSchema = modifiedSchema.replace('SHADOW_DATABASE_URL', 'DARKPIT_SHADOW_URL');
   modifiedSchema = modifiedSchema.replace('DATABASE_URL', 'DARKPIT_URL');
 }
 

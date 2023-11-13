@@ -55,6 +55,7 @@ import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { IsClientProvider } from '~/providers/IsClientProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -144,7 +145,7 @@ function MyApp(props: CustomAppProps) {
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
   ) : (
-    <>
+    <IsClientProvider>
       <ClientHistoryStore />
       <RegisterCatchNavigation />
       <RouterTransition />
@@ -183,7 +184,7 @@ function MyApp(props: CustomAppProps) {
           </SignalProvider>
         </FeatureFlagsProvider>
       </SessionProvider>
-    </>
+    </IsClientProvider>
   );
 
   return (

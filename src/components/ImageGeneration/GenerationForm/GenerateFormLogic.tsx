@@ -11,28 +11,37 @@ import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/g
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import { uniqBy } from 'lodash-es';
-import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelSetType,
+  baseModelSets,
+  generation,
+  generationConfig,
+} from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calculateGenerationBill } from '~/server/common/generation';
+import { isDefined } from '~/utils/type-guards';
+import { useTempGenerateStore } from './generation.utils';
+import { Generation } from '~/server/services/generation/generation.types';
 
 type GenerationMaxValueKey = keyof typeof generation.maxValues;
 const maxValueKeys = Object.keys(generation.maxValues);
 const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
 
-export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
+export function GenerateFormLogic() {
   const currentUser = useCurrentUser();
 
   const form = useForm<GenerateFormModel>({
     resolver: zodResolver(generateFormSchema),
     mode: 'onSubmit',
+    shouldUnregister: false,
     defaultValues: {
       ...generation.defaultValues,
       nsfw: currentUser?.showNsfw,
     },
-    shouldUnregister: false,
   });
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -51,9 +60,12 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const { data, type } = runData;
       const previousData = form.getValues();
       const getFormData = () => {
+        // Omitting model to keep ts happy
+        const { model, ...defaultValues } = generation.defaultValues;
+
         switch (type) {
           case 'remix': // 'remix' will return the formatted generation data as is
-            return { ...generation.defaultValues, ...data };
+            return { ...defaultValues, ...data };
           case 'run': // 'run' will keep previous relevant data and add new resources to existing resources
             const baseModel = data.baseModel as BaseModelSetType | undefined;
             const resources = (previousData.resources ?? []).concat(data.resources ?? []);
@@ -93,17 +105,17 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       */
       const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
-      if (!formData.model)
-        formData.model = {
-          id: 128713,
-          name: '8',
-          trainedWords: [],
-          modelId: 4384,
-          modelName: 'DreamShaper',
-          modelType: 'Checkpoint',
-          baseModel: 'SD 1.5',
-          strength: 1,
-        };
+      const hasSdxlResources = formData.resources?.some((x) => x.baseModel.includes('SDXL'));
+      if (hasSdxlResources) formData.nsfw = false;
+
+      if (!formData.model) {
+        // TODO.generation: We need a better way to handle these cases, having hardcoded values
+        // is not ideal and may lead to bugs in the future.
+        formData.model = (
+          hasSdxlResources ? generationConfig.SDXL.checkpoint : generationConfig.SD1.checkpoint
+        ) as Generation.Resource;
+      }
+
       for (const item of keys) {
         const key = item as keyof typeof formData;
         if (staticKeys.includes(key)) continue; // don't overwrite nsfw
@@ -133,7 +145,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     }
 
     const { model, resources = [], vae, ...params } = data;
-    const _resources = [model, ...resources].map((resource) => {
+    const _resources = [...[model].filter(isDefined), ...resources].map((resource) => {
       if (resource.modelType === ModelType.TextualInversion)
         return { ...resource, triggerWord: resource.trainedWords[0] };
       return resource;
@@ -144,10 +156,9 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     const performTransaction = async () => {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
-        params,
+        params: { ...params, baseModel: useTempGenerateStore.getState().baseModel },
       });
 
-      onSuccess?.();
       generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'
     };
 

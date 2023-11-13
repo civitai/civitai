@@ -55,6 +55,7 @@ import {
   isImageResource,
 } from './../schema/image.schema';
 import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { purgeCache } from '~/server/cloudflare/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1385,6 +1386,8 @@ export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: 
     });
     if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
+    purgeCache({ tags: [`image-resources-${id}`] });
+
     return resource;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1719,15 +1722,36 @@ export const getImagesByEntity = async ({
   type,
   imagesPerId = 4,
   include,
+  userId,
+  isModerator,
 }: {
   id?: number;
   ids?: number[];
   type: ImageEntityType;
   imagesPerId?: number;
   include?: ['tags'];
+  userId?: number;
+  isModerator?: boolean;
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
+  }
+
+  const AND: Prisma.Sql[] = [
+    Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+      userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+    })`,
+  ];
+
+  if (!isModerator) {
+    const needsReviewOr = [
+      Prisma.sql`i."needsReview" IS NULL`,
+      userId ? Prisma.sql`i."userId" = ${userId}` : null,
+    ].filter(isDefined);
+
+    if (needsReviewOr.length > 0) {
+      AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
+    }
   }
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
@@ -1744,6 +1768,7 @@ export const getImagesByEntity = async ({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id
             AND ic."entityType" = ${type}
             AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
+        WHERE ${Prisma.join(AND, ' AND ')}
       ) ranked
       WHERE ranked.row_num <= ${imagesPerId}
     )

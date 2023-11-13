@@ -16,7 +16,7 @@ import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 
-type RunType = 'run' | 'remix' | 'random' | 'params';
+export type RunType = 'run' | 'remix' | 'random' | 'params';
 type View = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
@@ -45,8 +45,13 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (!input) return;
         const data = await getGenerationData(input);
-        const type = input.type === 'model' ? 'run' : input.type === 'image' ? 'remix' : 'random';
-        if (data) get().setData({ type, data });
+        const type =
+          input.type === 'model' || input.type === 'modelVersion'
+            ? 'run'
+            : input.type === 'image'
+            ? 'remix'
+            : 'random';
+        if (data) get().setData({ type, data: { ...data } });
       },
       close: () =>
         set((state) => {
@@ -115,7 +120,6 @@ const getGenerationData = async (input: GetGenerationDataInput) => {
   }
 };
 
-const baseModelSetsEntries = Object.entries(baseModelSets);
 const formatGenerationData = (
   type: RunType,
   { resources, params }: Generation.Data
@@ -124,51 +128,45 @@ const formatGenerationData = (
     params?.width && params.height
       ? getClosestAspectRatio(params?.width, params?.height, params?.baseModel)
       : undefined;
+
   if (params?.sampler)
     params.sampler = generation.samplers.includes(params.sampler as any)
       ? params.sampler
       : undefined;
 
+  const additionalResourceTypes = getGenerationConfig(
+    params?.baseModel
+  ).additionalResourceTypes.map((x) => x.type);
+
+  const additionalResources = resources.filter((x) =>
+    additionalResourceTypes.includes(x.modelType as any)
+  );
+
+  const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
+
   const formData: Partial<GenerateFormModel> = removeEmpty({ ...params, aspectRatio });
   if (type === 'params') return formData;
   else if (type === 'run') {
-    const resource = resources[0];
-    const baseModel = resource
-      ? (baseModelSetsEntries.find(([, v]) =>
-          v.includes(resource.baseModel as BaseModel)
-        )?.[0] as BaseModelSetType)
-      : undefined;
-    const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
-    return { ...formData, baseModel, model, resources };
+    return {
+      ...formData,
+      model,
+      resources: additionalResources,
+    };
   } else {
-    // const aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
-    const additionalResourceTypes = getGenerationConfig(params?.baseModel).additionalResourceTypes;
-    const additionalResources = resources.filter((x) =>
-      additionalResourceTypes.includes(x.modelType as any)
-    );
-
-    const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
     const vae = resources.find((x) => x.modelType === ModelType.VAE);
-    const baseModel = model
-      ? (baseModelSetsEntries.find(([, v]) =>
-          v.includes(model.baseModel as BaseModel)
-        )?.[0] as BaseModelSetType)
-      : undefined;
 
     return {
       ...formData,
-      // aspectRatio,
       model,
       vae,
-      baseModel,
       resources: !!additionalResources.length ? additionalResources : undefined,
     };
   }
 };
 
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? baseModel === 'SDXL' ? 1024 : 512;
-  height = height ?? baseModel === 'SDXL' ? 1024 : 512;
+  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
+  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
   const ratios = aspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);

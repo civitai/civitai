@@ -14,9 +14,9 @@ const UserStat = ({
 }) => {
   return (
     <Stack spacing={0} align="center">
-      <Group spacing={0}>
-        <Text size="md">{value}</Text>
+      <Group spacing={2}>
         {icon}
+        <Text size="md">{value}</Text>
       </Group>
       <Text tt="uppercase" color="dimmed" size={10} weight={510}>
         {subtext}

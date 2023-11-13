@@ -40,6 +40,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { env } from '~/env/client.mjs';
+import { toStringList } from '~/utils/array-helpers';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -51,8 +52,12 @@ export function PostDetail({ postId }: { postId: number }) {
 
   const meta = (
     <Meta
-      title={post?.title ?? `Image post by ${post?.user.username}`}
-      description={truncate(removeTags(post?.detail ?? ''), { length: 150 })}
+      title={(post?.title ?? `Image post by ${post?.user.username}`) + ' | Civitai'}
+      description={
+        `A post by ${post?.user.username}. Tagged with ${toStringList(
+          post?.tags.map((x) => x.name) ?? []
+        )}.` + (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : '')
+      }
       image={
         post?.nsfw || images[0]?.url == null
           ? undefined

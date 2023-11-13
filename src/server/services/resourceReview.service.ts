@@ -75,6 +75,9 @@ export const getResourceReviewsInfinite = async ({
     if (!targetUser) throw new Error('User not found');
 
     AND.push({
+      userId: {
+        not: targetUser.id,
+      },
       model: {
         userId: targetUser.id,
       },
@@ -83,7 +86,9 @@ export const getResourceReviewsInfinite = async ({
   if (modelId) AND.push({ modelId });
   if (modelVersionId) AND.push({ modelVersionId });
 
-  AND.push({ details: { not: null } });
+  if (!username) {
+    AND.push({ details: { not: null } });
+  }
 
   orderBy.push({ createdAt: 'desc' });
   const items = await dbRead.resourceReview.findMany({

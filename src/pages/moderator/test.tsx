@@ -1,10 +1,13 @@
 import { Box, Button, Container, Modal, Stack, Title } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { create } from 'zustand';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+
+const useStore = create(() => ({ foo: true, bar: true, test: true, count: 0 }));
 
 const date = new Date();
 const offset = new Date(date.getTime() + 10 * 60000);

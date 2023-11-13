@@ -169,6 +169,7 @@ const tagCombos: ComputedTagCombo[] = [
       'short shorts',
       'tight pants + (looking back|from behind)',
       'no bra + (open clothes|covered nipples) + female',
+      'pantylines',
     ],
     sources: [TagSource.WD14],
   },

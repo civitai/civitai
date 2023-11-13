@@ -56,7 +56,12 @@ export const getBountyEntryHandler = async ({
     });
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
-    const images = await getImagesByEntity({ id: entry.id, type: 'BountyEntry' });
+    const images = await getImagesByEntity({
+      id: entry.id,
+      type: 'BountyEntry',
+      isModerator: ctx.user?.isModerator,
+      userId: ctx.user?.id,
+    });
     const files = await getBountyEntryFilteredFiles({
       id: entry.id,
       userId: ctx.user?.id,

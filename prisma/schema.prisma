@@ -54,14 +54,16 @@ model SessionInvalidation {
 }
 
 model UserReferral {
-  id                 Int               @id @default(autoincrement())
-  userReferralCodeId Int?
-  userReferralCode   UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
-  source             String?
-  createdAt          DateTime          @default(now())
-  userId             Int               @unique
-  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  note               String?
+  id                  Int               @id @default(autoincrement())
+  userReferralCodeId  Int?
+  userReferralCode    UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
+  source              String?
+  landingPage         String?
+  loginRedirectReason String?
+  createdAt           DateTime          @default(now())
+  userId              Int               @unique
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note                String?
 }
 
 model UserReferralCode {
@@ -572,6 +574,7 @@ model ModelVersionEngagement {
 enum ModelHashType {
   AutoV1
   AutoV2
+  AutoV3
   SHA256
   CRC32
   BLAKE3
@@ -631,6 +634,7 @@ model ModelFile {
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
+  headerData        Json?
   visibility        ModelFileVisibility @default(Public)
   dataPurged        Boolean             @default(false)
 
@@ -1770,6 +1774,7 @@ enum CosmeticSource {
   Purchase
   Event
   Membership
+  Claim
 }
 
 model Cosmetic {

@@ -1,7 +1,7 @@
 import { Button, Group, Text, GroupProps, useMantineTheme, Badge } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconBolt, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
+import { IconBolt, IconHeart, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -33,6 +33,7 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
 
 const availableReactions: Partial<Record<ToggleReactionInput['entityType'], ReviewReactions[]>> = {
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
+  bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
 };
 
 export function PostReactions({
@@ -57,7 +58,7 @@ export function PostReactions({
         </Group>
       )}
       <Group spacing={4} align="center">
-        <IconMoodSmile size={20} strokeWidth={2} />
+        <IconHeart size={20} strokeWidth={2} />
         <Text size="sm" weight={500} pr={2}>
           {total}
         </Text>
@@ -102,7 +103,7 @@ export function Reactions({
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
 
-  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
+  const supportsBuzzTipping = ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>

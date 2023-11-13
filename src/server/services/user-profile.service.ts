@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
+import { updateLeaderboardRank } from '~/server/services/user.service';
 
 export const getUserContentOverview = async ({
   username,
@@ -47,6 +48,7 @@ export const getUserContentOverview = async ({
       id: number;
       modelCount: number;
       imageCount: number;
+      postCount: number;
       articleCount: number;
       bountyCount: number;
       bountyEntryCount: number;
@@ -57,6 +59,7 @@ export const getUserContentOverview = async ({
   >`
     SELECT 
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published') as "modelCount",
+        (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL) as "postCount",
         (SELECT COUNT(*)::INT FROM "Image" i WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL) as "imageCount",
         (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" <= NOW()) as "articleCount", 
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() ) as "bountyCount",
@@ -139,43 +142,55 @@ export const updateUserProfile = async ({
   socialLinks,
   sponsorshipLinks,
   badgeId,
+  nameplateId,
   userId,
   coverImage,
+  leaderboardShowcase,
   ...profile
 }: UserProfileUpdateSchema & { userId: number }) => {
   const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
 
   await dbWrite.$transaction(
     async (tx) => {
-      await tx.user.update({
-        where: {
-          id: userId,
-        },
-        data: {
-          image: profileImage,
-          cosmetics:
-            badgeId !== undefined &&
-            // Avoid resetting the same badge
-            !current.cosmetics.find((x) => x.cosmeticId === badgeId && !!x.equippedAt)
+      const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
+      const payloadCosmeticIds: number[] = [];
+
+      if (badgeId) payloadCosmeticIds.push(badgeId);
+      if (nameplateId) payloadCosmeticIds.push(nameplateId);
+
+      const shouldUpdateUser = shouldUpdateCosmetics || profileImage || leaderboardShowcase;
+
+      if (shouldUpdateUser) {
+        await tx.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            image: profileImage,
+            leaderboardShowcase,
+            cosmetics: shouldUpdateCosmetics
               ? {
                   updateMany: {
                     where: { equippedAt: { not: null } },
                     data: { equippedAt: null },
                   },
-                  update: badgeId
-                    ? {
-                        where: { userId_cosmeticId: { userId, cosmeticId: badgeId } },
-                        data: { equippedAt: new Date() },
-                      }
-                    : undefined,
+                  update: payloadCosmeticIds.map((cosmeticId) => ({
+                    where: { userId_cosmeticId: { userId, cosmeticId } },
+                    data: { equippedAt: new Date() },
+                  })),
                 }
               : undefined,
-        },
-      });
+          },
+        });
+
+        if (leaderboardShowcase !== undefined) {
+          await updateLeaderboardRank(userId);
+        }
+      }
 
       const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];
 
-      if (links.length) {
+      if (socialLinks !== undefined || sponsorshipLinks !== undefined) {
         await tx.userLink.deleteMany({
           where: {
             userId,
@@ -222,6 +237,12 @@ export const updateUserProfile = async ({
         where: { userId },
         data: {
           ...profile,
+          messageAddedAt:
+            profile.message === undefined || profile.message === current?.profile?.message
+              ? undefined
+              : profile.message
+              ? new Date()
+              : null,
           coverImage:
             coverImage !== undefined && !coverImage?.id
               ? coverImage === null

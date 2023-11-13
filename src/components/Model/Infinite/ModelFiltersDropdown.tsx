@@ -33,6 +33,8 @@ const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[
   'period',
 ];
 
+const availableFileFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
+
 export function ModelFiltersDropdown() {
   const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
 
@@ -108,7 +110,8 @@ export function DumbModelFiltersDropdown({
     (showCheckpointType && filters.checkpointType ? 1 : 0) +
     (filters.earlyAccess ? 1 : 0) +
     (filters.supportsGeneration ? 1 : 0) +
-    (filters.followed ? 1 : 0);
+    (filters.followed ? 1 : 0) +
+    (filters.fileFormats?.length ?? 0);
 
   const clearFilters = useCallback(
     () =>
@@ -120,6 +123,7 @@ export function DumbModelFiltersDropdown({
         earlyAccess: false,
         supportsGeneration: false,
         followed: false,
+        fileFormats: undefined,
       }),
     [setFilters]
   );
@@ -228,6 +232,22 @@ export function DumbModelFiltersDropdown({
                     setFilters({ checkpointType: value !== 'all' ? value : undefined });
                   }}
                 />
+                <Divider label="File format" labelProps={{ weight: 'bold' }} />
+                <Chip.Group
+                  spacing={4}
+                  value={filters.fileFormats ?? []}
+                  onChange={(fileFormats: typeof availableFileFormats) =>
+                    setFilters({ fileFormats })
+                  }
+                  multiple
+                  my={4}
+                >
+                  {availableFileFormats.map((format, index) => (
+                    <Chip key={index} value={format} {...chipProps}>
+                      {format}
+                    </Chip>
+                  ))}
+                </Chip.Group>
               </>
             ) : null}
             <Divider label="Base model" labelProps={{ weight: 'bold' }} />

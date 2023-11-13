@@ -57,6 +57,7 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -137,6 +138,11 @@ export function ModelCard({ data }: Props) {
           openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
         }
       />,
+    ]);
+  }
+  if (features.profileOverhaul && currentUser?.id === data.user.id) {
+    contextMenuItems = contextMenuItems.concat([
+      <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
     ]);
   }
 
@@ -288,8 +294,8 @@ export function ModelCard({ data }: Props) {
                                         e.preventDefault();
                                         e.stopPropagation();
                                         generationPanel.open({
-                                          type: 'model',
-                                          id: data.id,
+                                          type: 'modelVersion',
+                                          id: data.version.id,
                                         });
                                       }}
                                     >

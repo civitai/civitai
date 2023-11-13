@@ -2,10 +2,15 @@ import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
 } from './../schema/user.schema';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   ArticleEngagementType,
   BountyEngagementType,
+  CosmeticSource,
   ModelEngagementType,
   OnboardingStep,
   Prisma,
@@ -45,6 +50,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
+import dayjs from 'dayjs';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -789,11 +795,15 @@ export const createUserReferral = async ({
   id,
   userReferralCode,
   source,
+  landingPage,
+  loginRedirectReason,
   ip,
 }: {
   id: number;
   userReferralCode?: string;
   source?: string;
+  landingPage?: string;
+  loginRedirectReason?: string;
   ip?: string;
 }) => {
   const user = await dbRead.user.findUniqueOrThrow({
@@ -816,7 +826,7 @@ export const createUserReferral = async ({
     await userReferredReward.apply({ refereeId, referrerId }, ip);
   };
 
-  if (userReferralCode || source) {
+  if (userReferralCode || source || landingPage || loginRedirectReason) {
     // Confirm userReferralCode is valid:
     const referralCode = !!userReferralCode
       ? await dbRead.userReferralCode.findFirst({
@@ -824,11 +834,11 @@ export const createUserReferral = async ({
         })
       : null;
 
-    if (!referralCode && !source) {
+    if (!referralCode && !source && !landingPage && !loginRedirectReason) {
       return;
     }
 
-    if (user.referral && referralCode) {
+    if (user.referral && referralCode && !user.referral.userReferralCodeId) {
       // Allow to update a referral with a user-referral-code:
       await dbWrite.userReferral.update({
         where: { id: user.referral.id },
@@ -845,6 +855,8 @@ export const createUserReferral = async ({
         data: {
           userId: id,
           source,
+          landingPage,
+          loginRedirectReason,
           userReferralCodeId: referralCode?.id ?? undefined,
         },
       });
@@ -858,3 +870,52 @@ export const createUserReferral = async ({
     }
   }
 };
+
+export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
+  const cosmetic = await dbRead.cosmetic.findUnique({
+    where: { id, source: CosmeticSource.Claim },
+    select: { id: true, availableStart: true, availableEnd: true },
+  });
+  if (!cosmetic) return null;
+  if (!dayjs().isBetween(cosmetic.availableStart, cosmetic.availableEnd)) return null;
+
+  const userCosmetic = await dbRead.userCosmetic.findFirst({
+    where: { userId, cosmeticId: cosmetic.id },
+  });
+  if (userCosmetic) throw throwConflictError('You already have this cosmetic');
+
+  await dbWrite.userCosmetic.create({
+    data: { userId, cosmeticId: cosmetic.id },
+  });
+
+  await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return cosmetic;
+};
+
+export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
+  const userCosmetic = await dbRead.userCosmetic.findFirst({
+    where: { userId, cosmeticId: id },
+    select: { obtainedAt: true, equippedAt: true },
+  });
+  return userCosmetic ?? { obtainedAt: null, equippedAt: null };
+}
+
+export async function equipCosmetic({ id, userId }: { id: number; userId: number }) {
+  const userCosmetic = await dbRead.userCosmetic.findFirst({
+    where: { userId, cosmeticId: id },
+    select: { obtainedAt: true },
+  });
+  if (!userCosmetic) throw new Error("You don't have that cosmetic");
+
+  await dbWrite.$transaction([
+    dbWrite.userCosmetic.updateMany({
+      where: { userId, equippedAt: { not: null } },
+      data: { equippedAt: null },
+    }),
+    dbWrite.userCosmetic.updateMany({
+      where: { userId, cosmeticId: id },
+      data: { equippedAt: new Date() },
+    }),
+  ]);
+}

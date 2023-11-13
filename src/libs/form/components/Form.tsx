@@ -106,7 +106,9 @@ function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.AnyZ
 
   const parseStoredData = (values: any) => {
     if (!schema) return values;
+    console.log({ values });
     const result = schema.safeParse(values);
+    if (!result.success) console.log({ error: result.error });
     return result.success ? result.data : {};
   };
 
