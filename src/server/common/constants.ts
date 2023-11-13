@@ -19,6 +19,7 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
+import { Generation } from '~/server/services/generation/generation.types';
 
 export const constants = {
   modelFilterDefaults: {
@@ -332,7 +333,8 @@ export const generation = {
       modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
       strength: 1,
-    },
+      trainedWords: [],
+    } as Generation.Resource,
   },
   maxValues: {
     seed: 4294967295,
@@ -342,9 +344,19 @@ export const generation = {
   },
 } as const;
 
+export type ResourceFilter = {
+  type: ModelType;
+  baseModelSet?: BaseModelSetType;
+  baseModels?: BaseModel[];
+};
 export const generationConfig = {
   SD1: {
-    additionalResourceTypes: [ModelType.LORA, ModelType.LoCon, ModelType.TextualInversion],
+    // additionalResourceTypes: [{ type: ModelType.LORA, baseModel: 'SD1' }],
+    additionalResourceTypes: [
+      { type: ModelType.LORA, baseModelSet: 'SD1' },
+      { type: ModelType.LoCon, baseModelSet: 'SD1' },
+      { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
+    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
@@ -357,9 +369,22 @@ export const generationConfig = {
       width: 512,
       height: 512,
     },
+    checkpoint: {
+      id: 128713,
+      name: '8',
+      trainedWords: [],
+      modelId: 4384,
+      modelName: 'DreamShaper',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 1.5',
+      strength: 1,
+    } as Generation.Resource,
   },
   SDXL: {
-    additionalResourceTypes: [ModelType.LORA],
+    additionalResourceTypes: [
+      { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
+    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -374,6 +399,16 @@ export const generationConfig = {
       width: 1024,
       height: 1024,
     },
+    checkpoint: {
+      id: 128078,
+      name: 'v1.0 VAE fix',
+      trainedWords: [],
+      modelId: 101055,
+      modelName: 'SD XL',
+      modelType: 'Checkpoint',
+      baseModel: 'SDXL 1.0',
+      strength: 1,
+    } as Generation.Resource,
   },
 };
 

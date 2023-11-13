@@ -107,7 +107,7 @@ export const blockedRequest = (() => {
   };
 })();
 
-const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
+const sharedGenerationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
@@ -144,6 +144,7 @@ const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
   quantity: z.coerce.number().max(generation.maxValues.quantity),
   nsfw: z.boolean().optional(),
   baseModel: z.string().optional(),
+  aspectRatio: z.string(),
 });
 
 export const generationFormShapeSchema = baseGenerationParamsSchema.extend({

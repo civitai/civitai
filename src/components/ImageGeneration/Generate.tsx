@@ -3,6 +3,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 import { IconLock } from '@tabler/icons-react';
+import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 
 export function Generate() {
   const currentUser = useCurrentUser();
@@ -19,5 +20,5 @@ export function Generate() {
       </Center>
     );
 
-  return <GenerateFormLogic />;
+  return <GenerationForm />;
 }

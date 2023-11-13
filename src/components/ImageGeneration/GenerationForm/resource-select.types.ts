@@ -1,7 +1,7 @@
+import { BaseModel, BaseModelSetType, ResourceFilter } from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 
 export type ResourceSelectOptions = {
-  baseModel?: string;
-  types?: ModelType[];
   canGenerate?: boolean;
+  resources?: ResourceFilter[];
 };

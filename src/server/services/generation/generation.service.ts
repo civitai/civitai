@@ -353,7 +353,7 @@ export const createGenerationRequest = async ({
   // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
 
   const additionalNetworks = resources
-    .filter((x) => additionalResourceTypes.includes(x.modelType as any))
+    .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
     .reduce((acc, { id, modelType, ...rest }) => {
       acc[`@civitai/${id}`] = { type: modelType, ...rest };
       return acc;

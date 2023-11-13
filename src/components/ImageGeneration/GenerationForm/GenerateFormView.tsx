@@ -47,7 +47,11 @@ import {
   getGenerationConfig,
   constants,
 } from '~/server/common/constants';
-import { GenerateFormModel, generationFormShapeSchema } from '~/server/schema/generation.schema';
+import {
+  GenerateFormModel,
+  generateFormSchema,
+  generationFormShapeSchema,
+} from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
@@ -65,13 +69,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTempGenerateStore } from './generation.utils';
-
-function getBaseModelFromSet(baseModel = 'SD 1.5') {
-  return Object.entries(baseModelSets).find(([, baseModels]) =>
-    baseModels.includes(baseModel as BaseModel)
-  )?.[0];
-}
+import { getBaseModelSetKey, useTempGenerateStore } from './generation.utils';
 
 export function GenerateFormView({
   form,
@@ -139,7 +137,7 @@ export function GenerateFormView({
       const values = form.getValues();
       const resources = [...(values.resources ?? []), ...[values.vae].filter(isDefined)];
       useTempGenerateStore.setState({
-        baseModel: getBaseModelFromSet(values.model?.baseModel),
+        baseModel: getBaseModelSetKey(values.model?.baseModel),
         hasResources: !!resources?.length,
       });
     }, 0);
@@ -148,7 +146,7 @@ export function GenerateFormView({
       const resources = [...(data.resources ?? []), ...[data.vae].filter(isDefined)];
 
       useTempGenerateStore.setState({
-        baseModel: getBaseModelFromSet(data.model?.baseModel),
+        baseModel: data.model?.baseModel ? getBaseModelSetKey(data.model?.baseModel) : undefined,
         hasResources: !!resources?.length,
       });
     });
@@ -166,7 +164,7 @@ export function GenerateFormView({
       style={{ height: '100%', width: '100%' }}
       name="generation-form"
       storage={typeof window !== 'undefined' ? window.localStorage : undefined}
-      schema={generationFormShapeSchema.deepPartial()}
+      schema={generateFormSchema.deepPartial()}
     >
       <Stack spacing={0} h="100%">
         <ScrollArea sx={{ flex: 1 }}>
@@ -184,9 +182,13 @@ export function GenerateFormView({
               buttonLabel="Add Model"
               withAsterisk
               options={{
-                baseModel: hasResources ? baseModel : undefined,
-                type: ModelType.Checkpoint,
                 canGenerate: true,
+                resources: [
+                  {
+                    type: ModelType.Checkpoint,
+                    baseModelSet: hasResources ? baseModel : undefined,
+                  },
+                ],
               }}
               allowRemove={false}
             />
@@ -216,9 +218,8 @@ export function GenerateFormView({
                     limit={9}
                     buttonLabel="Add additional resource"
                     options={{
-                      baseModel: baseModel,
-                      types: getGenerationConfig(baseModel).additionalResourceTypes,
                       canGenerate: true,
+                      resources: getGenerationConfig(baseModel).additionalResourceTypes,
                     }}
                   />
                 </Accordion.Panel>
@@ -376,9 +377,8 @@ export function GenerateFormView({
                           label={getDisplayName(ModelType.VAE)}
                           buttonLabel="Add VAE"
                           options={{
-                            baseModel: baseModel,
-                            type: ModelType.VAE,
                             canGenerate: true,
+                            resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
                           }}
                         />
                       </Stack>

@@ -66,10 +66,11 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getBaseModelset } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { ModelType } from '@prisma/client';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
-  notIds?: number[];
   onSelect: (value: Generation.Resource) => void;
   options?: ResourceSelectOptions;
 };
@@ -83,24 +84,10 @@ export const openResourceSelectModal = ({ title, ...innerProps }: ResourceSelect
     size: 1200,
   });
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
-
-const searchClient: InstantSearchProps['searchClient'] = {
-  ...meilisearch,
-  search(requests) {
-    return meilisearch.search(requests);
-  },
-};
-
 const ResourceSelectContext = React.createContext<{
-  onSelect: (value: Generation.Resource & { image: ResourceSelectData['image'] }) => void;
   canGenerate?: boolean;
-  baseModel?: string;
-  baseModelSet?: string[];
+  resources: { type: ModelType; baseModels: BaseModel[] }[];
+  onSelect: (value: Generation.Resource & { image: ResourceSelectData['image'] }) => void;
 } | null>(null);
 
 const useResourceSelectContext = () => {
@@ -112,25 +99,35 @@ const useResourceSelectContext = () => {
 export default function ResourceSelectModal({
   context,
   id,
-  innerProps: { notIds = [], onSelect, options = {} },
+  innerProps: { onSelect, options = {} },
 }: ContextModalProps<ResourceSelectModalProps>) {
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
 
-  const { baseModel, types, canGenerate } = options;
-  const baseModelSet = baseModel
-    ? Object.entries(baseModelSets).find(
-        ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
-      )?.[1]
-    : undefined;
+  const { resources = [], canGenerate } = options;
+  const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
+    let aggregate: BaseModel[] = [];
+    if (baseModelSet) aggregate = getBaseModelset(baseModelSet) ?? [];
+    if (baseModels) aggregate = [...new Set([...aggregate, ...baseModels])];
+    return { type, baseModels: aggregate };
+  });
 
   const filters: string[] = [];
-  if (types) filters.push(`(${types.map((type) => `type = ${type}`).join(' OR ')})`);
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
-  if (baseModelSet)
-    filters.push(
-      `(${baseModelSet.map((baseModel) => `version.baseModel = '${baseModel}'`).join(' OR ')})`
-    );
+  if (!!_resources.length) {
+    const innerFilter: string[] = [];
+    for (const { type, baseModels } of _resources) {
+      if (!baseModels.length) innerFilter.push(`type = ${type}`);
+      else
+        innerFilter.push(
+          `(${baseModels
+            .map((baseModel) => `(type = ${type} AND version.baseModel = '${baseModel}')`)
+            .join(' OR ')})`
+          //TODO - use IN instead of OR
+        );
+    }
+    filters.push(`(${innerFilter.join(' OR ')})`);
+  }
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
@@ -147,7 +144,7 @@ export default function ResourceSelectModal({
 
   return (
     <ResourceSelectContext.Provider
-      value={{ onSelect: handleSelect, canGenerate: options.canGenerate, baseModel, baseModelSet }}
+      value={{ onSelect: handleSelect, canGenerate, resources: _resources }}
     >
       <InstantSearch searchClient={searchClient} indexName={MODELS_SEARCH_INDEX}>
         <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
@@ -285,17 +282,22 @@ type ResourceSelectData = ReturnType<
 function ResourceSelectCard({ index, data }: { index: number; data: ResourceSelectData }) {
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const { onSelect, canGenerate, baseModel, baseModelSet } = useResourceSelectContext();
+  const { onSelect, canGenerate, resources } = useResourceSelectContext();
   const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
         ? data.image.width / data.image.height
         : 1,
   });
-  const versions = data.versions.filter((x) => {
+
+  const resourceFilter = resources.find((x) => x.type === data.type);
+  const versions = data.versions.filter((version) => {
     if (canGenerate === undefined) return true;
     return (
-      x.canGenerate === canGenerate && (baseModelSet ? baseModelSet?.includes(x.baseModel) : true)
+      version.canGenerate === canGenerate &&
+      (resourceFilter?.baseModels?.length
+        ? resourceFilter.baseModels?.includes(version.baseModel as any)
+        : true)
     );
   });
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
@@ -567,3 +569,16 @@ function ResourceSelectCard({ index, data }: { index: number; data: ResourceSele
     </FeedCard>
   );
 }
+
+const meilisearch = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id', keepZeroFacets: true }
+);
+
+const searchClient: InstantSearchProps['searchClient'] = {
+  ...meilisearch,
+  search(requests) {
+    return meilisearch.search(requests);
+  },
+};
