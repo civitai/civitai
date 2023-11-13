@@ -75,6 +75,7 @@ const formSchema = z
   })
   .merge(
     upsertBountyEntryInputSchema.omit({
+      images: true,
       bountyId: true,
       files: true,
     })
@@ -84,6 +85,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const router = useRouter();
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const queryUtils = trpc.useContext();
+  const [bountyEntryImages, setBountyEntryImages] = useState<BountyEntryGetById['images']>(
+    bountyEntry?.images ?? []
+  );
 
   const currency = getBountyCurrency(bounty);
   const maxAmount = getMainBountyAmount(bounty);
@@ -99,7 +103,6 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     schema: formSchema,
     defaultValues: {
       ...bountyEntry,
-      images: bountyEntry?.images ?? [],
       bountyFiles: (bountyEntry?.files ?? [])
         .filter((file) => !!file.metadata.unlockAmount)
         .map((f) => ({ ...f, url: f.url || '' })),
@@ -114,7 +117,6 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   });
 
   const bountyFiles = form.watch('bountyFiles');
-  const bountyEntryImages = form.watch('images');
 
   const [creating, setCreating] = useState(false);
   const bountyEntryUpsertMutation = trpc.bountyEntry.upsert.useMutation();
@@ -123,7 +125,6 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     bountyFiles,
     sampleFiles = [],
     unlockAmount,
-    images,
     ...data
   }: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
@@ -142,23 +143,28 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
       })),
     ];
 
+    console.log([...bountyEntryImages, ...filteredImages]);
+
     bountyEntryUpsertMutation.mutate(
-      { ...data, bountyId: bounty.id, images: [...images, ...filteredImages], files },
+      { ...data, bountyId: bounty.id, images: [...bountyEntryImages, ...filteredImages], files },
       {
         async onSuccess() {
           await queryUtils.bounty.getEntries.invalidate({ id: bounty.id });
           await router.push(`/bounties/${bounty.id}`);
         },
         onError(error) {
-          if (error instanceof TRPCClientError) {
+          try {
+            // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+            const parsedError = JSON.parse(error.message);
             showErrorNotification({
               title: 'Failed to create or update bounty entry',
-              error: JSON.parse(error.message),
+              error: parsedError,
             });
-          } else {
+          } catch (e) {
+            // Report old error as is:
             showErrorNotification({
               title: 'Failed to create or update bounty entry',
-              error: Array.isArray(error) ? error : new Error(error.message),
+              error: new Error(error.message),
             });
           }
         },
@@ -175,7 +181,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
       <Stack spacing="xl">
         <Group spacing="md">
           <BackButton url={`/bounties/${bounty.id}`} />
-          <Title inline>Submit new entry</Title>
+          <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
         </Group>
         {bounty.poi && <PoiAlert size="sm" />}
         <InputRTE
@@ -231,10 +237,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     size="lg"
                     color="red"
                     onClick={() => {
-                      form.setValue(
-                        'images',
-                        bountyEntryImages.filter((i) => i.id !== image.id)
-                      );
+                      setBountyEntryImages((current) => {
+                        return current.filter((i) => i.id !== image.id);
+                      });
                     }}
                   >
                     <IconTrash size={26} strokeWidth={2.5} />

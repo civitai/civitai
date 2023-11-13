@@ -30,7 +30,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React from 'react';
+import React, { useState } from 'react';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
@@ -94,6 +94,7 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 };
 
 const formSchema = upsertBountyInputSchema
+  .omit({ images: true })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
   })
@@ -179,6 +180,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const { classes } = useStyles();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
+  const [bountyImages, setBountyImages] = useState<BountyGetById['images']>(bounty?.images ?? []);
 
   const handleDropImages = async (droppedFiles: File[]) => {
     for (const file of droppedFiles) {
@@ -216,7 +218,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         !!bounty &&
         bounty.files.length > 0 &&
         bounty.files.every((f) => f.metadata?.ownRights === true),
-      images: !!bounty ? bounty.images ?? [] : [],
     },
     shouldUnregister: false,
   });
@@ -247,7 +248,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const expiresAt = form.watch('expiresAt');
   const files = form.watch('files');
-  const bountyImages = form.watch('images') ?? [];
 
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
@@ -288,7 +288,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           ...data,
           images: filteredImages,
         });
+
         await router.push(`/bounties/${result?.id}`);
+
         clearStorage();
       } catch (error) {
         // Do nothing since the query event will show an error notification
@@ -429,9 +431,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                             size="lg"
                             color="red"
                             onClick={() => {
-                              form.setValue(
-                                'images',
-                                bountyImages.filter((i) => i.id !== image.id)
+                              setBountyImages((current) =>
+                                current.filter((i) => i.id !== image.id)
                               );
                             }}
                           >

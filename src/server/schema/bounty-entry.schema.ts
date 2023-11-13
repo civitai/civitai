@@ -25,7 +25,7 @@ export const upsertBountyEntryInputSchema = z.object({
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
   images: z
-    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).optional() }))
+    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }))
     .min(1, 'At least one example image must be uploaded'),
   description: getSanitizedStringSchema().nullish(),
 });

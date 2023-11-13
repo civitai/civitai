@@ -83,8 +83,14 @@ export const upsertBountyEntry = ({
 }: UpsertBountyEntryInput & { userId: number }) => {
   return dbWrite.$transaction(async (tx) => {
     if (id) {
+      const [awarded] = await getBountyEntryEarnedBuzz({ ids: [id] });
+
+      if (awarded && awarded.awardedUnitAmount > 0) {
+        throw throwBadRequestError('Bounty entry has already been awarded and cannot be updated');
+      }
       // confirm it exists:
       const entry = await tx.bountyEntry.update({ where: { id }, data: { description } });
+
       if (!entry) return null;
 
       if (files) {

@@ -61,7 +61,7 @@ export const createBountyInputSchema = z.object({
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
   images: z
-    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).optional() }))
+    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }))
     .min(1, 'At least one example image must be uploaded'),
 });
 

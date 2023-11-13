@@ -263,6 +263,7 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     },
     onError(error) {
       if (error instanceof TRPCClientError) {
+        console.log('here i am?');
         showErrorNotification({
           title: 'Failed to save bounty',
           error: JSON.parse(error.message),
