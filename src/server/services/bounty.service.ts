@@ -6,7 +6,7 @@ import {
   Prisma,
   TagTarget,
 } from '@prisma/client';
-import { ManipulateType } from 'dayjs';
+import dayjs, { ManipulateType } from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -336,13 +336,17 @@ export const upsertBounty = async ({
 };
 
 export const deleteBountyById = async ({ id }: GetByIdInput) => {
-  const bounty = await getBountyById({ id, select: { userId: true } });
+  const bounty = await getBountyById({ id, select: { userId: true, expiresAt: true } });
   if (!bounty) throw throwNotFoundError('Bounty not found');
 
+  // If only entries created AFTER the cuttoff date are found, we'll allow deletion
+  const entryCutOffDate = dayjs.utc(bounty.expiresAt).subtract(6, 'hour').toDate();
   const benefactorsCount = await dbWrite.bountyBenefactor.count({
     where: { bountyId: id, userId: bounty.userId ? { not: bounty.userId } : undefined },
   });
-  const entriesCount = await dbWrite.bountyEntry.count({ where: { bountyId: id } });
+  const entriesCount = await dbWrite.bountyEntry.count({
+    where: { bountyId: id, createdAt: { lte: entryCutOffDate } },
+  });
 
   if (benefactorsCount !== 0 || entriesCount !== 0)
     throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');

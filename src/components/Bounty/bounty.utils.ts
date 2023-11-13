@@ -230,13 +230,13 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
         // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
         const parsedError = JSON.parse(error.message);
         showErrorNotification({
-          title: 'Failed to save bounty',
+          title: 'Failed to create bounty',
           error: parsedError,
         });
       } catch (e) {
         // Report old error as is:
         showErrorNotification({
-          title: 'Failed to save bounty',
+          title: 'Failed to create bounty',
           error: new Error(error.message),
         });
       }
@@ -262,20 +262,20 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
       await queryUtils.bounty.getInfinite.invalidate();
     },
     onError(error) {
-      if (error instanceof TRPCClientError) {
-        console.log('here i am?');
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
         showErrorNotification({
           title: 'Failed to save bounty',
-          error: JSON.parse(error.message),
+          error: parsedError,
         });
-
-        return;
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to save bounty',
+          error: new Error(error.message),
+        });
       }
-
-      showErrorNotification({
-        title: 'Failed to save bounty',
-        error: new Error(error.message),
-      });
     },
   });
 
