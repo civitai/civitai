@@ -71,11 +71,19 @@ export const getFormData = (type: RunType, data: Partial<GenerateFormModel>) => 
           : [parsedModel]
         : [];
 
+      const parsedVae = data.vae ?? formData.vae;
+      const [vae] = parsedVae
+        ? baseModel
+          ? [parsedVae].filter((x) => baseModelSets[baseModel].includes(x.baseModel as BaseModel))
+          : [parsedVae]
+        : [];
+
       return {
         ...formData,
         ...data,
         model,
         resources: filteredResources,
+        vae,
       };
     }
     default:
