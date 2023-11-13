@@ -46,8 +46,7 @@ import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-export function EditPostImages({ max }: { max?: number }) {
-  max ??= POST_IMAGE_LIMIT;
+export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
@@ -66,7 +65,7 @@ export function EditPostImages({ max }: { max?: number }) {
 
   useEffect(() => {
     const files = postImageTransmitter.getData();
-    if (files) handleDrop(files);
+    if (files) handleDrop(files.splice(0, max));
   }, []);
 
   return (
