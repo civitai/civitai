@@ -56,7 +56,6 @@ export const getFormData = (type: RunType, data: Partial<GenerateFormModel>) => 
     case 'random':
       return { ...formData, ...data };
     case 'run': {
-      // TODO - handle getting base model elsewhere
       const baseModel = data.baseModel as BaseModelSetType | undefined;
       const resources = (formData.resources ?? []).concat(data.resources ?? []);
       const uniqueResources = !!resources.length ? uniqBy(resources, 'id') : undefined;
