@@ -3,7 +3,7 @@ import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bou
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
@@ -83,8 +83,14 @@ export const upsertBountyEntry = ({
 }: UpsertBountyEntryInput & { userId: number }) => {
   return dbWrite.$transaction(async (tx) => {
     if (id) {
+      const [awarded] = await getBountyEntryEarnedBuzz({ ids: [id] });
+
+      if (awarded && awarded.awardedUnitAmount > 0) {
+        throw throwBadRequestError('Bounty entry has already been awarded and cannot be updated');
+      }
       // confirm it exists:
       const entry = await tx.bountyEntry.update({ where: { id }, data: { description } });
+
       if (!entry) return null;
 
       if (files) {
@@ -98,7 +104,7 @@ export const upsertBountyEntry = ({
       }
 
       if (images) {
-        await createEntityImages({
+        await updateEntityImages({
           images,
           tx,
           userId,

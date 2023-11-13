@@ -8,13 +8,20 @@ export function showErrorNotification({
   title,
   autoClose = 3000,
 }: {
-  error: Error;
+  error: Error | { message: string }[];
   reason?: string;
   title?: string;
   autoClose?: number | false;
 }) {
-  console.error(error);
-  const message = reason ?? error.message;
+  const message = Array.isArray(error) ? (
+    <ul>
+      {error.map((e, index) => (
+        <li key={index}>{e.message}</li>
+      ))}
+    </ul>
+  ) : (
+    reason ?? error.message
+  );
 
   showNotification({
     icon: <IconX size={18} />,
