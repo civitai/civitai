@@ -822,7 +822,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           </Accordion.Item>
         )}
       </Accordion>
-      {bounty.poi && <PoiAlert size="sm" />}
+      {bounty.poi && <PoiAlert />}
     </Stack>
   );
 };
