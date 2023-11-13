@@ -99,6 +99,7 @@ import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -821,6 +822,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           </Accordion.Item>
         )}
       </Accordion>
+      {bounty.poi && <PoiAlert size="sm" />}
     </Stack>
   );
 };
