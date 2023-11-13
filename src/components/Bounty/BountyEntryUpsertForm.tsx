@@ -42,6 +42,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
+import { TRPCClientError } from '@trpc/client';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -74,7 +75,6 @@ const formSchema = z
   })
   .merge(
     upsertBountyEntryInputSchema.omit({
-      images: true,
       bountyId: true,
       files: true,
     })
@@ -99,6 +99,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     schema: formSchema,
     defaultValues: {
       ...bountyEntry,
+      images: bountyEntry?.images ?? [],
       bountyFiles: (bountyEntry?.files ?? [])
         .filter((file) => !!file.metadata.unlockAmount)
         .map((f) => ({ ...f, url: f.url || '' })),
@@ -113,14 +114,16 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   });
 
   const bountyFiles = form.watch('bountyFiles');
+  const bountyEntryImages = form.watch('images');
 
   const [creating, setCreating] = useState(false);
-  const bountyEntryCreateMutation = trpc.bountyEntry.create.useMutation();
+  const bountyEntryUpsertMutation = trpc.bountyEntry.upsert.useMutation();
 
   const handleSubmit = ({
     bountyFiles,
     sampleFiles = [],
     unlockAmount,
+    images,
     ...data
   }: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
@@ -139,18 +142,25 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
       })),
     ];
 
-    bountyEntryCreateMutation.mutate(
-      { ...data, bountyId: bounty.id, images: filteredImages, files },
+    bountyEntryUpsertMutation.mutate(
+      { ...data, bountyId: bounty.id, images: [...images, ...filteredImages], files },
       {
         async onSuccess() {
           await queryUtils.bounty.getEntries.invalidate({ id: bounty.id });
           await router.push(`/bounties/${bounty.id}`);
         },
         onError(error) {
-          showErrorNotification({
-            title: 'Failed to create bounty',
-            error: new Error(error.message),
-          });
+          if (error instanceof TRPCClientError) {
+            showErrorNotification({
+              title: 'Failed to create or update bounty entry',
+              error: JSON.parse(error.message),
+            });
+          } else {
+            showErrorNotification({
+              title: 'Failed to create or update bounty entry',
+              error: Array.isArray(error) ? error : new Error(error.message),
+            });
+          }
         },
       }
     );
@@ -158,6 +168,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
   const acceptedFileTypes =
     dropzoneOptionsByModelType[bounty.type] ?? dropzoneOptionsByModelType.Other;
+  const images = [...bountyEntryImages, ...imageFiles];
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -191,7 +202,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           />
         </Input.Wrapper>
-        {imageFiles.length > 0 && (
+        {images.length > 0 && (
           <SimpleGrid
             spacing="sm"
             breakpoints={[
@@ -200,6 +211,46 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               { minWidth: 'md', cols: 4 },
             ]}
           >
+            {bountyEntryImages.map((image) => (
+              <Paper
+                key={image.id}
+                radius="sm"
+                p={0}
+                sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                withBorder
+              >
+                <EdgeMedia
+                  placeholder="empty"
+                  src={image.url}
+                  alt={undefined}
+                  style={{ objectFit: 'cover', height: '100%' }}
+                />
+                <div style={{ position: 'absolute', top: 12, right: 12 }}>
+                  <ActionIcon
+                    variant="filled"
+                    size="lg"
+                    color="red"
+                    onClick={() => {
+                      form.setValue(
+                        'images',
+                        bountyEntryImages.filter((i) => i.id !== image.id)
+                      );
+                    }}
+                  >
+                    <IconTrash size={26} strokeWidth={2.5} />
+                  </ActionIcon>
+                </div>
+                {image.meta && (
+                  <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                    <ImageMetaPopover meta={image.meta}>
+                      <ActionIcon variant="light" color="dark" size="lg">
+                        <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                      </ActionIcon>
+                    </ImageMetaPopover>
+                  </div>
+                )}
+              </Paper>
+            ))}
             {imageFiles
               .slice()
               .reverse()
@@ -464,7 +515,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             withAsterisk
           />
         </Group>
-        {bountyFiles && bountyFiles.length > 0 && (
+        {!bountyEntry && bountyFiles && bountyFiles.length > 0 && (
           <InputCheckbox name="ownRights" label="I own the rights to these files" mt="xs" />
         )}
         {openEntry && (
@@ -508,8 +559,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             )}
           </NavigateBack>
           <Button
-            loading={bountyEntryCreateMutation.isLoading && !creating}
-            disabled={bountyEntryCreateMutation.isLoading}
+            loading={bountyEntryUpsertMutation.isLoading && !creating}
+            disabled={bountyEntryUpsertMutation.isLoading}
             onClick={() => setCreating(false)}
             type="submit"
           >

@@ -45,6 +45,7 @@ import {
   IconInfoCircle,
   IconLock,
   IconLockOpen,
+  IconPencilMinus,
   IconShare3,
   IconStar,
   IconTrash,
@@ -74,6 +75,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import Link from 'next/link';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -282,41 +284,22 @@ export default function BountyEntryDetailsPage({
   const shareSection = (
     <Group spacing={8} px={mobile ? 'xs' : 'md'} noWrap>
       {isOwner && bountyEntry.awardedUnitAmountTotal === 0 && (
-        <Button
-          size="md"
-          radius="xl"
-          color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          compact
-          fullWidth
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            openConfirmModal({
-              title: 'Delete this entry?',
-              children: (
-                <Stack>
-                  <Text size="sm">Are you sure you want to delete this entry?</Text>
-                  <Text color="red.4" size="sm">
-                    This action is not reversible. If you still want to participate in the hunt, you
-                    will have to create a new submission.
-                  </Text>
-                </Stack>
-              ),
-              centered: true,
-              labels: { confirm: 'Delete', cancel: 'Cancel' },
-              onConfirm: () => {
-                deleteEntryMutation({ id: bountyEntry.id });
-              },
-            });
-          }}
-        >
-          <Group spacing={4} noWrap>
-            <IconTrash size={14} />
-            <Text size="xs">Delete</Text>
-          </Group>
-        </Button>
+        <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
+          <Button
+            size="md"
+            radius="xl"
+            color="gray"
+            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            compact
+            fullWidth
+            component="a"
+          >
+            <Group spacing={4} noWrap>
+              <IconPencilMinus size={14} />
+              <Text size="xs">Edit</Text>
+            </Group>
+          </Button>
+        </Link>
       )}
       {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
         <Button

@@ -1,6 +1,6 @@
 import { Currency } from '@prisma/client';
 import { z } from 'zod';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';
 
@@ -24,6 +24,8 @@ export const upsertBountyEntryInputSchema = z.object({
   bountyId: z.number(),
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
-  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
+  images: z
+    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).optional() }))
+    .min(1, 'At least one example image must be uploaded'),
   description: getSanitizedStringSchema().nullish(),
 });

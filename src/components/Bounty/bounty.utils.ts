@@ -262,6 +262,15 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
       await queryUtils.bounty.getInfinite.invalidate();
     },
     onError(error) {
+      if (error instanceof TRPCClientError) {
+        showErrorNotification({
+          title: 'Failed to save bounty',
+          error: JSON.parse(error.message),
+        });
+
+        return;
+      }
+
       showErrorNotification({
         title: 'Failed to save bounty',
         error: new Error(error.message),

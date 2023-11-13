@@ -74,7 +74,8 @@ export const getBountyEntryHandler = async ({
       ...entry,
       images: images.map((i) => ({
         ...i,
-        metadata: i.metadata as ImageMetaProps,
+        meta: i.meta as ImageMetaProps,
+        metadata: i.metadata as any,
       })),
       files,
       fileCount: files.length,
@@ -110,6 +111,7 @@ export const upsertBountyEntryHandler = async ({
 
     // if the current user has more entries than allowed, throw an error
     if (
+      !input.id &&
       bounty.entryLimit &&
       bounty.entries.filter((entry) => entry.userId === userId).length >= bounty.entryLimit
     ) {
@@ -120,6 +122,7 @@ export const upsertBountyEntryHandler = async ({
       ...input,
       userId,
     });
+
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
     ctx.track

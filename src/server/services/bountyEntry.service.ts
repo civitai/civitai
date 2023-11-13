@@ -3,7 +3,7 @@ import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bou
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
@@ -98,7 +98,7 @@ export const upsertBountyEntry = ({
       }
 
       if (images) {
-        await createEntityImages({
+        await updateEntityImages({
           images,
           tx,
           userId,
