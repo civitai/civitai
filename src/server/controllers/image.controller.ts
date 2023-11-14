@@ -374,7 +374,7 @@ export const getImageResourcesHandler = async ({
 
 export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
   try {
-    return await getEntityCoverImage({ ...input });
+    return await getEntityCoverImage({ ...input, include: ['tags'] });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
