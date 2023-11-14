@@ -7,6 +7,8 @@ export function DeleteImage({
   imageId,
   onSuccess,
   skipConfirm,
+  closeOnConfirm = false,
+  onDelete,
 }: {
   imageId: number;
   children: ({
@@ -18,6 +20,8 @@ export function DeleteImage({
   }) => React.ReactElement;
   onSuccess?: (imageId: number) => void;
   skipConfirm?: boolean;
+  closeOnConfirm?: boolean;
+  onDelete?: (imageId: number) => void;
 }) {
   const { mutate, isLoading } = trpc.image.delete.useMutation({
     async onSuccess(_, { id }) {
@@ -39,8 +43,11 @@ export function DeleteImage({
         children: 'Are you sure you want to delete this image?',
         labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
         confirmProps: { color: 'red', loading: isLoading },
-        closeOnConfirm: false,
-        onConfirm: () => mutate({ id: imageId }),
+        closeOnConfirm,
+        onConfirm: () => {
+          mutate({ id: imageId });
+          onDelete?.(imageId);
+        },
         zIndex: 1000,
       });
     }

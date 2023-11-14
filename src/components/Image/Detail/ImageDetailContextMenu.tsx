@@ -5,6 +5,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IconTrash, IconBan, IconLock, IconPencil, IconRadar2 } from '@tabler/icons-react';
 import { ToggleLockComments } from '~/components/CommentsV2';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useRouter } from 'next/router';
 import { NextLink } from '@mantine/next';
@@ -18,17 +19,8 @@ TODO.gallery
   - we really need to implement stores for our key entities (model, review, image) that will allow us to update values without having to deal with the react-query cache. For an example, refer to the TosViolationButton component below.
 */
 
-export function ImageDetailContextMenu({
-  children,
-  image,
-  isMod,
-  isOwner,
-}: {
-  children: React.ReactElement;
-  image?: any;
-  isMod?: boolean;
-  isOwner?: boolean;
-}) {
+export function ImageDetailContextMenu({ children }: { children: React.ReactElement }) {
+  const { image, isMod, isOwner } = useImageDetailContext();
   const [opened, setOpened] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -91,7 +83,7 @@ export function ImageDetailContextMenu({
         )}
         {isMod && (
           <>
-            <TosViolationButton onSuccess={handleTosViolationSuccess} image={image}>
+            <TosViolationButton onSuccess={handleTosViolationSuccess}>
               {({ onClick, isLoading }) => (
                 <Menu.Item
                   icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
@@ -103,7 +95,7 @@ export function ImageDetailContextMenu({
                 </Menu.Item>
               )}
             </TosViolationButton>
-            <RescanImageButton image={image}>
+            <RescanImageButton>
               {({ onClick, isLoading }) => (
                 <Menu.Item
                   icon={isLoading ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />}
@@ -153,7 +145,9 @@ export function ImageDetailContextMenu({
   );
 }
 
-function TosViolationButton({ children, onSuccess, image }: ButtonCallbackProps) {
+function TosViolationButton({ children, onSuccess }: ButtonCallbackProps) {
+  const { image } = useImageDetailContext();
+
   const { mutate, isLoading } = trpc.image.setTosViolation.useMutation({
     async onSuccess() {
       closeModal('confirm-tos-violation');
@@ -176,14 +170,15 @@ function TosViolationButton({ children, onSuccess, image }: ButtonCallbackProps)
       confirmProps: { color: 'red', loading: isLoading },
       closeOnConfirm: false,
       onConfirm: image ? () => mutate({ id: image.id }) : undefined,
-      zIndex: 1000,
     });
   };
 
   return children({ onClick: handleTosViolation, isLoading });
 }
 
-function RescanImageButton({ children, onSuccess, image }: ButtonCallbackProps) {
+function RescanImageButton({ children, onSuccess }: ButtonCallbackProps) {
+  const { image } = useImageDetailContext();
+
   const { mutate, isLoading } = trpc.image.rescan.useMutation({
     async onSuccess() {
       closeModal('confirm-tos-violation');
@@ -213,5 +208,4 @@ type ButtonCallbackProps = {
     isLoading: boolean;
   }) => React.ReactElement;
   onSuccess?: () => void;
-  image?: any;
 };

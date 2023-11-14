@@ -48,8 +48,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isOwner, isLoading, active, toggleInfo, close, isMod, shareUrl } =
-    useImageDetailContext();
+  const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -187,7 +186,7 @@ export function ImageDetail() {
                     </Button>
                   </ShareButton>
                 </Group>
-                <ImageDetailContextMenu image={image} isOwner={isOwner} isMod={isMod}>
+                <ImageDetailContextMenu>
                   <ActionIcon
                     size={30}
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}

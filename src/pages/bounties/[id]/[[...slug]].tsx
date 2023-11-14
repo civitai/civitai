@@ -21,6 +21,7 @@ import {
   Textarea,
   Modal,
   NumberInput,
+  Menu,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -56,6 +57,7 @@ import {
   IconStar,
   IconSwords,
   IconTournament,
+  IconTrash,
   IconTrophy,
   IconViewfinder,
 } from '@tabler/icons-react';
@@ -100,6 +102,8 @@ import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvid
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
+import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
+import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -128,16 +132,25 @@ export default function BountyDetailsPage({
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useIsMobile();
+  const queryUtils = trpc.useContext();
   const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
-  const { setImages, onSetImage } = useImageViewerCtx();
+  const { setImages, onSetImage, setOnDeleteImage } = useImageViewerCtx();
   const { toggle, engagements, toggling } = useBountyEngagement();
+  const [deletingImage, setDeletingImage] = useState<boolean>(false);
 
   const discussionSectionRef = useRef<HTMLDivElement>(null);
+  const isModerator = currentUser?.isModerator;
+  const isOwner = bounty?.user && bounty?.user?.id === currentUser?.id;
 
   const isFavorite = !bounty ? false : !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
+
+  const handleImageDelete = async () => {
+    await queryUtils.bounty.getById.invalidate({ id: bounty?.id });
+    setDeletingImage(false);
+  };
   const handleEngagementClick = async (type: BountyEngagementType) => {
     if (toggling || !bounty) return;
     await toggle({ type, bountyId: bounty.id });
@@ -180,6 +193,9 @@ export default function BountyDetailsPage({
   useEffect(() => {
     if (bounty?.id) {
       setImages(bounty.images);
+      setOnDeleteImage((imageId) => {
+        handleImageDelete();
+      });
     }
   }, [bounty?.id, bounty?.images, setImages]);
 
@@ -326,16 +342,63 @@ export default function BountyDetailsPage({
           </Grid.Col>
           <Grid.Col xs={12} md={8} orderMd={1}>
             <Stack spacing="xs">
-              <ImageCarousel
-                images={bounty.images}
-                nsfw={bounty.nsfw}
-                entityId={bounty.id}
-                entityType="bounty"
-                mobile={mobile}
-                onClick={(image) => {
-                  onSetImage(image.id);
+              <ImageGuardReportContext.Provider
+                value={{
+                  getMenuItems: ({ menuItems, ...image }) => {
+                    const items = menuItems.map((item) => item.component);
+
+                    if (!isOwner && !isModerator) {
+                      return items;
+                    }
+
+                    const deleteImage = (
+                      <DeleteImage
+                        closeOnConfirm
+                        imageId={image.id}
+                        onSuccess={handleImageDelete}
+                        onDelete={() => {
+                          setDeletingImage(true);
+                        }}
+                      >
+                        {({ onClick, isLoading }) => (
+                          <Menu.Item
+                            color="red"
+                            icon={
+                              isLoading ? (
+                                <Loader size={14} />
+                              ) : (
+                                <IconTrash size={14} stroke={1.5} />
+                              )
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              onClick();
+                            }}
+                            disabled={isLoading}
+                          >
+                            Delete
+                          </Menu.Item>
+                        )}
+                      </DeleteImage>
+                    );
+
+                    return [deleteImage, ...items];
+                  },
                 }}
-              />
+              >
+                <ImageCarousel
+                  images={bounty.images}
+                  nsfw={bounty.nsfw}
+                  entityId={bounty.id}
+                  entityType="bounty"
+                  mobile={mobile}
+                  onClick={(image) => {
+                    onSetImage(image.id);
+                  }}
+                  isLoading={deletingImage}
+                />
+              </ImageGuardReportContext.Provider>
               <Title order={2} mt="sm">
                 About this bounty
               </Title>
