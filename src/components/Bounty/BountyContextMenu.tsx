@@ -64,7 +64,7 @@ export function BountyContextMenu({
         </Menu.Item>
       </Link>
     ) : null,
-    isModerator && !(bounty.complete || expired) ? (
+    isModerator && !bounty.complete ? (
       <Menu.Item
         key="refund"
         disabled={refunding}

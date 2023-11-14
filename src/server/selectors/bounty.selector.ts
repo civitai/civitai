@@ -19,6 +19,11 @@ export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
   complete: true,
   user: { select: userWithCosmeticsSelect },
   tags: { select: { tag: { select: { id: true, name: true } } } },
+  _count: {
+    select: {
+      entries: true,
+    },
+  },
   stats: {
     select: {
       favoriteCountAllTime: true,

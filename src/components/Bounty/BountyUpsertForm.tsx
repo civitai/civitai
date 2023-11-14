@@ -207,12 +207,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         bounty?.minBenefactorUnitAmount ?? constants.bounties.minCreateAmount,
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
-      expiresAt: bounty
-        ? dayjs(stripTime(bounty.expiresAt)).utcOffset(tzOffset).toDate()
-        : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty
-        ? dayjs(stripTime(bounty.startsAt)).utcOffset(tzOffset).toDate()
-        : new Date(),
+      expiresAt: bounty ? bounty.expiresAt : dayjs().add(7, 'day').endOf('day').toDate(),
+      startsAt: bounty ? bounty.startsAt : new Date(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -274,7 +270,26 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   const { upsertBounty, upserting } = useMutateBounty({ bountyId: bounty?.id });
 
+  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
+  const alreadyStarted = !!bounty && bounty.startsAt < new Date();
+  const images = [...bountyImages, ...imageFiles];
+
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
+    if (
+      data.entryLimit &&
+      bounty &&
+      bounty._count.entries > 0 &&
+      bounty.entryLimit > data.entryLimit
+    ) {
+      form.setError('entryLimit', {
+        type: 'custom',
+        message:
+          'Bounty has already received entries. You can increse the entry limit but not decrease it.',
+      });
+
+      return;
+    }
+
     const completedUploads = imageFiles
       .filter((file) => file.status === 'success')
       .map(({ id, url, ...file }) => ({ ...file, url: id }));
@@ -303,10 +318,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       performTransaction();
     }
   };
-
-  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
-  const alreadyStarted = !!bounty && bounty.startsAt < new Date();
-  const images = [...bountyImages, ...imageFiles];
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -507,104 +518,113 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </SimpleGrid>
                 )}
                 {!alreadyStarted && (
-                  <>
-                    <Stack>
-                      <Group spacing="md" grow>
-                        <InputDatePicker
-                          className={classes.fluid}
-                          name="startsAt"
-                          label="Start Date"
-                          placeholder="Select a start date"
-                          icon={<IconCalendar size={16} />}
-                          withAsterisk
-                          minDate={minStartDate}
-                          maxDate={maxStartDate}
-                        />
-                        <InputDatePicker
-                          className={classes.fluid}
-                          name="expiresAt"
-                          label="Deadline"
-                          placeholder="Select an end date"
-                          icon={<IconCalendarDue size={16} />}
-                          withAsterisk
-                          minDate={minExpiresDate}
-                          maxDate={maxExpiresDate}
-                        />
-                      </Group>
-                      <Text weight={590}>
-                        With the selected dates, your bounty will expire{' '}
-                        <Text weight="bold" color="red.5" span>
-                          <DaysFromNow date={stripTime(expiresAt)} inUtc />
-                        </Text>
-                        . All times are in{' '}
-                        <Text weight="bold" color="red.5" span>
-                          UTC
-                        </Text>
-                        .
+                  <Stack>
+                    <Group spacing="md" grow>
+                      <InputDatePicker
+                        className={classes.fluid}
+                        name="startsAt"
+                        label="Start Date"
+                        placeholder="Select a start date"
+                        icon={<IconCalendar size={16} />}
+                        withAsterisk
+                        minDate={minStartDate}
+                        maxDate={maxStartDate}
+                      />
+                      <InputDatePicker
+                        className={classes.fluid}
+                        name="expiresAt"
+                        label="Deadline"
+                        placeholder="Select an end date"
+                        icon={<IconCalendarDue size={16} />}
+                        withAsterisk
+                        minDate={minExpiresDate}
+                        maxDate={maxExpiresDate}
+                      />
+                    </Group>
+                    <Text weight={590}>
+                      With the selected dates, your bounty will expire{' '}
+                      <Text weight="bold" color="red.5" span>
+                        <DaysFromNow date={stripTime(expiresAt)} inUtc />
                       </Text>
-                    </Stack>
-                    {!bounty && (
-                      <>
-                        <Divider label="Bounty rewards" />
-                        {bountyModeEnabled && (
-                          <InputRadioGroup
-                            name="mode"
-                            label="Award Mode"
-                            withAsterisk
-                            className={classes.radioItemWrapper}
-                          >
-                            {Object.values(BountyMode).map((value) => (
-                              <Radio
-                                key={value}
-                                className={classes.radioItem}
-                                value={value}
-                                label={
-                                  <RadioItem
-                                    label={getDisplayName(value)}
-                                    description={bountyModeDescription[value]}
-                                  />
-                                }
+                      . All times are in{' '}
+                      <Text weight="bold" color="red.5" span>
+                        UTC
+                      </Text>
+                      .
+                    </Text>
+                  </Stack>
+                )}
+
+                <Divider label="Bounty rewards" />
+                {!bounty ? (
+                  <>
+                    {bountyModeEnabled && (
+                      <InputRadioGroup
+                        name="mode"
+                        label="Award Mode"
+                        withAsterisk
+                        className={classes.radioItemWrapper}
+                      >
+                        {Object.values(BountyMode).map((value) => (
+                          <Radio
+                            key={value}
+                            className={classes.radioItem}
+                            value={value}
+                            label={
+                              <RadioItem
+                                label={getDisplayName(value)}
+                                description={bountyModeDescription[value]}
                               />
-                            ))}
-                          </InputRadioGroup>
-                        )}
-                        <Group spacing="md" grow>
-                          <InputNumber
-                            className={classes.fluid}
-                            name="unitAmount"
-                            label="Bounty Amount"
-                            placeholder="How much are you willing to reward for this bounty"
-                            min={constants.bounties.minCreateAmount}
-                            max={constants.bounties.maxCreateAmount}
-                            step={100}
-                            icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                            format={currency !== Currency.BUZZ ? 'currency' : undefined}
-                            withAsterisk
+                            }
                           />
-                          <InputNumber
-                            className={classes.fluid}
-                            name="entryLimit"
-                            label="Max entries per hunter"
-                            placeholder="How many entries can a hunter submit to your bounty"
-                            min={1}
-                            max={100000}
-                            withAsterisk
-                          />
-                          {mode === BountyMode.Split && (
-                            <InputNumber
-                              className={classes.fluid}
-                              name="minBenefactorUnitAmount"
-                              label="Minimum Benefactor Amount"
-                              placeholder="How much does a supporter need to contribute to your bounty to become a supporter"
-                              min={0}
-                              max={unitAmount}
-                              format={currency !== Currency.BUZZ ? 'currency' : undefined}
-                            />
-                          )}
-                        </Group>
-                      </>
+                        ))}
+                      </InputRadioGroup>
                     )}
+                    <Group spacing="md" grow>
+                      <InputNumber
+                        className={classes.fluid}
+                        name="unitAmount"
+                        label="Bounty Amount"
+                        placeholder="How much are you willing to reward for this bounty"
+                        min={constants.bounties.minCreateAmount}
+                        max={constants.bounties.maxCreateAmount}
+                        step={100}
+                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        format={currency !== Currency.BUZZ ? 'currency' : undefined}
+                        withAsterisk
+                      />
+                      <InputNumber
+                        className={classes.fluid}
+                        name="entryLimit"
+                        label="Max entries per hunter"
+                        placeholder="How many entries can a hunter submit to your bounty"
+                        min={1}
+                        max={100000}
+                        withAsterisk
+                      />
+                      {mode === BountyMode.Split && (
+                        <InputNumber
+                          className={classes.fluid}
+                          name="minBenefactorUnitAmount"
+                          label="Minimum Benefactor Amount"
+                          placeholder="How much does a supporter need to contribute to your bounty to become a supporter"
+                          min={0}
+                          max={unitAmount}
+                          format={currency !== Currency.BUZZ ? 'currency' : undefined}
+                        />
+                      )}
+                    </Group>
                   </>
+                ) : (
+                  <InputNumber
+                    className={classes.fluid}
+                    name="entryLimit"
+                    label="Max entries per hunter"
+                    placeholder="How many entries can a hunter submit to your bounty"
+                    min={1}
+                    max={100000}
+                    withAsterisk
+                  />
                 )}
               </Stack>
               <Stack spacing="xl">

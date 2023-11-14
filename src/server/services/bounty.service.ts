@@ -246,6 +246,7 @@ export const updateBountyById = async ({
   expiresAt: incomingExpiresAt,
   images,
   userId,
+  entryLimit,
   ...data
 }: UpdateBountyInput & { userId: number }) => {
   // Convert dates to UTC for storing
@@ -254,10 +255,34 @@ export const updateBountyById = async ({
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
+      const existing = await tx.bounty.findUniqueOrThrow({
+        where: { id },
+        select: {
+          id: true,
+          entryLimit: true,
+          complete: true,
+          _count: { select: { entries: true } },
+        },
+      });
+
+      if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
+
+      if (
+        entryLimit &&
+        existing.entryLimit &&
+        entryLimit < existing.entryLimit &&
+        existing._count.entries > 0
+      ) {
+        throw throwBadRequestError(
+          'Cannot reduce entry limit because some users already submitted entries.'
+        );
+      }
+
       const bounty = await tx.bounty.update({
         where: { id },
         data: {
           ...data,
+          entryLimit,
           startsAt,
           expiresAt,
           details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
