@@ -49,6 +49,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImageDetailByProps({
   imageId,
@@ -67,6 +68,7 @@ export function ImageDetailByProps({
   onSetImage: (id: number | null) => void;
   image?: ImageProps | null;
 } & Partial<ImageGuardConnect>) {
+  const currentUser = useCurrentUser();
   const { data = null, isLoading } = trpc.image.get.useQuery(
     {
       id: imageId,
@@ -86,9 +88,11 @@ export function ImageDetailByProps({
     laughCountAllTime: number;
     cryCountAllTime: number;
   } | null = data?.stats ?? null;
-  const user = data?.user;
 
+  const user = data?.user;
   const { classes, cx, theme } = useStyles();
+  const isOwner = user && user.id === currentUser?.id;
+  const isModerator = currentUser?.isModerator;
 
   return (
     <>
@@ -203,6 +207,15 @@ export function ImageDetailByProps({
                         </Group>
                       </Button>
                     </Group>
+                    <ImageDetailContextMenu image={image} isOwner={isOwner} isMod={isModerator}>
+                      <ActionIcon
+                        size={30}
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        radius="xl"
+                      >
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </ImageDetailContextMenu>
                   </Group>
                 </Card.Section>
                 <Card.Section

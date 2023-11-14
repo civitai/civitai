@@ -41,6 +41,7 @@ export function DeleteImage({
         confirmProps: { color: 'red', loading: isLoading },
         closeOnConfirm: false,
         onConfirm: () => mutate({ id: imageId }),
+        zIndex: 1000,
       });
     }
   };
