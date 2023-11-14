@@ -456,7 +456,6 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                           presets={[
                             { label: 'Fast', value: 'Euler a' },
                             { label: 'Popular', value: 'DPM++ 2M Karras' },
-                            { label: 'Quality', value: 'DPM++ SDE Karras' },
                           ]}
                         />
                         <InputNumberSlider

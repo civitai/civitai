@@ -315,7 +315,6 @@ export const samplerOffsets = {
   LMS: 10,
   DDIM: 15,
   'DPM++ 2M Karras': 4,
-  'DPM++ SDE Karras': 4,
   DPM2: 4,
   'DPM2 a': 4,
 } as const;

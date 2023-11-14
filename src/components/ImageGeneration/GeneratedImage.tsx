@@ -13,7 +13,7 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const handleImageClick = () => {
-    if (!image) return;
+    if (!image || !image.available) return;
     openContextModal({
       modal: 'generatedImageLightbox',
       zIndex: 400,
