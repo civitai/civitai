@@ -46,6 +46,7 @@ import { env } from '~/env/client.mjs';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import Link from 'next/link';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -136,9 +137,8 @@ export function ImageDetail() {
               <Group position="apart" spacing={8}>
                 <Group spacing={8}>
                   {!query.postId && image.postId && (
-                    <Link href={`/posts/${image.postId}`} passHref>
+                    <RoutedDialogLink name="postDetail" state={{ postId: image.postId }}>
                       <Button
-                        component="a"
                         size="md"
                         radius="xl"
                         color="gray"
@@ -150,7 +150,7 @@ export function ImageDetail() {
                           <Text size="xs">View post</Text>
                         </Group>
                       </Button>
-                    </Link>
+                    </RoutedDialogLink>
                   )}
                   <Button
                     size="md"

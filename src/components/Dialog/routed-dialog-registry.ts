@@ -3,6 +3,7 @@ import { ComponentProps, ComponentType } from 'react';
 import { UrlObject } from 'url';
 
 const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'));
+const PostDetailModal = dynamic(() => import('~/components/Post/Detail/PostDetailModal'));
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -27,6 +28,13 @@ export const dialogs = createDialogDictionary({
       url: { query: { ...query, imageId } },
       asPath: `/images/${imageId}`,
       state,
+    }),
+  },
+  postDetail: {
+    component: PostDetailModal,
+    resolve: (query, { postId }) => ({
+      url: { query: { ...query, postId } },
+      asPath: `/posts/${postId}`,
     }),
   },
 });
