@@ -301,7 +301,7 @@ export default function BountyEntryDetailsPage({
           </Button>
         </Link>
       )}
-      {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
+      {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Button
           size="md"
           radius="xl"

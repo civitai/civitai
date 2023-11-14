@@ -24,7 +24,7 @@ export function BountyContextMenu({
   const { deleteBounty, refundBounty, refunding } = useMutateBounty({ bountyId: bounty.id });
 
   const menuItems: React.ReactElement<MenuItemProps>[] = [
-    !expired && (isOwner || isModerator) ? (
+    isModerator || (!expired && isOwner) ? (
       <Menu.Item
         key="delete"
         color="red"
@@ -57,7 +57,7 @@ export function BountyContextMenu({
         Delete
       </Menu.Item>
     ) : null,
-    !expired && (isOwner || isModerator) ? (
+    isModerator || (!expired && isOwner) ? (
       <Link key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
         <Menu.Item component="a" icon={<IconEdit size={14} stroke={1.5} />}>
           Edit
