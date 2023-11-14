@@ -9,6 +9,7 @@ import {
   findResourcesToAssociateHandler,
   getAssociatedResourcesCardDataHandler,
   getDownloadCommandHandler,
+  getModelByHashesHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
   getModelReportDetailsHandler,
@@ -42,6 +43,7 @@ import {
   getModelsByCategorySchema,
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
+  modelByHashesInput,
   ModelInput,
   modelUpsertSchema,
   publishModelSchema,
@@ -231,4 +233,5 @@ export const modelRouter = router({
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
+  getModelsByHash: publicProcedure.input(modelByHashesInput).mutation(getModelByHashesHandler),
 });
