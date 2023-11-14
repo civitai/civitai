@@ -284,7 +284,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       form.setError('entryLimit', {
         type: 'custom',
         message:
-          'Bounty has already received entries. You can increse the entry limit but not decrease it.',
+          'Bounty has already received entries. You can increase the entry limit but not decrease it.',
       });
 
       return;
