@@ -13,7 +13,6 @@ const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThrea
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
-const HiddenCommentsModal = dynamic(() => import('~/routed-context/modals/HiddenCommentsModal'));
 
 const registry = {
   filesEdit: {
@@ -52,16 +51,6 @@ const registry = {
           pathname: `/reviews/${reviewId}`,
           query: args,
         },
-        { shallow: true },
-      ];
-    },
-  },
-  hiddenCommentsModal: {
-    Component: HiddenCommentsModal,
-    resolve: (args: React.ComponentProps<typeof HiddenCommentsModal>) => {
-      return [
-        { query: { ...Router.query, ...args, modal: 'hiddenCommentsModal' } },
-        undefined,
         { shallow: true },
       ];
     },

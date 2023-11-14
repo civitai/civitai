@@ -99,12 +99,14 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   children,
   className,
   passHref,
+  style,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
   passHref?: TPassHref;
   className?: string;
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
+  style?: React.CSSProperties;
 }) {
   const browserRouter = getBrowserRouter();
   const { asPath } = resolveDialog(name, browserRouter.query, state);
@@ -115,11 +117,16 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   };
 
   if (passHref) {
-    return cloneElement(children as React.ReactElement, { href: asPath, onClick: handleClick });
+    return cloneElement(children as React.ReactElement, {
+      href: asPath,
+      onClick: handleClick,
+      className,
+      style,
+    });
   }
 
   return (
-    <a href={asPath} onClick={handleClick} className={className}>
+    <a href={asPath} onClick={handleClick} className={className} style={style}>
       {children}
     </a>
   );

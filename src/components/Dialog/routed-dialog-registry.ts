@@ -5,6 +5,7 @@ import { UrlObject } from 'url';
 const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'));
 const PostDetailModal = dynamic(() => import('~/components/Post/Detail/PostDetailModal'));
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
+const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/HiddenCommentsModal'));
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -43,6 +44,12 @@ export const dialogs = createDialogDictionary({
     component: CollectionEditModal,
     resolve: (query, { collectionId }) => ({
       url: { query: { ...query, collectionId } },
+    }),
+  },
+  hiddenModelComments: {
+    component: HiddenCommentsModal,
+    resolve: (query, { modelId }) => ({
+      url: { query: { ...query, modelId } },
     }),
   },
 });
