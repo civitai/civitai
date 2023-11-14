@@ -26,7 +26,7 @@ export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'>
 
 type State = {
   focused: boolean;
-  _value?: number;
+  value?: number;
   changeEndValue?: number;
   computedWidth?: string;
   selectedPreset?: string;
@@ -50,24 +50,18 @@ export function NumberSlider({
   const numberRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<State>({
     focused: false,
-    _value: value,
+    value,
     changeEndValue: undefined,
     computedWidth: undefined,
     selectedPreset: value?.toString(),
   });
 
-  useEffect(() => {
-    // Set the right selectedPreset when value changes
-    if (value?.toString() !== state.selectedPreset)
-      setState((current) => ({ ...current, selectedPreset: value?.toString() }));
-  }, [value]);
-
   const handleSliderChange = (value?: number) => {
-    setState((current) => ({ ...current, _value: value, selectedPreset: value?.toString() }));
+    setState((current) => ({ ...current, value, selectedPreset: value?.toString() }));
   };
 
   const handleInputChange = (value?: number) => {
-    setState((current) => ({ ...current, _value: value, selectedPreset: value?.toString() }));
+    setState((current) => ({ ...current, value, selectedPreset: value?.toString() }));
     onChange?.(value);
   };
 
@@ -97,10 +91,14 @@ export function NumberSlider({
   };
 
   useEffect(() => {
-    if (!state.focused) {
-      setState((current) => ({ ...current, _value: value }));
-    }
+    if (!state.focused) setState((current) => ({ ...current, value }));
   }, [value, precision, state.focused]);
+
+  useEffect(() => {
+    // Set the right selectedPreset when value changes
+    if (value?.toString() !== state.selectedPreset)
+      setState((current) => ({ ...current, selectedPreset: value?.toString() }));
+  }, [state.selectedPreset, value]);
 
   useEffect(() => {
     if (!state.changeEndValue) return;
@@ -152,7 +150,7 @@ export function NumberSlider({
           max={max}
           step={step}
           precision={precision}
-          value={state._value}
+          value={state.value}
           onChange={handleSliderChange}
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
@@ -171,7 +169,7 @@ export function NumberSlider({
           max={max}
           step={step}
           precision={precision}
-          value={state._value}
+          value={state.value}
           onChange={handleInputChange}
           onBlur={handleInputBlur}
           onFocus={handleInputFocus}
