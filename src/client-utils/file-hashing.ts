@@ -1,5 +1,8 @@
 import jsSHA from 'jssha';
 
+const SIZE_100_MB = 100 * 1024 * 1024; // 100MB
+const SIZE_1_GB = 1000 * 1024 * 1024; // 1 GB
+
 const computeSHA256 = async (file: File) => {
   // Read the file as an ArrayBuffer
   const fileBuffer = await file.arrayBuffer();
@@ -18,8 +21,7 @@ const computeSHA256jsSHA = async (file: File) => {
   const reader = file.stream().getReader({ mode: 'byob' });
   const shaObj = new jsSHA('SHA-256', 'ARRAYBUFFER');
 
-  const chunkSize = 100 * 1024 * 1024; // 100MB
-  const buffer = new Uint8Array(chunkSize);
+  const buffer = new Uint8Array(SIZE_100_MB);
 
   while (true) {
     const { done, value } = await reader.read(buffer);
@@ -29,11 +31,11 @@ const computeSHA256jsSHA = async (file: File) => {
   return shaObj.getHash('HEX');
 };
 
-export const getFilesHash = async (files: File[]) => {
-  return await Promise.all(
-    files.map(async (file) => {
-      const hashFn = file.size < 1000 * 1024 * 1024 ? computeSHA256 : computeSHA256jsSHA;
-      return await hashFn(file);
+export const getFilesHash = (files: File[]) => {
+  return Promise.all(
+    files.map((file) => {
+      const hashFn = file.size < SIZE_1_GB ? computeSHA256 : computeSHA256jsSHA;
+      return hashFn(file);
     })
   );
 };

@@ -1173,6 +1173,10 @@ export const getAssociatedResourcesCardDataHandler = async ({
 export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesInput }) => {
   const { hashes } = input;
 
+  if (hashes.length === 0) {
+    return [];
+  }
+
   const modelsByHashes = await dbRead.$queryRaw<
     { userId: number; modelId: number; hash: string }[]
   >`
