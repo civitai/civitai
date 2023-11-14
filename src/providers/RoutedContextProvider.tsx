@@ -11,30 +11,12 @@ import { Freeze } from '~/components/Freeze/Freeze';
 
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
-const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
-const ModelVersionEdit = dynamic(() => import('~/routed-context/modals/ModelVersionEdit'));
 const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 const HiddenCommentsModal = dynamic(() => import('~/routed-context/modals/HiddenCommentsModal'));
 const CollectionEdit = dynamic(() => import('~/routed-context/modals/CollectionEdit'));
 
 const registry = {
-  modelEdit: {
-    Component: ModelEdit,
-    resolve: (args: React.ComponentProps<typeof ModelEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'modelEdit' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
-  modelVersionEdit: {
-    Component: ModelVersionEdit,
-    resolve: (args: React.ComponentProps<typeof ModelVersionEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'modelVersionEdit' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
   filesEdit: {
     Component: FilesEdit,
     resolve: (args: React.ComponentProps<typeof FilesEdit>) => [

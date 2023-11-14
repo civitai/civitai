@@ -22,6 +22,7 @@ import {
   IconPhotoEdit,
   IconTrash,
 } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -267,16 +268,11 @@ export function ModelVersionList({
                       Unpublish as Violation
                     </Menu.Item>
                   )}
+
                   <Menu.Item
-                    // component={NextLink}
+                    component={NextLink}
+                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                     icon={<IconEdit size={14} stroke={1.5} />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openRoutedContext('modelVersionEdit', {
-                        modelVersionId: version.id,
-                      });
-                    }}
-                    // href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                   >
                     Edit details
                   </Menu.Item>

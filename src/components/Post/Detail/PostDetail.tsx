@@ -15,7 +15,6 @@ import {
 import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';

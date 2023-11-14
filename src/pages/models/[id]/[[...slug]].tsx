@@ -698,7 +698,8 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                         <Menu.Item
                           icon={<IconEdit size={14} stroke={1.5} />}
-                          onClick={() => openRoutedContext('modelEdit', { modelId: model.id })}
+                          component={NextLink}
+                          href={`/models/${model.id}/edit`}
                         >
                           Edit Model
                         </Menu.Item>

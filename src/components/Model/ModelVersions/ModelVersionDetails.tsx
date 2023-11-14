@@ -607,21 +607,12 @@ export function ModelVersionDetails({
                         </Anchor>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Item
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            await openRoutedContext('modelEdit', { modelId: model.id });
-                          }}
-                        >
+                        <Menu.Item component={NextLink} href={`/models/${version.modelId}/edit`}>
                           Edit Model Details
                         </Menu.Item>
                         <Menu.Item
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            await openRoutedContext('modelVersionEdit', {
-                              modelVersionId: version.id,
-                            });
-                          }}
+                          component={NextLink}
+                          href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                         >
                           Edit Version Details
                         </Menu.Item>

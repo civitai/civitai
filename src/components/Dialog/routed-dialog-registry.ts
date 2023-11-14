@@ -7,6 +7,7 @@ const PostDetailModal = dynamic(() => import('~/components/Post/Detail/PostDetai
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
+  requireAuth?: boolean;
   component: ComponentType<T>;
   resolve: (
     query: Record<string, unknown>,

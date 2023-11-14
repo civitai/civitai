@@ -8,6 +8,7 @@ import {
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { resolveHref } from 'next/dist/shared/lib/router/router';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type DialogKey = keyof typeof dialogs;
 
@@ -15,6 +16,7 @@ export function RoutedDialogProvider() {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
   const prevState = useRef<{ url: string; as: string; pathname: string }>();
+  const currentUser = useCurrentUser();
 
   useEffect(() => {
     router.beforePopState((state) => {
@@ -59,6 +61,7 @@ export function RoutedDialogProvider() {
     const toOpen = keyNamePairs.filter((x) => !openDialogs.includes(x.name));
 
     for (const { key, name } of toOpen) {
+      if (dialogs[name].requireAuth && !currentUser) continue;
       const state = history.state.state;
       const Dialog = createBrowserRouterSync(dialogs[name].component);
       dialogStore.trigger({
@@ -73,7 +76,7 @@ export function RoutedDialogProvider() {
     for (const key of toClose) {
       dialogStore.closeById(key);
     }
-  }, [browserRouter.query]);
+  }, [browserRouter.query, currentUser]);
 
   return null;
 }
