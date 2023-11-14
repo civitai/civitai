@@ -173,8 +173,6 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const tzOffset = dayjs().utcOffset();
-
 export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const router = useRouter();
   const { classes } = useStyles();
@@ -207,8 +205,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         bounty?.minBenefactorUnitAmount ?? constants.bounties.minCreateAmount,
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
-      expiresAt: bounty ? bounty.expiresAt : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty ? bounty.startsAt : new Date(),
+      expiresAt: bounty
+        ? dayjs(stripTime(bounty.expiresAt)).toDate()
+        : dayjs().add(7, 'day').endOf('day').toDate(),
+      startsAt: bounty ? dayjs(stripTime(bounty.startsAt)).toDate() : new Date(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
