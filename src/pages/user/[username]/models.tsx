@@ -1,6 +1,6 @@
 import { Box, Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -37,16 +37,19 @@ export default function UserModelsPage() {
   const viewingPublished = section === 'published';
   const viewingDraft = section === 'draft';
   const viewingTraining = section === 'training' && features.imageTrainingResults;
+  const Wrapper = useMemo(
+    () =>
+      ({ children }: { children: React.ReactNode }) =>
+        features.profileOverhaul ? (
+          <Box mt="md">{children}</Box>
+        ) : (
+          <Tabs.Panel value="/models">{children}</Tabs.Panel>
+        ),
+    [features.profileOverhaul]
+  );
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
-
-  const Wrapper = ({ children }: { children: React.ReactNode }) =>
-    features.profileOverhaul ? (
-      <Box mt="md">{children}</Box>
-    ) : (
-      <Tabs.Panel value="/models">{children}</Tabs.Panel>
-    );
 
   return (
     <Wrapper>
