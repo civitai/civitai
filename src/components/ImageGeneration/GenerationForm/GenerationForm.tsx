@@ -72,8 +72,6 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { calculateGenerationBill } from '~/server/common/generation';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -218,11 +216,11 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
         <ScrollArea sx={{ flex: 1 }}>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
-                    <DismissibleAlert
-                      id="image-gen-params"
-                      content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
-                    />
-                  )} */}
+              <DismissibleAlert
+                id="image-gen-params"
+                content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
+              />
+            )} */}
             <InputResourceSelect
               name="model"
               label="Model"
@@ -380,27 +378,46 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     </Accordion.Control>
                     <Accordion.Panel>
                       <Stack>
-                        <InputSelect name="sampler" label="Sampler" data={generation.samplers} />
-                        <Group position="apart">
-                          <InputNumberSlider
-                            name="steps"
-                            label="Steps"
-                            min={10}
-                            max={generation.maxValues.steps}
-                            sliderProps={sharedSliderProps}
-                            numberProps={sharedNumberProps}
-                          />
-                          <InputNumberSlider
-                            name="cfgScale"
-                            label="CFG Scale"
-                            min={1}
-                            max={isSDXL ? 10 : 30}
-                            step={0.5}
-                            precision={1}
-                            sliderProps={sharedSliderProps}
-                            numberProps={sharedNumberProps}
-                          />
-                        </Group>
+                        <InputNumberSlider
+                          name="cfgScale"
+                          label="CFG Scale"
+                          min={1}
+                          max={isSDXL ? 10 : 30}
+                          step={0.5}
+                          precision={1}
+                          sliderProps={sharedSliderProps}
+                          numberProps={sharedNumberProps}
+                          presets={[
+                            { label: 'Creative', value: '4' },
+                            { label: 'Balanced', value: '7' },
+                            { label: 'Precise', value: '10' },
+                          ]}
+                          reverse
+                        />
+                        <InputSelect
+                          name="sampler"
+                          label="Sampler"
+                          data={generation.samplers}
+                          presets={[
+                            { label: 'Fast', value: 'Euler a' },
+                            { label: 'Popular', value: 'DPM++ 2M Karras' },
+                            { label: 'Quality', value: 'DPM++ SDE Karras' },
+                          ]}
+                        />
+                        <InputNumberSlider
+                          name="steps"
+                          label="Steps"
+                          min={10}
+                          max={generation.maxValues.steps}
+                          sliderProps={sharedSliderProps}
+                          numberProps={sharedNumberProps}
+                          presets={[
+                            { label: 'Fast', value: '10' },
+                            { label: 'Balanced', value: '20' },
+                            { label: 'High', value: '30' },
+                          ]}
+                          reverse
+                        />
                         <InputSeed
                           name="seed"
                           label="Seed"

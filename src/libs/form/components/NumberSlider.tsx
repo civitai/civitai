@@ -1,14 +1,15 @@
 import {
+  Group,
   Input,
   InputWrapperProps,
-  Group,
-  Slider,
   NumberInput,
-  SliderProps,
   NumberInputProps,
+  Slider,
+  SliderProps,
   createStyles,
 } from '@mantine/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PresetOptions, Props as PresetOptionsProps } from './PresetOptions';
 
 export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
@@ -20,6 +21,15 @@ export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'>
   sliderProps?: Omit<SliderProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
   numberProps?: Omit<NumberInputProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
   reverse?: boolean;
+  presets?: PresetOptionsProps['options'];
+};
+
+type State = {
+  focused: boolean;
+  _value?: number;
+  changeEndValue?: number;
+  computedWidth?: string;
+  selectedPreset?: string;
 };
 
 export function NumberSlider({
@@ -32,21 +42,32 @@ export function NumberSlider({
   sliderProps,
   numberProps,
   reverse,
+  presets,
+  label,
   ...inputWrapperProps
 }: NumberSliderProps) {
   const { classes, cx } = useStyles();
   const numberRef = useRef<HTMLInputElement>(null);
-  const [focused, setFocused] = useState(false);
-  const [_value, setValue] = useState(value);
-  const [changeEndValue, setChangeEndValue] = useState<number>();
-  const [computedWidth, setComputedWidth] = useState<string>();
+  const [state, setState] = useState<State>({
+    focused: false,
+    _value: value,
+    changeEndValue: undefined,
+    computedWidth: undefined,
+    selectedPreset: value?.toString(),
+  });
+
+  useEffect(() => {
+    // Set the right selectedPreset when value changes
+    if (value !== state._value)
+      setState((current) => ({ ...current, selectedPreset: value?.toString() }));
+  }, [value]);
 
   const handleSliderChange = (value?: number) => {
-    setValue(value);
+    setState((current) => ({ ...current, _value: value, selectedPreset: value?.toString() }));
   };
 
   const handleInputChange = (value?: number) => {
-    setValue(value);
+    setState((current) => ({ ...current, _value: value, selectedPreset: value?.toString() }));
     onChange?.(value);
   };
 
@@ -56,43 +77,73 @@ export function NumberSlider({
   );
 
   const handleSliderFocus = (event: React.FocusEvent<HTMLDivElement>) => {
-    setFocused(true);
+    setState((current) => ({ ...current, focused: true }));
     sliderProps?.onFocus?.(event);
   };
 
   const handleSliderBlur = (event: React.FocusEvent<HTMLDivElement>) => {
-    setFocused(false);
+    setState((current) => ({ ...current, focused: false }));
     sliderProps?.onBlur?.(event);
   };
 
   const handleInputFocus = (event: React.FocusEvent<HTMLInputElement>) => {
-    setFocused(true);
+    setState((current) => ({ ...current, focused: true }));
     numberProps?.onFocus?.(event);
   };
 
   const handleInputBlur = (event: React.FocusEvent<HTMLInputElement>) => {
-    setFocused(false);
+    setState((current) => ({ ...current, focused: false }));
     numberProps?.onBlur?.(event);
   };
 
   useEffect(() => {
-    if (!focused) {
-      setValue(value);
+    if (!state.focused) {
+      setState((current) => ({ ...current, _value: value }));
     }
-  }, [value, precision]);
+  }, [value, precision, state.focused]);
 
   useEffect(() => {
-    if (!changeEndValue) return;
-    onChange?.(changeEndValue);
-  }, [changeEndValue]);
+    if (!state.changeEndValue) return;
+    onChange?.(state.changeEndValue);
+  }, [state.changeEndValue]);
 
   useEffect(() => {
     if (!numberRef.current) return;
-    setComputedWidth(getComputedWidth(numberRef.current, min, max, precision));
+    setState((current) => ({
+      ...current,
+      // Just to keep ts happy :shrug:
+      computedWidth: numberRef.current
+        ? getComputedWidth(numberRef.current, min, max, precision)
+        : undefined,
+    }));
   }, [min, max, precision]);
 
+  const hasPresets = presets && presets.length > 0;
+
   return (
-    <Input.Wrapper {...inputWrapperProps} className={cx(classes.fill, inputWrapperProps.className)}>
+    <Input.Wrapper
+      {...inputWrapperProps}
+      label={
+        hasPresets ? (
+          <Group spacing={8} position="apart" noWrap>
+            {label}
+            <PresetOptions
+              color="blue"
+              options={presets}
+              value={state.selectedPreset}
+              onChange={(value) => {
+                setState((current) => ({ ...current, selectedPreset: value }));
+                onChange?.(Number(value));
+              }}
+            />
+          </Group>
+        ) : (
+          label
+        )
+      }
+      className={cx(classes.fill, inputWrapperProps.className)}
+      styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
+    >
       <Group spacing="xs" style={reverse ? { flexDirection: 'row-reverse' } : undefined}>
         <Slider
           {...sliderProps}
@@ -101,12 +152,12 @@ export function NumberSlider({
           max={max}
           step={step}
           precision={precision}
-          value={_value}
+          value={state._value}
           onChange={handleSliderChange}
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
           label={(value) => (value && precision ? value.toFixed(precision) : value)}
-          onChangeEnd={setChangeEndValue}
+          onChangeEnd={(value) => setState((current) => ({ ...current, changeEndValue: value }))}
         />
         <NumberInput
           ref={numberRef}
@@ -114,13 +165,13 @@ export function NumberSlider({
           className={cx(classes.number, numberProps?.className)}
           style={{
             ...numberProps?.style,
-            minWidth: numberProps?.style?.minWidth ?? computedWidth,
+            minWidth: numberProps?.style?.minWidth ?? state.computedWidth,
           }}
           min={min}
           max={max}
           step={step}
           precision={precision}
-          value={_value}
+          value={state._value}
           onChange={handleInputChange}
           onBlur={handleInputBlur}
           onFocus={handleInputFocus}

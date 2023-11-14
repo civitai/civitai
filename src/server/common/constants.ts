@@ -311,9 +311,17 @@ export const samplerMap = new Map<Sampler, string[]>([
 export const generation = {
   formStoreKey: 'generation-form',
   samplers: constants.samplers.filter((sampler) =>
-    ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(
-      sampler
-    )
+    [
+      'Euler a',
+      'Euler',
+      'Heun',
+      'LMS',
+      'DDIM',
+      'DPM++ 2M Karras',
+      'DPM++ SDE Karras',
+      'DPM2',
+      'DPM2 a',
+    ].includes(sampler)
   ),
   defaultValues: {
     cfgScale: 7,
