@@ -18,6 +18,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
 
   const opened =
     session?.user &&
+    !session.user.bannedAt &&
     (!session?.user?.tos ||
       !session.user.email ||
       !session.user.username ||

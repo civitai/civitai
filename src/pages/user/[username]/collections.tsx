@@ -12,7 +12,7 @@ import { CollectionSort } from '~/server/common/enums';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 
@@ -39,14 +39,19 @@ export default function UserCollectionsPage() {
   const username = (router.query.username as string) ?? '';
   const { data: creator, isLoading } = trpc.user.getCreator.useQuery({ username });
 
+  const Wrapper = useMemo(
+    () =>
+      ({ children }: { children: React.ReactNode }) =>
+        features.profileOverhaul ? (
+          <Box mt="md">{children}</Box>
+        ) : (
+          <Tabs.Panel value="/collections">{children}</Tabs.Panel>
+        ),
+    [features.profileOverhaul]
+  );
+
   // currently not showing any content if the username is undefined
   if (!username || (!creator && !isLoading)) return <NotFound />;
-  const Wrapper = ({ children }: { children: React.ReactNode }) =>
-    features.profileOverhaul ? (
-      <Box mt="md">{children}</Box>
-    ) : (
-      <Tabs.Panel value="/collections">{children}</Tabs.Panel>
-    );
 
   if (isLoading) {
     return (

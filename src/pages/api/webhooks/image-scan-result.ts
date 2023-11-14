@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 import { auditMetaData, includesInappropriate } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
-import { tagsNeedingReview } from '~/libs/tags';
+import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
@@ -46,8 +46,8 @@ const schema = z.object({
   source: z.nativeEnum(TagSource),
 });
 
-function isModerationCategory(tag: string) {
-  return topLevelModerationCategories.includes(tag);
+function shouldIgnore(tag: string) {
+  return tagsToIgnore.includes(tag) || topLevelModerationCategories.includes(tag);
 }
 
 export default WebhookEndpoint(async function imageTags(req, res) {
@@ -195,7 +195,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
           .filter((x) => x.id)
           .map(
             (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${
+              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(x.tag)}, '${
                 x.source ?? source
               }')`
           )
@@ -228,7 +228,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     const tags =
       (
         await dbWrite.tagsOnImage.findMany({
-          where: { imageId: id, automated: true },
+          where: { imageId: id, automated: true, disabled: false },
           select: { tag: { select: { type: true, name: true } } },
         })
       )?.map((x) => x.tag) ?? [];

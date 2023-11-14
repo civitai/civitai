@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -76,7 +77,7 @@ export const useBuzzTransaction = (opts?: {
   const { message, purchaseSuccessMessage, performTransactionOnPurchase } = opts ?? {};
 
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
+  const { balance } = useBuzz();
   const isMobile = useIsMobile();
 
   const { trackAction } = useTrackEvent();
@@ -89,11 +90,11 @@ export const useBuzzTransaction = (opts?: {
       });
     },
   });
-  const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
+  const hasRequiredAmount = (buzzAmount: number) => balance >= buzzAmount;
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
-    const hasRequiredAmount = (currentUser?.balance ?? 0) >= buzzAmount;
+    const hasRequiredAmount = balance >= buzzAmount;
     if (!hasRequiredAmount) {
       trackAction({ type: 'NotEnoughFunds', details: { amount: buzzAmount } }).catch(
         () => undefined
@@ -101,11 +102,8 @@ export const useBuzzTransaction = (opts?: {
 
       openBuyBuzzModal(
         {
-          message:
-            typeof message === 'function'
-              ? message(buzzAmount - (currentUser?.balance ?? 0))
-              : message,
-          minBuzzAmount: buzzAmount - (currentUser?.balance ?? 0),
+          message: typeof message === 'function' ? message(buzzAmount - balance) : message,
+          minBuzzAmount: buzzAmount - balance,
           onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
           purchaseSuccessMessage,
         },

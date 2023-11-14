@@ -1,10 +1,9 @@
 import { Group, Loader, MantineSize, Text, TextProps, Tooltip } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
-import { CivitaiSessionState } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Props = TextProps & {
-  user: CivitaiSessionState | null;
   iconSize?: number;
   textSize?: MantineSize;
   withTooltip?: boolean;
@@ -12,15 +11,13 @@ type Props = TextProps & {
 };
 
 export function UserBuzz({
-  user,
   iconSize = 20,
   textSize = 'md',
   withTooltip,
   withAbbreviation = true,
   ...textProps
 }: Props) {
-  if (!user) return null;
-  const { balance } = user;
+  const { balance } = useBuzz();
 
   const content = (
     <Text color="accent.5" transform="uppercase" {...textProps}>

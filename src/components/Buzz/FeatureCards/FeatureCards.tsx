@@ -23,6 +23,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { MouseEvent } from 'react';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -193,10 +194,11 @@ const getSpendings = ({
 
 export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   const currentUser = useCurrentUser();
+  const { balance } = useBuzz();
   // const open = useGenerationStore((state) => state.open);
   const spendings = getSpendings({
     username: currentUser?.username ?? '',
-    balance: currentUser?.balance ?? 0,
+    balance: balance ?? 0,
   });
 
   return (

@@ -110,10 +110,10 @@ export function ReactionButton({
     );
   };
 
-  if (noEmpty && count < 1) return null;
-
   const canClick = !!currentUser && !readonly;
   const child = children({ hasReacted, count, reaction, canClick });
+
+  if (noEmpty && count < 1) return null;
 
   return canClick ? cloneElement(child, { onClick: handleClick }) : child;
 }

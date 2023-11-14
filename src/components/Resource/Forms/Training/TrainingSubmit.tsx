@@ -36,6 +36,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
@@ -318,6 +319,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
+  const { balance } = useBuzz();
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to train this model. Required buzz: ${numberWithCommas(
@@ -506,7 +508,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
               </Text>
               <Text span inline>
-                {((currentUser?.balance ?? 0) - (buzzCost ?? 0)).toLocaleString()}.
+                {(balance - (buzzCost ?? 0)).toLocaleString()}.
               </Text>
             </div>
             <Text>Proceed?</Text>

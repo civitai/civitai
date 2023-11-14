@@ -6,10 +6,13 @@ import {
 } from '~/components/Profile/ProfileSection';
 import { useInView } from 'react-intersection-observer';
 import { IconHeart } from '@tabler/icons-react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesImages } from '~/components/Search/search.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -17,8 +20,9 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     triggerOnce: true,
   });
   const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
+  const currentUser = useCurrentUser();
   const {
-    data: coverImages = [],
+    data: _coverImages = [],
     isLoading,
     isRefetching,
   } = trpc.image.getEntitiesCoverImage.useQuery(
@@ -30,6 +34,26 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
       keepPreviousData: true,
     }
   );
+  const {
+    users: hiddenUsers,
+    images: hiddenImages,
+    tags: hiddenTags,
+    isLoading: loadingPreferences,
+  } = useHiddenPreferencesContext();
+
+  const coverImages: typeof _coverImages = useMemo(() => {
+    if (loadingPreferences) {
+      return [];
+    }
+
+    return applyUserPreferencesImages<(typeof _coverImages)[number]>({
+      items: _coverImages,
+      currentUserId: currentUser?.id,
+      hiddenUsers,
+      hiddenImages,
+      hiddenTags,
+    });
+  }, [_coverImages]);
 
   const { classes, cx } = useProfileSectionStyles({
     // count: coverImages.length,
