@@ -6,7 +6,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { PostReactions } from '~/components/Reaction/Reactions';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function PostsCard({
   data: { image, id, stats, imageCount },
@@ -32,7 +32,7 @@ export function PostsCard({
                       <>
                         <ImageGuard.Report context="post" />
                         <ImageGuard.ToggleConnect position="top-left" />
-                        <RoutedContextLink modal="postDetailModal" postId={id}>
+                        <RoutedDialogLink name="postDetail" state={{ postId: id }}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                               <MediaHash {...image} />
@@ -48,7 +48,7 @@ export function PostsCard({
                               style={{ width: '100%', position: 'relative' }}
                             />
                           )}
-                        </RoutedContextLink>
+                        </RoutedDialogLink>
                         <PostReactions
                           className={classes.reactions}
                           imageCount={imageCount}

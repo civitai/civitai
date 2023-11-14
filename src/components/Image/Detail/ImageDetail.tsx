@@ -44,7 +44,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { env } from '~/env/client.mjs';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import Link from 'next/link';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
@@ -137,8 +136,9 @@ export function ImageDetail() {
               <Group position="apart" spacing={8}>
                 <Group spacing={8}>
                   {!query.postId && image.postId && (
-                    <RoutedDialogLink name="postDetail" state={{ postId: image.postId }}>
+                    <RoutedDialogLink passHref name="postDetail" state={{ postId: image.postId }}>
                       <Button
+                        component="a"
                         size="md"
                         radius="xl"
                         color="gray"

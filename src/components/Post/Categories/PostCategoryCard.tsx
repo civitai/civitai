@@ -1,11 +1,11 @@
 import { ActionIcon, AspectRatio, Box, createStyles } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { PostReactions } from '~/components/Reaction/Reactions';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { PostGetByCategoryPostModel } from '~/types/router';
 
 export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel }) {
@@ -20,7 +20,11 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
             <div className={classes.container}>
               <ImageGuard.Report context="post" />
               <ImageGuard.ToggleConnect className={classes.toggle} />
-              <RoutedContextLink modal="postDetailModal" postId={data.id} className={classes.link}>
+              <RoutedDialogLink
+                name="postDetail"
+                state={{ postId: data.id }}
+                className={classes.link}
+              >
                 <AspectRatio
                   ratio={1}
                   sx={(theme) => ({
@@ -44,7 +48,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                     />
                   )}
                 </AspectRatio>
-              </RoutedContextLink>
+              </RoutedDialogLink>
 
               <PostReactions
                 className={classes.reactions}

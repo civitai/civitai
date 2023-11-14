@@ -37,7 +37,6 @@ import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CollectionType } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -49,6 +48,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { env } from '~/env/client.mjs';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function ImageDetailByProps({
   imageId,
@@ -169,8 +169,13 @@ export function ImageDetailByProps({
                   <Group position="apart" spacing={8}>
                     <Group spacing={8}>
                       {image.postId && (
-                        <RoutedContextLink modal="postDetailModal" postId={image.postId}>
+                        <RoutedDialogLink
+                          passHref
+                          name="postDetail"
+                          state={{ postId: image.postId }}
+                        >
                           <Button
+                            component="a"
                             size="md"
                             radius="xl"
                             color="gray"
@@ -182,7 +187,7 @@ export function ImageDetailByProps({
                               <Text size="xs">View post</Text>
                             </Group>
                           </Button>
-                        </RoutedContextLink>
+                        </RoutedDialogLink>
                       )}
                       <Button
                         size="md"

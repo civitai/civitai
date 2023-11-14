@@ -23,15 +23,12 @@ export function RoutedDialogProvider() {
 
       // it's magic...
       if (!state.url.includes('dialog') && router.pathname !== state.url.split('?')[0]) {
-        console.log(1);
         return true;
       }
       if (state.url.includes('dialog') || previous?.url.includes('dialog')) {
         setUsingNextRouter(false);
-        console.log(2);
         return false;
       }
-      console.log(3);
       return true;
     });
   }, [router]);
