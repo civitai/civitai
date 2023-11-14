@@ -30,6 +30,7 @@ import { useBuzzTransaction } from './buzz.utils';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { isTouchDevice } from '~/utils/device-helpers';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -110,6 +111,7 @@ export function InteractiveTipBuzzButton({
   const { theme, classes, cx } = useStyle();
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
+  const { balance } = useBuzz();
   const features = useFeatureFlags();
 
   const [buzzCounter, setBuzzCounter] = useState(0);
@@ -121,7 +123,7 @@ export function InteractiveTipBuzzButton({
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
-      return Math.min(currentUser?.balance ?? 0, prevCounter + step);
+      return Math.min(balance ?? 0, prevCounter + step);
     });
   }, 100);
 
@@ -193,8 +195,7 @@ export function InteractiveTipBuzzButton({
     let amount = Number(value);
     if (isNaN(amount) || amount < 1) amount = 1;
     else if (amount > 9999) amount = 9999;
-    else if (currentUser?.balance && amount > currentUser?.balance)
-      amount = currentUser?.balance ?? 0;
+    else if (balance && amount > balance) amount = balance ?? 0;
     setBuzzCounter(amount);
 
     return amount;

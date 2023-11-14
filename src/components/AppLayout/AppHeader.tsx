@@ -566,7 +566,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             <Group spacing={4} noWrap>
               <UserBuzz
                 iconSize={16}
-                user={currentUser}
                 textSize={textSize}
                 withAbbreviation={withAbbreviation}
                 withTooltip={withAbbreviation}
@@ -729,7 +728,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   <Group spacing={8} noWrap>
                     <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && <UserBuzz user={currentUser} pr="sm" />}
+                    {features.buzz && <UserBuzz pr="sm" />}
                   </Group>
                 </UnstyledButton>
               </Menu.Target>

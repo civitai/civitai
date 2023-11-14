@@ -232,7 +232,7 @@ const { openModal, Modal } = createContextModal<{
                 <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
                   Available Buzz
                 </Text>
-                <UserBuzz user={currentUser} iconSize={16} textSize="sm" withTooltip />
+                <UserBuzz iconSize={16} textSize="sm" withTooltip />
               </Group>
             </Badge>
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />

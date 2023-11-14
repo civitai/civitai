@@ -28,7 +28,7 @@ import {
 import React, { useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
-import { useQueryBuzzAccount } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -120,15 +120,13 @@ export default function UserBuzzDashboard() {
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getUserTransactions.useQuery({
     limit: 200,
   });
-  const { lifetimeBalance = 0 } = useQueryBuzzAccount({
-    enabled: !!currentUser,
-  });
+  const { balance, lifetimeBalance, balanceLoading } = useBuzz();
 
   const transactionsReversed = useMemo(() => [...(transactions ?? [])].reverse(), [transactions]);
 
   const starterBuzzAmount = (transactions ?? []).reduce((acc, transaction) => {
     return acc - transaction.amount;
-  }, currentUser?.balance ?? 0);
+  }, balance);
 
   const items: Record<string, number> = useMemo(() => {
     if (!transactions) return {};
@@ -182,7 +180,7 @@ export default function UserBuzzDashboard() {
                   <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
                     <Stack spacing={0}>
                       <Title order={3}>Current Buzz</Title>
-                      <UserBuzz textSize="xl" user={currentUser} withAbbreviation={false} />
+                      <UserBuzz textSize="xl" withAbbreviation={false} />
                     </Stack>
                     <Stack spacing="xs" mt="xl">
                       <Line
@@ -214,7 +212,7 @@ export default function UserBuzzDashboard() {
                       </Title>
                       <Group className={classes.lifetimeBuzzBadge} spacing={2} noWrap>
                         <CurrencyIcon currency={Currency.BUZZ} size={24} />
-                        {lifetimeBalance === null ? (
+                        {balanceLoading ? (
                           <Loader variant="dots" color="yellow.7" />
                         ) : (
                           <Text
@@ -223,7 +221,7 @@ export default function UserBuzzDashboard() {
                             color="yellow.7"
                             className={classes.lifetimeBuzz}
                           >
-                            {numberWithCommas(lifetimeBalance ?? 0)}
+                            {numberWithCommas(lifetimeBalance)}
                           </Text>
                         )}
                       </Group>
