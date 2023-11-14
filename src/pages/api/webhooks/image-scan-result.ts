@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 import { auditMetaData, includesInappropriate } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
-import { tagsNeedingReview } from '~/libs/tags';
+import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
@@ -115,6 +115,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   if (source === TagSource.WD14) {
     for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
   }
+
+  // Handle tags to ignore
+  incomingTags = incomingTags.filter((x) => !tagsToIgnore.includes(x.tag));
 
   // De-dupe incoming tags and keep tag with highest confidence
   const tagMap: Record<string, IncomingTag> = {};
