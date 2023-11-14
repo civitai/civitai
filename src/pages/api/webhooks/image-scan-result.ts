@@ -46,8 +46,8 @@ const schema = z.object({
   source: z.nativeEnum(TagSource),
 });
 
-function isModerationCategory(tag: string) {
-  return topLevelModerationCategories.includes(tag);
+function shouldIgnore(tag: string) {
+  return tagsToIgnore.includes(tag) || topLevelModerationCategories.includes(tag);
 }
 
 export default WebhookEndpoint(async function imageTags(req, res) {
@@ -115,9 +115,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   if (source === TagSource.WD14) {
     for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
   }
-
-  // Handle tags to ignore
-  incomingTags = incomingTags.filter((x) => !tagsToIgnore.includes(x.tag));
 
   // De-dupe incoming tags and keep tag with highest confidence
   const tagMap: Record<string, IncomingTag> = {};
@@ -198,7 +195,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
           .filter((x) => x.id)
           .map(
             (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${
+              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(x.tag)}, '${
                 x.source ?? source
               }')`
           )
@@ -231,7 +228,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     const tags =
       (
         await dbWrite.tagsOnImage.findMany({
-          where: { imageId: id, automated: true },
+          where: { imageId: id, automated: true, disabled: false },
           select: { tag: { select: { type: true, name: true } } },
         })
       )?.map((x) => x.tag) ?? [];
