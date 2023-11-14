@@ -5,7 +5,7 @@ import { ImageSort } from '~/server/common/enums';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Box,
   Chip,
@@ -96,15 +96,19 @@ export function UserImagesPage() {
 
   const viewingReactions = section === 'reactions';
 
+  const Wrapper = useMemo(
+    () =>
+      ({ children }: { children: React.ReactNode }) =>
+        features.profileOverhaul ? (
+          <Box mt="md">{children}</Box>
+        ) : (
+          <Tabs.Panel value="/images">{children}</Tabs.Panel>
+        ),
+    [features.profileOverhaul]
+  );
+
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
-
-  const Wrapper = ({ children }: { children: React.ReactNode }) =>
-    features.profileOverhaul ? (
-      <Box mt="md">{children}</Box>
-    ) : (
-      <Tabs.Panel value="/images">{children}</Tabs.Panel>
-    );
 
   return (
     <Wrapper>

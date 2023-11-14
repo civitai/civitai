@@ -1,6 +1,6 @@
 import { Box, Group, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
@@ -49,14 +49,18 @@ export default function UserPostsPage() {
   const viewingDraft = section === 'draft';
   const features = useFeatureFlags();
 
-  if (!query.username) return <NotFound />;
+  const Wrapper = useMemo(
+    () =>
+      ({ children }: { children: React.ReactNode }) =>
+        features.profileOverhaul ? (
+          <Box mt="md">{children}</Box>
+        ) : (
+          <Tabs.Panel value="/posts">{children}</Tabs.Panel>
+        ),
+    [features.profileOverhaul]
+  );
 
-  const Wrapper = ({ children }: { children: React.ReactNode }) =>
-    features.profileOverhaul ? (
-      <Box mt="md">{children}</Box>
-    ) : (
-      <Tabs.Panel value="/posts">{children}</Tabs.Panel>
-    );
+  if (!query.username) return <NotFound />;
 
   return (
     <Wrapper>

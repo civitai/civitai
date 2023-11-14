@@ -43,6 +43,8 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { TRPCClientError } from '@trpc/client';
+import { getFilesHash } from '~/client-utils/file-hashing';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -82,6 +84,7 @@ const formSchema = z
   );
 
 export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const queryUtils = trpc.useContext();
@@ -120,6 +123,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
   const [creating, setCreating] = useState(false);
   const bountyEntryUpsertMutation = trpc.bountyEntry.upsert.useMutation();
+  const { mutateAsync: getModelsByHashMutation } = trpc.model.getModelsByHash.useMutation();
 
   const handleSubmit = ({
     bountyFiles,
@@ -403,6 +407,39 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           />
           <InputMultiFileUpload
             name="bountyFiles"
+            onFilesValidate={async (files) => {
+              if (
+                ![BountyType.ModelCreation, BountyType.LoraCreation, BountyType.EmbedCreation].some(
+                  (t) => t === bounty.type
+                )
+              ) {
+                // Anything goes:
+                return {
+                  valid: true,
+                };
+              }
+
+              const hashes = await getFilesHash(files);
+              const existingModels = await getModelsByHashMutation({
+                hashes,
+              });
+
+              if (
+                existingModels.length > 0 &&
+                existingModels.find((m) => m.userId !== currentUser?.id)
+              ) {
+                return {
+                  valid: false,
+                  errors: [
+                    'You cannot submit a model that already exists in the system and does not belong to your account',
+                  ],
+                };
+              }
+
+              return {
+                valid: true,
+              };
+            }}
             label={
               <Group spacing={8} noWrap>
                 <Text size="xl">Bounty Files</Text>
