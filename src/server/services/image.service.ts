@@ -475,9 +475,14 @@ export const getAllImages = async ({
   nsfw?: NsfwLevel;
   headers?: Record<string, string>;
 }) => {
-  const AND = [Prisma.sql`i."postId" IS NOT NULL`];
+  const AND: Prisma.Sql[] = [];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
+
+  const requiresPostId = !isModerator || !(needsReview || reportReview || tagReview);
+  if (requiresPostId) {
+    AND.push(Prisma.sql`i."postId" IS NOT NULL`);
+  }
 
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
@@ -730,11 +735,9 @@ export const getAllImages = async ({
   const queryFrom = Prisma.sql`
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
-      !isModerator
-        ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
-        : ''
-    )}
+    ${Prisma.raw(!requiresPostId ? 'LEFT ' : '')}JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
+    !isModerator ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})` : ''
+  )}
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''

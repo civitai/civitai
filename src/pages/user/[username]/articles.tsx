@@ -1,7 +1,7 @@
 import { Box, Group, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
@@ -51,16 +51,19 @@ export default function UserArticlesPage() {
   );
   const viewingPublished = section === 'published';
   const features = useFeatureFlags();
+  const Wrapper = useMemo(
+    () =>
+      ({ children }: { children: React.ReactNode }) =>
+        features.profileOverhaul ? (
+          <Box mt="md">{children}</Box>
+        ) : (
+          <Tabs.Panel value="/articles">{children}</Tabs.Panel>
+        ),
+    [features.profileOverhaul]
+  );
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
-
-  const Wrapper = ({ children }: { children: React.ReactNode }) =>
-    features.profileOverhaul ? (
-      <Box mt="md">{children}</Box>
-    ) : (
-      <Tabs.Panel value="/articles">{children}</Tabs.Panel>
-    );
 
   return (
     <Wrapper>

@@ -307,3 +307,8 @@ export const imageModelDetailSchema = z.object({
 export const characterModelDetailSchema = z.object({});
 export const textModelDetailSchema = z.object({});
 export const audioModelDetailSchema = z.object({});
+
+export type ModelByHashesInput = z.infer<typeof modelByHashesInput>;
+export const modelByHashesInput = z.object({
+  hashes: z.array(z.string()),
+});

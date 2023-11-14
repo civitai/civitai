@@ -31,6 +31,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   ) => React.ReactNode;
   orientation?: 'horizontal' | 'vertical';
   showDropzoneStatus?: boolean;
+  onFilesValidate?: (files: File[]) => Promise<{ valid: boolean; errors?: string[] }>;
 };
 
 export function MultiFileInputUpload({
@@ -40,6 +41,7 @@ export function MultiFileInputUpload({
   renderItem,
   orientation,
   showDropzoneStatus = true,
+  onFilesValidate,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -54,6 +56,14 @@ export function MultiFileInputUpload({
     if (dropzoneProps?.maxFiles && files.length + droppedFiles.length > dropzoneProps.maxFiles) {
       setErrors(['Max files exceeded']);
       return;
+    }
+
+    if (onFilesValidate) {
+      const validation = await onFilesValidate(droppedFiles);
+      if (!validation.valid) {
+        setErrors(validation.errors ?? []);
+        return;
+      }
     }
 
     const uploadedFiles = await Promise.all(
