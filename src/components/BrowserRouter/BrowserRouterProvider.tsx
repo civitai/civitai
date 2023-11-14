@@ -14,8 +14,8 @@ type BrowserRouterState = { asPath: string; query: Record<string, any> };
 const BrowserRouterContext = createContext<{
   asPath: string;
   query: Record<string, any>;
-  push: (url: Url, as?: Url) => void;
-  replace: (url: Url, as?: Url) => void;
+  push: (url: Url, as?: Url, state?: Record<string, any>) => void;
+  replace: (url: Url, as?: Url, state?: Record<string, any>) => void;
   back: () => void;
 } | null>(null);
 
@@ -38,11 +38,10 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
   const {
     asPath = router.asPath,
     query = parseQuery({ url: `${router.pathname}?${QS.stringify(router.query)}` }),
-    setState,
   } = useBrowserRouterState();
 
   useDidUpdate(() => {
-    setState({ asPath: history.state.as, query: parseQuery() });
+    useBrowserRouterState.setState({ asPath: history.state.as, query: parseQuery() });
   }, [router]); //eslint-disable-line
 
   useEffect(() => {
@@ -52,7 +51,7 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       const event = e as CustomEvent;
       const state = event.detail[0];
       stateRef.current = { asPath: state.as, query: parseQuery(state) };
-      if (!usingNextRouter) setState(stateRef.current);
+      if (!usingNextRouter) useBrowserRouterState.setState(stateRef.current);
     };
 
     addEventListener('popstate', popstateFn);
@@ -69,7 +68,7 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
   const handleRouteChangeComplete = () => {
     if (stateRef.current && stateRef.current?.asPath === history.state.as)
-      setState(stateRef.current);
+      useBrowserRouterState.setState(stateRef.current);
 
     setUsingNextRouter(false);
   };
@@ -91,16 +90,19 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
   );
 }
 
-const goto = (type: 'replace' | 'push', url: Url, as?: Url) => {
+const goto = (type: 'replace' | 'push', url: Url, as?: Url, state?: Record<string, any>) => {
   const [_url, _urlAs] = resolveHref(Router, url, true);
   const [, _as] = as ? resolveHref(Router, as, true) : [_url, _urlAs];
 
   const historyState = {
     ...history.state,
-    // options: { ...history.state.options, key: uuidv4() },
+    state: { ...history.state.state, ...state },
+    key: uuidv4(),
     url: _url,
     as: _as,
   };
+
+  console.log(historyState.state);
 
   type === 'replace'
     ? history.replaceState(historyState, '', _as)
@@ -110,18 +112,12 @@ const goto = (type: 'replace' | 'push', url: Url, as?: Url) => {
 };
 
 const browserRouterControls = {
-  push: (url: Url, as?: Url) => goto('push', url, as),
-  replace: (url: Url, as?: Url) => goto('replace', url, as),
+  push: (url: Url, as?: Url, state?: Record<string, any>) => goto('push', url, as, state),
+  replace: (url: Url, as?: Url, state?: Record<string, any>) => goto('replace', url, as, state),
   back: () => history.go(-1),
 };
 
-const useBrowserRouterState = create<{
-  asPath?: string;
-  query?: Record<string, any>;
-  setState: (args: { asPath?: string; query?: Record<string, any> }) => void;
-}>((set) => ({
-  setState: (args) => set(({ setState, ...state }) => ({ ...state, ...args })),
-}));
+const useBrowserRouterState = create<{ asPath?: string; query?: Record<string, any> }>(() => ({}));
 
 export const getBrowserRouter = () => {
   const { query = Router.query, asPath = Router.asPath } = useBrowserRouterState.getState();

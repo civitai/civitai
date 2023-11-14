@@ -5,12 +5,14 @@ import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { useEffect } from 'react';
 
 export default function ImagePage() {
   const router = useBrowserRouter();
   const imageId = router.query.imageId;
   const filters = imagesQueryParamSchema.parse(router.query);
 
+  useEffect(() => console.log('image details page loaded'), []);
   if (!imageId) return null;
 
   return (

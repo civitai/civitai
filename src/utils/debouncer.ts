@@ -25,3 +25,17 @@ export const useDebouncer = (timeout: number) => {
 
   return debouncer;
 };
+
+export const createKeyDebouncer = (timeout: number) => {
+  const dictionary: Record<string, NodeJS.Timeout> = {};
+
+  const debouncer = (key: string, fn: () => void) => {
+    if (dictionary[key]) clearTimeout(dictionary[key]);
+    dictionary[key] = setTimeout(() => {
+      fn();
+      delete dictionary[key];
+    }, timeout);
+  };
+
+  return debouncer;
+};

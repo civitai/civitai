@@ -406,38 +406,41 @@ export default function ModelDetailsV2({
   }, [publishedVersions, selectedVersion, modelVersionId]);
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
-  useEffect(() => {
-    if (router) {
-      router.beforePopState(({ as, url }) => {
-        const modelsPath = features.alternateHome ? '/models' : '/';
+  // useEffect(() => {
+  //   if (router) {
+  //     router.beforePopState(({ as, url }) => {
+  //       console.log('[slug]');
+  //       const modelsPath = features.alternateHome ? '/models' : '/';
 
-        if (
-          as === modelsPath ||
-          as.startsWith(modelsPath + '?') ||
-          as.startsWith('/user/') ||
-          as.startsWith('/tag/') ||
-          as.startsWith('/search/models')
-        ) {
-          const [route, queryString] = as.split('?');
-          const [, otherQueryString] = url.split('?');
-          const queryParams = QS.parse(queryString);
-          const otherParams = QS.parse(otherQueryString);
+  //       if (
+  //         as === modelsPath ||
+  //         as.startsWith(modelsPath + '?') ||
+  //         as.startsWith('/user/') ||
+  //         as.startsWith('/tag/') ||
+  //         as.startsWith('/search/models')
+  //       ) {
+  //         const [route, queryString] = as.split('?');
+  //         const [, otherQueryString] = url.split('?');
+  //         const queryParams = QS.parse(queryString);
+  //         const otherParams = QS.parse(otherQueryString);
 
-          router.replace(
-            { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
-            as
-          );
+  //         router.replace(
+  //           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
+  //           as
+  //         );
 
-          return false;
-        }
+  //         console.log({ as });
 
-        return true;
-      });
-    }
-    // Below was commented out as it's not used on the docs when using `useRouter`.
-    // It seems to have been used before when `Router` was used instead of `useRouter`.
-    // return () => router.beforePopState(() => true);
-  }, [router, id, features]); // Add any state variables to dependencies array if needed.
+  //         return false;
+  //       }
+
+  //       return true;
+  //     });
+  //   }
+  //   // Below was commented out as it's not used on the docs when using `useRouter`.
+  //   // It seems to have been used before when `Router` was used instead of `useRouter`.
+  //   // return () => router.beforePopState(() => true);
+  // }, [router, id, features]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
 

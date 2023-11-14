@@ -18,19 +18,24 @@ export function RoutedDialogProvider() {
 
   useEffect(() => {
     router.beforePopState((state) => {
+      // console.log('RoutedDialogProvider');
       const previous = prevState.current;
       setUsingNextRouter(true);
 
       // it's magic...
       if (!state.url.includes('dialog') && router.pathname !== state.url.split('?')[0]) {
-        state.options.scroll = false;
         return true;
       }
       if (state.url.includes('dialog') || previous?.url.includes('dialog')) {
         setUsingNextRouter(false);
         return false;
       }
-      state.options.scroll = undefined;
+      // console.log({ state: state.url, prev: previous?.url });
+      // if (state.url.includes('dialog')) {
+      //   setUsingNextRouter(false);
+      //   return false;
+      // }
+      // state.options.scroll = undefined;
       return true;
     });
   }, [router]);
@@ -50,13 +55,14 @@ export function RoutedDialogProvider() {
     const toOpen = names.filter((name) => !openDialogs.includes(name));
 
     for (const name of toOpen) {
-      const sessionState = sessionStorage.getItem(name as DialogKey);
-      const state = sessionState ? JSON.parse(sessionState) : undefined;
+      // const sessionState = sessionStorage.getItem(name as DialogKey);
+      // const state = sessionState ? JSON.parse(sessionState) : undefined;
+      const state = history.state.state;
       const Dialog = createBrowserRouterSync(dialogs[name].component);
       dialogStore.trigger({
         id: name,
         component: Dialog,
-        props: { ...state },
+        props: { ...browserRouter.query, ...state },
         options: { onClose: () => history.go(-1) },
         type: 'routed-dialog',
       });
@@ -80,16 +86,16 @@ export function triggerRoutedDialog<T extends DialogKey>({
   const browserRouter = getBrowserRouter();
   const { url, asPath, state: sessionState } = resolveDialog(name, browserRouter.query, state);
 
-  if (sessionState) {
-    sessionStorage.setItem(
-      name,
-      JSON.stringify(sessionState, (key, value) =>
-        typeof value === 'bigint' ? value.toString() : value
-      )
-    );
-  }
+  // if (sessionState) {
+  //   sessionStorage.setItem(
+  //     name,
+  //     JSON.stringify(sessionState, (key, value) =>
+  //       typeof value === 'bigint' ? value.toString() : value
+  //     )
+  //   );
+  // }
 
-  browserRouter.push(url, asPath);
+  browserRouter.push(url, asPath, sessionState);
 }
 
 export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean = false>({
@@ -110,15 +116,15 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
 
   const handleClick = (e: any) => {
     e.preventDefault();
-    if (sessionState)
-      sessionStorage.setItem(
-        name,
-        JSON.stringify(sessionState, (key, value) =>
-          typeof value === 'bigint' ? value.toString() : value
-        )
-      );
+    // if (sessionState)
+    //   sessionStorage.setItem(
+    //     name,
+    //     JSON.stringify(sessionState, (key, value) =>
+    //       typeof value === 'bigint' ? value.toString() : value
+    //     )
+    //   );
 
-    browserRouter.push(url, asPath);
+    browserRouter.push(url, asPath, sessionState);
   };
 
   if (passHref) {
@@ -155,7 +161,8 @@ function resolveDialog<T extends DialogKey>(
       ...query,
       dialog: ([] as DialogKey[]).concat(query.dialog ?? []).concat(name),
     },
-    { ...state, as: typeof history !== 'undefined' ? history.state.as : undefined }
+    state
+    // { ...state, as: typeof history !== 'undefined' ? history.state.as : undefined }
   ); // eslint-disable-line
 
   const [_url, _urlAs] = resolveHref(Router, url, true);

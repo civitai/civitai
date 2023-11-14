@@ -37,14 +37,14 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
     /*
       This is necessary in order to maintain scroll position on router.back
     */
-    useEffect(() => {
-      router.beforePopState((state) => {
-        state.options.scroll = false;
-        return true;
-      });
+    // useEffect(() => {
+    //   router.beforePopState((state) => {
+    //     state.options.scroll = false;
+    //     return true;
+    //   });
 
-      return () => router.beforePopState(() => true);
-    }, []);
+    //   return () => router.beforePopState(() => true);
+    // }, []);
 
     if (!result.success) return null;
     if (!user && authGuard) {

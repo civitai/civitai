@@ -26,7 +26,7 @@ const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
   useEffect(() => {
     setTimeout(() => {
       setOpened(true);
-    }, 50);
+    }, 0);
   }, []);
 
   return (

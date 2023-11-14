@@ -86,11 +86,13 @@ export function ImageDetailProvider({
   );
 
   useEffect(() => {
-    if (prefetchedImage)
+    if (prefetchedImage && shouldFetchImage) {
+      console.log('replace', { shouldFetchImage });
       browserRouter.replace(
         { query: { ...browserRouter.query, postId: prefetchedImage.postId } },
         `/images/${imageId}`
       );
+    }
   }, [prefetchedImage]); // eslint-disable-line
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
