@@ -1,5 +1,3 @@
-import { Deferred } from '~/utils/deferred';
-
 type BackoffOptions<T = any> = {
   startingDelay: number;
   growthFactor: number;
@@ -8,6 +6,7 @@ type BackoffOptions<T = any> = {
   delayFirstAttempt?: boolean;
   resolve?: (data: T) => boolean;
   retry: (e: any, attemptNumber: number) => boolean | Promise<boolean>;
+  onMaxAttemptsReached?: () => void;
 };
 
 const defaultOptions: BackoffOptions = {
@@ -32,7 +31,6 @@ export class ExponentialBackoff<T = any> {
   private options: BackoffOptions<T>;
   private delay: number;
   private timeout?: NodeJS.Timeout;
-  private deferred?: Deferred;
 
   private get attemptLimitReached() {
     return this.attemptNumber >= this.options.maxAttempts || !this.timeout;
@@ -60,6 +58,7 @@ export class ExponentialBackoff<T = any> {
         const resolved = this.options.resolve?.(data) ?? false;
         if (resolved) this.attemptNumber = 0;
         else if (!this.attemptLimitReached) this.execute(cb);
+        else this.options.onMaxAttemptsReached?.();
       } catch (e) {
         const shouldRetry = !this.attemptLimitReached && this.options.retry(e, this.attemptNumber);
         if (shouldRetry) this.execute(cb);
@@ -71,9 +70,8 @@ export class ExponentialBackoff<T = any> {
     if (this.timeout) {
       clearTimeout(this.timeout);
       this.timeout = undefined;
+      this.attemptNumber = 0;
     }
-    this.attemptNumber = 0;
-    this.deferred?.reject();
   };
 }
 

@@ -41,7 +41,10 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
   } = useBrowserRouterState();
 
   useDidUpdate(() => {
-    useBrowserRouterState.setState({ asPath: history.state.as, query: parseQuery() });
+    useBrowserRouterState.setState({
+      asPath: router.asPath,
+      query: parseQuery({ url: `${router.pathname}?${QS.stringify(router.query)}` }),
+    });
   }, [router]); //eslint-disable-line
 
   useEffect(() => {
@@ -61,10 +64,6 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       removeEventListener('locationchange', locationChangeFn);
     };
   }, []);
-
-  // const handleRouteChangeStart = () => {
-
-  // };
 
   const handleRouteChangeComplete = () => {
     if (stateRef.current && stateRef.current?.asPath === history.state.as)
@@ -101,8 +100,6 @@ const goto = (type: 'replace' | 'push', url: Url, as?: Url, state?: Record<strin
     url: _url,
     as: _as,
   };
-
-  console.log(historyState.state);
 
   type === 'replace'
     ? history.replaceState(historyState, '', _as)

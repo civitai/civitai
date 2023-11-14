@@ -17,34 +17,44 @@ emitter.on('scroll', ({ key, ...scrollPosition }) => {
 
 export const useScrollPosition = () => {
   useEffect(() => {
+    let canEmit = true;
     const node = document.querySelector('html');
     if (typeof window !== 'undefined') history.scrollRestoration = 'manual';
 
     const handleRouteChangeComplete = () => {
+      canEmit = false;
       const backoff = new ExponentialBackoff({
         startingDelay: 50,
         growthFactor: 1,
         maxAttempts: 10,
+        onMaxAttemptsReached: () => {
+          canEmit = true;
+        },
       });
       backoff.execute(() => {
         const record = scrollMap.get(history.state.key);
         if (record && node) {
+          // console.log(window.innerHeight, record?.scrollTop, node?.scrollTop);
+          if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
+            backoff.abort();
+            canEmit = true;
+            return;
+          }
+
           node.scrollTop = record.scrollTop;
           node.scrollLeft = record.scrollLeft;
-
-          if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft)
-            backoff.abort();
         }
       });
     };
 
     const handleScroll = () => {
-      if (node)
+      if (node && canEmit) {
         emitter.emit('scroll', {
           key: history.state.key,
           scrollTop: node.scrollTop,
           scrollLeft: node.scrollLeft,
         });
+      }
     };
 
     addEventListener('scroll', handleScroll);
