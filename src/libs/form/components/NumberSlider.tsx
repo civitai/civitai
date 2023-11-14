@@ -58,7 +58,7 @@ export function NumberSlider({
 
   useEffect(() => {
     // Set the right selectedPreset when value changes
-    if (value !== state._value)
+    if (value?.toString() !== state.selectedPreset)
       setState((current) => ({ ...current, selectedPreset: value?.toString() }));
   }, [value]);
 
@@ -191,7 +191,7 @@ const getComputedWidth = (elem: HTMLInputElement, min: number, max: number, prec
   return `calc(${ch}ch + ${computed.paddingLeft} + ${computed.paddingRight} + ${computed.borderLeftWidth} + ${computed.borderRightWidth} + 6px)`;
 };
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   fill: { flex: 1 },
   number: { flex: 0, minWidth: 60 },
 }));
