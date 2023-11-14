@@ -73,8 +73,6 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { calculateGenerationBill } from '~/server/common/generation';
 import { getHotkeyHandler } from '@mantine/hooks';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
@@ -105,8 +103,15 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line
 
-  const { totalCost, baseModel, hasResources, trainedWords, additionalResourcesCount, isSDXL } =
-    useDerivedGenerationState();
+  const {
+    totalCost,
+    baseModel,
+    hasResources,
+    trainedWords,
+    additionalResourcesCount,
+    samplerCfgOffset,
+    isSDXL,
+  } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
@@ -462,9 +467,9 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                           sliderProps={sharedSliderProps}
                           numberProps={sharedNumberProps}
                           presets={[
-                            { label: 'Fast', value: '10' },
-                            { label: 'Balanced', value: '20' },
-                            { label: 'High', value: '30' },
+                            { label: 'Fast', value: Number(10 + samplerCfgOffset).toString() },
+                            { label: 'Balanced', value: Number(20 + samplerCfgOffset).toString() },
+                            { label: 'High', value: Number(30 + samplerCfgOffset).toString() },
                           ]}
                           reverse
                         />
