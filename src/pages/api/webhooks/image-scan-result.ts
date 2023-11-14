@@ -71,9 +71,25 @@ export default WebhookEndpoint(async function imageTags(req, res) {
         });
         break;
       case Status.Unscannable:
+        let { scanJobs } = (await dbWrite.image.findUnique({
+          where: { id: data.id },
+          select: { scanJobs: true },
+        })) ?? { scanJobs: {} };
+
+        if (typeof scanJobs !== 'object') scanJobs = {};
+
+        let retryCount = 0;
+        if (scanJobs && 'retryCount' in scanJobs) {
+          retryCount = scanJobs.retryCount as number;
+          retryCount++;
+        }
+
         await dbWrite.image.updateMany({
           where: { id: data.id, ingestion: { in: pendingStates } },
-          data: { ingestion: ImageIngestionStatus.Error },
+          data: {
+            ingestion: ImageIngestionStatus.Error,
+            scanJobs: { ...scanJobs, retryCount },
+          },
         });
         break;
       case Status.Success:
