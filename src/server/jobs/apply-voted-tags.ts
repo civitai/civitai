@@ -2,7 +2,8 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { imagesSearchIndex } from '~/server/search-index';
-import { SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { chunk } from 'lodash-es';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -81,10 +82,10 @@ async function applyUpvotes() {
 
   // Update NSFW baseline
   // --------------------------------------------
-  await dbWrite.$executeRaw`
-    -- Update NSFW baseline
-    WITH to_update AS (
-      SELECT array_agg(i.id) ids
+  const toUpdate = (
+    await dbWrite.$queryRaw<{ id: number }[]>`
+      -- Get updated images
+      SELECT DISTINCT i.id
       FROM "Image" i
       -- if any moderation tags were applied since last run
       WHERE EXISTS (
@@ -95,10 +96,24 @@ async function applyUpvotes() {
           AND toi."imageId" = i.id
           AND toi."createdAt" > ${lastApplied} - INTERVAL '1 minute'
       )
-    )
-    SELECT update_nsfw_levels(ids)
-    FROM to_update;
-  `;
+    `
+  ).map(({ id }) => id);
+
+  const batches = chunk(toUpdate, 500);
+  for (const batch of batches) {
+    // Update NSFW baseline - images
+    await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${batch.join(',')}])`);
+    // Update NSFW baseline - posts
+    await dbWrite.$executeRaw`
+      WITH to_update AS (
+        SELECT array_agg(DISTINCT i."postId") ids
+        FROM "Image" i
+        WHERE i.id IN (${Prisma.join(batch)})
+      )
+      SELECT update_post_nsfw_levels(ids)
+      FROM to_update;
+    `;
+  }
 
   // Update the last sent time
   // --------------------------------------------
@@ -226,10 +241,10 @@ async function applyDownvotes() {
 
   // Update NSFW baseline
   // --------------------------------------------
-  await dbWrite.$executeRaw`
-    -- Remove NSFW if no longer tagged
-    WITH to_update AS (
-      SELECT array_agg(i.id) ids
+  const toUpdate = (
+    await dbWrite.$queryRaw<{ id: number }[]>`
+      -- Get updated images
+      SELECT DISTINCT i.id
       FROM "Image" i
       WHERE nsfw != 'None'
       -- If any moderation tags were disabled since last run, update
@@ -240,17 +255,24 @@ async function applyDownvotes() {
           toi.disabled AND t.type = 'Moderation' AND toi."imageId" = i.id
           AND toi."disabledAt" > ${lastApplied} - INTERVAL '1 minute'
       )
-      -- And there aren't any remaining moderation tags
-      AND NOT EXISTS (
-        SELECT 1 FROM "TagsOnImage" toi
-        JOIN "Tag" t ON t.id = toi."tagId"
-        WHERE
-          toi.disabled = FALSE AND t.type = 'Moderation' AND toi."imageId" = i.id
+    `
+  ).map(({ id }) => id);
+
+  const batches = chunk(toUpdate, 500);
+  for (const batch of batches) {
+    // Update NSFW baseline - images
+    await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${batch.join(',')}])`);
+    // Update NSFW baseline - posts
+    await dbWrite.$executeRaw`
+      WITH to_update AS (
+        SELECT array_agg(DISTINCT i."postId") ids
+        FROM "Image" i
+        WHERE i.id IN (${Prisma.join(batch)})
       )
-    )
-    SELECT update_nsfw_levels(ids)
-    FROM to_update;
-  `;
+      SELECT update_post_nsfw_levels(ids)
+      FROM to_update;
+    `;
+  }
 
   // Update the last sent time
   // --------------------------------------------
