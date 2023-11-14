@@ -45,6 +45,7 @@ import {
   IconInfoCircle,
   IconLock,
   IconLockOpen,
+  IconPencilMinus,
   IconShare3,
   IconStar,
   IconTrash,
@@ -74,6 +75,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import Link from 'next/link';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -281,6 +283,24 @@ export default function BountyEntryDetailsPage({
 
   const shareSection = (
     <Group spacing={8} px={mobile ? 'xs' : 'md'} noWrap>
+      {isOwner && bountyEntry.awardedUnitAmountTotal === 0 && (
+        <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
+          <Button
+            size="md"
+            radius="xl"
+            color="gray"
+            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            compact
+            fullWidth
+            component="a"
+          >
+            <Group spacing={4} noWrap>
+              <IconPencilMinus size={14} />
+              <Text size="xs">Edit</Text>
+            </Group>
+          </Button>
+        </Link>
+      )}
       {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
         <Button
           size="md"

@@ -43,7 +43,7 @@ export const bountyEntryRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
     .query(getBountyEntryFilteredFilesHandler),
-  create: protectedProcedure
+  upsert: protectedProcedure
     .input(upsertBountyEntryInputSchema)
     .use(isFlagProtected('bounties'))
     .mutation(upsertBountyEntryHandler),

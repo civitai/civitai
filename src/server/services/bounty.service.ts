@@ -6,12 +6,12 @@ import {
   Prisma,
   TagTarget,
 } from '@prisma/client';
-import { ManipulateType } from 'dayjs';
+import dayjs, { ManipulateType } from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { decreaseDate, startOfDay, toUtc } from '~/utils/date-helpers';
 import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
@@ -244,8 +244,10 @@ export const updateBountyById = async ({
   details,
   startsAt: incomingStartsAt,
   expiresAt: incomingExpiresAt,
+  images,
+  userId,
   ...data
-}: UpdateBountyInput) => {
+}: UpdateBountyInput & { userId: number }) => {
   // Convert dates to UTC for storing
   const startsAt = startOfDay(toUtc(incomingStartsAt));
   const expiresAt = startOfDay(toUtc(incomingExpiresAt));
@@ -285,6 +287,7 @@ export const updateBountyById = async ({
             : undefined,
         },
       });
+
       if (!bounty) return null;
 
       if (files) {
@@ -294,6 +297,16 @@ export const updateBountyById = async ({
           entityType: 'Bounty',
           files,
           ownRights: !!ownRights,
+        });
+      }
+
+      if (images) {
+        await updateEntityImages({
+          images,
+          tx,
+          entityId: bounty.id,
+          entityType: 'Bounty',
+          userId,
         });
       }
 
@@ -312,7 +325,10 @@ export const upsertBounty = async ({
 }: UpsertBountyInput & { userId: number }) => {
   if (id) {
     const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
-    return updateBountyById(updateInput);
+    return updateBountyById({
+      ...updateInput,
+      userId,
+    });
   } else {
     const createInput = await createBountyInputSchema.parseAsync({ ...data });
     return createBounty({ ...createInput, userId });
@@ -320,13 +336,17 @@ export const upsertBounty = async ({
 };
 
 export const deleteBountyById = async ({ id }: GetByIdInput) => {
-  const bounty = await getBountyById({ id, select: { userId: true } });
+  const bounty = await getBountyById({ id, select: { userId: true, expiresAt: true } });
   if (!bounty) throw throwNotFoundError('Bounty not found');
 
+  // If only entries created AFTER the cuttoff date are found, we'll allow deletion
+  const entryCutOffDate = dayjs.utc(bounty.expiresAt).subtract(6, 'hour').toDate();
   const benefactorsCount = await dbWrite.bountyBenefactor.count({
     where: { bountyId: id, userId: bounty.userId ? { not: bounty.userId } : undefined },
   });
-  const entriesCount = await dbWrite.bountyEntry.count({ where: { bountyId: id } });
+  const entriesCount = await dbWrite.bountyEntry.count({
+    where: { bountyId: id, createdAt: { lte: entryCutOffDate } },
+  });
 
   if (benefactorsCount !== 0 || entriesCount !== 0)
     throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
