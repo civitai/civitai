@@ -10,8 +10,9 @@ import {
   getFormData,
   useDerivedGenerationState,
   useGenerationFormStore,
+  keyupEditAttention,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -209,6 +210,14 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const promptKeyHandler = getHotkeyHandler([
     ['mod+Enter', () => form.handleSubmit(handleSubmit)()],
+    [
+      'mod+ArrowUp',
+      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+    ],
+    [
+      'mod+ArrowDown',
+      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+    ],
   ]);
 
   const { requests } = useGetGenerationRequests();
