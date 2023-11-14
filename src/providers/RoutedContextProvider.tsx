@@ -14,7 +14,6 @@ const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'))
 const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 const HiddenCommentsModal = dynamic(() => import('~/routed-context/modals/HiddenCommentsModal'));
-const CollectionEdit = dynamic(() => import('~/routed-context/modals/CollectionEdit'));
 
 const registry = {
   filesEdit: {
@@ -66,14 +65,6 @@ const registry = {
         { shallow: true },
       ];
     },
-  },
-  collectionEdit: {
-    Component: CollectionEdit,
-    resolve: (args: React.ComponentProps<typeof CollectionEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'collectionEdit' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
   },
 };
 
