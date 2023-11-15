@@ -107,7 +107,7 @@ export function ImagesAsPostsCard({
                       </Tooltip>
                     )}
                     {data.review ? (
-                      <RoutedContextLink modal="resourceReviewModal" reviewId={data.review.id}>
+                      <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
                         <IconBadge
                           className={classes.statBadge}
                           sx={{
@@ -132,7 +132,7 @@ export function ImagesAsPostsCard({
                             </Center>
                           )}
                         </IconBadge>
-                      </RoutedContextLink>
+                      </RoutedDialogLink>
                     ) : currentUser?.id === data.user.id ? (
                       <>{/* <Button compact>Add Review</Button> */}</>
                     ) : null}

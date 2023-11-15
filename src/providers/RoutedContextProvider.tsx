@@ -12,7 +12,6 @@ import { Freeze } from '~/components/Freeze/Freeze';
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
-const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 
 const registry = {
   filesEdit: {
@@ -38,22 +37,6 @@ const registry = {
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],
-  },
-  resourceReviewModal: {
-    Component: ResourceReviewModal,
-    resolve: ({ reviewId, ...args }: React.ComponentProps<typeof ResourceReviewModal>) => {
-      const slug = Router.query.slug ?? 'placeholder';
-      return [
-        {
-          query: { ...Router.query, slug, reviewId, ...args, modal: 'resourceReviewModal' },
-        },
-        {
-          pathname: `/reviews/${reviewId}`,
-          query: args,
-        },
-        { shallow: true },
-      ];
-    },
   },
 };
 

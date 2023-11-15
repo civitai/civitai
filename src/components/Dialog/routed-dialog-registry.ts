@@ -6,6 +6,9 @@ const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDe
 const PostDetailModal = dynamic(() => import('~/components/Post/Detail/PostDetailModal'));
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/HiddenCommentsModal'));
+const ResourceReviewModal = dynamic(
+  () => import('~/components/ResourceReview/ResourceReviewModal')
+);
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -50,6 +53,12 @@ export const dialogs = createDialogDictionary({
     component: HiddenCommentsModal,
     resolve: (query, { modelId }) => ({
       url: { query: { ...query, modelId } },
+    }),
+  },
+  resourceReview: {
+    component: ResourceReviewModal,
+    resolve: (query, { reviewId }) => ({
+      url: { query: { ...query, reviewId } },
     }),
   },
 });
