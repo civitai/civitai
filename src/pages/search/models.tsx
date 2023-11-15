@@ -71,6 +71,7 @@ const RenderFilters = () => {
         sortBy={['name']}
         attribute="checkpointType"
       />
+      <ChipRefinementList title="Filter by File Format" sortBy={['name']} attribute="fileFormats" />
       <ChipRefinementList
         title="Filter by Category"
         sortBy={['name']}
