@@ -25,6 +25,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -280,8 +281,11 @@ export function ModelVersionList({
                     icon={<IconFileSettings size={14} stroke={1.5} />}
                     onClick={(e) => {
                       e.stopPropagation();
-                      openRoutedContext('filesEdit', {
-                        modelVersionId: version.id,
+                      triggerRoutedDialog({
+                        name: 'filesEdit',
+                        state: {
+                          modelVersionId: version.id,
+                        },
                       });
                     }}
                   >

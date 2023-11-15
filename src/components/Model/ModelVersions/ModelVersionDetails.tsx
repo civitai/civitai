@@ -63,7 +63,6 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { baseModelLicenses, CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -76,6 +75,7 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import Link from 'next/link';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function ModelVersionDetails({
   model,
@@ -651,15 +651,11 @@ export function ModelVersionDetails({
                     ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
                     : 'Files'}
                   {isOwnerOrMod && (
-                    <RoutedContextLink
-                      modal="filesEdit"
-                      modelVersionId={version.id}
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
                       <Text variant="link" size="sm">
                         Manage Files
                       </Text>
-                    </RoutedContextLink>
+                    </RoutedDialogLink>
                   )}
                 </Group>
               </Accordion.Control>

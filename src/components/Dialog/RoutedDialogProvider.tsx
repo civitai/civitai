@@ -1,4 +1,11 @@
-import React, { ComponentProps, ComponentType, cloneElement, useEffect, useRef } from 'react';
+import React, {
+  ComponentProps,
+  ComponentType,
+  cloneElement,
+  useEffect,
+  useMemo,
+  useRef,
+} from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
 import { dialogs } from './routed-dialog-registry';
@@ -7,7 +14,7 @@ import {
   getBrowserRouter,
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { resolveHref } from 'next/dist/shared/lib/router/router';
+import { NextRouter, resolveHref } from 'next/dist/shared/lib/router/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type DialogKey = keyof typeof dialogs;
@@ -108,12 +115,17 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
   style?: React.CSSProperties;
 }) {
-  const browserRouter = getBrowserRouter();
-  const { asPath } = resolveDialog(name, browserRouter.query, state);
+  const router = useRouter();
+  const browserRouter = useBrowserRouter();
+  const { asPath } = resolveDialog(name, browserRouter.query, state, router);
+  // const asPath = useResolveDialog({ name, state });
 
   const handleClick = (e: any) => {
-    e.preventDefault();
-    triggerRoutedDialog({ name, state });
+    if (!e.ctrlKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerRoutedDialog({ name, state });
+    }
   };
 
   if (passHref) {
@@ -132,6 +144,19 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   );
 }
 
+function useResolveDialog<T extends DialogKey>({
+  name,
+  state,
+}: {
+  name: T;
+  state: ComponentProps<(typeof dialogs)[T]['component']>;
+}) {
+  const router = useRouter();
+  const browserRouter = useBrowserRouter();
+  const { asPath } = resolveDialog(name, browserRouter.query, state, router);
+  return useMemo(() => asPath, [asPath]);
+}
+
 function createBrowserRouterSync(Dialog: ComponentType<any>) {
   return function BrowserRouterSync(args: ComponentProps<ComponentType<any>>) {
     const { query, state } = useBrowserRouter();
@@ -142,7 +167,8 @@ function createBrowserRouterSync(Dialog: ComponentType<any>) {
 function resolveDialog<T extends DialogKey>(
   name: T,
   query: Record<string, any>,
-  state: ComponentProps<(typeof dialogs)[T]['component']>
+  state: ComponentProps<(typeof dialogs)[T]['component']>,
+  router: NextRouter = Router
 ) {
   const dialog = dialogs[name];
   if (!dialog) throw new Error('invalid dialog name');
@@ -158,8 +184,8 @@ function resolveDialog<T extends DialogKey>(
     state
   ); // eslint-disable-line
 
-  const [_url, _urlAs] = resolveHref(Router, url, true);
-  const [, _asPath] = asPath ? resolveHref(Router, asPath, true) : [_url, _urlAs];
+  const [_url, _urlAs] = resolveHref(router, url, true);
+  const [, _asPath] = asPath ? resolveHref(router, asPath, true) : [_url, _urlAs];
 
   return { url: _url, asPath: _asPath, state: _state };
 }

@@ -42,14 +42,14 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
   const {
     asPath = router.asPath,
-    query = parseQuery({ url: `${router.pathname}?${QS.stringify(router.query)}` }),
+    query = QS.parse(QS.stringify(router.query)),
     state = {},
   } = useBrowserRouterState();
 
   useDidUpdate(() => {
     useBrowserRouterState.setState({
       asPath: router.asPath,
-      query: parseQuery({ url: `${router.pathname}?${QS.stringify(router.query)}` }),
+      query: QS.parse(QS.stringify(router.query)),
     });
   }, [router]); //eslint-disable-line
 

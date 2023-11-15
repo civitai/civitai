@@ -9,6 +9,7 @@ const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/Hidden
 const ResourceReviewModal = dynamic(
   () => import('~/components/ResourceReview/ResourceReviewModal')
 );
+const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModal'));
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -59,6 +60,12 @@ export const dialogs = createDialogDictionary({
     component: ResourceReviewModal,
     resolve: (query, { reviewId }) => ({
       url: { query: { ...query, reviewId } },
+    }),
+  },
+  filesEdit: {
+    component: FilesEditModal,
+    resolve: (query, { modelVersionId }) => ({
+      url: { query: { ...query, modelVersionId } },
     }),
   },
 });
