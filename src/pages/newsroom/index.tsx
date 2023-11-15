@@ -1,9 +1,11 @@
 import { Anchor, Center, Container, createStyles, Stack, Tabs, Text, Title } from '@mantine/core';
 import { useMemo } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeaturedArticle } from '~/components/Newsroom/FeaturedArticle';
 import { MediaKit } from '~/components/Newsroom/MediaKit';
 import { News } from '~/components/Newsroom/News';
 import { PressMentions } from '~/components/Newsroom/PressMentions';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -22,6 +24,8 @@ export default function CivitaiNewsroom() {
   const articles = data?.articles ?? [];
   const pressMentions = data?.pressMentions ?? [];
   const featuredArticle = useMemo(() => data?.articles.find((article) => article.featured), [data]);
+  const features = useFeatureFlags();
+  if (!features.newsroom) return <NotFound />;
 
   return (
     <>
