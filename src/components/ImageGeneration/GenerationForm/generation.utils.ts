@@ -1,4 +1,9 @@
-import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelSetType,
+  baseModelSets,
+  samplerOffsets,
+} from '~/server/common/constants';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { isDefined } from '~/utils/type-guards';
@@ -38,12 +43,21 @@ export const useDerivedGenerationState = () => {
     [resources]
   );
 
+  const samplerCfgOffset = useGenerationFormStore(({ sampler, cfgScale }) => {
+    const castedSampler = sampler as keyof typeof samplerOffsets;
+    const samplerOffset = samplerOffsets[castedSampler] ?? 0;
+    const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
+
+    return samplerOffset * cfgOffset;
+  });
+
   return {
     totalCost,
     baseModel,
     hasResources,
     trainedWords,
     additionalResourcesCount,
+    samplerCfgOffset,
     isSDXL: baseModel === 'SDXL',
   };
 };

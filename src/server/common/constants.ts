@@ -308,13 +308,20 @@ export const samplerMap = new Map<Sampler, string[]>([
   ['UniPC', ['uni_pc', 'uni_pc_bh2']],
 ]);
 
+export const samplerOffsets = {
+  'Euler a': 4,
+  Euler: 4,
+  Heun: 8,
+  LMS: 10,
+  DDIM: 15,
+  'DPM++ 2M Karras': 4,
+  DPM2: 4,
+  'DPM2 a': 4,
+} as const;
+
 export const generation = {
   formStoreKey: 'generation-form',
-  samplers: constants.samplers.filter((sampler) =>
-    ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(
-      sampler
-    )
-  ),
+  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
   defaultValues: {
     cfgScale: 7,
     steps: 25,
