@@ -583,8 +583,24 @@ export default function BountyEntryDetailsPage({
                   entityId={bountyEntry.id}
                   entityType="bountyEntry"
                   mobile
+                  onImageChange={(images) => {
+                    const [image] = images;
+                    if (image) {
+                      setActiveImage(image as BountyEntryGetById['images'][number]);
+                    }
+                  }}
                 />
               </div>
+              {activeImage && (
+                <VotableTags
+                  entityType="image"
+                  entityId={activeImage.id}
+                  canAdd
+                  canAddModerated={false}
+                  collapsible
+                  px="sm"
+                />
+              )}
               {notesSection}
               <Divider label="Discussion" labelPosition="center" />
               <Stack spacing={8} px="xs">

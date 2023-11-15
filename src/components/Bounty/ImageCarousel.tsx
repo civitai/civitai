@@ -23,7 +23,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import Link from 'next/link';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { applyUserPreferencesImages } from '../Search/search.utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
@@ -119,6 +119,7 @@ export function ImageCarousel({
   mobile = false,
   onClick,
   isLoading,
+  onImageChange,
 }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -143,6 +144,12 @@ export function ImageCarousel({
         : [],
     [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images, loadingHiddenPreferences]
   );
+
+  useEffect(() => {
+    if (filteredImages.length > 0) {
+      onImageChange?.(mobile ? [filteredImages[0]] : filteredImages.slice(0, 2));
+    }
+  }, [filteredImages]);
 
   if (!filteredImages.length) {
     return (
@@ -199,6 +206,13 @@ export function ImageCarousel({
         withControls={filteredImages.length > 2 ? true : false}
         controlSize={mobile ? 32 : 56}
         loop
+        onSlideChange={(index) => {
+          if (onImageChange) {
+            onImageChange(
+              mobile ? [filteredImages[index]] : filteredImages.slice(index, index + 2)
+            );
+          }
+        }}
       >
         <ImageGuard
           images={filteredImages}
@@ -298,4 +312,5 @@ type Props = {
   mobile?: boolean;
   onClick?: (image: ImageProps) => void;
   isLoading?: boolean;
+  onImageChange?: (images: ImageProps[]) => void;
 } & ImageGuardConnect;
