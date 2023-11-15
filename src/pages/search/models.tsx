@@ -58,8 +58,14 @@ const RenderFilters = () => {
         title="Filter by Base Model"
         attribute="version.baseModel"
         sortBy={['name']}
+        limit={20}
       />
-      <ChipRefinementList title="Filter by Model Type" attribute="type" sortBy={['name']} />
+      <ChipRefinementList
+        title="Filter by Model Type"
+        attribute="type"
+        sortBy={['name']}
+        limit={20}
+      />
       <ChipRefinementList
         title="Filter by Checkpoint Type"
         sortBy={['name']}
@@ -71,16 +77,12 @@ const RenderFilters = () => {
         attribute="category.name"
         limit={100}
       />
-      <SearchableMultiSelectRefinementList
-        title="Users"
-        attribute="user.username"
-        searchable={true}
-      />
+      <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList
         title="Tags"
         attribute="tags.name"
         operator="and"
-        searchable={true}
+        searchable
       />
       <ClearRefinements />
     </>
