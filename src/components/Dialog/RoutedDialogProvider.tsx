@@ -16,6 +16,7 @@ import {
 } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { NextRouter, resolveHref } from 'next/dist/shared/lib/router/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { QS } from '~/utils/qs';
 
 type DialogKey = keyof typeof dialogs;
 
@@ -116,9 +117,8 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   style?: React.CSSProperties;
 }) {
   const router = useRouter();
-  const browserRouter = useBrowserRouter();
-  const { asPath } = resolveDialog(name, browserRouter.query, state, router);
-  // const asPath = useResolveDialog({ name, state });
+  const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
+  const { asPath } = resolveDialog(name, query, state, router);
 
   const handleClick = (e: any) => {
     if (!e.ctrlKey) {
@@ -144,19 +144,6 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   );
 }
 
-function useResolveDialog<T extends DialogKey>({
-  name,
-  state,
-}: {
-  name: T;
-  state: ComponentProps<(typeof dialogs)[T]['component']>;
-}) {
-  const router = useRouter();
-  const browserRouter = useBrowserRouter();
-  const { asPath } = resolveDialog(name, browserRouter.query, state, router);
-  return useMemo(() => asPath, [asPath]);
-}
-
 function createBrowserRouterSync(Dialog: ComponentType<any>) {
   return function BrowserRouterSync(args: ComponentProps<ComponentType<any>>) {
     const { query, state } = useBrowserRouter();
@@ -166,7 +153,7 @@ function createBrowserRouterSync(Dialog: ComponentType<any>) {
 
 function resolveDialog<T extends DialogKey>(
   name: T,
-  query: Record<string, any>,
+  query: Record<string, any> = {},
   state: ComponentProps<(typeof dialogs)[T]['component']>,
   router: NextRouter = Router
 ) {

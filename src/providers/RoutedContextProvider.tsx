@@ -11,17 +11,8 @@ import { Freeze } from '~/components/Freeze/Freeze';
 
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
-const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 
 const registry = {
-  filesEdit: {
-    Component: FilesEdit,
-    resolve: (args: React.ComponentProps<typeof FilesEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'filesEdit' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
   commentThread: {
     Component: CommentThread,
     resolve: (args: React.ComponentProps<typeof CommentThread>) => [

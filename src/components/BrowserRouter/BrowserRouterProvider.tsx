@@ -129,8 +129,10 @@ const useBrowserRouterState = create<{
 
 export const getBrowserRouter = () => {
   const isClient = typeof window !== 'undefined';
-  const { query = isClient ? Router.query : {}, asPath = isClient ? Router.asPath : {} } =
-    useBrowserRouterState.getState();
+  const {
+    query = isClient ? Router.query : undefined,
+    asPath = isClient ? Router.asPath : undefined,
+  } = useBrowserRouterState.getState();
   return { query, asPath, ...browserRouterControls };
 };
 
