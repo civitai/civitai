@@ -76,7 +76,6 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -110,6 +109,7 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -404,43 +404,6 @@ export default function ModelDetailsV2({
       });
     }
   }, [publishedVersions, selectedVersion, modelVersionId]);
-
-  // when a user navigates back in their browser, set the previous url with the query string model={id}
-  // useEffect(() => {
-  //   if (router) {
-  //     router.beforePopState(({ as, url }) => {
-  //       console.log('[slug]');
-  //       const modelsPath = features.alternateHome ? '/models' : '/';
-
-  //       if (
-  //         as === modelsPath ||
-  //         as.startsWith(modelsPath + '?') ||
-  //         as.startsWith('/user/') ||
-  //         as.startsWith('/tag/') ||
-  //         as.startsWith('/search/models')
-  //       ) {
-  //         const [route, queryString] = as.split('?');
-  //         const [, otherQueryString] = url.split('?');
-  //         const queryParams = QS.parse(queryString);
-  //         const otherParams = QS.parse(otherQueryString);
-
-  //         router.replace(
-  //           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
-  //           as
-  //         );
-
-  //         console.log({ as });
-
-  //         return false;
-  //       }
-
-  //       return true;
-  //     });
-  //   }
-  //   // Below was commented out as it's not used on the docs when using `useRouter`.
-  //   // It seems to have been used before when `Router` was used instead of `useRouter`.
-  //   // return () => router.beforePopState(() => true);
-  // }, [router, id, features]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
 
@@ -988,7 +951,7 @@ export default function ModelDetailsV2({
                         <Button
                           leftIcon={<IconMessage size={16} />}
                           variant="outline"
-                          onClick={() => openRoutedContext('commentEdit', {})}
+                          onClick={() => triggerRoutedDialog({ name: 'commentEdit', state: {} })}
                           size="xs"
                         >
                           Add Comment

@@ -32,13 +32,16 @@ export function RoutedDialogProvider() {
       setUsingNextRouter(true);
 
       // it's magic...
-      if (!state.url.includes('dialog') && router.pathname !== state.url.split('?')[0]) {
+      if (!state.url.includes('dialog') && router.asPath.split('?')[0] !== state.as.split('?')[0]) {
+        console.log(1);
         return true;
       }
       if (state.url.includes('dialog') || previous?.url.includes('dialog')) {
         setUsingNextRouter(false);
+        console.log(2);
         return false;
       }
+      console.log(3);
       return true;
     });
   }, [router]);
@@ -151,6 +154,17 @@ function createBrowserRouterSync(Dialog: ComponentType<any>) {
   };
 }
 
+const getAsPath = (query: Record<string, any>, router: NextRouter) => {
+  const matches = router.pathname.match(/\[([\.\w]+)\]/g);
+  const params = { ...query };
+  for (const key in params) {
+    if (matches?.some((match) => match.includes(key))) delete params[key];
+  }
+  let asPath = router.asPath.split('?')[0];
+  if (Object.keys(params).length > 0) asPath = `${asPath}?${QS.stringify(params)}`;
+  return asPath;
+};
+
 function resolveDialog<T extends DialogKey>(
   name: T,
   query: Record<string, any> = {},
@@ -159,9 +173,10 @@ function resolveDialog<T extends DialogKey>(
 ) {
   const dialog = dialogs[name];
   if (!dialog) throw new Error('invalid dialog name');
+
   const {
-    url,
-    asPath,
+    query: resolvedQuery,
+    asPath = getAsPath(resolvedQuery, router),
     state: _state,
   } = dialog.resolve(
     {
@@ -171,8 +186,9 @@ function resolveDialog<T extends DialogKey>(
     state
   ); // eslint-disable-line
 
-  const [_url, _urlAs] = resolveHref(router, url, true);
+  const [_url, _urlAs] = resolveHref(router, { query: resolvedQuery as any }, true);
   const [, _asPath] = asPath ? resolveHref(router, asPath, true) : [_url, _urlAs];
+  // console.log({ _url, _urlAs, _asPath });
 
   return { url: _url, asPath: _asPath, state: _state };
 }

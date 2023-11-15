@@ -10,21 +10,12 @@ import useIsClient from '~/hooks/useIsClient';
 import { Freeze } from '~/components/Freeze/Freeze';
 
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
-const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 
 const registry = {
   commentThread: {
     Component: CommentThread,
     resolve: (args: React.ComponentProps<typeof CommentThread>) => [
       { query: { ...Router.query, ...args, modal: 'commentThread' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
-  },
-  commentEdit: {
-    Component: CommentEdit,
-    resolve: (args: React.ComponentProps<typeof CommentEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'commentEdit' } },
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],

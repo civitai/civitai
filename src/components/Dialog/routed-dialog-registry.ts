@@ -10,6 +10,9 @@ const ResourceReviewModal = dynamic(
   () => import('~/components/ResourceReview/ResourceReviewModal')
 );
 const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModal'));
+const CommentEditModal = dynamic(
+  () => import('~/components/Model/ModelDiscussion/CommentEditModal')
+);
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -18,9 +21,9 @@ type DialogItem<T> = {
   resolve: (
     query: Record<string, unknown>,
     args: ComponentProps<ComponentType<T>>
-  ) => { url: Url; asPath?: Url; state?: Record<string, unknown> };
+  ) => { query: Record<string, unknown>; asPath?: Url; state?: Record<string, unknown> };
 };
-type DialogRegistry<T extends Record<string, unknown>> = { [K in keyof T]: DialogItem<T[K]> };
+type DialogRegistry<T extends Record<string, any>> = { [K in keyof T]: DialogItem<T[K]> };
 
 function createDialogDictionary<T extends Record<string, unknown>>(
   dictionary: DialogRegistry<T>
@@ -32,7 +35,7 @@ export const dialogs = createDialogDictionary({
   imageDetail: {
     component: ImageDetailModal,
     resolve: (query, { imageId, ...state }) => ({
-      url: { query: { ...query, imageId } },
+      query: { ...query, imageId },
       asPath: `/images/${imageId}`,
       state,
     }),
@@ -40,32 +43,38 @@ export const dialogs = createDialogDictionary({
   postDetail: {
     component: PostDetailModal,
     resolve: (query, { postId }) => ({
-      url: { query: { ...query, postId } },
+      query: { ...query, postId },
       asPath: `/posts/${postId}`,
     }),
   },
   collectionEdit: {
     component: CollectionEditModal,
     resolve: (query, { collectionId }) => ({
-      url: { query: { ...query, collectionId } },
+      query: { ...query, collectionId },
     }),
   },
   hiddenModelComments: {
     component: HiddenCommentsModal,
     resolve: (query, { modelId }) => ({
-      url: { query: { ...query, modelId } },
+      query: { ...query, modelId },
     }),
   },
   resourceReview: {
     component: ResourceReviewModal,
     resolve: (query, { reviewId }) => ({
-      url: { query: { ...query, reviewId } },
+      query: { ...query, reviewId },
     }),
   },
   filesEdit: {
     component: FilesEditModal,
     resolve: (query, { modelVersionId }) => ({
-      url: { query: { ...query, modelVersionId } },
+      query: { ...query, modelVersionId },
+    }),
+  },
+  commentEdit: {
+    component: CommentEditModal,
+    resolve: (query, { commentId }) => ({
+      query: { ...query, commentId },
     }),
   },
 });

@@ -12,6 +12,7 @@ import {
   IconBan,
 } from '@tabler/icons-react';
 import { SessionUser } from 'next-auth';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -172,7 +173,9 @@ export function CommentDiscussionMenu({
             {((!comment.locked && !isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
-                onClick={() => openRoutedContext('commentEdit', { commentId: comment.id })}
+                onClick={() =>
+                  triggerRoutedDialog({ name: 'commentEdit', state: { commentId: comment.id } })
+                }
               >
                 Edit comment
               </Menu.Item>

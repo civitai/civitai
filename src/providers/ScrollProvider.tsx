@@ -34,7 +34,6 @@ export const useScrollPosition = () => {
       backoff.execute(() => {
         const record = scrollMap.get(history.state.key);
         if (record && node) {
-          // console.log(window.innerHeight, record?.scrollTop, node?.scrollTop);
           if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
             backoff.abort();
             canEmit = true;
