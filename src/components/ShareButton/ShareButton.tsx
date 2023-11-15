@@ -1,8 +1,7 @@
-import { Group, Popover, Stack, Text, Button } from '@mantine/core';
+import { Group, Popover, Stack, Text, Button, ThemeIcon } from '@mantine/core';
 import React from 'react';
 import { QS } from '~/utils/qs';
 import { SocialIconReddit } from '~/components/ShareButton/Icons/SocialIconReddit';
-import { SocialIconTwitter } from '~/components/ShareButton/Icons/SocialIconTwitter';
 import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
 import { useClipboard } from '@mantine/hooks';
 import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther';
@@ -12,6 +11,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { IconBrandX } from '@tabler/icons-react';
 
 export function ShareButton({
   children,
@@ -55,7 +55,7 @@ export function ShareButton({
       render: <SocialIconReddit />,
     },
     {
-      type: 'Twitter',
+      type: 'X',
       onClick: () => {
         trackShare({ platform: 'twitter', url });
         window.open(
@@ -66,7 +66,11 @@ export function ShareButton({
           })}`
         );
       },
-      render: <SocialIconTwitter />,
+      render: (
+        <ThemeIcon variant="filled" color="#000" size={60} radius="xl">
+          <IconBrandX size={30} />
+        </ThemeIcon>
+      ),
     },
     {
       type: 'Other',

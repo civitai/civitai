@@ -2,6 +2,7 @@ export type DomainLink = keyof typeof domainLinks;
 export const domainLinks = {
   huggingFace: ['huggingface.co'],
   twitter: ['twitter.com'],
+  x: ['x.com'],
   twitch: ['twitch.tv'],
   reddit: ['reddit.com'],
   youtube: ['youtube.com'],
