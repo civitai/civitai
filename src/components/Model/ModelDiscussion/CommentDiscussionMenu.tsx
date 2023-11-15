@@ -12,10 +12,8 @@ import {
   IconBan,
 } from '@tabler/icons-react';
 import { SessionUser } from 'next-auth';
-import {
-  closeLatestRoutedDialog,
-  triggerRoutedDialog,
-} from '~/components/Dialog/RoutedDialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -32,6 +30,7 @@ export function CommentDiscussionMenu({
   ...props
 }: Props) {
   const queryUtils = trpc.useContext();
+  const dialog = useDialogContext();
 
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
@@ -43,7 +42,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       closeAllModals();
-      closeLatestRoutedDialog();
+      dialog.onClose();
     },
     onError(error) {
       showErrorNotification({
@@ -102,7 +101,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getById.invalidate({ id: comment.id });
       closeModal('confirm-tos-violation');
-      closeLatestRoutedDialog();
+      dialog.onClose();
     },
     onError(error) {
       showErrorNotification({

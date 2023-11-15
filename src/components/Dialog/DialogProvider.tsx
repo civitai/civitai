@@ -7,12 +7,8 @@ type DialogState = {
   onClose: () => void;
 };
 
-const DialogContext = createContext<DialogState | null>(null);
-export const useDialogContext = () => {
-  const context = useContext(DialogContext);
-  if (!context) throw new Error('missing DialogContext');
-  return context;
-};
+const DialogContext = createContext<DialogState>({ opened: false, onClose: () => undefined });
+export const useDialogContext = () => useContext(DialogContext);
 
 const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
   const [opened, setOpened] = useState(false);
