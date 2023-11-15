@@ -12,15 +12,21 @@ import {
   getArticleById,
   getArticles,
   getArticlesByCategory,
+  getCivitaiNews,
   getDraftArticlesByUserId,
 } from '~/server/services/article.service';
 import { upsertArticleHandler } from '~/server/controllers/article.controller';
+import { edgeCacheIt } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 
 export const articleRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteArticlesSchema)
     .use(isFlagProtected('articles'))
     .query(({ input, ctx }) => getArticles({ ...input, sessionUser: ctx?.user })),
+  getCivitaiNews: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(() => getCivitaiNews()),
   getByCategory: publicProcedure
     .input(getInfiniteArticlesSchema)
     .use(isFlagProtected('articles'))

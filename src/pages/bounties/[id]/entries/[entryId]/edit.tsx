@@ -56,7 +56,12 @@ export default function BountyEntryCreate({
 
   if (isLoading || isLoadingEntry) return <PageLoader />;
 
-  if (!bounty || !bountyEntry || !currentUser || currentUser?.id !== bountyEntry?.user?.id) {
+  if (
+    !bounty ||
+    !bountyEntry ||
+    !currentUser ||
+    (!currentUser?.isModerator && currentUser?.id !== bountyEntry?.user?.id)
+  ) {
     return <NotFound />;
   }
 

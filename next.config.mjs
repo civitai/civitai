@@ -158,6 +158,11 @@ export default defineNextConfig(withAxiom({
         source: '/forms/bounty-refund',
         destination: 'https://forms.clickup.com/8459928/f/825mr-8331/R30FGV9JFHLF527GGN',
         permanent: true,
+      },
+      {
+        source: '/forms/press-inquiry',
+        destination: 'https://forms.clickup.com/8459928/f/825mr-9351/RZXWRNLV9Q1D32ACNP',
+        permanent: true,
       }
     ];
   },

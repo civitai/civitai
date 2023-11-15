@@ -1832,6 +1832,15 @@ model Article {
   collectionItems CollectionItem[]
 }
 
+model PressMention {
+  id          Int      @id @default(autoincrement())
+  title       String
+  url         String
+  source      String
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
 enum ArticleEngagementType {
   Favorite
   Hide

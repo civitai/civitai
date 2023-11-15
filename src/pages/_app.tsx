@@ -254,6 +254,7 @@ function MyApp(props: CustomAppProps) {
                 '#325D51',
               ],
             },
+            black: '#222',
           }}
           withGlobalStyles
           withNormalizeCSS

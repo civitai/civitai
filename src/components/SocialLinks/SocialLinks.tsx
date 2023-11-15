@@ -5,7 +5,7 @@ import {
   IconBrandInstagram,
   IconBrandReddit,
   IconBrandTiktok,
-  IconBrandTwitter,
+  IconBrandX,
   IconBrandYoutube,
   TablerIconsProps,
 } from '@tabler/icons-react';
@@ -31,7 +31,7 @@ type Props = ActionIconProps & {
 const SocialIcons: Record<SocialOption, (props: TablerIconsProps) => JSX.Element> = {
   github: IconBrandGithub,
   discord: IconBrandDiscord,
-  twitter: IconBrandTwitter,
+  twitter: IconBrandX,
   instagram: IconBrandInstagram,
   tiktok: IconBrandTiktok,
   reddit: IconBrandReddit,

@@ -132,12 +132,12 @@ const useStyles = createStyles((theme, _, getRef) => ({
   },
   c: {
     ref: getRef('c'),
-    fill: theme.colorScheme === 'dark' ? theme.colors.dark[0] : '#111',
+    fill: theme.colorScheme === 'dark' ? theme.colors.dark[0] : '#222',
   },
 
   ivit: {
     ref: getRef('ivit'),
-    fill: theme.colorScheme === 'dark' ? theme.colors.dark[0] : '#111',
+    fill: theme.colorScheme === 'dark' ? theme.colors.dark[0] : '#222',
   },
 
   ai: {

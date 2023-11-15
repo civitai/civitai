@@ -9,7 +9,7 @@ import {
   IconBrandReddit,
   IconBrandTumblr,
   IconBrandTwitch,
-  IconBrandTwitter,
+  IconBrandX,
   IconBrandYoutube,
   IconCup,
   IconMug,
@@ -33,7 +33,8 @@ export function DomainIcon({
 
 const tablerIconMap: { [key in DomainLink]: TablerIcon } = {
   huggingFace: IconBrandHuggingFace,
-  twitter: IconBrandTwitter,
+  twitter: IconBrandX,
+  x: IconBrandX,
   twitch: IconBrandTwitch,
   reddit: IconBrandReddit,
   youtube: IconBrandYoutube,

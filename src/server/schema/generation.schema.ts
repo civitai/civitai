@@ -137,7 +137,9 @@ const sharedGenerationParamsSchema = z.object({
   cfgScale: z.coerce.number().min(1).max(30),
   sampler: z
     .string()
-    .refine((val) => generation.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
+    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
+      message: 'invalid sampler',
+    }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
   steps: z.coerce.number().min(10).max(generation.maxValues.steps),
   clipSkip: z.coerce.number().default(1),

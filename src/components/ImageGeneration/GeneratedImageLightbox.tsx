@@ -1,12 +1,13 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { Box, Center } from '@mantine/core';
+import { Center } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { ContextModalProps } from '@mantine/modals';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { Generation } from '~/server/services/generation/generation.types';
 
 const TRANSITION_DURATION = 200;
@@ -20,8 +21,10 @@ export default function GeneratedImageLightbox({
   const { image, request } = innerProps;
   const { images: feed } = useGetGenerationRequests();
 
-  const initialSlide = feed.findIndex((item) => item.id === image.id);
-  const [currentSlide, setCurrentSlide] = useState<number>(initialSlide);
+  const { setRef, height, width } = useAspectRatioFit({
+    width: request.params.width ?? 1200,
+    height: request.params.height ?? 1200,
+  });
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   useAnimationOffsetEffect(embla, TRANSITION_DURATION);
@@ -31,28 +34,38 @@ export default function GeneratedImageLightbox({
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
+  const filteredFeed = useMemo(() => feed.filter((item) => item.available), [feed]);
+  const initialSlide = filteredFeed.findIndex((item) => item.id === image.id);
+
   return (
-    <Box sx={{ position: 'relative' }}>
+    <div ref={setRef} style={{ position: 'relative' }}>
       <Carousel
         align="center"
         slideGap="md"
         slidesToScroll={1}
         controlSize={40}
-        onSlideChange={setCurrentSlide}
         initialSlide={initialSlide > -1 ? initialSlide : 0}
         getEmblaApi={setEmbla}
         withKeyboardEvents={false}
         loop
       >
-        {feed.map((item) => (
-          <Carousel.Slide key={item.id} sx={{ height: 'calc(100vh - 84px)' }}>
-            <Center h="100%">
+        {filteredFeed.map((item) => (
+          <Carousel.Slide
+            key={item.id}
+            style={{
+              height: 'calc(100vh - 84px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Center h={height} w={width}>
               <EdgeMedia src={item.url} width={request.params.width} />
             </Center>
           </Carousel.Slide>
         ))}
       </Carousel>
-      <Box sx={{ position: 'fixed', bottom: 0, right: 0, width: '100%', maxWidth: 450 }}>
+      <div style={{ position: 'fixed', bottom: 0, right: 0, width: '100%', maxWidth: 450 }}>
         <GenerationDetails
           label="Generation Details"
           params={request.params}
@@ -66,7 +79,7 @@ export default function GeneratedImageLightbox({
           }}
           upsideDown
         />
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

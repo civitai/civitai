@@ -7,6 +7,7 @@ import {
   Center,
   createStyles,
   Group,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -22,7 +23,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import Link from 'next/link';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { applyUserPreferencesImages } from '../Search/search.utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
@@ -49,6 +50,17 @@ const useStyles = createStyles((theme) => ({
     [theme.fn.largerThan('md')]: {
       display: 'none',
     },
+  },
+  loader: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%,-50%)',
+    zIndex: 1,
+  },
+  loadingCarousel: {
+    pointerEvents: 'none',
+    opacity: 0.5,
   },
   footer: {
     display: 'flex',
@@ -106,6 +118,8 @@ export function ImageCarousel({
   nsfw,
   mobile = false,
   onClick,
+  isLoading,
+  onImageChange,
 }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -130,6 +144,12 @@ export function ImageCarousel({
         : [],
     [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images, loadingHiddenPreferences]
   );
+
+  useEffect(() => {
+    if (filteredImages.length > 0) {
+      onImageChange?.(mobile ? [filteredImages[0]] : filteredImages.slice(0, 2));
+    }
+  }, [filteredImages]);
 
   if (!filteredImages.length) {
     return (
@@ -169,99 +189,120 @@ export function ImageCarousel({
   }
 
   return (
-    <Carousel
-      key={entityId}
-      className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-      classNames={classes}
-      slideSize="50%"
-      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-      slideGap="xl"
-      align={filteredImages.length > 2 ? 'start' : 'center'}
-      slidesToScroll={mobile ? 1 : 2}
-      withControls={filteredImages.length > 2 ? true : false}
-      controlSize={mobile ? 32 : 56}
-      loop
-    >
-      <ImageGuard
-        images={filteredImages}
-        nsfw={nsfw}
-        connect={{ entityId, entityType }}
-        render={(image) => {
-          return (
-            <Carousel.Slide>
-              <Box
-                sx={{ cursor: 'pointer' }}
-                onClick={onClick ? () => onClick(image) : undefined}
-                tabIndex={0}
-                role="button"
-                onKeyDown={
-                  onClick
-                    ? (e) => {
-                        const keyDown = e.key !== undefined ? e.key : e.keyCode;
-                        if (
-                          keyDown === 'Enter' ||
-                          keyDown === 13 ||
-                          ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
-                          keyDown === 32
-                        ) {
-                          // (prevent default so the page doesn't scroll when pressing space)
-                          e.preventDefault();
-                          onClick(image);
-                        }
-                      }
-                    : undefined
-                }
-              >
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <Center style={{ height: '100%', width: '100%' }}>
-                      <div style={{ width: '100%', position: 'relative' }}>
-                        <ImageGuard.ToggleConnect position="top-left" />
-                        <ImageGuard.Report context="image" />
-                        {!safe ? (
-                          <AspectRatio
-                            ratio={1}
-                            sx={(theme) => ({
-                              width: '100%',
-                              borderRadius: theme.radius.md,
-                              overflow: 'hidden',
-                            })}
-                          >
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        ) : (
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{
-                              width: 450,
-                              style: { objectPosition: mobile ? 'top' : 'center' },
-                            }}
-                            radius="md"
-                            style={{ width: '100%' }}
-                            aspectRatio={1}
-                          />
-                        )}
-                        {image.meta && (
-                          <ImageMetaPopover
-                            meta={image.meta}
-                            generationProcess={image.generationProcess ?? undefined}
-                            imageId={image.id}
-                          >
-                            <ActionIcon variant="light" className={classes.meta}>
-                              <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                            </ActionIcon>
-                          </ImageMetaPopover>
-                        )}
-                      </div>
-                    </Center>
-                  )}
-                </ImageGuard.Content>
-              </Box>
-            </Carousel.Slide>
-          );
+    <Box pos="relative">
+      <Carousel
+        key={entityId}
+        className={cx(
+          !mobile && classes.carousel,
+          mobile && classes.mobileBlock,
+          isLoading && classes.loadingCarousel
+        )}
+        classNames={classes}
+        slideSize="50%"
+        breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+        slideGap="xl"
+        align={filteredImages.length > 2 ? 'start' : 'center'}
+        slidesToScroll={mobile ? 1 : 2}
+        withControls={filteredImages.length > 2 ? true : false}
+        controlSize={mobile ? 32 : 56}
+        loop
+        onSlideChange={(index) => {
+          if (onImageChange) {
+            onImageChange(
+              mobile ? [filteredImages[index]] : filteredImages.slice(index, index + 2)
+            );
+          }
         }}
-      />
-    </Carousel>
+      >
+        <ImageGuard
+          images={filteredImages}
+          nsfw={nsfw}
+          connect={{ entityId, entityType }}
+          render={(image) => {
+            return (
+              <Carousel.Slide>
+                <Box
+                  sx={{ cursor: 'pointer' }}
+                  onClick={onClick ? () => onClick(image) : undefined}
+                  tabIndex={0}
+                  role="button"
+                  onKeyDown={
+                    onClick
+                      ? (e) => {
+                          const keyDown = e.key !== undefined ? e.key : e.keyCode;
+                          if (
+                            keyDown === 'Enter' ||
+                            keyDown === 13 ||
+                            ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
+                            keyDown === 32
+                          ) {
+                            // (prevent default so the page doesn't scroll when pressing space)
+                            e.preventDefault();
+                            onClick(image);
+                          }
+                        }
+                      : undefined
+                  }
+                >
+                  <ImageGuard.Content>
+                    {({ safe }) => (
+                      <Center style={{ height: '100%', width: '100%' }}>
+                        <div style={{ width: '100%', position: 'relative' }}>
+                          <ImageGuard.ToggleConnect position="top-left" />
+                          <ImageGuard.Report context="image" />
+                          {!safe ? (
+                            <AspectRatio
+                              ratio={1}
+                              sx={(theme) => ({
+                                width: '100%',
+                                borderRadius: theme.radius.md,
+                                overflow: 'hidden',
+                              })}
+                            >
+                              <MediaHash {...image} />
+                            </AspectRatio>
+                          ) : (
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{
+                                width: 450,
+                                style: { objectPosition: mobile ? 'top' : 'center' },
+                              }}
+                              radius="md"
+                              style={{ width: '100%' }}
+                              aspectRatio={1}
+                            />
+                          )}
+                          {image.meta && (
+                            <ImageMetaPopover
+                              meta={image.meta}
+                              generationProcess={image.generationProcess ?? undefined}
+                              imageId={image.id}
+                            >
+                              <ActionIcon variant="light" className={classes.meta}>
+                                <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                          )}
+                        </div>
+                      </Center>
+                    )}
+                  </ImageGuard.Content>
+                </Box>
+              </Carousel.Slide>
+            );
+          }}
+        />
+      </Carousel>
+
+      {isLoading && (
+        <Box className={classes.loader}>
+          <Center>
+            <Loader />
+          </Center>
+        </Box>
+      )}
+    </Box>
   );
 }
 
@@ -270,4 +311,6 @@ type Props = {
   nsfw: boolean;
   mobile?: boolean;
   onClick?: (image: ImageProps) => void;
+  isLoading?: boolean;
+  onImageChange?: (images: ImageProps[]) => void;
 } & ImageGuardConnect;

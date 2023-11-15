@@ -253,12 +253,33 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       reviewKey = 'minor';
     } else if (nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
-        SELECT
-          COUNT(*) > 0 "poi"
-        FROM "ImageResource" ir
-        JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-        JOIN "Model" m ON m.id = mv."modelId"
-        WHERE ir."imageId" = ${image.id} AND m.poi
+        WITH to_check AS (
+          -- Check based on associated resources
+          SELECT
+            COUNT(*) > 0 "poi"
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = ${image.id} AND m.poi
+          UNION
+          -- Check based on associated bounties
+          SELECT
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi"
+          FROM "Image" i
+          JOIN "ImageConnection" ic ON ic."imageId" = i.id
+          JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
+          WHERE ic."imageId" = ${image.id}
+          UNION
+          -- Check based on associated bounty entries
+          SELECT
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi"
+          FROM "Image" i
+          JOIN "ImageConnection" ic ON ic."imageId" = i.id
+          JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
+          JOIN "Bounty" b ON b.id = be."bountyId"
+          WHERE ic."imageId" = ${image.id}
+        )
+        SELECT bool_or(poi) "poi" FROM to_check;
       `;
       if (poi) reviewKey = 'poi';
     }

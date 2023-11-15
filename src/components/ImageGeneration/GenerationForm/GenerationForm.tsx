@@ -10,8 +10,9 @@ import {
   getFormData,
   useDerivedGenerationState,
   useGenerationFormStore,
+  keyupEditAttention,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -72,8 +73,7 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { calculateGenerationBill } from '~/server/common/generation';
+import { getHotkeyHandler } from '@mantine/hooks';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -103,8 +103,15 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line
 
-  const { totalCost, baseModel, hasResources, trainedWords, additionalResourcesCount, isSDXL } =
-    useDerivedGenerationState();
+  const {
+    totalCost,
+    baseModel,
+    hasResources,
+    trainedWords,
+    additionalResourcesCount,
+    samplerCfgOffset,
+    isSDXL,
+  } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
@@ -206,11 +213,26 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   };
   // #endregion
 
+  const promptKeyHandler = getHotkeyHandler([
+    ['mod+Enter', () => form.handleSubmit(handleSubmit)()],
+    [
+      'mod+ArrowUp',
+      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+    ],
+    [
+      'mod+ArrowDown',
+      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+    ],
+  ]);
+
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit =
     pendingProcessingCount >= constants.imageGeneration.maxConcurrentRequests;
   const disableGenerateButton = reachedRequestLimit;
+
+  // Manually handle error display for prompt box
+  const { errors } = form.formState;
 
   return (
     <Form form={form} onSubmit={handleSubmit} onError={handleError}>
@@ -218,11 +240,11 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
         <ScrollArea sx={{ flex: 1 }}>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
-                    <DismissibleAlert
-                      id="image-gen-params"
-                      content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
-                    />
-                  )} */}
+              <DismissibleAlert
+                id="image-gen-params"
+                content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
+              />
+            )} */}
             <InputResourceSelect
               name="model"
               label="Model"
@@ -276,21 +298,82 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <Card {...sharedCardProps}>
               <Stack>
                 <Stack spacing={0}>
-                  <InputTextArea
-                    name="prompt"
-                    label="Prompt"
-                    withAsterisk
-                    autosize
-                    styles={
-                      showFillForm
-                        ? { input: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } }
-                        : undefined
-                    }
-                    onPaste={(event) => {
-                      const text = event.clipboardData.getData('text/plain');
-                      if (text) setShowFillForm(text.includes('Steps:'));
-                    }}
-                  />
+                  <Input.Wrapper label="Prompt" error={errors.prompt?.message} withAsterisk>
+                    <Paper
+                      px="sm"
+                      bg="transparent"
+                      sx={(theme) => ({
+                        borderBottomLeftRadius: showFillForm ? 0 : undefined,
+                        borderBottomRightRadius: showFillForm ? 0 : undefined,
+                        borderColor: errors.prompt
+                          ? theme.colors.red[theme.fn.primaryShade()]
+                          : undefined,
+                        marginBottom: errors.prompt ? 5 : undefined,
+
+                        // Apply focus styles if textarea is focused
+                        '&:has(textarea:focus)': {
+                          ...theme.focusRingStyles.inputStyles(theme),
+                        },
+                      })}
+                      withBorder
+                    >
+                      <InputTextArea
+                        name="prompt"
+                        placeholder="Your prompt goes here..."
+                        autosize
+                        styles={{
+                          input: {
+                            border: 'none',
+                            padding: '0',
+                          },
+                          // Prevents input from displaying form error
+                          error: { display: 'none' },
+                          wrapper: { margin: 0 },
+                        }}
+                        onPaste={(event) => {
+                          const text = event.clipboardData.getData('text/plain');
+                          if (text) setShowFillForm(text.includes('Steps:'));
+                        }}
+                        onKeyDown={promptKeyHandler}
+                      />
+                      {trainedWords.length > 0 ? (
+                        <Stack spacing={8} mb="xs">
+                          <Divider />
+                          <Text color="dimmed" size="xs" weight={590}>
+                            Trigger words
+                          </Text>
+                          <Group spacing={4}>
+                            <TrainedWords
+                              type="LORA"
+                              trainedWords={trainedWords}
+                              badgeProps={{ style: { textTransform: 'none' } }}
+                            />
+                            <CopyButton value={trainedWords.join(', ')}>
+                              {({ copied, copy }) => (
+                                <Button
+                                  variant="subtle"
+                                  size="xs"
+                                  color={copied ? 'green' : 'blue.5'}
+                                  onClick={copy}
+                                  compact
+                                >
+                                  {copied ? (
+                                    <Group spacing={4}>
+                                      Copied <IconCheck size={14} />
+                                    </Group>
+                                  ) : (
+                                    <Group spacing={4}>
+                                      Copy all <IconCopy size={14} />
+                                    </Group>
+                                  )}
+                                </Button>
+                              )}
+                            </CopyButton>
+                          </Group>
+                        </Stack>
+                      ) : null}
+                    </Paper>
+                  </Input.Wrapper>
                   {showFillForm && (
                     <Button
                       variant="light"
@@ -302,44 +385,14 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       Apply Parameters
                     </Button>
                   )}
-                  {trainedWords.length > 0 ? (
-                    <Stack spacing={8} mt={showFillForm ? 'md' : 8}>
-                      <Text color="dimmed" size="xs" weight={590}>
-                        Trigger words
-                      </Text>
-                      <TrainedWords
-                        type="LORA"
-                        trainedWords={trainedWords}
-                        badgeProps={{ style: { textTransform: 'none' } }}
-                      />
-                      <CopyButton value={trainedWords.join(', ')}>
-                        {({ copied, copy }) => (
-                          <Group position="left">
-                            <Button
-                              variant="subtle"
-                              size="xs"
-                              color={copied ? 'green' : 'blue.5'}
-                              onClick={copy}
-                              compact
-                            >
-                              {copied ? (
-                                <Group spacing={4}>
-                                  Copied <IconCheck size={14} />
-                                </Group>
-                              ) : (
-                                <Group spacing={4}>
-                                  Copy all <IconCopy size={14} />
-                                </Group>
-                              )}
-                            </Button>
-                          </Group>
-                        )}
-                      </CopyButton>
-                    </Stack>
-                  ) : null}
                 </Stack>
 
-                <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+                <InputTextArea
+                  name="negativePrompt"
+                  label="Negative Prompt"
+                  onKeyDown={promptKeyHandler}
+                  autosize
+                />
                 {!isSDXL && <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />}
               </Stack>
             </Card>
@@ -380,27 +433,45 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     </Accordion.Control>
                     <Accordion.Panel>
                       <Stack>
-                        <InputSelect name="sampler" label="Sampler" data={generation.samplers} />
-                        <Group position="apart">
-                          <InputNumberSlider
-                            name="steps"
-                            label="Steps"
-                            min={10}
-                            max={generation.maxValues.steps}
-                            sliderProps={sharedSliderProps}
-                            numberProps={sharedNumberProps}
-                          />
-                          <InputNumberSlider
-                            name="cfgScale"
-                            label="CFG Scale"
-                            min={1}
-                            max={isSDXL ? 10 : 30}
-                            step={0.5}
-                            precision={1}
-                            sliderProps={sharedSliderProps}
-                            numberProps={sharedNumberProps}
-                          />
-                        </Group>
+                        <InputNumberSlider
+                          name="cfgScale"
+                          label="CFG Scale"
+                          min={1}
+                          max={isSDXL ? 10 : 30}
+                          step={0.5}
+                          precision={1}
+                          sliderProps={sharedSliderProps}
+                          numberProps={sharedNumberProps}
+                          presets={[
+                            { label: 'Creative', value: '4' },
+                            { label: 'Balanced', value: '7' },
+                            { label: 'Precise', value: '10' },
+                          ]}
+                          reverse
+                        />
+                        <InputSelect
+                          name="sampler"
+                          label="Sampler"
+                          data={generation.samplers}
+                          presets={[
+                            { label: 'Fast', value: 'Euler a' },
+                            { label: 'Popular', value: 'DPM++ 2M Karras' },
+                          ]}
+                        />
+                        <InputNumberSlider
+                          name="steps"
+                          label="Steps"
+                          min={10}
+                          max={generation.maxValues.steps}
+                          sliderProps={sharedSliderProps}
+                          numberProps={sharedNumberProps}
+                          presets={[
+                            { label: 'Fast', value: Number(10 + samplerCfgOffset).toString() },
+                            { label: 'Balanced', value: Number(20 + samplerCfgOffset).toString() },
+                            { label: 'High', value: Number(30 + samplerCfgOffset).toString() },
+                          ]}
+                          reverse
+                        />
                         <InputSeed
                           name="seed"
                           label="Seed"

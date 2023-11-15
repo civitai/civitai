@@ -196,6 +196,7 @@ export const deleteBountyEntryHandler = async ({
   try {
     const deleted = await deleteBountyEntry({
       ...input,
+      isModerator: !!ctx.user.isModerator,
     });
     if (!deleted) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 

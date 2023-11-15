@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
+import { truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
@@ -21,7 +22,7 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -31,6 +32,7 @@ import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 
@@ -210,6 +212,67 @@ export const getArticles = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+type CivitaiNewsItemRaw = {
+  id: number;
+  cover: string;
+  title: string;
+  content: string;
+  publishedAt: Date;
+  userId: number;
+  featured: boolean;
+  summary?: string;
+};
+export type CivitaiNewsItem = {
+  id: number;
+  cover: string;
+  title: string;
+  content: string;
+  publishedAt: Date;
+  user: UserWithCosmetics;
+  featured: boolean;
+  summary: string;
+};
+export const getCivitaiNews = async () => {
+  const articlesRaw = await dbRead.$queryRaw<CivitaiNewsItemRaw[]>`
+    SELECT
+      a.id,
+      cover,
+      title,
+      content,
+      "publishedAt",
+      a."userId",
+      COALESCE(a.metadata->>'featured' = 'true', false) AS featured,
+      a.metadata->>'summary' AS summary
+    FROM "Article" a
+    JOIN "CollectionItem" ci ON ci."articleId" = a.id
+    JOIN "Collection" c ON c.id = ci."collectionId"
+    WHERE c.name = 'Newsroom' AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
+    ORDER BY a."createdAt" DESC
+    LIMIT 10
+  `;
+  const userIds = new Set(articlesRaw.map((x) => x.userId));
+  const users = await dbRead.user.findMany({
+    where: { id: { in: [...userIds] } },
+    select: userWithCosmeticsSelect,
+  });
+
+  const articles = articlesRaw.map(({ userId, summary, ...article }) => {
+    const user = users.find((x) => x.id === userId);
+    return {
+      ...article,
+      summary: summary ?? truncate(removeTags(article.content), { length: 200 }),
+      user: user ?? null,
+    } as CivitaiNewsItem;
+  });
+
+  const pressMentions = await dbRead.pressMention.findMany({
+    orderBy: { publishedAt: 'desc' },
+    where: { publishedAt: { lte: new Date() } },
+  });
+
+  return { articles, pressMentions };
 };
 
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
