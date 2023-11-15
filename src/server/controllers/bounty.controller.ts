@@ -353,7 +353,11 @@ export const deleteBountyHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const deleted = await deleteBountyById(input);
+    const deleted = await deleteBountyById({
+      ...input,
+      isModerator: !!ctx.user.isModerator,
+    });
+
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background

@@ -10,6 +10,7 @@ import {
   Group,
   Loader,
   MantineProvider,
+  Menu,
   Paper,
   ScrollArea,
   Stack,
@@ -23,6 +24,7 @@ import {
   IconPlaylistAdd,
   IconChevronLeft,
   IconChevronRight,
+  IconTrash,
 } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -44,11 +46,17 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { trpc } from '~/utils/trpc';
 import { useHotkeys } from '@mantine/hooks';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import {
+  ImageGuard,
+  ImageGuardConnect,
+  ImageGuardReportContext,
+} from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
+import React, { useState } from 'react';
 
 export function ImageDetailByProps({
   imageId,
@@ -59,6 +67,7 @@ export function ImageDetailByProps({
   image: defaultImageItem,
   entityId,
   entityType,
+  onDeleteImage,
 }: {
   imageId: number;
   onClose: () => void;
@@ -66,7 +75,9 @@ export function ImageDetailByProps({
   prevImageId: number | null;
   onSetImage: (id: number | null) => void;
   image?: ImageProps | null;
+  onDeleteImage?: (id: number) => void;
 } & Partial<ImageGuardConnect>) {
+  const currentUser = useCurrentUser();
   const { data = null, isLoading } = trpc.image.get.useQuery(
     {
       id: imageId,
@@ -86,9 +97,11 @@ export function ImageDetailByProps({
     laughCountAllTime: number;
     cryCountAllTime: number;
   } | null = data?.stats ?? null;
-  const user = data?.user;
 
+  const user = data?.user;
   const { classes, cx, theme } = useStyles();
+  const isOwner = user && user.id === currentUser?.id;
+  const isModerator = currentUser?.isModerator;
 
   return (
     <>
@@ -115,6 +128,8 @@ export function ImageDetailByProps({
             isLoading={isLoading}
             entityId={entityId}
             entityType={entityType}
+            onDeleteImage={onDeleteImage}
+            onClose={onClose}
           />
           <Card className={cx(classes.sidebar)}>
             {!image ? (
@@ -227,7 +242,7 @@ export function ImageDetailByProps({
                       entityType="image"
                       entityId={image.id}
                       canAdd
-                      canAddModerated={false}
+                      canAddModerated={isModerator}
                       collapsible
                       px="sm"
                     />
@@ -341,6 +356,8 @@ type GalleryCarouselProps = {
   nextImageId: number | null;
   prevImageId: number | null;
   onSetImage: (id: number | null) => void;
+  onDeleteImage?: (id: number) => void;
+  onClose: () => void;
 };
 
 export function ImageDetailCarousel({
@@ -352,6 +369,8 @@ export function ImageDetailCarousel({
   isLoading,
   entityId,
   entityType = 'post',
+  onDeleteImage,
+  onClose,
 }: GalleryCarouselProps & Partial<ImageGuardConnect>) {
   // const router = useRouter();
   const { classes, cx } = useCarrouselStyles();
@@ -360,6 +379,17 @@ export function ImageDetailCarousel({
     height: current?.height ?? 1200,
     width: current?.width ?? 1200,
   });
+  const user = current?.user;
+  const currentUser = useCurrentUser();
+  const isOwner = user && user.id === currentUser?.id;
+  const isModerator = currentUser?.isModerator;
+  const [deletingImage, setDeletingImage] = useState<boolean>(false);
+
+  const handleDeleteSuccess = async () => {
+    setDeletingImage(false);
+    onClose();
+    onDeleteImage?.(current?.id ?? -1);
+  };
 
   // #region [navigation]
   useHotkeys([
@@ -405,55 +435,98 @@ export function ImageDetailCarousel({
           <Loader />
         </Center>
       ) : (
-        <ImageGuard
-          images={[current]}
-          connect={{ entityId: entityId || current?.postId || -1, entityType }}
-          render={(image) => {
-            return (
-              <Center
-                sx={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                }}
-              >
+        <ImageGuardReportContext.Provider
+          value={{
+            getMenuItems: ({ menuItems, ...image }) => {
+              const items = menuItems.map((item) => item.component);
+
+              if (!isOwner && !isModerator) {
+                return items;
+              }
+
+              const deleteImage = (
+                <DeleteImage
+                  imageId={image.id}
+                  onSuccess={handleDeleteSuccess}
+                  onDelete={() => setDeletingImage(true)}
+                  closeOnConfirm
+                >
+                  {({ onClick, isLoading }) => (
+                    <Menu.Item
+                      color="red"
+                      icon={isLoading ? <Loader size={14} /> : <IconTrash size={14} stroke={1.5} />}
+                      onClick={onClick}
+                      disabled={isLoading}
+                      closeMenuOnClick
+                    >
+                      Delete
+                    </Menu.Item>
+                  )}
+                </DeleteImage>
+              );
+
+              return [deleteImage, ...items];
+            },
+          }}
+        >
+          <ImageGuard
+            images={[current]}
+            connect={{ entityId: entityId || current?.postId || -1, entityType }}
+            render={(image) => {
+              return (
                 <Center
-                  style={{
-                    position: 'relative',
-                    height: height,
-                    width: width,
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    opacity: deletingImage ? 0.5 : 1,
                   }}
                 >
-                  <ImageGuard.ToggleConnect
-                    position="top-left"
-                    sx={(theme) => ({ borderRadius: theme.radius.sm })}
-                  />
-                  <ImageGuard.ToggleImage
-                    position="top-left"
-                    sx={(theme) => ({ borderRadius: theme.radius.sm })}
-                  />
-                  <ImageGuard.Report />
-                  <ImageGuard.Unsafe>
-                    <MediaHash {...image} />
-                  </ImageGuard.Unsafe>
-                  <ImageGuard.Safe>
-                    <EdgeMedia
-                      src={image.url}
-                      name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
-                      type={image.type}
-                      style={{ maxHeight: '100%', maxWidth: '100%' }}
-                      width={image.width ?? 1200}
-                      anim
+                  <Center
+                    style={{
+                      position: 'relative',
+                      height: height,
+                      width: width,
+                    }}
+                  >
+                    <ImageGuard.ToggleConnect
+                      position="top-left"
+                      sx={(theme) => ({ borderRadius: theme.radius.sm })}
                     />
-                  </ImageGuard.Safe>
+                    <ImageGuard.ToggleImage
+                      position="top-left"
+                      sx={(theme) => ({ borderRadius: theme.radius.sm })}
+                    />
+                    <ImageGuard.Report />
+                    <ImageGuard.Unsafe>
+                      <MediaHash {...image} />
+                    </ImageGuard.Unsafe>
+                    <ImageGuard.Safe>
+                      <EdgeMedia
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        style={{ maxHeight: '100%', maxWidth: '100%' }}
+                        width={image.width ?? 1200}
+                        anim
+                      />
+                    </ImageGuard.Safe>
+                  </Center>
                 </Center>
-              </Center>
-            );
-          }}
-        />
+              );
+            }}
+          />
+        </ImageGuardReportContext.Provider>
+      )}
+      {deletingImage && (
+        <Box className={classes.loader}>
+          <Center>
+            <Loader />
+          </Center>
+        </Box>
       )}
     </div>
   );
@@ -463,6 +536,17 @@ const useCarrouselStyles = createStyles((theme, _props, getRef) => {
   return {
     root: {
       position: 'relative',
+    },
+    loader: {
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%,-50%)',
+      zIndex: 1,
+    },
+    imageLoading: {
+      pointerEvents: 'none',
+      opacity: 0.5,
     },
     center: {
       position: 'absolute',

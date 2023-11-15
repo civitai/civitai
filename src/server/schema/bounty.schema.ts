@@ -78,6 +78,7 @@ export const updateBountyInputSchema = createBountyInputSchema
     nsfw: true,
     ownRights: true,
     images: true,
+    entryLimit: true,
   })
   .extend({
     id: z.number(),

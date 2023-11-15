@@ -246,6 +246,7 @@ export const updateBountyById = async ({
   expiresAt: incomingExpiresAt,
   images,
   userId,
+  entryLimit,
   ...data
 }: UpdateBountyInput & { userId: number }) => {
   // Convert dates to UTC for storing
@@ -254,10 +255,34 @@ export const updateBountyById = async ({
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
+      const existing = await tx.bounty.findUniqueOrThrow({
+        where: { id },
+        select: {
+          id: true,
+          entryLimit: true,
+          complete: true,
+          _count: { select: { entries: true } },
+        },
+      });
+
+      if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
+
+      if (
+        entryLimit &&
+        existing.entryLimit &&
+        entryLimit < existing.entryLimit &&
+        existing._count.entries > 0
+      ) {
+        throw throwBadRequestError(
+          'Cannot reduce entry limit because some users already submitted entries.'
+        );
+      }
+
       const bounty = await tx.bounty.update({
         where: { id },
         data: {
           ...data,
+          entryLimit,
           startsAt,
           expiresAt,
           details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -335,21 +360,30 @@ export const upsertBounty = async ({
   }
 };
 
-export const deleteBountyById = async ({ id }: GetByIdInput) => {
-  const bounty = await getBountyById({ id, select: { userId: true, expiresAt: true } });
+export const deleteBountyById = async ({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator: boolean }) => {
+  const bounty = await getBountyById({
+    id,
+    select: { userId: true, expiresAt: true, complete: true, refunded: true },
+  });
+
   if (!bounty) throw throwNotFoundError('Bounty not found');
 
-  // If only entries created AFTER the cuttoff date are found, we'll allow deletion
-  const entryCutOffDate = dayjs.utc(bounty.expiresAt).subtract(6, 'hour').toDate();
-  const benefactorsCount = await dbWrite.bountyBenefactor.count({
-    where: { bountyId: id, userId: bounty.userId ? { not: bounty.userId } : undefined },
-  });
-  const entriesCount = await dbWrite.bountyEntry.count({
-    where: { bountyId: id, createdAt: { lte: entryCutOffDate } },
-  });
+  if (!isModerator) {
+    // If only entries created AFTER the cuttoff date are found, we'll allow deletion
+    const entryCutOffDate = dayjs.utc(bounty.expiresAt).subtract(6, 'hour').toDate();
+    const benefactorsCount = await dbWrite.bountyBenefactor.count({
+      where: { bountyId: id, userId: bounty.userId ? { not: bounty.userId } : undefined },
+    });
+    const entriesCount = await dbWrite.bountyEntry.count({
+      where: { bountyId: id, createdAt: { lte: entryCutOffDate } },
+    });
 
-  if (benefactorsCount !== 0 || entriesCount !== 0)
-    throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
+    if (benefactorsCount !== 0 || entriesCount !== 0)
+      throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
+  }
 
   const deletedBounty = await dbWrite.$transaction(async (tx) => {
     const deletedBounty = await tx.bounty.delete({ where: { id } });
@@ -359,10 +393,11 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
 
     return deletedBounty;
   });
+
   if (!deletedBounty) return null;
 
   // Refund the bounty creator
-  if (bounty.userId) {
+  if (bounty.userId && !bounty.complete && !bounty.refunded) {
     const bountyCreator = await dbRead.bountyBenefactor.findUnique({
       where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
       select: { unitAmount: true, currency: true },

@@ -310,7 +310,13 @@ export const getBountyEntryFilteredFiles = async ({
   });
 };
 
-export const deleteBountyEntry = async ({ id }: { id: number }) => {
+export const deleteBountyEntry = async ({
+  id,
+  isModerator,
+}: {
+  id: number;
+  isModerator: boolean;
+}) => {
   const entry = await dbRead.bountyEntry.findUniqueOrThrow({
     where: { id },
     select: {
@@ -329,12 +335,14 @@ export const deleteBountyEntry = async ({ id }: { id: number }) => {
     throw throwBadRequestError('Bounty entry does not exist');
   }
 
-  const [award] = await getBountyEntryEarnedBuzz({ ids: [entry.id] });
+  if (!isModerator) {
+    const [award] = await getBountyEntryEarnedBuzz({ ids: [entry.id] });
 
-  if (award.awardedUnitAmount > 0) {
-    throw throwBadRequestError(
-      'This bounty entry has been awarded by some users and as such, cannot be deleted.'
-    );
+    if (award.awardedUnitAmount > 0) {
+      throw throwBadRequestError(
+        'This bounty entry has been awarded by some users and as such, cannot be deleted.'
+      );
+    }
   }
 
   const deletedBountyEntry = await dbWrite.$transaction(async (tx) => {

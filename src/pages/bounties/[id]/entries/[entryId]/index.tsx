@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -13,6 +13,7 @@ import {
   ActionIcon,
   Alert,
   Anchor,
+  Box,
   Button,
   Card,
   Center,
@@ -36,7 +37,7 @@ import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard, ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useHotkeys } from '@mantine/hooks';
 import {
@@ -46,6 +47,7 @@ import {
   IconLock,
   IconLockOpen,
   IconPencilMinus,
+  IconPhoto,
   IconShare3,
   IconStar,
   IconTrash,
@@ -64,7 +66,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useRouter } from 'next/router';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { openConfirmModal } from '@mantine/modals';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -76,6 +78,8 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import Link from 'next/link';
+import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -120,6 +124,9 @@ const useStyles = createStyles((theme, _props, getRef) => {
       alignItems: 'stretch',
     },
     active: { ref: getRef('active') },
+    imageLoading: {
+      opacity: '50%',
+    },
     sidebar: {
       width: 457,
       borderRadius: 0,
@@ -174,6 +181,10 @@ export default function BountyEntryDetailsPage({
     id: entryId,
   });
   const queryUtils = trpc.useContext();
+  const [mainImage] = bountyEntry?.images ?? [];
+  const [activeImage, setActiveImage] = useState<BountyEntryGetById['images'][number] | null>(
+    mainImage || null
+  );
 
   const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
     trpc.bountyEntry.delete.useMutation({
@@ -188,7 +199,6 @@ export default function BountyEntryDetailsPage({
         });
       },
     });
-  const [mainImage] = bountyEntry?.images ?? [];
   const user = bountyEntry?.user;
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
@@ -283,7 +293,7 @@ export default function BountyEntryDetailsPage({
 
   const shareSection = (
     <Group spacing={8} px={mobile ? 'xs' : 'md'} noWrap>
-      {isOwner && bountyEntry.awardedUnitAmountTotal === 0 && (
+      {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
           <Button
             size="md"
@@ -301,7 +311,7 @@ export default function BountyEntryDetailsPage({
           </Button>
         </Link>
       )}
-      {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
+      {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Button
           size="md"
           radius="xl"
@@ -575,8 +585,24 @@ export default function BountyEntryDetailsPage({
                   entityId={bountyEntry.id}
                   entityType="bountyEntry"
                   mobile
+                  onImageChange={(images) => {
+                    const [image] = images;
+                    if (image) {
+                      setActiveImage(image as BountyEntryGetById['images'][number]);
+                    }
+                  }}
                 />
               </div>
+              {activeImage && (
+                <VotableTags
+                  entityType="image"
+                  entityId={activeImage.id}
+                  canAdd
+                  canAddModerated={isModerator}
+                  collapsible
+                  px="sm"
+                />
+              )}
               {notesSection}
               <Divider label="Discussion" labelPosition="center" />
               <Stack spacing={8} px="xs">
@@ -626,13 +652,27 @@ export default function BountyEntryDetailsPage({
             />
           )}
         </NavigateBack>
-        <BountyEntryCarousel bountyEntry={bountyEntry} className={classes.carousel} />
+        <BountyEntryCarousel
+          onImageChange={setActiveImage}
+          bountyEntry={bountyEntry}
+          className={classes.carousel}
+        />
 
         <Card className={classes.sidebar} p={0}>
           <Stack style={{ flex: 1, overflow: 'hidden' }}>
             {userSection}
             <Card.Section style={{ overflowY: 'auto' }}>
               <Stack spacing="md">
+                {activeImage && (
+                  <VotableTags
+                    entityType="image"
+                    entityId={activeImage.id}
+                    canAdd
+                    canAddModerated={isModerator}
+                    collapsible
+                    px="sm"
+                  />
+                )}
                 {awardSection}
                 {shareSection}
                 {filesSection}
@@ -688,14 +728,26 @@ BountyEntryDetailsPage.getLayout = (page: React.ReactElement) => (
 export function BountyEntryCarousel({
   bountyEntry,
   className,
+  onImageChange,
 }: {
   bountyEntry: BountyEntryGetById;
   className: string;
+  onImageChange?: (image: BountyEntryGetById['images'][number]) => void;
 }) {
+  const currentUser = useCurrentUser();
   const { images } = bountyEntry;
   const [currentIdx, setCurrentIdx] = useState(0);
   const current = images[currentIdx];
   const { classes, cx } = useCarrouselStyles();
+  const isOwner = bountyEntry?.user && bountyEntry?.user?.id === currentUser?.id;
+  const isModerator = currentUser?.isModerator ?? false;
+  const queryUtils = trpc.useContext();
+  const [deletingImage, setDeletingImage] = useState<boolean>(false);
+
+  const handleDeleteSuccess = async () => {
+    await queryUtils.bountyEntry.getById.invalidate({ id: bountyEntry?.id });
+    setDeletingImage(false);
+  };
 
   const { setRef, height, width } = useAspectRatioFit({
     height: current?.height ?? 1200,
@@ -718,6 +770,12 @@ export function BountyEntryCarousel({
     ['ArrowRight', onNextImage],
   ]);
   // #endregion
+
+  useEffect(() => {
+    if (current && onImageChange) {
+      onImageChange?.(current);
+    }
+  }, [current]);
 
   if (!current) {
     return (
@@ -764,74 +822,117 @@ export function BountyEntryCarousel({
           )}
         </>
       )}
-      <ImageGuard
-        images={[current]}
-        connect={{ entityId: bountyEntry.id, entityType: 'bountyEntry' }}
-        render={(image) => {
-          return (
-            <Center
-              sx={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-              }}
-            >
+      <ImageGuardReportContext.Provider
+        value={{
+          getMenuItems: ({ menuItems, ...image }) => {
+            const items = menuItems.map((item) => item.component);
+
+            if (!isOwner && !isModerator) {
+              return items;
+            }
+
+            const deleteImage = (
+              <DeleteImage
+                imageId={image.id}
+                onSuccess={handleDeleteSuccess}
+                onDelete={() => setDeletingImage(true)}
+                closeOnConfirm
+              >
+                {({ onClick, isLoading }) => (
+                  <Menu.Item
+                    color="red"
+                    icon={isLoading ? <Loader size={14} /> : <IconTrash size={14} stroke={1.5} />}
+                    onClick={onClick}
+                    disabled={isLoading}
+                    closeMenuOnClick
+                  >
+                    Delete
+                  </Menu.Item>
+                )}
+              </DeleteImage>
+            );
+
+            return [deleteImage, ...items];
+          },
+        }}
+      >
+        <ImageGuard
+          images={[current]}
+          connect={{ entityId: bountyEntry.id, entityType: 'bountyEntry' }}
+          render={(image) => {
+            return (
               <Center
-                style={{
-                  position: 'relative',
-                  height: height,
-                  width: width,
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  opacity: deletingImage ? 0.5 : 1,
                 }}
               >
-                <ImageGuard.ToggleConnect
-                  position="top-left"
-                  sx={(theme) => ({ borderRadius: theme.radius.sm })}
-                />
-                <ImageGuard.ToggleImage
-                  position="top-left"
-                  sx={(theme) => ({ borderRadius: theme.radius.sm })}
-                />
-                <ImageGuard.Report />
-                <ImageGuard.Unsafe>
-                  <MediaHash {...image} />
-                </ImageGuard.Unsafe>
-                <ImageGuard.Safe>
-                  <EdgeMedia
-                    src={image.url}
-                    name={image.name ?? image.id.toString()}
-                    alt={image.name ?? undefined}
-                    type={image.type}
-                    style={{ maxHeight: '100%', maxWidth: '100%' }}
-                    width={image.width ?? 1200}
-                    anim
+                <Center
+                  style={{
+                    position: 'relative',
+                    height: height,
+                    width: width,
+                  }}
+                >
+                  <ImageGuard.ToggleConnect
+                    position="top-left"
+                    sx={(theme) => ({ borderRadius: theme.radius.sm })}
                   />
-                </ImageGuard.Safe>
-                {image.meta && (
-                  <ImageMetaPopover
-                    meta={image.meta}
-                    generationProcess={image.generationProcess ?? undefined}
-                    imageId={image.id}
-                  >
-                    <ActionIcon
-                      style={{
-                        position: 'absolute',
-                        bottom: '10px',
-                        right: '10px',
-                      }}
-                      variant="light"
+                  <ImageGuard.ToggleImage
+                    position="top-left"
+                    sx={(theme) => ({ borderRadius: theme.radius.sm })}
+                  />
+                  <ImageGuard.Report />
+                  <ImageGuard.Unsafe>
+                    <MediaHash {...image} />
+                  </ImageGuard.Unsafe>
+                  <ImageGuard.Safe>
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      type={image.type}
+                      style={{ maxHeight: '100%', maxWidth: '100%' }}
+                      width={image.width ?? 1200}
+                      anim
+                    />
+                  </ImageGuard.Safe>
+                  {image.meta && (
+                    <ImageMetaPopover
+                      meta={image.meta}
+                      generationProcess={image.generationProcess ?? undefined}
+                      imageId={image.id}
                     >
-                      <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                    </ActionIcon>
-                  </ImageMetaPopover>
-                )}
+                      <ActionIcon
+                        style={{
+                          position: 'absolute',
+                          bottom: '10px',
+                          right: '10px',
+                        }}
+                        variant="light"
+                      >
+                        <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                      </ActionIcon>
+                    </ImageMetaPopover>
+                  )}
+                </Center>
               </Center>
-            </Center>
-          );
-        }}
-      />
+            );
+          }}
+        />
+      </ImageGuardReportContext.Provider>
       {images.length > 1 && <div className={classes.indicators}>{indicators}</div>}
+      {deletingImage && (
+        <Box className={classes.loader}>
+          <Center>
+            <Loader />
+          </Center>
+        </Box>
+      )}
     </div>
   );
 }
@@ -840,6 +941,17 @@ const useCarrouselStyles = createStyles((theme, _props, getRef) => {
   return {
     root: {
       position: 'relative',
+    },
+    loader: {
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%,-50%)',
+      zIndex: 1,
+    },
+    imageLoading: {
+      pointerEvents: 'none',
+      opacity: 0.5,
     },
     center: {
       position: 'absolute',
