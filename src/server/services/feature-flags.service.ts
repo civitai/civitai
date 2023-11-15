@@ -69,7 +69,7 @@ const featureFlags = createFeatureFlags({
     availability: ['mod', 'founder'],
   },
   bounties: ['public'],
-  newsroom: ['mod'],
+  newsroom: ['public'],
   profileOverhaul: {
     toggleable: true,
     default: true,

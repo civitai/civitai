@@ -1,7 +1,7 @@
 import { Button, Card, createStyles, Stack, Text, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
-import { formatDateMin } from '~/utils/date-helpers';
+import { formatDate } from '~/utils/date-helpers';
 
 export function News({ articles }: { articles: CivitaiNewsItem[] }) {
   return (
@@ -20,7 +20,7 @@ function NewsItem({ article }: { article: CivitaiNewsItem }) {
       <Title order={3} className={classes.title}>
         {article.title}
       </Title>
-      <Text className={classes.publishDate}>{formatDateMin(article.publishedAt)}</Text>
+      <Text className={classes.publishDate}>{formatDate(article.publishedAt)}</Text>
       <Text className={classes.summary}>{article.summary}</Text>
       <Button className={classes.action} variant="outline">
         Read the Article
