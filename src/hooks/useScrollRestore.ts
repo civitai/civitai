@@ -28,7 +28,7 @@ export const useWindowScrollRestore = () => {
   useEffect(() => {
     let routeChangeComplete = false;
     const node = document.querySelector('html');
-    if (typeof window !== 'undefined') history.scrollRestoration = 'manual';
+    history.scrollRestoration = 'manual';
     let backoff: ExponentialBackoff | undefined;
 
     const handleRouteChangeComplete = () => {
