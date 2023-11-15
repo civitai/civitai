@@ -33,7 +33,7 @@ export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
   const { classes } = useStyles({ hasMature });
 
   return (
-    <Popover width={400} withArrow withinPortal>
+    <Popover width={400} withArrow withinPortal zIndex={1000}>
       <Popover.Target>
         <Badge radius="xs" className={classes.badge} px={5}>
           <Group spacing={4} noWrap>
