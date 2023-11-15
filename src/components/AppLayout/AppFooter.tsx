@@ -123,6 +123,9 @@ export function AppFooter() {
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>
+          <Button component={NextLink} href="/newsroom" {...buttonProps} target="_blank">
+            Newsroom
+          </Button>
           <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
