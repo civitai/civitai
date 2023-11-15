@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -79,6 +79,7 @@ import { env } from '~/env/client.mjs';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import Link from 'next/link';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -180,6 +181,7 @@ export default function BountyEntryDetailsPage({
     id: entryId,
   });
   const queryUtils = trpc.useContext();
+  const [activeImage, setActiveImage] = useState<BountyEntryGetById['images'][number] | null>(null);
 
   const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
     trpc.bountyEntry.delete.useMutation({
@@ -632,13 +634,27 @@ export default function BountyEntryDetailsPage({
             />
           )}
         </NavigateBack>
-        <BountyEntryCarousel bountyEntry={bountyEntry} className={classes.carousel} />
+        <BountyEntryCarousel
+          onImageChange={setActiveImage}
+          bountyEntry={bountyEntry}
+          className={classes.carousel}
+        />
 
         <Card className={classes.sidebar} p={0}>
           <Stack style={{ flex: 1, overflow: 'hidden' }}>
             {userSection}
             <Card.Section style={{ overflowY: 'auto' }}>
               <Stack spacing="md">
+                {activeImage && (
+                  <VotableTags
+                    entityType="image"
+                    entityId={activeImage.id}
+                    canAdd
+                    canAddModerated={false}
+                    collapsible
+                    px="sm"
+                  />
+                )}
                 {awardSection}
                 {shareSection}
                 {filesSection}
@@ -694,9 +710,11 @@ BountyEntryDetailsPage.getLayout = (page: React.ReactElement) => (
 export function BountyEntryCarousel({
   bountyEntry,
   className,
+  onImageChange,
 }: {
   bountyEntry: BountyEntryGetById;
   className: string;
+  onImageChange?: (image: BountyEntryGetById['images'][number]) => void;
 }) {
   const currentUser = useCurrentUser();
   const { images } = bountyEntry;
@@ -734,6 +752,12 @@ export function BountyEntryCarousel({
     ['ArrowRight', onNextImage],
   ]);
   // #endregion
+
+  useEffect(() => {
+    if (current && onImageChange) {
+      onImageChange?.(current);
+    }
+  }, [current]);
 
   if (!current) {
     return (
