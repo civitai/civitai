@@ -116,36 +116,6 @@ function MyApp(props: CustomAppProps) {
 
   useScrollPosition();
 
-  // fixes an issue where clicking the browser back button will cause the scroll position to change before the it should
-  // https://github.com/vercel/next.js/issues/3303#issuecomment-507255105
-  // const pageHeightRef = useRef<number[]>([]);
-  // useEffect(() => {
-  //   const cachedPageHeight = pageHeightRef.current;
-  //   const html = document.querySelector('html');
-  //   if (!html) return;
-
-  //   const handleChangeStart = () => {
-  //     cachedPageHeight.push(document.documentElement.offsetHeight);
-  //   };
-  //   const handleChangeComplete = () => {
-  //     console.log('route change complete');
-  //     html.style.height = 'initial';
-  //   };
-
-  //   Router.events.on('routeChangeStart', handleChangeStart);
-  //   Router.events.on('routeChangeComplete', handleChangeComplete);
-  //   Router.beforePopState(() => {
-  //     html.style.height = `${cachedPageHeight.pop()}px`;
-  //     return true;
-  //   });
-
-  //   return () => {
-  //     Router.events.off('routeChangeStart', handleChangeStart);
-  //     Router.events.off('routeChangeComplete', handleChangeComplete);
-  //     Router.beforePopState(() => true);
-  //   };
-  // }, []);
-
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
   ) : (

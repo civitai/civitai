@@ -74,35 +74,3 @@ export class ExponentialBackoff<T = any> {
     }
   };
 }
-
-// export async function incrementalBackoff<T>(cb: () => Promise<T> | T, options?: BackoffOptions<T>) {
-//   const { startingDelay, growthFactor, maxAttempts, maxDelay, delayFirstAttempt, resolve, retry } =
-//     sanitizeOptions(options);
-
-//   let attemptNumber = 0;
-//   let timeout = delayFirstAttempt ? startingDelay : 0;
-
-//   const attemptLimitReached = () => attemptNumber >= maxAttempts;
-
-//   const increment = () => {
-//     attemptNumber++;
-//     timeout = (timeout === 0 ? startingDelay : timeout) * growthFactor;
-//     if (maxDelay && timeout > maxDelay) timeout = maxDelay;
-//   };
-
-//   while (!attemptLimitReached()) {
-//     try {
-//       await delay(timeout);
-//       const data = await cb();
-//       if (resolve?.(data)) attemptNumber = maxAttempts;
-//       increment();
-//     } catch (e) {
-//       increment();
-//       const shouldRetry = await retry(e, attemptNumber);
-
-//       if (!shouldRetry || attemptLimitReached()) {
-//         throw e;
-//       }
-//     }
-//   }
-// }
