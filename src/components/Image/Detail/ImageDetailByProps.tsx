@@ -242,7 +242,7 @@ export function ImageDetailByProps({
                       entityType="image"
                       entityId={image.id}
                       canAdd
-                      canAddModerated={false}
+                      canAddModerated={isModerator}
                       collapsible
                       px="sm"
                     />
