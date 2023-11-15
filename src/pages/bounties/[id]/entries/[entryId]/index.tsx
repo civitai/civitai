@@ -181,7 +181,10 @@ export default function BountyEntryDetailsPage({
     id: entryId,
   });
   const queryUtils = trpc.useContext();
-  const [activeImage, setActiveImage] = useState<BountyEntryGetById['images'][number] | null>(null);
+  const [mainImage] = bountyEntry?.images ?? [];
+  const [activeImage, setActiveImage] = useState<BountyEntryGetById['images'][number] | null>(
+    mainImage || null
+  );
 
   const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
     trpc.bountyEntry.delete.useMutation({
@@ -196,7 +199,6 @@ export default function BountyEntryDetailsPage({
         });
       },
     });
-  const [mainImage] = bountyEntry?.images ?? [];
   const user = bountyEntry?.user;
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
