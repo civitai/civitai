@@ -124,7 +124,7 @@ export function AppFooter() {
             Status
           </Button>
           {features.newsroom && (
-            <Button component={NextLink} href="/newsroom" {...buttonProps} target="_blank">
+            <Button component={NextLink} href="/newsroom" {...buttonProps}>
               Newsroom
             </Button>
           )}
