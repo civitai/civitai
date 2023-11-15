@@ -34,7 +34,6 @@ import {
 } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ResourceReviewPagedModel } from '~/types/router';

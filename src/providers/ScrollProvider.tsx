@@ -17,26 +17,23 @@ emitter.on('scroll', ({ key, ...scrollPosition }) => {
 
 export const useScrollPosition = () => {
   useEffect(() => {
-    let canEmit = true;
+    let scrolled = false;
     const node = document.querySelector('html');
     if (typeof window !== 'undefined') history.scrollRestoration = 'manual';
+    let backoff: ExponentialBackoff | undefined;
 
     const handleRouteChangeComplete = () => {
-      canEmit = false;
-      const backoff = new ExponentialBackoff({
+      scrolled = false;
+      backoff = new ExponentialBackoff({
         startingDelay: 50,
         growthFactor: 1,
         maxAttempts: 10,
-        onMaxAttemptsReached: () => {
-          canEmit = true;
-        },
       });
       backoff.execute(() => {
         const record = scrollMap.get(history.state.key);
         if (record && node) {
           if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
-            backoff.abort();
-            canEmit = true;
+            backoff?.abort();
             return;
           }
 
@@ -47,9 +44,13 @@ export const useScrollPosition = () => {
     };
 
     const handleScroll = () => {
-      if (node && canEmit) {
-        emitter.emit('scroll', {
-          key: history.state.key,
+      if (scrolled) backoff?.abort();
+    };
+
+    const handleScrollEnd = () => {
+      scrolled = true;
+      if (node) {
+        scrollMap.set(history.state.key, {
           scrollTop: node.scrollTop,
           scrollLeft: node.scrollLeft,
         });
@@ -57,9 +58,11 @@ export const useScrollPosition = () => {
     };
 
     addEventListener('scroll', handleScroll);
+    addEventListener('scrollend', handleScrollEnd);
     Router.events.on('routeChangeComplete', handleRouteChangeComplete);
     return () => {
       removeEventListener('scroll', handleScroll);
+      removeEventListener('scrollend', handleScrollEnd);
       Router.events.off('routeChangeComplete', handleRouteChangeComplete);
     };
   }, []);

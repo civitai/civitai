@@ -11,10 +11,10 @@ import {
 } from '@tabler/icons-react';
 
 import { ToggleLockComments } from '~/components/CommentsV2';
+import { closeLatestRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -50,7 +50,7 @@ export function ResourceReviewMenu({
     onSuccess: async () => {
       await queryUtils.resourceReview.invalidate();
       closeAllModals();
-      closeRoutedContext();
+      closeLatestRoutedDialog();
     },
   });
   const handleDelete = () => {

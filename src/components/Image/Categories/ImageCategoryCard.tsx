@@ -6,7 +6,6 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImageGetByCategoryImageModel } from '~/types/router';
 
 export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel }) {

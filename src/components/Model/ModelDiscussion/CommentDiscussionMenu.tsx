@@ -12,11 +12,13 @@ import {
   IconBan,
 } from '@tabler/icons-react';
 import { SessionUser } from 'next-auth';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import {
+  closeLatestRoutedDialog,
+  triggerRoutedDialog,
+} from '~/components/Dialog/RoutedDialogProvider';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { closeRoutedContext, openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -41,7 +43,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       closeAllModals();
-      closeRoutedContext();
+      closeLatestRoutedDialog();
     },
     onError(error) {
       showErrorNotification({
@@ -100,7 +102,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getById.invalidate({ id: comment.id });
       closeModal('confirm-tos-violation');
-      closeRoutedContext();
+      closeLatestRoutedDialog();
     },
     onError(error) {
       showErrorNotification({

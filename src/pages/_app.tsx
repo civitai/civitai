@@ -37,7 +37,6 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
-import { FreezeProvider, RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -46,7 +45,6 @@ import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
@@ -168,15 +166,10 @@ function MyApp(props: CustomAppProps) {
                           <CustomModalsProvider>
                             <NotificationsProvider zIndex={9999}>
                               <BrowserRouterProvider>
-                                <FreezeProvider>
-                                  <TosProvider>
-                                    {getLayout(<Component {...pageProps} />)}
-                                  </TosProvider>
-                                </FreezeProvider>
+                                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                                 <GenerationPanel />
                                 <DialogProvider />
                                 <RoutedDialogProvider />
-                                <RoutedContextProvider2 />
                               </BrowserRouterProvider>
                             </NotificationsProvider>
                           </CustomModalsProvider>

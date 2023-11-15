@@ -13,6 +13,9 @@ const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModa
 const CommentEditModal = dynamic(
   () => import('~/components/Model/ModelDiscussion/CommentEditModal')
 );
+const CommentThreadModal = dynamic(
+  () => import('~/components/Model/Discussion/CommentThreadModal')
+);
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -75,6 +78,12 @@ export const dialogs = createDialogDictionary({
     component: CommentEditModal,
     resolve: (query, { commentId }) => ({
       query: { ...query, commentId },
+    }),
+  },
+  commentThread: {
+    component: CommentThreadModal,
+    resolve: (query, { commentId, highlight }) => ({
+      query: { ...query, commentId, highlight },
     }),
   },
 });

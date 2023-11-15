@@ -24,7 +24,6 @@ export function FloatingActionButton({
   return (
     <Affix
       // @ts-ignore: ignoring cause target prop accepts string. See: https://v5.mantine.dev/core/portal#specify-target-dom-node
-      target="#freezeBlock"
       position={{ bottom: hasFooter ? 70 : 12, right: 12 }}
       zIndex={199}
       style={{ transition: 'bottom 300ms linear' }}

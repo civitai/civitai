@@ -30,7 +30,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ModelById } from '~/types/router';
 
 const useStyles = createStyles((theme) => ({

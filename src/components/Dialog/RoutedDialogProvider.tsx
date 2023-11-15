@@ -17,6 +17,7 @@ import {
 import { NextRouter, resolveHref } from 'next/dist/shared/lib/router/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { QS } from '~/utils/qs';
+import { getHasClientHistory } from '~/store/ClientHistoryStore';
 
 type DialogKey = keyof typeof dialogs;
 
@@ -33,15 +34,12 @@ export function RoutedDialogProvider() {
 
       // it's magic...
       if (!state.url.includes('dialog') && router.asPath.split('?')[0] !== state.as.split('?')[0]) {
-        console.log(1);
         return true;
       }
       if (state.url.includes('dialog') || previous?.url.includes('dialog')) {
         setUsingNextRouter(false);
-        console.log(2);
         return false;
       }
-      console.log(3);
       return true;
     });
   }, [router]);
@@ -104,6 +102,19 @@ export function triggerRoutedDialog<T extends DialogKey>({
   browserRouter.push(url, asPath, sessionState);
 }
 
+export function closeLatestRoutedDialog() {
+  const browserRouter = getBrowserRouter();
+  const hasHistory = getHasClientHistory();
+  if (!hasHistory) {
+    const { dialog, ...query } = Router.query;
+    const [pathname] = Router.asPath.split('?');
+    Router.push({ pathname, query }, { pathname }, { shallow: true });
+  } else {
+    dialogStore.closeLatest();
+    browserRouter.back();
+  }
+}
+
 export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean = false>({
   name,
   state,
@@ -154,16 +165,16 @@ function createBrowserRouterSync(Dialog: ComponentType<any>) {
   };
 }
 
-const getAsPath = (query: Record<string, any>, router: NextRouter) => {
-  const matches = router.pathname.match(/\[([\.\w]+)\]/g);
-  const params = { ...query };
-  for (const key in params) {
-    if (matches?.some((match) => match.includes(key))) delete params[key];
-  }
-  let asPath = router.asPath.split('?')[0];
-  if (Object.keys(params).length > 0) asPath = `${asPath}?${QS.stringify(params)}`;
-  return asPath;
-};
+// const getAsPath = (query: Record<string, any>, router: NextRouter) => {
+//   const matches = router.pathname.match(/\[([\.\w]+)\]/g);
+//   const params = { ...query };
+//   for (const key in params) {
+//     if (matches?.some((match) => match.includes(key))) delete params[key];
+//   }
+//   let asPath = router.asPath.split('?')[0];
+//   if (Object.keys(params).length > 0) asPath = `${asPath}?${QS.stringify(params)}`;
+//   return asPath;
+// };
 
 function resolveDialog<T extends DialogKey>(
   name: T,
@@ -176,7 +187,7 @@ function resolveDialog<T extends DialogKey>(
 
   const {
     query: resolvedQuery,
-    asPath = getAsPath(resolvedQuery, router),
+    asPath = { pathname: router.pathname, query: resolvedQuery as any },
     state: _state,
   } = dialog.resolve(
     {
