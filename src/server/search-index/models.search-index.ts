@@ -19,11 +19,12 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
 
-const READ_BATCH_SIZE = 1000;
+const READ_BATCH_SIZE = 500;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
@@ -101,6 +102,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'status',
     'category.name',
     'canGenerate',
+    'fileFormats',
   ];
 
   if (
@@ -177,6 +179,7 @@ const onFetchItemsToIndex = async ({
           trainedWords: true,
           baseModel: true,
           baseModelType: true,
+          files: { select: { metadata: true }, where: { type: 'Model' } },
         },
         where: {
           status: ModelStatus.Published,
@@ -306,12 +309,21 @@ const onFetchItemsToIndex = async ({
         user,
         category: category?.tag,
         version,
-        versions: modelVersions.map(({ generationCoverage, ...x }) => ({
+        versions: modelVersions.map(({ generationCoverage, files, ...x }) => ({
           ...x,
           canGenerate: generationCoverage?.covered,
         })),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
+        ],
+        fileFormats: [
+          ...new Set(
+            modelVersions
+              .flatMap((modelVersion) =>
+                modelVersion.files.map((x) => (x.metadata as ModelFileMetadata)?.format)
+              )
+              .filter(isDefined)
+          ),
         ],
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
         tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
