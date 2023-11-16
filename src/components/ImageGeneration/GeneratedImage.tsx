@@ -1,7 +1,7 @@
 import { AspectRatio, Loader, Center, Card, Text, Stack, Group } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { IconHourglass } from '@tabler/icons-react';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 
 // type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
 
@@ -56,7 +56,7 @@ export function GeneratedImage({
             sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}
             p="xs"
           >
-            {!image.status && (
+            {request.status === GenerationRequestStatus.Pending && (
               <Stack align="center">
                 <IconHourglass />
                 <Text color="dimmed" size="xs">
@@ -64,7 +64,7 @@ export function GeneratedImage({
                 </Text>
               </Stack>
             )}
-            {image.status === 'Started' && (
+            {request.status === GenerationRequestStatus.Processing && (
               <Stack align="center">
                 <Loader size={24} />
                 <Text color="dimmed" size="xs" align="center">
@@ -72,7 +72,7 @@ export function GeneratedImage({
                 </Text>
               </Stack>
             )}
-            {image.status === 'Error' && (
+            {request.status === GenerationRequestStatus.Error && (
               <Text color="dimmed" size="xs" align="center">
                 Could not load image
               </Text>

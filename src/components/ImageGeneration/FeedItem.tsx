@@ -1,18 +1,9 @@
-import {
-  Paper,
-  Checkbox,
-  AspectRatio,
-  Card,
-  ActionIcon,
-  Group,
-  Tooltip,
-  TooltipProps,
-} from '@mantine/core';
+import { Paper, Checkbox, Card, ActionIcon, Group, Tooltip, TooltipProps } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconAdjustments,
   IconArrowsShuffle,
-  IconBolt,
   IconInfoCircle,
   IconPlayerPlayFilled,
   IconTrash,
@@ -98,6 +89,10 @@ export function FeedItem({
           top: theme.spacing.xs,
           left: theme.spacing.xs,
           zIndex: 3,
+
+          '& input:checked': {
+            borderColor: theme.white,
+          },
         })}
         checked={selected}
         onChange={(event) => {
@@ -106,103 +101,98 @@ export function FeedItem({
           setShowActions(false);
         }}
       />
-      {!selected && (
-        <Group
-          position="apart"
-          sx={(theme) => ({
-            bottom: 0,
-            left: 0,
-            padding: theme.spacing.xs,
-            position: 'absolute',
-            width: '100%',
-            overflow: 'hidden',
-            zIndex: 3,
-          })}
+      <Group
+        position="apart"
+        sx={(theme) => ({
+          bottom: 0,
+          left: 0,
+          padding: theme.spacing.xs,
+          position: 'absolute',
+          width: '100%',
+          overflow: 'hidden',
+          zIndex: 3,
+        })}
+      >
+        <Card
+          p={0}
+          sx={{
+            backdropFilter: 'blur(3px)',
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            boxShadow:
+              'inset 0px 0px 1px 1px rgba(255,255,255,0.1), 0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+          }}
         >
-          <Card
-            p={0}
-            sx={{
-              backdropFilter: 'blur(3px)',
-              backgroundColor: 'rgba(0,0,0,0.6)',
-              boxShadow:
-                'inset 0px 0px 1px 1px rgba(255,255,255,0.1), 0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
-            }}
-          >
-            <Group spacing={0} noWrap>
-              <ActionIcon size="lg" variant="light" p={4} onClick={toggle} radius={0}>
-                <IconBolt />
-              </ActionIcon>
-              {showActions && (
-                <Group spacing={0} noWrap>
-                  <Tooltip {...tooltipProps} label="Generate">
-                    <ActionIcon size="lg" p={4} variant="light" radius={0} onClick={handleGenerate}>
-                      <IconPlayerPlayFilled />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip {...tooltipProps} label="Delete">
-                    <ActionIcon
-                      size="lg"
-                      p={4}
-                      color="red"
-                      radius={0}
-                      onClick={handleDeleteImage}
-                      loading={bulkDeleteImagesMutation.isLoading}
-                    >
-                      <IconTrash />
-                    </ActionIcon>
-                  </Tooltip>
-
-                  <Tooltip {...tooltipProps} label="Create variant">
-                    <span>
-                      <ActionIcon
-                        size="lg"
-                        p={4}
-                        variant="light"
-                        onClick={() => onCreateVariantClick(image)}
-                        radius={0}
-                        style={{ background: 'none', border: 'none' }}
-                        disabled
-                      >
-                        <IconArrowsShuffle />
-                      </ActionIcon>
-                    </span>
-                  </Tooltip>
-                  <Tooltip {...tooltipProps} label="Upscale">
-                    <span>
-                      <ActionIcon
-                        size="lg"
-                        p={4}
-                        variant="light"
-                        radius={0}
-                        style={{ background: 'none', border: 'none' }}
-                        disabled
-                      >
-                        <IconWindowMaximize />
-                      </ActionIcon>
-                    </span>
-                  </Tooltip>
-                </Group>
-              )}
-            </Group>
-          </Card>
-
-          <ImageMetaPopover
-            meta={request.params}
-            zIndex={constants.imageGeneration.drawerZIndex + 1}
-            // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
-          >
-            <ActionIcon variant="transparent" size="md">
-              <IconInfoCircle
-                color="white"
-                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                opacity={0.8}
-                strokeWidth={2.5}
-                size={26}
-              />
+          <Group spacing={0} noWrap>
+            <ActionIcon variant="light" p={4} onClick={toggle} radius={0}>
+              <IconAdjustments />
             </ActionIcon>
-          </ImageMetaPopover>
-        </Group>
-      )}
+            {showActions && (
+              <Group spacing={0} noWrap>
+                <Tooltip {...tooltipProps} label="Generate">
+                  <ActionIcon p={4} variant="light" radius={0} onClick={handleGenerate}>
+                    <IconPlayerPlayFilled />
+                  </ActionIcon>
+                </Tooltip>
+                <Tooltip {...tooltipProps} label="Delete">
+                  <ActionIcon
+                    p={4}
+                    color="red"
+                    radius={0}
+                    onClick={handleDeleteImage}
+                    loading={bulkDeleteImagesMutation.isLoading}
+                  >
+                    <IconTrash />
+                  </ActionIcon>
+                </Tooltip>
+
+                <Tooltip {...tooltipProps} label="Create variant">
+                  <span>
+                    <ActionIcon
+                      p={4}
+                      variant="light"
+                      onClick={() => onCreateVariantClick(image)}
+                      radius={0}
+                      style={{ background: 'none', border: 'none' }}
+                      disabled
+                    >
+                      <IconArrowsShuffle />
+                    </ActionIcon>
+                  </span>
+                </Tooltip>
+                <Tooltip {...tooltipProps} label="Upscale">
+                  <span>
+                    <ActionIcon
+                      p={4}
+                      variant="light"
+                      radius={0}
+                      style={{ background: 'none', border: 'none' }}
+                      disabled
+                    >
+                      <IconWindowMaximize />
+                    </ActionIcon>
+                  </span>
+                </Tooltip>
+              </Group>
+            )}
+          </Group>
+        </Card>
+
+        <ImageMetaPopover
+          meta={request.params}
+          zIndex={constants.imageGeneration.drawerZIndex + 1}
+          // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
+        >
+          <ActionIcon variant="transparent" size="md">
+            <IconInfoCircle
+              color="white"
+              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+              opacity={0.8}
+              strokeWidth={2.5}
+              size={26}
+            />
+          </ActionIcon>
+        </ImageMetaPopover>
+      </Group>
     </Paper>
   );
 }
@@ -211,6 +201,6 @@ type Props = {
   image: Generation.Image;
   request: Generation.Request;
   selected: boolean;
-  onCheckboxClick: (data: { image: any; checked: boolean }) => void;
-  onCreateVariantClick: (image: any) => void;
+  onCheckboxClick: (data: { image: Generation.Image; checked: boolean }) => void;
+  onCreateVariantClick: (image: Generation.Image) => void;
 };

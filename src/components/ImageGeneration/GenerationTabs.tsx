@@ -1,4 +1,4 @@
-import { createStyles, Badge, Card, Stack, Group, Button } from '@mantine/core';
+import { createStyles, Badge, Card, Stack, Group, Button, StackProps } from '@mantine/core';
 import { IconBrush, IconListDetails, IconSlideshow, TablerIconsProps } from '@tabler/icons-react';
 import { Feed, FloatingFeedActions } from './Feed';
 import { Queue } from './Queue';
@@ -10,7 +10,7 @@ import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-export default function GenerationTabs({}) {
+export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
@@ -70,7 +70,7 @@ export default function GenerationTabs({}) {
   const render = tabs[view].render;
 
   return (
-    <Stack style={{ height: '100%', overflow: 'hidden' }} spacing={0}>
+    <Stack h="100%" style={{ overflow: 'hidden' }} spacing={0} {...wrapperProps}>
       {header && <div>{header()}</div>}
       <div style={{ flexGrow: 1, overflowY: 'auto' }}>{render()}</div>
 
