@@ -542,7 +542,7 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     dbWrite.collection.deleteMany({ where: { userId: id } }),
     dbWrite.bounty.deleteMany({ where: { userId: id } }),
     dbWrite.bountyEntry.deleteMany({
-      where: { userId: id, benefactors: { some: { awardedAt: { not: null } } } },
+      where: { userId: id, benefactors: { none: {} } },
     }),
   ]);
 
