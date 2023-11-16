@@ -14,13 +14,13 @@ import {
 import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { createContext, useContext, useMemo, useState } from 'react';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { useImageFilters } from '~/components/Image/image.utils';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -65,7 +65,6 @@ export default function ImagesAsPostsInfinite({
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { ref, inView } = useInView();
   const isMobile = useIsMobile();
   // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
@@ -79,7 +78,7 @@ export default function ImagesAsPostsInfinite({
     username,
   });
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit },
       {
@@ -91,14 +90,6 @@ export default function ImagesAsPostsInfinite({
     );
 
   const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && !isFetching) {
-      fetchNextPage?.();
-    }
-  }, [fetchNextPage, inView, isFetching]);
-  // #endregion
 
   const isMuted = currentUser?.muted ?? false;
   const addPostLink = `/posts/create?modelId=${modelId}${
@@ -203,10 +194,16 @@ export default function ImagesAsPostsInfinite({
                   render={ImagesAsPostsCard}
                   itemId={(data) => data.images.map((x) => x.id).join('_')}
                 />
-                {hasNextPage && !isLoading && !isRefetching && (
-                  <Center ref={ref} sx={{ height: 36 }} mt="md">
-                    {inView && <Loader />}
-                  </Center>
+                {hasNextPage && (
+                  <InViewLoader
+                    loadFn={fetchNextPage}
+                    loadCondition={!isRefetching}
+                    style={{ gridColumn: '1/-1' }}
+                  >
+                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Loader />
+                    </Center>
+                  </InViewLoader>
                 )}
               </div>
             ) : (

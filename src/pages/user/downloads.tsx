@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Center,
   Container,
@@ -9,12 +8,11 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
 } from '@mantine/core';
 import { IconCloudOff, IconTrash } from '@tabler/icons-react';
-import { useEffect, useMemo } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useMemo } from 'react';
 import { DownloadList } from '~/components/Downloads/DownloadList';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -22,9 +20,7 @@ export default function Downloads() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
-  const { ref, inView } = useInView();
-
-  const { data, isLoading, fetchNextPage, hasNextPage } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.download.getAllByUser.useInfiniteQuery(
       {},
       {
@@ -63,12 +59,6 @@ export default function Downloads() {
       });
   };
 
-  useEffect(() => {
-    if (inView) {
-      fetchNextPage();
-    }
-  }, [fetchNextPage, inView]);
-
   return (
     <Container size="xs">
       <Group position="apart" align="flex-end">
@@ -98,10 +88,16 @@ export default function Downloads() {
             textSize="md"
             withDivider
           />
-          {!isLoading && hasNextPage && (
-            <Group position="center" ref={ref}>
-              <Loader />
-            </Group>
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
         </Stack>
       ) : (

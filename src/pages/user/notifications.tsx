@@ -12,8 +12,8 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
-import { useEffect, useMemo } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useMemo } from 'react';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
@@ -24,9 +24,7 @@ export default function Notifications() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
-  const { ref, inView } = useInView();
-
-  const { data, isLoading, fetchNextPage, hasNextPage } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.notification.getAllByUser.useInfiniteQuery(
       {},
       {
@@ -47,12 +45,6 @@ export default function Notifications() {
   const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
     if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
   };
-
-  useEffect(() => {
-    if (inView) {
-      fetchNextPage();
-    }
-  }, [fetchNextPage, inView]);
 
   return (
     <>
@@ -94,10 +86,16 @@ export default function Notifications() {
                   withDivider
                   truncate={false}
                 />
-                {!isLoading && hasNextPage && (
-                  <Group position="center" ref={ref}>
-                    <Loader />
-                  </Group>
+                {hasNextPage && (
+                  <InViewLoader
+                    loadFn={fetchNextPage}
+                    loadCondition={!isRefetching}
+                    style={{ gridColumn: '1/-1' }}
+                  >
+                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Loader />
+                    </Center>
+                  </InViewLoader>
                 )}
               </Stack>
             ) : (

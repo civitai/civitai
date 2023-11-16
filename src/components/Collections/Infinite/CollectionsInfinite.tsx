@@ -1,6 +1,4 @@
 import { Center, Loader, LoadingOverlay } from '@mantine/core';
-import { useEffect } from 'react';
-import { useInView } from 'react-intersection-observer';
 
 import { CollectionCard } from '~/components/Cards/CollectionCard';
 import {
@@ -12,27 +10,21 @@ import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export function CollectionsInfinite({
   filters: filterOverrides = {},
   showEof = false,
   enabled = true,
 }: Props) {
-  const { ref, inView } = useInView();
   const collectionFilters = useCollectionFilters();
 
   const filters = removeEmpty({ ...collectionFilters, ...filterOverrides });
 
-  const { collections, isLoading, isFetching, isRefetching, fetchNextPage, hasNextPage } =
-    useQueryCollections(filters, { enabled, keepPreviousData: true });
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && !isFetching) {
-      fetchNextPage?.();
-    }
-  }, [fetchNextPage, inView, isFetching]);
-  // #endregion
+  const { collections, isLoading, isRefetching, fetchNextPage, hasNextPage } = useQueryCollections(
+    filters,
+    { enabled, keepPreviousData: true }
+  );
 
   return (
     <>
@@ -49,10 +41,16 @@ export function CollectionsInfinite({
             itemId={(x) => x.id}
             empty={<NoContent />}
           />
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
