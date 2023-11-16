@@ -175,6 +175,7 @@ export const createGenerationRequestSchema = z.object({
       triggerWord: z.string().optional(),
     })
     .array()
+    .min(1, 'You must select at least one resource')
     .max(10),
   params: sharedGenerationParamsSchema,
 });

@@ -7,7 +7,6 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useInView } from 'react-intersection-observer';
 import { useEffect, useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
@@ -23,6 +22,7 @@ import { applyUserPreferencesModels } from '~/components/Search/search.utils';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export default function ModelsSearch() {
   return (
@@ -71,6 +71,7 @@ const RenderFilters = () => {
         sortBy={['name']}
         attribute="checkpointType"
       />
+      <ChipRefinementList title="Filter by File Format" sortBy={['name']} attribute="fileFormats" />
       <ChipRefinementList
         title="Filter by Category"
         sortBy={['name']}
@@ -92,7 +93,6 @@ const RenderFilters = () => {
 export function ModelsHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
   const { status } = useInstantSearch();
-  const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -118,13 +118,6 @@ export function ModelsHitList() {
   }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - models.length;
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && status === 'idle' && !isLastPage) {
-      showMore?.();
-    }
-  }, [status, inView, showMore, isLastPage]);
 
   useEffect(() => {
     if (!modelId) {
@@ -208,10 +201,16 @@ export function ModelsHitList() {
           );
         })}
       </Box>
-      {hits.length > 0 && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && <Loader />}
-        </Center>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader
+          loadFn={showMore}
+          loadCondition={status === 'idle'}
+          style={{ gridColumn: '1/-1' }}
+        >
+          <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
       )}
     </Stack>
   );

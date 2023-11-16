@@ -6,8 +6,7 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useInView } from 'react-intersection-observer';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
@@ -19,6 +18,7 @@ import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import { BountyCard } from '~/components/Cards/BountyCard';
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export default function BountySearch() {
   return (
@@ -53,12 +53,8 @@ const RenderFilters = () => {
         attribute="details.baseModel"
         sortBy={['name']}
       />
-      <SearchableMultiSelectRefinementList
-        title="Users"
-        attribute="user.username"
-        searchable={true}
-      />
-      <SearchableMultiSelectRefinementList title="Tags" attribute="tags.name" searchable={true} />
+      <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
+      <SearchableMultiSelectRefinementList title="Tags" attribute="tags.name" searchable />
     </>
   );
 };
@@ -66,7 +62,6 @@ const RenderFilters = () => {
 export function BountyHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<BountySearchIndexRecord>();
   const { status } = useInstantSearch();
-  const { ref, inView } = useInView();
   const { classes, cx } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
   const {
@@ -91,13 +86,6 @@ export function BountyHitList() {
   }, [loadingPreferences, hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
 
   const hiddenItems = hits.length - bounties.length;
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && status === 'idle' && !isLastPage) {
-      showMore?.();
-    }
-  }, [status, inView, showMore, isLastPage]);
 
   if (loadingPreferences) {
     return (
@@ -172,10 +160,16 @@ export function BountyHitList() {
           return <BountyCard key={hit.id} data={hit} />;
         })}
       </Box>
-      {hits.length > 0 && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && <Loader />}
-        </Center>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader
+          loadFn={showMore}
+          loadCondition={status === 'idle'}
+          style={{ gridColumn: '1/-1' }}
+        >
+          <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
       )}
     </Stack>
   );

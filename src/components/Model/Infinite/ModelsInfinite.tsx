@@ -1,10 +1,8 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
-import { debounce, isEqual } from 'lodash-es';
-import { useEffect, useMemo } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { isEqual } from 'lodash-es';
+import { useEffect } from 'react';
 
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -23,6 +21,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
@@ -34,23 +33,15 @@ export function ModelsInfinite({
   showEof = false,
 }: InfiniteModelsProps) {
   const features = useFeatureFlags();
-  const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
 
   const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryModels(debouncedFilters, { keepPreviousData: true });
-  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && !isFetching) {
-      debouncedFetchNextPage();
-    }
-  }, [debouncedFetchNextPage, inView, isFetching]);
-  // #endregion
+  const { models, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryModels(
+    debouncedFilters,
+    { keepPreviousData: true }
+  );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -89,10 +80,16 @@ export function ModelsInfinite({
             />
           )}
 
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>

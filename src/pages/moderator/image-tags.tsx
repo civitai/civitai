@@ -27,13 +27,13 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import Link from 'next/link';
-import { useEffect, useMemo } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useMemo } from 'react';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
@@ -59,7 +59,6 @@ import { trpc } from '~/utils/trpc';
 // });
 
 export default function ImageTags() {
-  const { ref, inView } = useInView();
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
 
@@ -131,10 +130,6 @@ export default function ImageTags() {
       color: 'blue',
     });
   };
-
-  useEffect(() => {
-    if (inView) fetchNextPage();
-  }, [fetchNextPage, inView]);
 
   const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
     position: 'bottom',
@@ -230,10 +225,16 @@ export default function ImageTags() {
         ) : (
           <NoContent mt="lg" message="There are no tags that need review" />
         )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
+        {hasNextPage && (
+          <InViewLoader
+            loadFn={fetchNextPage}
+            loadCondition={!isRefetching}
+            style={{ gridColumn: '1/-1' }}
+          >
+            <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Loader />
+            </Center>
+          </InViewLoader>
         )}
       </Stack>
     </Container>

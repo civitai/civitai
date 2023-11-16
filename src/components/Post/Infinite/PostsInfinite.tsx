@@ -2,11 +2,11 @@ import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine
 import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
-import { debounce, isEqual } from 'lodash-es';
-import { useEffect, useMemo } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { isEqual } from 'lodash-es';
+import { useEffect } from 'react';
 
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
@@ -34,23 +34,15 @@ export default function PostsInfinite({
   filters: filterOverrides = {},
   showEof = false,
 }: PostsInfiniteProps) {
-  const { ref, inView } = useInView();
   const postFilters = usePostFilters();
   const filters = removeEmpty({ ...postFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
+  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryPosts(
     debouncedFilters,
     { keepPreviousData: true }
   );
-  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && !isFetching) debouncedFetchNextPage();
-  }, [debouncedFetchNextPage, inView, isFetching]);
-  // #endregion
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -78,10 +70,16 @@ export default function PostsInfinite({
             render={PostsCard}
             itemId={(data) => data.id}
           />
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>

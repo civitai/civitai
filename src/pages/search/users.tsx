@@ -1,20 +1,8 @@
-import {
-  Stack,
-  Text,
-  Box,
-  Center,
-  Loader,
-  Title,
-  ThemeIcon,
-  Card,
-  Group,
-  ActionIcon,
-} from '@mantine/core';
+import { Stack, Text, Box, Center, Loader, Title, ThemeIcon, Card, Group } from '@mantine/core';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 
 import { SortBy } from '~/components/Search/CustomSearchComponents';
-import { useInView } from 'react-intersection-observer';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { IconCloudOff } from '@tabler/icons-react';
@@ -23,8 +11,6 @@ import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchL
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { applyUserPreferencesUsers } from '~/components/Search/search.utils';
@@ -33,6 +19,7 @@ import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser'
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import Link from 'next/link';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export default function UserSearch() {
   return (
@@ -68,7 +55,6 @@ const RenderFilters = () => {
 export function UserHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<UserSearchIndexRecord>();
   const { status } = useInstantSearch();
-  const { ref, inView } = useInView();
   const { classes, cx } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
   const { users: hiddenUsers, isLoading: loadingPreferences } = useHiddenPreferencesContext();
@@ -82,13 +68,6 @@ export function UserHitList() {
   }, [hits, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - users.length;
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && status === 'idle' && !isLastPage) {
-      showMore?.();
-    }
-  }, [status, inView, showMore, isLastPage]);
 
   if (loadingPreferences) {
     return (
@@ -161,10 +140,16 @@ export function UserHitList() {
           return <UserCard key={hit.id} data={hit} />;
         })}
       </Box>
-      {hits.length > 0 && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && <Loader />}
-        </Center>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader
+          loadFn={showMore}
+          loadCondition={status === 'idle'}
+          style={{ gridColumn: '1/-1' }}
+        >
+          <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
       )}
     </Stack>
   );

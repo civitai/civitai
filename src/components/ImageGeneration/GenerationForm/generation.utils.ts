@@ -48,7 +48,7 @@ export const useDerivedGenerationState = () => {
     const samplerOffset = samplerOffsets[castedSampler] ?? 0;
     const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
 
-    return samplerOffset * cfgOffset;
+    return samplerOffset + cfgOffset;
   });
 
   return {
