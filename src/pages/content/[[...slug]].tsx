@@ -70,7 +70,7 @@ export default function ContentPage({
               return (
                 <Link href={props.href as string}>
                   <a target={props.href?.includes('http') ? '_blank' : '_self'}>
-                    {props.children[0]}
+                    {props.children?.[0]}
                   </a>
                 </Link>
               );

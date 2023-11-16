@@ -1,40 +1,29 @@
-import { usePrevious } from '@dnd-kit/utilities';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import trieMemoize from 'trie-memoize';
 
 type DialogState = {
   opened: boolean;
   onClose: () => void;
 };
 
-const DialogContext = createContext<DialogState | null>(null);
-export const useDialogContext = () => {
-  const context = useContext(DialogContext);
-  if (!context) throw new Error('missing DialogContext');
-  return context;
-};
+const DialogContext = createContext<DialogState>({ opened: false, onClose: () => undefined });
+export const useDialogContext = () => useContext(DialogContext);
 
 const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
   const [opened, setOpened] = useState(false);
-  const previousOpened = usePrevious(opened);
 
-  const duration = dialog.options?.transitionDuration ?? 150;
   const Dialog = dialog.component;
   const onClose = () => {
-    setOpened(false);
     dialog.options?.onClose?.();
+    dialogStore.closeById(dialog.id);
   };
 
   useEffect(() => {
-    setOpened(true);
+    setTimeout(() => {
+      setOpened(true);
+    }, 0);
   }, []);
-
-  useEffect(() => {
-    if (!opened && previousOpened)
-      setTimeout(() => {
-        dialogStore.closeById(dialog.id);
-      }, duration);
-  }, [opened]); // eslint-disable-line
 
   return (
     <DialogContext.Provider value={{ opened, onClose }}>
@@ -45,12 +34,15 @@ const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
 
 export const DialogProvider = () => {
   const dialogs = useDialogStore((state) => state.dialogs);
-  console.log({ dialogs });
   return (
     <>
-      {dialogs.map((dialog) => (
-        <DialogProviderInner key={dialog.id} dialog={dialog} />
+      {dialogs.map((dialog, i) => (
+        <div key={dialog.id.toString()}>{createRenderElement(dialog)}</div>
       ))}
     </>
   );
 };
+
+const createRenderElement = trieMemoize([WeakMap], (dialog) => (
+  <DialogProviderInner dialog={dialog} />
+));

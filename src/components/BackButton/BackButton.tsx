@@ -27,7 +27,7 @@ export function NavigateBack({
   const handleClick = () => {
     if (closingRef.current) return;
     closingRef.current = true;
-    if (hasHistory) router.back();
+    if (hasHistory) history.go(-1);
     else {
       const navigate = options.replace ? router.replace : router.push;
 

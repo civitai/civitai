@@ -8,21 +8,16 @@ import {
   Loader,
   Alert,
   Group,
-  AspectRatio,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { trpc } from '~/utils/trpc';
-import { useState, useMemo } from 'react';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { useState } from 'react';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { NsfwLevel } from '@prisma/client';
-import { Blurhash } from 'react-blurhash';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -53,16 +48,17 @@ export function PostImages({
     );
 
   const remainingImages = images.length - maxInitialImages;
+  const _images = showMore ? images : images.slice(0, maxInitialImages);
 
   return (
     <Stack>
       <ImageGuard
         connect={{ entityId: postId, entityType: 'post' }}
-        images={showMore ? images : images.slice(0, maxInitialImages)}
+        images={_images}
         render={(image) => {
           const width = image.width ?? maxWidth;
           return (
-            <RoutedContextLink modal="imageDetailModal" imageId={image.id} postId={postId}>
+            <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
               <Paper radius="md" className={classes.frame} shadow="md" withBorder>
                 <ImageGuard.ToggleConnect position="top-left" />
                 <ImageGuard.Report />
@@ -128,7 +124,7 @@ export function PostImages({
                   </ImageMetaPopover>
                 )}
               </Paper>
-            </RoutedContextLink>
+            </RoutedDialogLink>
           );
         }}
       />

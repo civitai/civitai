@@ -41,7 +41,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwLevelOrder, nsfwLevelUI } from '~/libs/moderation';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { isNsfwImage } from '~/server/common/model-helpers';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { SimpleUser } from '~/server/selectors/user.selector';
@@ -52,6 +51,7 @@ import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export type ImageGuardConnect = {
   entityType:
@@ -441,9 +441,9 @@ ImageGuard.Report = function ReportImage({
     defaultMenuItems.push({
       key: 'view-post',
       component: (
-        <RoutedContextLink modal="postDetailModal" postId={image.postId} key="view-post">
+        <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} key="view-post">
           <Menu.Item icon={<IconEye size={14} stroke={1.5} />}>View Post</Menu.Item>
-        </RoutedContextLink>
+        </RoutedDialogLink>
       ),
     });
 
