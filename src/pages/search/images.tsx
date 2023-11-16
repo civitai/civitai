@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import {
+  ChipRefinementList,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
@@ -48,6 +49,12 @@ function RenderFilters() {
           { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
         ]}
       />
+      <ChipRefinementList
+        title="Filter by Aspect Ratio"
+        sortBy={['name']}
+        attribute="aspectRatio"
+      />
+      <ChipRefinementList title="Generated With" sortBy={['name']} attribute="generationTool" />
       <SearchableMultiSelectRefinementList
         title="Users"
         attribute="user.username"
@@ -59,6 +66,7 @@ function RenderFilters() {
         operator="and"
         searchable={true}
       />
+      <ChipRefinementList title="Filter by Base Model" sortBy={['name']} attribute="baseModel" />
     </>
   );
 }
