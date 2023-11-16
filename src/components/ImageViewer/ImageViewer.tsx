@@ -139,15 +139,6 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
     }
   }, [router?.query]);
 
-  useEffect(() => {
-    if (router) {
-      router.beforePopState((state) => {
-        state.options.scroll = false;
-        return true;
-      });
-    }
-  }, [router]);
-
   const activeImageRecord = images.find((i) => i.id === activeImageId);
 
   return (

@@ -16,8 +16,9 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { ImageGetInfinite } from '~/types/router';
 import { ImageIngestionProvider } from '~/components/Image/Ingestion/ImageIngestionProvider';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 
-type ImagesInfiniteState = {
+type ImageFilters = {
   modelId?: number;
   modelVersionId?: number;
   postId?: number;
@@ -33,16 +34,10 @@ type ImagesInfiniteState = {
   followed?: boolean;
   browsingMode?: BrowsingMode;
 };
-const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
-export const useImagesInfiniteContext = () => {
-  const context = useContext(ImagesInfiniteContext);
-  if (!context) throw new Error('ImagesInfiniteContext not in tree');
-  return context;
-};
 
 type ImagesInfiniteProps = {
   withTags?: boolean;
-  filters?: ImagesInfiniteState;
+  filters?: ImageFilters;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
 };
@@ -79,19 +74,19 @@ export default function ImagesInfinite({
 
   return (
     <IsClient>
-      <ImagesInfiniteContext.Provider value={filters}>
-        {isLoading ? (
-          <Center p="xl">
-            <Loader />
-          </Center>
-        ) : !!images.length ? (
-          <div style={{ position: 'relative' }}>
-            <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-            <ImageIngestionProvider
-              ids={images
-                .filter((image) => image.ingestion !== ImageIngestionStatus.Scanned)
-                .map(({ id }) => id)}
-            >
+      {isLoading ? (
+        <Center p="xl">
+          <Loader />
+        </Center>
+      ) : !!images.length ? (
+        <div style={{ position: 'relative' }}>
+          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          <ImageIngestionProvider
+            ids={images
+              .filter((image) => image.ingestion !== ImageIngestionStatus.Scanned)
+              .map(({ id }) => id)}
+          >
+            <ImagesProvider images={images}>
               <MasonryColumns
                 data={images}
                 imageDimensions={(data) => {
@@ -103,28 +98,28 @@ export default function ImagesInfinite({
                 render={MasonryItem ?? ImagesCard}
                 itemId={(data) => data.id}
               />
-            </ImageIngestionProvider>
-            {hasNextPage && !isLoading && !isRefetching && (
-              <Center ref={ref} sx={{ height: 36 }} mt="md">
-                {inView && <Loader />}
-              </Center>
-            )}
-            {!hasNextPage && showEof && <EndOfFeed />}
-          </div>
-        ) : (
-          <Stack align="center" py="lg">
-            <ThemeIcon size={128} radius={100}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
-            <Text size={32} align="center">
-              No results found
-            </Text>
-            <Text align="center">
-              {"Try adjusting your search or filters to find what you're looking for"}
-            </Text>
-          </Stack>
-        )}
-      </ImagesInfiniteContext.Provider>
+            </ImagesProvider>
+          </ImageIngestionProvider>
+          {hasNextPage && !isLoading && !isRefetching && (
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
+            </Center>
+          )}
+          {!hasNextPage && showEof && <EndOfFeed />}
+        </div>
+      ) : (
+        <Stack align="center" py="lg">
+          <ThemeIcon size={128} radius={100}>
+            <IconCloudOff size={80} />
+          </ThemeIcon>
+          <Text size={32} align="center">
+            No results found
+          </Text>
+          <Text align="center">
+            {"Try adjusting your search or filters to find what you're looking for"}
+          </Text>
+        </Stack>
+      )}
     </IsClient>
   );
 }

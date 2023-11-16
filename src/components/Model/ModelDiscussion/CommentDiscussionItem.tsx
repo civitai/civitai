@@ -4,12 +4,12 @@ import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/ico
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -123,7 +123,9 @@ export function CommentDiscussionItem({ data: comment }: Props) {
             size="xs"
             radius="xl"
             variant="subtle"
-            onClick={() => openRoutedContext('commentThread', { commentId: comment.id })}
+            onClick={() =>
+              triggerRoutedDialog({ name: 'commentThread', state: { commentId: comment.id } })
+            }
             compact
           >
             <Group spacing={2} noWrap>

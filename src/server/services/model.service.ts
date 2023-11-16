@@ -743,12 +743,13 @@ export const publishModelById = async ({
         });
 
         // Send to orchestrator
-        // TODO - check with Koen and re-enable
-        // await Promise.all(
-        //   model.modelVersions.map((version) =>
-        //     prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
-        //   )
-        // );
+        try {
+          await Promise.all(
+            model.modelVersions.map((version) =>
+              prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
+            )
+          );
+        } catch (e) {}
       }
       if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id, tx });
 

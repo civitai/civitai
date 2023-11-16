@@ -10,6 +10,8 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { CollectionMode, ReviewReactions } from '@prisma/client';
 import { ImageGetById, ImageGetInfinite } from '~/types/router';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -38,10 +40,14 @@ export const useImageDetailContext = () => {
 export function ImageDetailProvider({
   children,
   imageId,
+  images: initialImages = [],
+  hideReactionCount,
   filters,
 }: {
   children: React.ReactElement;
   imageId: number;
+  images?: ImagesInfiniteModel[];
+  hideReactionCount?: boolean;
   filters: {
     postId?: number;
     modelId?: number;
@@ -55,28 +61,22 @@ export function ImageDetailProvider({
   } & Record<string, unknown>;
 }) {
   const router = useRouter();
-  const active = router.query.active === 'true';
-  const closingRef = useRef(false);
+  const browserRouter = useBrowserRouter();
+  const active = browserRouter.query.active;
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const [postId, setPostId] = useState(filters.postId);
-  const { modelId, modelVersionId, username, reactions, collectionId } = filters;
+  const { postId } = browserRouter.query;
+  const { modelId, modelVersionId, username, reactions } = filters;
   // #region [data fetching]
-  const shouldFetchMany = Object.keys(filters).length > 0 || !!postId;
-  const { images = [], isInitialLoading: imagesLoading } = useQueryImages(
+  const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
+  const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
     { ...filters, username: !!reactions?.length ? undefined : username, postId },
     {
       enabled: shouldFetchMany,
     }
   );
-
-  const { data: collectionData, isLoading: isLoadingCollection } = trpc.collection.getById.useQuery(
-    { id: collectionId as number },
-    { enabled: !!collectionId }
-  );
-
-  const collection = collectionData?.collection;
+  const images = initialImages.length > 0 ? initialImages : queryImages;
 
   const shouldFetchImage =
     !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
@@ -86,8 +86,13 @@ export function ImageDetailProvider({
   );
 
   useEffect(() => {
-    setPostId(prefetchedImage?.postId);
-  }, [prefetchedImage]);
+    if (prefetchedImage && shouldFetchImage) {
+      browserRouter.replace(
+        { query: { ...browserRouter.query, postId: prefetchedImage.postId } },
+        `/images/${imageId}`
+      );
+    }
+  }, [prefetchedImage]); // eslint-disable-line
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
@@ -95,13 +100,12 @@ export function ImageDetailProvider({
 
   // #region [back button functionality]
   const close = () => {
-    if (closingRef.current) return;
-    if (hasHistory) router.back();
+    if (hasHistory) browserRouter.back();
     else {
-      const [, queryString] = router.asPath.split('?');
+      const [, queryString] = browserRouter.asPath.split('?');
       const { active, ...query } = QS.parse(queryString) as any;
 
-      if (active) router.replace({ query: router.query }, { query }, { shallow: true });
+      if (active) browserRouter.replace({ query: browserRouter.query }, { query });
       else {
         const returnUrl = getReturnUrl({ postId, modelId, modelVersionId, username }) ?? '/images';
         router.push(returnUrl, undefined, { shallow: true });
@@ -110,33 +114,14 @@ export function ImageDetailProvider({
   };
   useHotkeys([['Escape', close]]);
 
-  const handleClosingStart = () => {
-    closingRef.current = true;
-  };
-  const handleClosingEnd = () => {
-    closingRef.current = false;
-  };
-
-  useEffect(() => {
-    router.events.on('routeChangeStart', handleClosingStart);
-    router.events.on('routeChangeComplete', handleClosingEnd);
-
-    return () => {
-      router.events.off('routeChangeStart', handleClosingStart);
-      router.events.off('routeChangeComplete', handleClosingEnd);
-    };
-  }, []); //eslint-disable-line
-  // #endregion
-
   // #region [info toggle]
   const toggleInfo = () => {
-    const [, queryString] = router.asPath.split('?');
+    const [, queryString] = browserRouter.asPath.split('?');
     const { active, ...query } = QS.parse(queryString) as any;
 
-    router.push(
-      { query: { ...router.query, active: !active } },
-      { query: { ...query, active: !active } },
-      { shallow: true }
+    browserRouter.push(
+      { query: { ...browserRouter.query, active: !active } },
+      { query: { ...query, active: !active } }
     );
   };
   // #endregion
@@ -151,16 +136,13 @@ export function ImageDetailProvider({
   const canNavigate = index > -1 ? images.length > 1 : images.length > 0; // see notes
 
   const navigate = (id: number) => {
-    const { imageId, ...query } = router.query;
-    const [, queryString] = router.asPath.split('?');
-    router.replace(
+    const query = browserRouter.query;
+    const [, queryString] = browserRouter.asPath.split('?');
+    browserRouter.replace(
       { query: { ...query, imageId: id } },
       {
         pathname: `/images/${id}`,
         query: QS.parse(queryString) as any,
-      },
-      {
-        shallow: true,
       }
     );
   };
@@ -181,10 +163,10 @@ export function ImageDetailProvider({
   // #endregion
 
   const shareUrl = useMemo(() => {
-    const [pathname, queryString] = router.asPath.split('?');
+    const [pathname, queryString] = browserRouter.asPath.split('?');
     const { active, ...query } = QS.parse(queryString);
     return Object.keys(query).length > 0 ? `${pathname}?${QS.stringify(query)}` : pathname;
-  }, [router]);
+  }, [browserRouter]);
 
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === image?.user.id;
@@ -195,7 +177,6 @@ export function ImageDetailProvider({
     : modelId
     ? { entityType: 'model', entityId: modelId }
     : undefined;
-  const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
     <ImageDetailContext.Provider
@@ -216,7 +197,7 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+      <ReactionSettingsProvider settings={{ hideReactionCount }}>
         {children}
       </ReactionSettingsProvider>
     </ImageDetailContext.Provider>
