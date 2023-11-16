@@ -6,8 +6,7 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useInView } from 'react-intersection-observer';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -20,6 +19,7 @@ import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvid
 import { applyUserPreferencesArticles } from '~/components/Search/search.utils';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export default function ArticlesSearch() {
   return (
@@ -49,16 +49,12 @@ const RenderFilters = () => {
           { label: 'Newest', value: ArticlesSearchIndexSortBy[5] as string },
         ]}
       />{' '}
-      <SearchableMultiSelectRefinementList
-        title="Users"
-        attribute="user.username"
-        searchable={true}
-      />
+      <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList
         title="Tags"
         attribute="tags.name"
         operator="and"
-        searchable={true}
+        searchable
       />
       <ClearRefinements />
     </>
@@ -68,7 +64,6 @@ const RenderFilters = () => {
 export function ArticlesHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<ArticleSearchIndexRecord>();
   const { status } = useInstantSearch();
-  const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
   const {
@@ -87,13 +82,6 @@ export function ArticlesHitList() {
   }, [hits, hiddenTags, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - articles.length;
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && status === 'idle' && !isLastPage) {
-      showMore?.();
-    }
-  }, [status, inView, showMore, isLastPage]);
 
   if (hits.length === 0) {
     const NotFound = (
@@ -174,10 +162,16 @@ export function ArticlesHitList() {
           return <ArticleCard key={hit.id} data={hit} />;
         })}
       </Box>
-      {hits.length > 0 && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && <Loader />}
-        </Center>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader
+          loadFn={showMore}
+          loadCondition={status === 'idle'}
+          style={{ gridColumn: '1/-1' }}
+        >
+          <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
       )}
     </Stack>
   );
