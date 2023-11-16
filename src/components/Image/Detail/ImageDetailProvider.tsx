@@ -87,7 +87,6 @@ export function ImageDetailProvider({
 
   useEffect(() => {
     if (prefetchedImage && shouldFetchImage) {
-      console.log('replace', { shouldFetchImage });
       browserRouter.replace(
         { query: { ...browserRouter.query, postId: prefetchedImage.postId } },
         `/images/${imageId}`

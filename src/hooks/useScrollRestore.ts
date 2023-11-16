@@ -22,17 +22,20 @@ export const useScrollRestore = () => {
     const node = ref.current;
     if (!node) return;
   });
+
+  return ref;
 };
 
 export const useWindowScrollRestore = () => {
   useEffect(() => {
-    let routeChangeComplete = false;
-    const node = document.querySelector('html');
     history.scrollRestoration = 'manual';
+
+    let ignoreScrollEvents = false;
     let backoff: ExponentialBackoff | undefined;
+    const node = document.querySelector('html');
 
     const handleRouteChangeComplete = () => {
-      routeChangeComplete = true;
+      ignoreScrollEvents = true;
       backoff = new ExponentialBackoff({
         startingDelay: 50,
         growthFactor: 1,
@@ -43,19 +46,20 @@ export const useWindowScrollRestore = () => {
         if (record && node) {
           if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
             backoff?.abort();
-            return;
-          }
+          } else {
+            ignoreScrollEvents = true;
 
-          node.scrollTop = record.scrollTop;
-          node.scrollLeft = record.scrollLeft;
+            node.scrollTop = record.scrollTop;
+            node.scrollLeft = record.scrollLeft;
+          }
         }
       });
     };
 
-    const handleScroll = () => {
+    const handleScroll = (e) => {
       if (node) {
-        if (routeChangeComplete && node.scrollTop === 0 && node?.scrollLeft === 0) {
-          routeChangeComplete = false;
+        if (ignoreScrollEvents) {
+          ignoreScrollEvents = false;
         } else {
           backoff?.abort();
           emitter.emit('scroll', {
@@ -67,7 +71,7 @@ export const useWindowScrollRestore = () => {
       }
     };
 
-    addEventListener('scroll', handleScroll);
+    addEventListener('scroll', handleScroll, { passive: true });
     Router.events.on('routeChangeComplete', handleRouteChangeComplete);
     return () => {
       removeEventListener('scroll', handleScroll);

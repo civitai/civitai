@@ -1,11 +1,4 @@
-import React, {
-  ComponentProps,
-  ComponentType,
-  cloneElement,
-  useEffect,
-  useMemo,
-  useRef,
-} from 'react';
+import React, { ComponentProps, ComponentType, cloneElement, useEffect, useRef } from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
 import { dialogs } from './routed-dialog-registry';
@@ -24,7 +17,7 @@ type DialogKey = keyof typeof dialogs;
 export function RoutedDialogProvider() {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
-  const prevState = useRef<{ url: string; as: string; pathname: string }>();
+  const prevState = useRef<{ url: string; as: string }>();
   const currentUser = useCurrentUser();
 
   useEffect(() => {
@@ -44,6 +37,23 @@ export function RoutedDialogProvider() {
     });
   }, [router]);
 
+  /*
+    this handles the case of a user clicking a next link
+    to the same url from which they opened their dialog
+  */
+  useEffect(() => {
+    const handleRouteChangeStart = (asPath: string) => {
+      if (router.asPath === asPath && prevState.current?.url.includes('dialog')) {
+        browserRouter.push({ query: router.query });
+        throw 'nextjs route change aborted';
+      }
+    };
+    router.events.on('routeChangeStart', handleRouteChangeStart);
+    return () => {
+      router.events.off('routeChangeStart', handleRouteChangeStart);
+    };
+  }, [router]); // eslint-disable-line
+
   useEffect(() => {
     const counts = {} as Record<DialogKey, number>;
     const names = ([] as DialogKey[]).concat((browserRouter.query.dialog as any) ?? []);
@@ -56,11 +66,7 @@ export function RoutedDialogProvider() {
         key: `${name}_${counts[name]}`,
       };
     });
-    prevState.current = {
-      url: history.state.url,
-      as: history.state.as,
-      pathname: history.state.url.split('?')[0],
-    };
+    prevState.current = history.state;
     const openDialogs = useDialogStore
       .getState()
       .dialogs.filter((x) => x.type === 'routed-dialog')

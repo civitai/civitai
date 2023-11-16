@@ -54,7 +54,6 @@ import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { useScrollPosition } from '~/providers/ScrollProvider';
 import { useWindowScrollRestore } from '~/hooks/useScrollRestore';
 
 dayjs.extend(duration);

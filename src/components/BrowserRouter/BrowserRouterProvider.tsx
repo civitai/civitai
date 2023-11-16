@@ -72,19 +72,17 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     };
   }, []);
 
-  const handleRouteChangeComplete = () => {
-    if (stateRef.current && stateRef.current?.asPath === history.state.as)
-      useBrowserRouterState.setState(stateRef.current);
-
-    setUsingNextRouter(false);
-  };
-
   useEffect(() => {
-    // router.events.on('routeChangeStart', handleRouteChangeStart);
+    const handleRouteChangeComplete = () => {
+      if (stateRef.current && stateRef.current?.asPath === history.state.as)
+        useBrowserRouterState.setState(stateRef.current);
+
+      setUsingNextRouter(false);
+    };
+
     router.events.on('routeChangeComplete', handleRouteChangeComplete);
 
     return () => {
-      // router.events.off('routeChangeStart', handleRouteChangeStart);
       router.events.off('routeChangeComplete', handleRouteChangeComplete);
     };
   }, []); //eslint-disable-line
