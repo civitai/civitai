@@ -2064,7 +2064,6 @@ export const updateEntityImages = async ({
     });
   }
 };
-/// --------------
 
 type GetImageModerationReviewQueueRaw = {
   id: number;
@@ -2150,13 +2149,13 @@ export const getImageModerationReviewQueue = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  const reportQuery = `
+  const reportsJoin = `
     JOIN "ImageReport" imgr ON i.id = imgr."imageId"
     JOIN "Report" report ON report.id = imgr."reportId"
     JOIN "User" ur ON ur.id = report."userId"
   `;
 
-  const reportSelect = `
+  const reportsSelect = `
     report.id as "reportId",
     report.reason as "reportReason",
     report.status as "reportStatus",
@@ -2170,7 +2169,7 @@ export const getImageModerationReviewQueue = async ({
     JOIN "User" u ON u.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
     LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
-    ${Prisma.raw(reportReview ? reportQuery : '')}
+    ${Prisma.raw(reportReview ? reportsJoin : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -2216,7 +2215,7 @@ export const getImageModerationReviewQueue = async ({
       u."deletedAt",
       ic."entityType",
       ic."entityId",
-      ${Prisma.raw(reportReview ? reportSelect : '')}
+      ${Prisma.raw(reportReview ? reportsSelect : '')}
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}

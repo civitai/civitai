@@ -286,7 +286,6 @@ export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
 export const imageReviewQueueInputSchema = z.object({
   limit: z.number().min(0).max(200).default(100),
   cursor: z.union([z.bigint(), z.number()]).optional(),
-  skip: z.number().optional(),
   needsReview: z.string().nullish(),
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
