@@ -34,8 +34,9 @@ export function FeedItem({
   const selected = generationImageSelect.useSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
   const [showActions, setShowActions] = useSessionStorage<boolean>({
-    key: 'showAllReactions',
+    key: 'showAllActions',
     defaultValue: false,
+    getInitialValueInEffect: true,
   });
 
   const toggle = () => setShowActions((prev) => !prev);
@@ -150,7 +151,7 @@ export function FeedItem({
                     <ActionIcon
                       p={4}
                       variant="light"
-                      onClick={() => onCreateVariantClick(image)}
+                      onClick={() => onCreateVariantClick?.(image)}
                       radius={0}
                       style={{ background: 'none', border: 'none' }}
                       disabled
@@ -200,7 +201,7 @@ export function FeedItem({
 type Props = {
   image: Generation.Image;
   request: Generation.Request;
-  selected: boolean;
-  onCheckboxClick: (data: { image: Generation.Image; checked: boolean }) => void;
-  onCreateVariantClick: (image: Generation.Image) => void;
+  // selected: boolean;
+  // onCheckboxClick: (data: { image: Generation.Image; checked: boolean }) => void;
+  onCreateVariantClick?: (image: Generation.Image) => void;
 };

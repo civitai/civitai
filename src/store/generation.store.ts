@@ -94,6 +94,7 @@ export const generationPanel = {
   open: store.open,
   close: store.close,
   setView: store.setView,
+  isOpen: store.opened,
 };
 
 export const generationStore = {

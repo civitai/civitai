@@ -144,11 +144,9 @@ export function Feed({
       <div className={classes.grid}>
         {feed
           .map((image) => {
-            const selected = state.selectedItems.includes(image.id);
             const request = requests.find((request) =>
               request.images?.some((x) => x.id === image.id)
             );
-
             if (!request) return null;
 
             return (
@@ -156,20 +154,20 @@ export function Feed({
                 key={image.id}
                 image={image}
                 request={request}
-                selected={selected}
-                onCheckboxClick={({ image, checked }) => {
-                  if (checked) {
-                    setState((current) => ({
-                      ...current,
-                      selectedItems: [...current.selectedItems, image.id],
-                    }));
-                  } else {
-                    setState((current) => ({
-                      ...current,
-                      selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                    }));
-                  }
-                }}
+                // selected={selected}
+                // onCheckboxClick={({ image, checked }) => {
+                //   if (checked) {
+                //     setState((current) => ({
+                //       ...current,
+                //       selectedItems: [...current.selectedItems, image.id],
+                //     }));
+                //   } else {
+                //     setState((current) => ({
+                //       ...current,
+                //       selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                //     }));
+                //   }
+                // }}
                 onCreateVariantClick={(image) =>
                   setState((current) => ({
                     ...current,

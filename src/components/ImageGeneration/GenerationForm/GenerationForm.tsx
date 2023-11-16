@@ -235,7 +235,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { errors } = form.formState;
 
   return (
-    <Form form={form} onSubmit={handleSubmit} onError={handleError}>
+    <Form form={form} onSubmit={handleSubmit} onError={handleError} style={{ width: '100%' }}>
       <Stack spacing={0} h="100%">
         <ScrollArea sx={{ flex: 1 }}>
           <Stack p="md" pb={0}>

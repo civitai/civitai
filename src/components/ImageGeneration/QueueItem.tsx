@@ -10,7 +10,6 @@ import {
   ThemeIcon,
   MantineColor,
   Tooltip,
-  SimpleGrid,
   TooltipProps,
   createStyles,
 } from '@mantine/core';
@@ -18,11 +17,9 @@ import { useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { IconBolt, IconPhoto, IconPlayerPlayFilled, IconTrash, IconX } from '@tabler/icons-react';
-import { useEffect } from 'react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { Countdown } from '~/components/Countdown/Countdown';
 import { openBoostModal } from '~/components/ImageGeneration/BoostModal';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
@@ -31,6 +28,7 @@ import { constants } from '~/server/common/constants';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
+import { FeedItem } from './FeedItem';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -54,7 +52,6 @@ export function QueueItem({ request }: Props) {
   const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
-  const succeeded = status === GenerationRequestStatus.Succeeded;
   const failed = status === GenerationRequestStatus.Error;
 
   const verbage = pendingProcessing
@@ -100,10 +97,6 @@ export function QueueItem({ request }: Props) {
     if (showBoost) openBoostModal({ request, cb: boost });
     else boost(request);
   };
-
-  // useEffect(() => {
-  //   if (request.queuePosition) console.log(request.queuePosition);
-  // }, [request]);
 
   return (
     <Card withBorder px="xs">
@@ -197,7 +190,7 @@ export function QueueItem({ request }: Props) {
         <Collection
           items={request.resources}
           limit={3}
-          renderItem={(resource: any) => (
+          renderItem={(resource: Generation.Resource) => (
             <Badge
               size="sm"
               sx={{ maxWidth: 200, cursor: 'pointer' }}
@@ -213,7 +206,7 @@ export function QueueItem({ request }: Props) {
         {!failed && !!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
-              <GeneratedImage key={image.id} image={image} request={request} />
+              <FeedItem key={image.id} image={image} request={request} />
             ))}
           </div>
         )}

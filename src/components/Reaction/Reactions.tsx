@@ -84,6 +84,7 @@ export function Reactions({
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
     defaultValue: false,
+    getInitialValueInEffect: true,
   });
 
   const ignoredKeys = ['tippedAmountCount'];
