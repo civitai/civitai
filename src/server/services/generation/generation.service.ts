@@ -337,7 +337,7 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXLDistilled: 'SDXL_Distilled',
 };
 
-async function isAvailableForGeneration(resources: CreateGenerationRequestInput['resources']) {
+async function checkGenerationAvailability(resources: CreateGenerationRequestInput['resources']) {
   const data = await getResourceData(resources.map((x) => x.id));
 
   return data.every((x) => !!x.generationCoverage?.covered);
@@ -351,7 +351,7 @@ export const createGenerationRequest = async ({
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
-  const allResourcesAvailable = await isAvailableForGeneration(resources).catch(() => false);
+  const allResourcesAvailable = await checkGenerationAvailability(resources).catch(() => false);
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
 
