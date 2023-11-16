@@ -8,6 +8,7 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
   baseModel: true,
   baseModelType: true,
   settings: true,
+  generationCoverage: { select: { covered: true } },
   model: {
     select: {
       id: true,
