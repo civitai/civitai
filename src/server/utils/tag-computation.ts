@@ -187,6 +187,8 @@ const tagCombos: ComputedTagCombo[] = [
       'peeing',
       'boob grab|breast grab',
       'face to breasts',
+      'ball gag',
+      'bdsm',
     ],
     sources: [TagSource.WD14],
   },

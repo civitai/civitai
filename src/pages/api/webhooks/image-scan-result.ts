@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 import { auditMetaData, includesInappropriate } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
-import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
+import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
@@ -239,7 +239,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       nsfw = false;
     for (const { name, type } of tags) {
       if (type === TagType.Moderation) nsfw = true;
-      if (tagsNeedingReview.includes(name)) hasMinorTag = true;
+      if (minorTags.includes(name)) hasMinorTag = true;
       else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
