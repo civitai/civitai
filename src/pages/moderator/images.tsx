@@ -419,7 +419,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
       case 'BountyEntry':
         return `/bounties/entries/${image.entityId}`;
       default:
-        return `/image/${image.id}`;
+        return `/images/${image.id}`;
     }
   }, [image]);
 

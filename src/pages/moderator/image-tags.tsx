@@ -256,6 +256,23 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
     [image.tags]
   );
   const needsReview = tags.toReview.length > 0;
+  const entityUrl = useMemo(() => {
+    if (image.entityType) {
+      console.log(image);
+    }
+    if (image.postId) {
+      return `/posts/${image.postId}`;
+    }
+
+    switch (image.entityType) {
+      case 'Bounty':
+        return `/bounties/${image.entityId}`;
+      case 'BountyEntry':
+        return `/bounties/entries/${image.entityId}`;
+      default:
+        return `/images/${image.id}`;
+    }
+  }, [image]);
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
@@ -301,8 +318,8 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                   width={450}
                   placeholder="empty"
                 />
-                {image.postId && (
-                  <Link href={`/posts/${image.postId}`} passHref>
+                {entityUrl && (
+                  <Link href={entityUrl} passHref>
                     <ActionIcon
                       component="a"
                       variant="transparent"
