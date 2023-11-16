@@ -24,6 +24,7 @@ import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema'
 import {
   GetEntitiesCoverImage,
   ImageEntityType,
+  ImageReviewQueueInput,
   ImageUploadProps,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
@@ -2092,4 +2093,259 @@ export const updateEntityImages = async ({
       })),
     });
   }
+};
+/// --------------
+
+type GetImageModerationReviewQueueRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: NsfwLevel;
+  width: number;
+  height: number;
+  hash: string;
+  meta: ImageMetaProps;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  ingestion: ImageIngestionStatus;
+  needsReview: string | null;
+  userId: number;
+  index: number;
+  postId: number;
+  postTitle: string;
+  modelVersionId: number | null;
+  imageId: number | null;
+  publishedAt: Date | null;
+  username: string | null;
+  userImage: string | null;
+  deletedAt: Date | null;
+  cursorId?: bigint;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
+  baseModel?: string;
+  entityType: string;
+  entityId: number;
+  reportId?: number;
+  reportReason?: string;
+  reportStatus?: ReportStatus;
+  reportDetails?: Prisma.JsonValue;
+  reportUsername?: string;
+  reportUserId?: number;
+};
+export const getImageModerationReviewQueue = async ({
+  limit,
+  cursor,
+  needsReview,
+  tagReview,
+  reportReview,
+}: ImageReviewQueueInput) => {
+  const AND: Prisma.Sql[] = [];
+  const WITH: Prisma.Sql[] = [];
+
+  if (needsReview) {
+    AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
+    AND.push(Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
+  }
+
+  if (tagReview) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      WHERE toi."imageId" = i.id AND toi."needsReview"
+    )`);
+  }
+
+  // Order by oldest first. This is to ensure that images that have been in the queue the longest
+  // are reviewed first.
+  let orderBy = `i."id" DESC`;
+
+  let cursorProp = 'i."id"';
+  let cursorDirection = 'DESC';
+
+  if (reportReview) {
+    // Add this to the WHERE:
+    AND.push(Prisma.sql`report."status" = 'Pending'`);
+    // Also, update sorter to most recent:
+    orderBy = `report."createdAt" ASC`;
+    cursorProp = 'report.id';
+    cursorDirection = 'ASC';
+  }
+
+  if (cursor) {
+    // Random sort cursor is handled by the WITH query
+    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+    if (cursorProp)
+      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+  }
+
+  const reportQuery = `
+    JOIN "ImageReport" imgr ON i.id = imgr."imageId"
+    JOIN "Report" report ON report.id = imgr."reportId"
+    JOIN "User" ur ON ur.id = report."userId"
+  `;
+
+  const reportSelect = `
+    report.id as "reportId",
+    report.reason as "reportReason",
+    report.status as "reportStatus",
+    report.details as "reportDetails",
+    ur.username as "reportUsername",
+    ur.id as "reportUserId", 
+  `;
+
+  const queryFrom = Prisma.sql`
+    FROM "Image" i
+    JOIN "User" u ON u.id = i."userId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
+    ${Prisma.raw(reportReview ? reportQuery : '')}
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  const queryHeader = Object.entries({
+    cursor,
+    limit,
+  })
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(', ');
+
+  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+
+  const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
+    -- ${Prisma.raw(queryHeader)}
+    ${queryWith}
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i.type,
+      i.metadata,
+      i.ingestion,
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      i."postId",
+      p."title" "postTitle",
+      i."index",
+      p."publishedAt",
+      p."modelVersionId",
+      u.username,
+      u.image "userImage",
+      u."deletedAt",
+      ic."entityType",
+      ic."entityId",
+      ${Prisma.raw(reportReview ? reportSelect : '')}
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+      ${queryFrom}
+      ORDER BY ${Prisma.raw(orderBy)}
+      LIMIT ${limit + 1}
+  `;
+
+  let nextCursor: bigint | undefined;
+
+  if (rawImages.length > limit) {
+    const nextItem = rawImages.pop();
+    nextCursor = nextItem?.cursorId;
+  }
+
+  const imageIds = rawImages.map((i) => i.id);
+  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
+
+  if (tagReview) {
+    const rawTags = await dbRead.imageTag.findMany({
+      where: { imageId: { in: imageIds } },
+      select: {
+        imageId: true,
+        tagId: true,
+        tagName: true,
+        tagType: true,
+        tagNsfw: true,
+        score: true,
+        automated: true,
+        upVotes: true,
+        downVotes: true,
+        needsReview: true,
+      },
+    });
+
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfw: tagNsfw,
+      name: tagName,
+    }));
+  }
+
+  const images: Array<
+    Omit<ImageV2Model, 'stats'> & {
+      tags?: VotableTagModel[] | undefined;
+      report?:
+        | {
+            id: number;
+            reason: string;
+            details: Prisma.JsonValue;
+            status: ReportStatus;
+            user: { id: number; username?: string | null };
+          }
+        | undefined;
+      publishedAt?: Date | null;
+      modelVersionId?: number | null;
+      baseModel?: string | null;
+      entityType?: string | null;
+      entityId?: number | null;
+    }
+  > = rawImages.map(
+    ({
+      userId: creatorId,
+      username,
+      userImage,
+      deletedAt,
+      reportId,
+      reportReason,
+      reportStatus,
+      reportDetails,
+      reportUsername,
+      reportUserId,
+
+      ...i
+    }) => ({
+      ...i,
+      user: {
+        id: creatorId,
+        username,
+        image: userImage,
+        deletedAt,
+        cosmetics: [],
+      },
+      reactions: [],
+      tags: tagsVar?.filter((x) => x.imageId === i.id),
+      report: reportId
+        ? {
+            id: reportId,
+            reason: reportReason as string,
+            details: reportDetails as Prisma.JsonValue,
+            status: reportStatus as ReportStatus,
+            user: { id: reportUserId as number, username: reportUsername },
+          }
+        : undefined,
+    })
+  );
+
+  return {
+    nextCursor,
+    items: images,
+  };
 };

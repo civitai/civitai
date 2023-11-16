@@ -384,6 +384,7 @@ export async function getAllHiddenForUser({
   const moderated = moderatedTags
     .filter((x) => x.nsfw !== NsfwLevel.Blocked)
     .map((tag) => ({ ...tag, type: 'moderated' }));
+
   const blocked = moderatedTags
     .filter((x) => x.nsfw === NsfwLevel.Blocked)
     .map((tag) => ({ ...tag, type: 'always' }));

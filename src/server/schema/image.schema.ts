@@ -188,6 +188,7 @@ export const ingestImageSchema = z.object({
 const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report', 'meta']);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
+
 export const getInfiniteImagesSchema = z
   .object({
     limit: z.number().min(0).max(200).default(100),
@@ -281,4 +282,15 @@ export const getEntitiesCoverImage = z.object({
       entityId: z.number(),
     })
   ),
+});
+
+export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
+
+export const imageReviewQueueInputSchema = z.object({
+  limit: z.number().min(0).max(200).default(100),
+  cursor: z.union([z.bigint(), z.number()]).optional(),
+  skip: z.number().optional(),
+  needsReview: z.string().nullish(),
+  tagReview: z.boolean().optional(),
+  reportReview: z.boolean().optional(),
 });

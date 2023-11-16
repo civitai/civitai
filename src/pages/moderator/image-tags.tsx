@@ -41,7 +41,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { ImageGetInfinite } from '~/types/router';
+import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
 // export const getServerSideProps = createServerSideProps({
@@ -63,19 +63,18 @@ export default function ImageTags() {
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
 
-  // TODO.images: Change endpoint to image.getInfinite
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
-    trpc.image.getInfinite.useInfiniteQuery(
-      { tagReview: true, withTags: true, sort: ImageSort.Newest },
+    trpc.image.getModeratorReviewQueue.useInfiniteQuery(
+      { tagReview: true },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
   const moderateTagsMutation = trpc.tag.moderateTags.useMutation({
     async onMutate({ entityIds, disable }) {
-      await queryUtils.image.getInfinite.cancel();
-      queryUtils.image.getInfinite.setInfiniteData(
-        { tagReview: true, withTags: true, sort: ImageSort.Newest },
+      await queryUtils.image.getModeratorReviewQueue.cancel();
+      queryUtils.image.getModeratorReviewQueue.setInfiniteData(
+        { tagReview: true },
         produce((data) => {
           if (!data?.pages?.length) return;
 
@@ -357,7 +356,7 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
 }
 
 type ImageGridItemProps = {
-  data: ImageGetInfinite[number];
+  data: ImageModerationReviewQueueImage;
   index: number;
   width: number;
   selected: boolean;

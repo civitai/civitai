@@ -6,6 +6,7 @@ import {
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
+  getModeratorReviewQueueHandler,
 } from './../controllers/image.controller';
 import {
   updateImageSchema,
@@ -14,6 +15,7 @@ import {
   getImagesByCategorySchema,
   getImageSchema,
   getEntitiesCoverImage,
+  imageReviewQueueInputSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -108,4 +110,7 @@ export const imageRouter = router({
   getEntitiesCoverImage: publicProcedure
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),
+  getModeratorReviewQueue: moderatorProcedure
+    .input(imageReviewQueueInputSchema)
+    .query(getModeratorReviewQueueHandler),
 });
