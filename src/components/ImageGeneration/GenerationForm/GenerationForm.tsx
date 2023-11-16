@@ -173,7 +173,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
         params: { ...params, baseModel },
-      });
+      }).catch(() => null); // catching here since error is handled at the mutation event level
       onSuccess?.();
       generationPanel.setView('queue');
     };
@@ -235,7 +235,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { errors } = form.formState;
 
   return (
-    <Form form={form} onSubmit={handleSubmit} onError={handleError}>
+    <Form form={form} onSubmit={handleSubmit} onError={handleError} style={{ width: '100%' }}>
       <Stack spacing={0} h="100%">
         <ScrollArea sx={{ flex: 1 }}>
           <Stack p="md" pb={0}>
