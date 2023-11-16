@@ -457,9 +457,6 @@ export const getAllImages = async ({
   generation,
   reviewId,
   prioritizedUserIds,
-  needsReview,
-  tagReview,
-  reportReview,
   include,
   nsfw,
   excludeCrossPosts,
@@ -476,14 +473,9 @@ export const getAllImages = async ({
   nsfw?: NsfwLevel;
   headers?: Record<string, string>;
 }) => {
-  const AND: Prisma.Sql[] = [];
+  const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
-
-  const requiresPostId = !isModerator || !(needsReview || reportReview || tagReview);
-  if (requiresPostId) {
-    AND.push(Prisma.sql`i."postId" IS NOT NULL`);
-  }
 
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
@@ -501,31 +493,7 @@ export const getAllImages = async ({
 
   // If User Isn't mod
   if (!isModerator) {
-    needsReview = null;
-    tagReview = false;
-    reportReview = false;
-
     applyModRulesSql(AND, { userId, publishedOnly: !collectionId });
-  }
-
-  if (needsReview) {
-    AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
-    AND.push(Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
-  }
-
-  if (tagReview) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
-      WHERE toi."imageId" = i.id AND toi."needsReview"
-    )`);
-  }
-
-  if (reportReview) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "ImageReport" imgr
-      JOIN "Report" report ON report.id = imgr."reportId"
-      WHERE imgr."imageId" = i.id AND report."status" = 'Pending'
-    )`);
   }
 
   if (excludeCrossPosts && modelVersionId) {
@@ -736,9 +704,11 @@ export const getAllImages = async ({
   const queryFrom = Prisma.sql`
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(!requiresPostId ? 'LEFT ' : '')}JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
-    !isModerator ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})` : ''
-  )}
+    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
+      !isModerator
+        ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
+        : ''
+    )}
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
