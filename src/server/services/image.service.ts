@@ -848,43 +848,9 @@ export const getAllImages = async ({
     ? await getCosmeticsForUsers(rawImages.map((i) => i.userId))
     : undefined;
 
-  let reportVar: Array<{
-    id: number;
-    reason: string;
-    details: Prisma.JsonValue;
-    status: ReportStatus;
-    user: { id: number; username: string | null };
-    imageId: number;
-  }>;
-
-  if (include?.includes('report')) {
-    const imageIds = rawImages.map((i) => i.id);
-    const rawReports = await dbRead.imageReport.findMany({
-      where: { imageId: { in: imageIds }, report: { status: 'Pending' } },
-      select: {
-        imageId: true,
-        report: {
-          select: {
-            id: true,
-            reason: true,
-            status: true,
-            details: true,
-            user: { select: { id: true, username: true } },
-          },
-        },
-      },
-    });
-
-    reportVar = rawReports.map(({ imageId, report }) => ({
-      imageId,
-      ...report,
-    }));
-  }
-
   const images: Array<
     ImageV2Model & {
       tags?: VotableTagModel[] | undefined;
-      report?: (typeof reportVar)[number] | undefined;
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       baseModel?: string | null;
@@ -926,7 +892,6 @@ export const getAllImages = async ({
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
-      report: reportVar?.find((x) => x.imageId === i.id),
     })
   );
 
@@ -2272,7 +2237,6 @@ export const getImageModerationReviewQueue = async ({
         | undefined;
       publishedAt?: Date | null;
       modelVersionId?: number | null;
-      baseModel?: string | null;
       entityType?: string | null;
       entityId?: number | null;
     }
@@ -2288,7 +2252,6 @@ export const getImageModerationReviewQueue = async ({
       reportDetails,
       reportUsername,
       reportUserId,
-
       ...i
     }) => ({
       ...i,
