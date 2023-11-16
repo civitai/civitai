@@ -36,27 +36,29 @@ export const useWindowScrollRestore = () => {
 
     const handleRouteChangeComplete = () => {
       ignoreScrollEvents = true;
-      backoff = new ExponentialBackoff({
-        startingDelay: 50,
-        growthFactor: 1,
-        maxAttempts: 10,
-      });
-      backoff.execute(() => {
-        const record = scrollMap.get(history.state.key);
-        if (record && node) {
-          if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
-            backoff?.abort();
-          } else {
-            ignoreScrollEvents = true;
+      const record = scrollMap.get(history.state.key);
+      if (record) {
+        backoff = new ExponentialBackoff({
+          startingDelay: 50,
+          growthFactor: 1,
+          maxAttempts: 10,
+        });
+        backoff.execute(() => {
+          if (node) {
+            if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
+              backoff?.abort();
+            } else {
+              ignoreScrollEvents = true;
 
-            node.scrollTop = record.scrollTop;
-            node.scrollLeft = record.scrollLeft;
+              node.scrollTop = record.scrollTop;
+              node.scrollLeft = record.scrollLeft;
+            }
           }
-        }
-      });
+        });
+      }
     };
 
-    const handleScroll = (e) => {
+    const handleScroll = () => {
       if (node) {
         if (ignoreScrollEvents) {
           ignoreScrollEvents = false;
