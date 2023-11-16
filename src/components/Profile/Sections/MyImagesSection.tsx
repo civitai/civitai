@@ -14,6 +14,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import Link from 'next/link';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -88,9 +89,11 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             })}
           >
             {!images.length && <ProfileSectionNoResults />}
-            {images.map((image) => (
-              <ImageCard data={image} key={image.id} />
-            ))}
+            <ImagesProvider images={images}>
+              {images.map((image) => (
+                <ImageCard data={image} key={image.id} />
+              ))}
+            </ImagesProvider>
             {isRefetching && <Loader className={classes.loader} />}
           </div>
         </ProfileSection>

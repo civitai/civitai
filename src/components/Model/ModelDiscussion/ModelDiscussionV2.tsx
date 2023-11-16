@@ -1,11 +1,11 @@
 import { Grid, Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { IconMessageCancel } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -49,9 +49,9 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
               autoFetch={false}
             />
             {hasHiddenComments && !onlyHidden && (
-              <RoutedContextLink
-                modal="hiddenCommentsModal"
-                modelId={modelId}
+              <RoutedDialogLink
+                name="hiddenModelComments"
+                state={{ modelId }}
                 style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
               >
                 <Text size="xs" color="dimmed">
@@ -64,7 +64,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
                     </Text>
                   </Group>
                 </Text>
-              </RoutedContextLink>
+              </RoutedDialogLink>
             )}
           </Stack>
         ) : (

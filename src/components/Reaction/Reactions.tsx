@@ -80,7 +80,7 @@ export function Reactions({
     targetUserId?: number;
   }) {
   const currentUser = useCurrentUser();
-  const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
+  const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
     defaultValue: false,
@@ -145,7 +145,7 @@ export function Reactions({
           noEmpty={!showAll}
           readonly={readonly}
         >
-          {ReactionBadge}
+          {(args) => <ReactionBadge {...args} />}
         </ReactionsList>
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
@@ -227,8 +227,7 @@ function ReactionBadge({
   canClick: boolean;
 }) {
   const color = hasReacted ? 'blue' : 'gray';
-  const settings = useReactionSettingsContext();
-  const displayReactionCount = settings?.displayReactionCount ?? true;
+  const { hideReactionCount } = useReactionSettingsContext();
   return (
     <Button
       size="xs"
@@ -251,7 +250,7 @@ function ReactionBadge({
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
-        {displayReactionCount && (
+        {!hideReactionCount && (
           <Text
             sx={(theme) => ({
               color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,

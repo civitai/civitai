@@ -1,8 +1,11 @@
-import { Container, Stack } from '@mantine/core';
+import { Box, Button, Container, Modal, Stack, Title } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 const useStore = create(() => ({ foo: true, bar: true, test: true, count: 0 }));
 
@@ -17,47 +20,39 @@ export default function Test() {
     <Container size="xs">
       <Stack>
         <Countdown endTime={offset} format="short"></Countdown>
-        <Foo />
-        <Bar />
-        <Derived />
+        <Button onClick={() => dialogStore.trigger({ component: ModalA })}>Modal</Button>
+
+        <RoutedDialogLink name="imageDetail" state={{ imageId: 2485691 }} passHref>
+          <a>
+            <h1>Route Dialog Link</h1>
+            <h2>Heading 2</h2>
+          </a>
+        </RoutedDialogLink>
       </Stack>
     </Container>
   );
 }
 
-const Foo = () => {
-  const foo = useStore((state) => state.foo);
+const ModalA = () => {
+  const dialog = useDialogContext();
 
-  useEffect(() => {
-    setTimeout(() => {
-      useStore.setState((state) => ({ ...state, foo: false }));
-    }, 2000);
-  }, []);
-
-  return <p>Foo: {`${foo}`}</p>;
+  return (
+    <Modal {...dialog} size={900}>
+      <Box p="xl">
+        <Button onClick={() => dialogStore.trigger({ component: ModalB })}>Modal</Button>
+      </Box>
+    </Modal>
+  );
 };
 
-const Bar = () => {
-  const bar = useStore((state) => state.bar);
+const ModalB = () => {
+  const dialog = useDialogContext();
 
-  useEffect(() => {
-    setTimeout(() => {
-      useStore.setState((state) => ({ ...state, bar: false }));
-    }, 1000);
-
-    setInterval(() => {
-      useStore.setState((state) => ({ ...state, count: state.count + 1 }));
-    }, 1000);
-  }, []);
-
-  return <p>Bar: {`${bar}`}</p>;
-};
-
-const Derived = () => {
-  const derived = useStore(({ bar, test, count }) => {
-    const num = count === 0 ? 1 : count <= 2 ? 2 : count <= 5 ? 3 : count <= 8 ? 4 : 5;
-    return `Bar: ${bar}, Test: ${test}, Count: ${num}`;
-  });
-
-  return <p>{derived}</p>;
+  return (
+    <Modal {...dialog}>
+      <Box p="xl">
+        <Title>Hello World</Title>
+      </Box>
+    </Modal>
+  );
 };

@@ -13,69 +13,36 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
-import { dbRead } from '~/server/db/client';
-import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
-import { isNumber } from '~/utils/type-guards';
 
-export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  useSession: true,
-  resolver: async ({ session, ssg, ctx }) => {
-    const { id } = ctx.params as { id: string };
-    if (!session)
-      return {
-        redirect: {
-          destination: `/models/${id}`,
-          permanent: false,
-        },
-      };
-
-    const modelId = Number(id);
-    if (!isNumber(modelId)) return { notFound: true };
-
-    const model = await dbRead.model.findUnique({
-      where: { id: modelId },
-      select: { userId: true, deletedAt: true },
-    });
-    const isModerator = session.user?.isModerator ?? false;
-    if (!model || (model.deletedAt && !isModerator)) return { notFound: true };
-
-    const isOwner = model.userId === session.user?.id;
-    if (!isOwner && !isModerator)
-      return {
-        redirect: {
-          destination: `/models/${id}`,
-          permanent: false,
-        },
-      };
-
-    await ssg?.model.getById.prefetch({ id: modelId });
-
-    return {
-      props: { modelId },
-    };
-  },
-});
-
-export default function ModelEditPage({ modelId }: Props) {
+export default function ModelEditPage() {
+  const currentUser = useCurrentUser();
   const router = useRouter();
-  const { data, isLoading } = trpc.model.getById.useQuery({ id: modelId });
+  const modelId = Number(router.query.id);
+  const { data, isLoading, isError } = trpc.model.getById.useQuery({ id: modelId });
   const model = useMemo(
-    () =>
-      ({
-        ...data,
-        tagsOnModels: data?.tagsOnModels.map(({ tag }) => tag) ?? [],
-      } as ModelUpsertInput),
+    () => ({
+      ...data,
+      tagsOnModels: data?.tagsOnModels.map(({ tag }) => tag) ?? [],
+    }),
     [data]
   );
 
   const handleSubmit = () => {
     router.push(`/models/${modelId}`);
   };
+
+  const isModerator = currentUser?.isModerator ?? false;
+  const isOwner = model?.user?.id === currentUser?.id;
+
+  if (isLoading) return <PageLoader />;
+  if (!model || isError || (model.deletedAt && !isModerator) || (!isOwner && !isModerator))
+    return <NotFound />;
 
   return (
     <Container size="sm">

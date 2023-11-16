@@ -37,7 +37,6 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
-import { FreezeProvider, RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -46,13 +45,16 @@ import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
+import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { useWindowScrollRestore } from '~/hooks/useScrollRestore';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -112,32 +114,7 @@ function MyApp(props: CustomAppProps) {
     [Component.getLayout]
   );
 
-  // fixes an issue where clicking the browser back button will cause the scroll position to change before the it should
-  // https://github.com/vercel/next.js/issues/3303#issuecomment-507255105
-  const pageHeightRef = useRef<number[]>([]);
-  useEffect(() => {
-    const cachedPageHeight = pageHeightRef.current;
-    const html = document.querySelector('html');
-    if (!html) return;
-
-    const handleChangeStart = () => {
-      cachedPageHeight.push(document.documentElement.offsetHeight);
-    };
-    const handleChangeComplete = () => (html.style.height = 'initial');
-
-    Router.events.on('routeChangeStart', handleChangeStart);
-    Router.events.on('routeChangeComplete', handleChangeComplete);
-    Router.beforePopState(() => {
-      html.style.height = `${cachedPageHeight.pop()}px`;
-      return true;
-    });
-
-    return () => {
-      Router.events.off('routeChangeStart', handleChangeStart);
-      Router.events.off('routeChangeComplete', handleChangeComplete);
-      Router.beforePopState(() => true);
-    };
-  }, []);
+  useWindowScrollRestore();
 
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
@@ -158,11 +135,12 @@ function MyApp(props: CustomAppProps) {
                         <CivitaiLinkProvider>
                           <CustomModalsProvider>
                             <NotificationsProvider zIndex={9999}>
-                              <FreezeProvider>
+                              <BrowserRouterProvider>
                                 <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                              </FreezeProvider>
-                              <GenerationPanel />
-                              <RoutedContextProvider2 />
+                                <GenerationPanel />
+                                <DialogProvider />
+                                <RoutedDialogProvider />
+                              </BrowserRouterProvider>
                             </NotificationsProvider>
                           </CustomModalsProvider>
                         </CivitaiLinkProvider>

@@ -52,6 +52,10 @@ const tagCombos: ComputedTagCombo[] = [
     sources: [TagSource.WD14],
   },
   {
+    tag: 'child',
+    qualifiers: ['male child', 'female child'],
+  },
+  {
     tag: 'graphic female nudity',
     qualifiers: ['nudity + female'],
     sources: [TagSource.WD14],
@@ -183,6 +187,8 @@ const tagCombos: ComputedTagCombo[] = [
       'peeing',
       'boob grab|breast grab',
       'face to breasts',
+      'ball gag',
+      'bdsm',
     ],
     sources: [TagSource.WD14],
   },
@@ -199,7 +205,6 @@ const tagCombos: ComputedTagCombo[] = [
       '!graphic female nudity',
       '!graphic male nudity',
       'swimwear',
-      'underwear',
       'lingerie',
       'bikini',
     ],

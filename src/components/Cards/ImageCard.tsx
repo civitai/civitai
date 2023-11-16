@@ -9,13 +9,14 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageGetInfinite } from '~/types/router';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import HoverActionButton from './components/HoverActionButton';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 
 export function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -146,17 +147,14 @@ export function UnroutedImageCard({ data }: Props) {
     </FeedCard>
   );
 }
-export function ImageCard({ data, collectionId }: Props) {
+export function ImageCard({ data }: Props) {
+  const context = useImagesContext();
+
   return (
-    <RoutedContextLink
-      modal="imageDetailModal"
-      imageId={data.id}
-      collectionId={collectionId}
-      period="AllTime"
-    >
+    <RoutedDialogLink name="imageDetail" state={{ imageId: data.id, ...context }}>
       <UnroutedImageCard data={data} />
-    </RoutedContextLink>
+    </RoutedDialogLink>
   );
 }
 
-type Props = { data: ImageGetInfinite[number] | ImageSearchIndexRecord; collectionId?: number };
+type Props = { data: ImageGetInfinite[number] | ImageSearchIndexRecord };

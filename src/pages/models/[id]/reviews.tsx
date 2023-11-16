@@ -34,7 +34,6 @@ import {
 } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ResourceReviewPagedModel } from '~/types/router';
@@ -43,6 +42,7 @@ import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
 import { StarRating } from '~/components/StartRating/StarRating';
 import { env } from '~/env/client.mjs';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -266,9 +266,9 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
         <Group spacing="xs">
           <StarRating value={review.rating} />
 
-          <RoutedContextLink
-            modal="resourceReviewModal"
-            reviewId={review.id}
+          <RoutedDialogLink
+            name="resourceReview"
+            state={{ reviewId: review.id }}
             style={{ display: 'flex' }}
           >
             <Badge
@@ -281,11 +281,11 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             >
               {review.helper?.imageCount ?? '0'}
             </Badge>
-          </RoutedContextLink>
+          </RoutedDialogLink>
 
-          <RoutedContextLink
-            modal="resourceReviewModal"
-            reviewId={review.id}
+          <RoutedDialogLink
+            name="resourceReview"
+            state={{ reviewId: review.id }}
             style={{ display: 'flex' }}
           >
             <Badge
@@ -298,7 +298,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             >
               {review.thread?._count.comments ?? '0'}
             </Badge>
-          </RoutedContextLink>
+          </RoutedDialogLink>
           {(review.exclude || isCreator) && <Badge color="red">Excluded from average</Badge>}
         </Group>
         {review.details && (

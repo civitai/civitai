@@ -4,7 +4,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
-import { deleteImageById, ingestImage } from '~/server/services/image.service';
+import { deleteImageById, ingestImageBulk } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
@@ -46,7 +46,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
 
   const batches = chunk(images, 250);
   for (const batch of batches) {
-    await Promise.all(batch.map((image) => ingestImage({ image })));
+    await ingestImageBulk({ images: batch });
   }
 });
 

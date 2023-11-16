@@ -19,6 +19,7 @@ import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 
 export default function ImageSearch() {
   return (
@@ -166,9 +167,12 @@ function ImagesHitList() {
           gridTemplateColumns: `repeat(auto-fill, minmax(290px, 1fr))`,
         }}
       >
-        {images.map((hit) => (
-          <ImageCard key={hit.id} data={hit} />
-        ))}
+        {/* TODO - fix type issues here. Problem is a type mismatch between ImageSearchIndexRecord and ImageGetInfinite  */}
+        <ImagesProvider images={images as any}>
+          {images.map((hit) => (
+            <ImageCard key={hit.id} data={hit} />
+          ))}
+        </ImagesProvider>
       </div>
       {hits.length > 0 && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">

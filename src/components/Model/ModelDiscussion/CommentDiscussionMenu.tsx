@@ -12,10 +12,11 @@ import {
   IconBan,
 } from '@tabler/icons-react';
 import { SessionUser } from 'next-auth';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { closeRoutedContext, openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -29,6 +30,7 @@ export function CommentDiscussionMenu({
   ...props
 }: Props) {
   const queryUtils = trpc.useContext();
+  const dialog = useDialogContext();
 
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
@@ -40,7 +42,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       closeAllModals();
-      closeRoutedContext();
+      dialog.onClose();
     },
     onError(error) {
       showErrorNotification({
@@ -99,7 +101,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getById.invalidate({ id: comment.id });
       closeModal('confirm-tos-violation');
-      closeRoutedContext();
+      dialog.onClose();
     },
     onError(error) {
       showErrorNotification({
@@ -172,7 +174,9 @@ export function CommentDiscussionMenu({
             {((!comment.locked && !isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
-                onClick={() => openRoutedContext('commentEdit', { commentId: comment.id })}
+                onClick={() =>
+                  triggerRoutedDialog({ name: 'commentEdit', state: { commentId: comment.id } })
+                }
               >
                 Edit comment
               </Menu.Item>

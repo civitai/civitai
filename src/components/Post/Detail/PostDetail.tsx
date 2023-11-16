@@ -15,7 +15,6 @@ import {
 import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
@@ -41,10 +40,11 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { env } from '~/env/client.mjs';
 import { toStringList } from '~/utils/array-helpers';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
-  const router = useRouter();
+  const { query } = useBrowserRouter();
   const theme = useMantineTheme();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const { images, isLoading: imagesLoading } = useQueryImages({ postId });
@@ -95,7 +95,7 @@ export function PostDetail({ postId }: { postId: number }) {
                   {post.title}
                 </Title>
               )}
-              {router.query.modal && (
+              {query.dialog && (
                 <NavigateBack url="/posts">
                   {({ onClick }) => <CloseButton onClick={onClick} size="lg" ml="auto" />}
                 </NavigateBack>
