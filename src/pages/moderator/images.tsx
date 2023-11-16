@@ -406,9 +406,6 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
   const hasReport = !!image.report;
   const pendingReport = hasReport && image.report?.status === 'Pending';
   const entityUrl = useMemo(() => {
-    if (image.entityType) {
-      console.log(image);
-    }
     if (image.postId) {
       return `/posts/${image.postId}`;
     }

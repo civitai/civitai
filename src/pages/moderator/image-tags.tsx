@@ -257,9 +257,6 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
   );
   const needsReview = tags.toReview.length > 0;
   const entityUrl = useMemo(() => {
-    if (image.entityType) {
-      console.log(image);
-    }
     if (image.postId) {
       return `/posts/${image.postId}`;
     }
