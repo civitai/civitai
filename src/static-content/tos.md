@@ -49,7 +49,7 @@ Content containing nudity, sexual situations, provocative/revealing attire, bloo
 - Content Duplication and false impersonation.
   - Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the site.
 
-If you believe your content has been removed unfairly, you can submit an appeal through our [Appeal Form](/appeal) for further review by a team separate from the moderation team.
+If you believe your account has been banned or muted unfairly, you can submit an appeal through our [Appeal Form](/appeal) for further review by a team separate from the moderation team.
 
 For additional information about how content is moderated, please review our [Content Moderation Policy](/content/moderation).
 

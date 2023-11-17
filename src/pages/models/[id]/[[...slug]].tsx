@@ -834,11 +834,7 @@ export default function ModelDetailsV2({
                     and is not visible to the community.{' '}
                     {unpublishedReason && unpublishedMessage ? unpublishedMessage : null} If you
                     adjust your model to comply with our guidelines, you can request a review from
-                    one of our moderators. If you believe this was done in error, you can{' '}
-                    <Text component="a" variant="link" href="/appeal" target="_blank">
-                      submit an appeal
-                    </Text>
-                    .
+                    one of our moderators.
                   </Text>
                 </Group>
               </Alert>
