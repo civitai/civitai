@@ -1,7 +1,6 @@
-import { Box, Center, Loader, Stack, Text, ThemeIcon, Title, UnstyledButton } from '@mantine/core';
-import { useEffect, useMemo } from 'react';
+import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { useMemo } from 'react';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
-import { useInView } from 'react-intersection-observer';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import {
   SearchableMultiSelectRefinementList,
@@ -12,7 +11,6 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
@@ -20,6 +18,7 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export default function ImageSearch() {
   return (
@@ -67,10 +66,8 @@ function RenderFilters() {
 function ImagesHitList() {
   const { classes } = useSearchLayoutStyles();
   const { status } = useInstantSearch();
-  const { ref, inView } = useInView();
 
   const { hits, showMore, isLastPage } = useInfiniteHits<ImageSearchIndexRecord>();
-  const router = useRouter();
   const currentUser = useCurrentUser();
   const {
     images: hiddenImages,
@@ -90,13 +87,6 @@ function ImagesHitList() {
   }, [hits, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - images.length;
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && status === 'idle' && !isLastPage) {
-      showMore();
-    }
-  }, [status, inView, showMore, isLastPage]);
 
   if (hits.length === 0) {
     const NotFound = (
@@ -174,10 +164,16 @@ function ImagesHitList() {
           ))}
         </ImagesProvider>
       </div>
-      {hits.length > 0 && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && <Loader />}
-        </Center>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader
+          loadFn={showMore}
+          loadCondition={status === 'idle'}
+          style={{ gridColumn: '1/-1' }}
+        >
+          <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
       )}
     </Stack>
   );

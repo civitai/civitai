@@ -26,7 +26,6 @@ import {
   useInfiniteHits,
   useInstantSearch,
   useRefinementList,
-  useToggleRefinement,
 } from 'react-instantsearch';
 import {
   BaseModel,
@@ -279,11 +278,11 @@ type ResourceSelectData = ReturnType<
   typeof applyUserPreferencesModels<ModelSearchIndexRecord>
 >[number];
 
-function ResourceSelectCard({ index, data }: { index: number; data: ResourceSelectData }) {
+function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData }) {
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { onSelect, canGenerate, resources } = useResourceSelectContext();
-  const { classes, cx, theme } = useCardStyles({
+  const { classes, cx } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
         ? data.image.width / data.image.height
@@ -296,7 +295,7 @@ function ResourceSelectCard({ index, data }: { index: number; data: ResourceSele
     return (
       version.canGenerate === canGenerate &&
       (resourceFilter?.baseModels?.length
-        ? resourceFilter.baseModels?.includes(version.baseModel as any)
+        ? resourceFilter.baseModels?.includes(version.baseModel as BaseModel)
         : true)
     );
   });
@@ -316,6 +315,7 @@ function ResourceSelectCard({ index, data }: { index: number; data: ResourceSele
       modelName: data.name,
       modelType: data.type,
       image: data.image,
+      covered: data.canGenerate,
       strength: 1, // TODO - use version recommendations or default to 1
     });
   };

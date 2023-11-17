@@ -173,7 +173,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
         params: { ...params, baseModel },
-      });
+      }).catch(() => null); // catching here since error is handled at the mutation event level
       onSuccess?.();
       generationPanel.setView('queue');
     };

@@ -37,6 +37,7 @@ export const trainingResultsSchema = z.object({
     .nullish(),
 });
 
+export type ModelFileMetadata = z.infer<typeof modelFileMetadataSchema>;
 export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),

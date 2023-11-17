@@ -1,14 +1,13 @@
 import { Stack, Text, LoadingOverlay, Center, Loader, ThemeIcon } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { debounce, isEqual } from 'lodash-es';
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { isEqual } from 'lodash-es';
+import { useEffect } from 'react';
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { useInView } from 'react-intersection-observer';
 import { IconCloudOff } from '@tabler/icons-react';
 import { ImageIngestionStatus, MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -17,6 +16,7 @@ import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.type
 import { ImageGetInfinite } from '~/types/router';
 import { ImageIngestionProvider } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 type ImageFilters = {
   modelId?: number;
@@ -48,23 +48,15 @@ export default function ImagesInfinite({
   showEof = false,
   renderItem: MasonryItem,
 }: ImagesInfiniteProps) {
-  const { ref, inView } = useInView();
   const imageFilters = useImageFilters('images');
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryImages(debouncedFilters, { keepPreviousData: true });
-  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && !isFetching) {
-      debouncedFetchNextPage();
-    }
-  }, [debouncedFetchNextPage, inView, isFetching]);
-  // #endregion
+  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
+    debouncedFilters,
+    { keepPreviousData: true }
+  );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -100,10 +92,16 @@ export default function ImagesInfinite({
               />
             </ImagesProvider>
           </ImageIngestionProvider>
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>

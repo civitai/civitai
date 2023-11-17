@@ -144,9 +144,7 @@ export function Reactions({
           entityId={entityId}
           noEmpty={!showAll}
           readonly={readonly}
-        >
-          {(args) => <ReactionBadge {...args} />}
-        </ReactionsList>
+        />
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
             toUserId={targetUserId}
@@ -167,18 +165,12 @@ function ReactionsList({
   entityType,
   entityId,
   available,
-  children,
   noEmpty,
   readonly,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
-  children: (args: {
-    hasReacted: boolean;
-    count: number;
-    reaction: ReviewReactions;
-    canClick: boolean;
-  }) => React.ReactElement;
+
   readonly?: boolean;
 }) {
   const currentUser = useCurrentUser();
@@ -207,7 +199,7 @@ function ReactionsList({
               readonly={!currentUser || readonly}
               noEmpty={noEmpty}
             >
-              {children}
+              {ReactionBadge}
             </ReactionButton>
           );
         })}

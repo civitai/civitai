@@ -17,7 +17,6 @@ import {
   Title,
 } from '@mantine/core';
 import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
-import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
@@ -31,7 +30,6 @@ import {
 import produce from 'immer';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useInView } from 'react-intersection-observer';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -114,7 +112,6 @@ const ImageReviewType = {
 type ImageReviewType = keyof typeof ImageReviewType;
 
 export default function Images() {
-  const { ref, inView } = useInView();
   // const queryUtils = trpc.useContext();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -142,10 +139,6 @@ export default function Images() {
   };
 
   useEffect(deselectAll, [type, deselectAll]);
-
-  useEffect(() => {
-    if (inView) fetchNextPage();
-  }, [fetchNextPage, inView]);
 
   const segments = [
     ...Object.entries(ImageReviewType).map(([key, value]) => ({ value: key, label: value })),
@@ -202,11 +195,6 @@ export default function Images() {
           />
         ) : (
           <NoContent mt="lg" message="There are no images that need review" />
-        )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
         )}
       </Stack>
     </Container>

@@ -6,8 +6,7 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useInView } from 'react-intersection-observer';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
@@ -19,6 +18,7 @@ import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
 import { CollectionCard } from '~/components/Cards/CollectionCard';
 import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export default function CollectionSearch() {
   return (
@@ -47,11 +47,7 @@ const RenderFilters = () => {
         ]}
       />
       <ChipRefinementList title="Filter by type" attribute="type" sortBy={['name']} />
-      <SearchableMultiSelectRefinementList
-        title="Users"
-        attribute="user.username"
-        searchable={true}
-      />
+      <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
     </>
   );
 };
@@ -59,7 +55,6 @@ const RenderFilters = () => {
 export function CollectionHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<CollectionSearchIndexRecord>();
   const { status } = useInstantSearch();
-  const { ref, inView } = useInView();
   const { classes, cx } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
   const {
@@ -80,13 +75,6 @@ export function CollectionHitList() {
   }, [hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
 
   const hiddenItems = hits.length - collections.length;
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && status === 'idle' && !isLastPage) {
-      showMore?.();
-    }
-  }, [status, inView, showMore, isLastPage]);
 
   if (loadingPreferences) {
     return (
@@ -177,10 +165,16 @@ export function CollectionHitList() {
           );
         })}
       </Box>
-      {hits.length > 0 && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && <Loader />}
-        </Center>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader
+          loadFn={showMore}
+          loadCondition={status === 'idle'}
+          style={{ gridColumn: '1/-1' }}
+        >
+          <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
       )}
     </Stack>
   );

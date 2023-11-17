@@ -11,7 +11,7 @@ import {
 import { useEffect, useRef } from 'react';
 import { usePrevious } from '@mantine/hooks';
 import { useWindowSize } from '@react-hook/window-size';
-import { useInView } from 'react-intersection-observer';
+import { InViewLoader } from '../InView/InViewLoader';
 
 type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   UseMasonryOptions<TData>,
@@ -34,7 +34,7 @@ type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   maxColumnCount?: number;
   filters: TFilters;
   autoFetch?: boolean;
-  fetchNextPage?: () => void;
+  fetchNextPage: VoidFunction;
   /** using the data in the grid, determine the index to scroll to */
   scrollToIndex?: (data: TData[]) => number;
 };
@@ -55,7 +55,6 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   ...masonicProps
 }: Props<T, TFilters>) {
   const theme = useMantineTheme();
-  const { ref, inView } = useInView();
 
   // #region [track data/filter changes]
   const stringified = JSON.stringify(filters);
@@ -101,14 +100,6 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   }, []); // eslint-disable-line
   // #endregion
 
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView) {
-      fetchNextPage?.();
-    }
-  }, [fetchNextPage, inView]);
-  // #endregion
-
   return (
     <div style={{ position: 'relative' }}>
       <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
@@ -126,9 +117,15 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
       })}
       {hasNextPage &&
         (autoFetch ? (
-          <Center ref={ref}>
-            <Loader />
-          </Center>
+          <InViewLoader
+            loadFn={fetchNextPage}
+            loadCondition={!isRefetching}
+            style={{ gridColumn: '1/-1' }}
+          >
+            <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Loader />
+            </Center>
+          </InViewLoader>
         ) : (
           <Center>
             <Button

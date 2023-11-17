@@ -1,9 +1,8 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconCloudOff } from '@tabler/icons-react';
-import { debounce, isEqual } from 'lodash-es';
-import { useEffect, useMemo } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { isEqual } from 'lodash-es';
+import { useEffect } from 'react';
 
 import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
@@ -12,25 +11,18 @@ import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 
 export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
-  const { ref, inView } = useInView();
   const articlesFilters = useArticleFilters();
 
   const filters = removeEmpty({ ...articlesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { articles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryArticles(debouncedFilters, { keepPreviousData: true });
-  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
-
-  // #region [infinite data fetching]
-  useEffect(() => {
-    if (inView && !isFetching) {
-      debouncedFetchNextPage();
-    }
-  }, [debouncedFetchNextPage, inView, isFetching]);
-  // #endregion
+  const { articles, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryArticles(
+    debouncedFilters,
+    { keepPreviousData: true }
+  );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -53,10 +45,16 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
             itemId={(x) => x.id}
             empty={<NoContent />}
           />
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
