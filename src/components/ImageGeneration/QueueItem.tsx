@@ -84,7 +84,13 @@ export function QueueItem({ request }: Props) {
     });
   };
 
-  const handleGenerate = () => generationStore.setData({ type: 'remix', data: request });
+  const handleGenerate = () => {
+    const { resources, params } = request;
+    generationStore.setData({
+      type: 'remix',
+      data: { resources, params: { ...params, seed: undefined } },
+    });
+  };
 
   const { prompt, ...details } = request.params;
 

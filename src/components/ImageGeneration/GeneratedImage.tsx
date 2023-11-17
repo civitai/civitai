@@ -5,22 +5,20 @@ import {
   Card,
   Text,
   Stack,
-  Group,
   Checkbox,
   ActionIcon,
-  Tooltip,
-  TooltipProps,
   Box,
   Menu,
+  createStyles,
 } from '@mantine/core';
 import { openConfirmModal, openContextModal } from '@mantine/modals';
 import {
-  IconAdjustments,
   IconArrowsShuffle,
   IconDotsVertical,
   IconHourglass,
   IconInfoCircle,
   IconPlayerPlayFilled,
+  IconPlayerTrackNextFilled,
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
@@ -41,6 +39,7 @@ export function GeneratedImage({
   image: Generation.Image;
   request: Generation.Request;
 }) {
+  const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = generationImageSelect.useSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
@@ -63,6 +62,14 @@ export function GeneratedImage({
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
+    const { resources, params } = request;
+    generationStore.setData({
+      type: 'remix',
+      data: { resources, params: { ...params, seed: undefined } },
+    });
+  };
+
+  const handleGenerateWithSeed = () => {
     generationStore.setData({
       type: 'remix',
       data: { ...request, params: { ...request.params, seed: image.seed ?? request.params.seed } },
@@ -146,44 +153,26 @@ export function GeneratedImage({
                 <img alt="" src={image.url} style={{ zIndex: 2, width: '100%' }} />
               )}
             </Box>
-            <Checkbox
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs,
-                left: theme.spacing.xs,
-                zIndex: 3,
-
-                '& input:checked': {
-                  borderColor: theme.white,
-                },
-              })}
-              checked={selected}
-              onChange={(e) => {
-                toggleSelect(e.target.checked);
-              }}
-            />
+            <label className={classes.checkboxLabel}>
+              <Checkbox
+                className={classes.checkbox}
+                checked={selected}
+                onChange={(e) => {
+                  toggleSelect(e.target.checked);
+                }}
+              />
+            </label>
             <Menu withinPortal>
               <Menu.Target>
-                <ActionIcon
-                  variant="transparent"
-                  p={0}
-                  onClick={(e: React.MouseEvent) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  sx={(theme) => ({
-                    width: 30,
-                    position: 'absolute',
-                    top: theme.spacing.xs,
-                    right: theme.spacing.xs,
-                  })}
-                >
-                  <IconDotsVertical
-                    size={26}
-                    color="#fff"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  />
-                </ActionIcon>
+                <div className={classes.menuTarget}>
+                  <ActionIcon variant="transparent">
+                    <IconDotsVertical
+                      size={26}
+                      color="#fff"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    />
+                  </ActionIcon>
+                </div>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item
@@ -191,6 +180,12 @@ export function GeneratedImage({
                   icon={<IconPlayerPlayFilled size={14} stroke={1.5} />}
                 >
                   Generate
+                </Menu.Item>
+                <Menu.Item
+                  onClick={handleGenerateWithSeed}
+                  icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+                >
+                  Generate (with seed)
                 </Menu.Item>
                 <Menu.Item
                   color="red"
@@ -209,18 +204,12 @@ export function GeneratedImage({
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-            <Box
-              sx={(theme) => ({
-                bottom: theme.spacing.xs,
-                right: theme.spacing.xs,
-                position: 'absolute',
-              })}
+            <ImageMetaPopover
+              meta={request.params}
+              zIndex={constants.imageGeneration.drawerZIndex + 1}
+              // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
             >
-              <ImageMetaPopover
-                meta={request.params}
-                zIndex={constants.imageGeneration.drawerZIndex + 1}
-                // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
-              >
+              <div className={classes.info}>
                 <ActionIcon variant="transparent" size="md">
                   <IconInfoCircle
                     color="white"
@@ -230,11 +219,40 @@ export function GeneratedImage({
                     size={26}
                   />
                 </ActionIcon>
-              </ImageMetaPopover>
-            </Box>
+              </div>
+            </ImageMetaPopover>
           </Card>
         </>
       )}
     </AspectRatio>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  checkboxLabel: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    padding: theme.spacing.xs,
+    cursor: 'pointer',
+  },
+  checkbox: {
+    '& input:checked': {
+      borderColor: theme.white,
+    },
+  },
+  menuTarget: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    padding: theme.spacing.xs,
+    cursor: 'pointer',
+  },
+  info: {
+    bottom: 0,
+    right: 0,
+    padding: theme.spacing.xs,
+    position: 'absolute',
+    cursor: 'pointer',
+  },
+}));

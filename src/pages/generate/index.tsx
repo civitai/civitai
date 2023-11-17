@@ -53,7 +53,7 @@ export default function GeneratePage() {
   const isClient = useIsClient();
   const [tab, setTab] = useState<string>('queue');
 
-  const result = useGetGenerationRequests({ take: 5 });
+  const result = useGetGenerationRequests();
   usePageScrollRestore({
     key: tab,
     condition: !!result.data,
