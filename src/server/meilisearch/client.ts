@@ -33,7 +33,7 @@ export async function updateDocs({
     } catch (err) {
       retryCount++;
       if (retryCount >= RETRY_LIMIT) throw err;
-      sleep(5000 * (1 + RETRY_LIMIT - retryCount));
+      sleep(5000 * (1 + retryCount));
     }
   }
 }
