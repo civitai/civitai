@@ -20,11 +20,12 @@ import {
 } from '~/server/search-index/base.search-index';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
+import { withRetries } from '~/server/utils/errorHandling';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
 
-const READ_BATCH_SIZE = 500;
+const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
@@ -103,6 +104,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'category.name',
     'canGenerate',
     'fileFormats',
+    'lastVersionAtUnix',
   ];
 
   if (
@@ -137,240 +139,247 @@ const onFetchItemsToIndex = async ({
   skip?: number;
   take?: number;
 }) => {
-  const modelCategories = await getCategoryTags('model');
-  const modelCategoriesIds = modelCategories.map((category) => category.id);
+  return withRetries(
+    async () => {
+      const modelCategories = await getCategoryTags('model');
+      const modelCategoriesIds = modelCategories.map((category) => category.id);
 
-  const offset = queryProps.skip || 0;
-  console.log(
-    `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    ' filters:',
-    whereOr
-  );
-  const models = await db.model.findMany({
-    take: READ_BATCH_SIZE,
-    ...queryProps,
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      status: true,
-      createdAt: true,
-      lastVersionAt: true,
-      publishedAt: true,
-      locked: true,
-      earlyAccessDeadline: true,
-      mode: true,
-      checkpointType: true,
-      // Joins:
-      user: {
-        select: userWithCosmeticsSelect,
-      },
-      modelVersions: {
-        orderBy: { index: 'asc' },
+      const offset = queryProps.skip || 0;
+      console.log(
+        `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
+        offset,
+        offset + READ_BATCH_SIZE - 1,
+        ' filters:',
+        whereOr
+      );
+      const models = await db.model.findMany({
+        take: READ_BATCH_SIZE,
+        ...queryProps,
         select: {
           id: true,
           name: true,
-          earlyAccessTimeFrame: true,
+          type: true,
+          nsfw: true,
+          status: true,
           createdAt: true,
-          generationCoverage: { select: { covered: true } },
-          trainedWords: true,
-          baseModel: true,
-          baseModelType: true,
-          files: { select: { metadata: true }, where: { type: 'Model' } },
-        },
-        where: {
-          status: ModelStatus.Published,
-        },
-      },
-      tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
-      hashes: {
-        select: modelHashSelect,
-        where: {
-          hashType: ModelHashType.SHA256,
-          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-        },
-      },
-      metrics: {
-        select: {
-          commentCount: true,
-          favoriteCount: true,
-          downloadCount: true,
-          rating: true,
-          ratingCount: true,
-          collectedCount: true,
-          tippedAmountCount: true,
-        },
-        where: {
-          timeframe: MetricTimeframe.AllTime,
-        },
-      },
-      rank: {
-        select: {
-          [`downloadCount${MetricTimeframe.AllTime}`]: true,
-          [`favoriteCount${MetricTimeframe.AllTime}`]: true,
-          [`commentCount${MetricTimeframe.AllTime}`]: true,
-          [`ratingCount${MetricTimeframe.AllTime}`]: true,
-          [`rating${MetricTimeframe.AllTime}`]: true,
-          [`collectedCount${MetricTimeframe.AllTime}`]: true,
-          [`tippedAmountCount${MetricTimeframe.AllTime}`]: true,
-        },
-      },
-    },
-    where: {
-      status: ModelStatus.Published,
-      OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
-    },
-  });
-
-  console.log(
-    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    'filters:',
-    whereOr
-  );
-
-  // Avoids hitting the DB without data.
-  if (models.length === 0) {
-    return {
-      indexReadyRecords: [],
-      indexRecordsWithImages: [],
-    };
-  }
-
-  const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
-  const images = !!modelVersionIds.length
-    ? await getImagesForModelVersion({
-        modelVersionIds,
-        imagesPerVersion: 10,
-      })
-    : [];
-
-  const imageIds = images.map((image) => image.id);
-  // Performs a single DB request:
-  const tagsOnImages = !imageIds.length
-    ? []
-    : await db.tagsOnImage.findMany({
-        select: {
-          imageId: true,
-          tag: {
+          lastVersionAt: true,
+          publishedAt: true,
+          locked: true,
+          earlyAccessDeadline: true,
+          mode: true,
+          checkpointType: true,
+          // Joins:
+          user: {
+            select: userWithCosmeticsSelect,
+          },
+          modelVersions: {
+            orderBy: { index: 'asc' },
             select: {
               id: true,
               name: true,
+              earlyAccessTimeFrame: true,
+              createdAt: true,
+              generationCoverage: { select: { covered: true } },
+              trainedWords: true,
+              baseModel: true,
+              baseModelType: true,
+              files: { select: { metadata: true }, where: { type: 'Model' } },
+            },
+            where: {
+              status: ModelStatus.Published,
+            },
+          },
+          tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
+          hashes: {
+            select: modelHashSelect,
+            where: {
+              hashType: ModelHashType.SHA256,
+              fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+            },
+          },
+          metrics: {
+            select: {
+              commentCount: true,
+              favoriteCount: true,
+              downloadCount: true,
+              rating: true,
+              ratingCount: true,
+              collectedCount: true,
+              tippedAmountCount: true,
+            },
+            where: {
+              timeframe: MetricTimeframe.AllTime,
+            },
+          },
+          rank: {
+            select: {
+              [`downloadCount${MetricTimeframe.AllTime}`]: true,
+              [`favoriteCount${MetricTimeframe.AllTime}`]: true,
+              [`commentCount${MetricTimeframe.AllTime}`]: true,
+              [`ratingCount${MetricTimeframe.AllTime}`]: true,
+              [`rating${MetricTimeframe.AllTime}`]: true,
+              [`collectedCount${MetricTimeframe.AllTime}`]: true,
+              [`tippedAmountCount${MetricTimeframe.AllTime}`]: true,
             },
           },
         },
         where: {
-          imageId: {
-            in: imageIds,
-          },
+          status: ModelStatus.Published,
+          OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
         },
       });
 
-  // Get tags for each image:
-  const imagesWithTags = images.map((image) => {
-    const imageTags = tagsOnImages
-      .filter((tagOnImage) => tagOnImage.imageId === image.id)
-      .map((tagOnImage) => tagOnImage.tag);
-
-    return {
-      ...image,
-      tags: imageTags,
-    };
-  });
-
-  const indexReadyRecords = models
-    .map((modelRecord) => {
-      const { user, modelVersions, tagsOnModels, hashes, rank, ...model } = modelRecord;
-
-      const metrics = modelRecord.metrics[0] || {};
-
-      const weightedRating =
-        (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
-        (metrics.ratingCount + RATING_BAYESIAN_C);
-
-      const [version] = modelVersions;
-
-      if (!version) {
-        return null;
-      }
-
-      const canGenerate = modelVersions.some((x) => x.generationCoverage?.covered);
-
-      const category = tagsOnModels.find((tagOnModel) =>
-        modelCategoriesIds.includes(tagOnModel.tag.id)
+      console.log(
+        `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
+        offset,
+        offset + READ_BATCH_SIZE - 1,
+        'filters:',
+        whereOr
       );
 
-      return {
-        ...model,
-        user,
-        category: category?.tag,
-        version,
-        versions: modelVersions.map(({ generationCoverage, files, ...x }) => ({
-          ...x,
-          canGenerate: generationCoverage?.covered,
-        })),
-        triggerWords: [
-          ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
-        ],
-        fileFormats: [
-          ...new Set(
-            modelVersions
-              .flatMap((modelVersion) =>
-                modelVersion.files.map((x) => (x.metadata as ModelFileMetadata)?.format)
-              )
-              .filter(isDefined)
-          ),
-        ],
-        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
-        metrics: {
-          ...metrics,
-          weightedRating,
-        },
-        rank: {
-          downloadCount: rank?.[`downloadCount${MetricTimeframe.AllTime}`] ?? 0,
-          favoriteCount: rank?.[`favoriteCount${MetricTimeframe.AllTime}`] ?? 0,
-          commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
-          ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
-          rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,
-          collectedCount: rank?.[`collectedCount${MetricTimeframe.AllTime}`] ?? 0,
-          tippedAmountCount: rank?.[`tippedAmountCount${MetricTimeframe.AllTime}`] ?? 0,
-        },
-        canGenerate,
-      };
-    })
-    // Removes null models that have no versionIDs
-    .filter(isDefined);
-
-  const indexRecordsWithImages = models
-    .map((modelRecord) => {
-      const { modelVersions, ...model } = modelRecord;
-      const [modelVersion] = modelVersions;
-
-      if (!modelVersion) {
-        return null;
+      // Avoids hitting the DB without data.
+      if (models.length === 0) {
+        return {
+          indexReadyRecords: [],
+          indexRecordsWithImages: [],
+        };
       }
 
-      const modelImages = imagesWithTags.filter(
-        (image) => image.modelVersionId === modelVersion.id
-      );
+      const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+      const images = !!modelVersionIds.length
+        ? await getImagesForModelVersion({
+            modelVersionIds,
+            imagesPerVersion: 10,
+          })
+        : [];
+
+      const imageIds = images.map((image) => image.id);
+      // Performs a single DB request:
+      const tagsOnImages = !imageIds.length
+        ? []
+        : await db.tagsOnImage.findMany({
+            select: {
+              imageId: true,
+              tag: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+            where: {
+              imageId: {
+                in: imageIds,
+              },
+            },
+          });
+
+      // Get tags for each image:
+      const imagesWithTags = images.map((image) => {
+        const imageTags = tagsOnImages
+          .filter((tagOnImage) => tagOnImage.imageId === image.id)
+          .map((tagOnImage) => tagOnImage.tag);
+
+        return {
+          ...image,
+          tags: imageTags,
+        };
+      });
+
+      const indexReadyRecords = models
+        .map((modelRecord) => {
+          const { user, modelVersions, tagsOnModels, hashes, rank, ...model } = modelRecord;
+
+          const metrics = modelRecord.metrics[0] || {};
+
+          const weightedRating =
+            (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
+            (metrics.ratingCount + RATING_BAYESIAN_C);
+
+          const [version] = modelVersions;
+
+          if (!version) {
+            return null;
+          }
+
+          const canGenerate = modelVersions.some((x) => x.generationCoverage?.covered);
+
+          const category = tagsOnModels.find((tagOnModel) =>
+            modelCategoriesIds.includes(tagOnModel.tag.id)
+          );
+
+          return {
+            ...model,
+            lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
+            user,
+            category: category?.tag,
+            version,
+            versions: modelVersions.map(({ generationCoverage, files, ...x }) => ({
+              ...x,
+              canGenerate: generationCoverage?.covered,
+            })),
+            triggerWords: [
+              ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
+            ],
+            fileFormats: [
+              ...new Set(
+                modelVersions
+                  .flatMap((modelVersion) =>
+                    modelVersion.files.map((x) => (x.metadata as ModelFileMetadata)?.format)
+                  )
+                  .filter(isDefined)
+              ),
+            ],
+            hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+            tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
+            metrics: {
+              ...metrics,
+              weightedRating,
+            },
+            rank: {
+              downloadCount: rank?.[`downloadCount${MetricTimeframe.AllTime}`] ?? 0,
+              favoriteCount: rank?.[`favoriteCount${MetricTimeframe.AllTime}`] ?? 0,
+              commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
+              ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
+              rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,
+              collectedCount: rank?.[`collectedCount${MetricTimeframe.AllTime}`] ?? 0,
+              tippedAmountCount: rank?.[`tippedAmountCount${MetricTimeframe.AllTime}`] ?? 0,
+            },
+            canGenerate,
+          };
+        })
+        // Removes null models that have no versionIDs
+        .filter(isDefined);
+
+      const indexRecordsWithImages = models
+        .map((modelRecord) => {
+          const { modelVersions, ...model } = modelRecord;
+          const [modelVersion] = modelVersions;
+
+          if (!modelVersion) {
+            return null;
+          }
+
+          const modelImages = imagesWithTags.filter(
+            (image) => image.modelVersionId === modelVersion.id
+          );
+
+          return {
+            id: model.id,
+            images: modelImages,
+          };
+        })
+        // Removes null models that have no versionIDs
+        .filter(isDefined);
 
       return {
-        id: model.id,
-        images: modelImages,
+        indexReadyRecords,
+        indexRecordsWithImages,
       };
-    })
-    // Removes null models that have no versionIDs
-    .filter(isDefined);
-
-  return {
-    indexReadyRecords,
-    indexRecordsWithImages,
-  };
+    },
+    3,
+    1500
+  );
 };
 
 const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {

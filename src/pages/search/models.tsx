@@ -4,6 +4,7 @@ import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import {
   ChipRefinementList,
   ClearRefinements,
+  DateRangeRefinement,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
@@ -71,6 +72,7 @@ const RenderFilters = () => {
         sortBy={['name']}
         attribute="checkpointType"
       />
+      <DateRangeRefinement title="Filter by Last Updated At" attribute="lastVersionAtUnix" />
       <ChipRefinementList title="Filter by File Format" sortBy={['name']} attribute="fileFormats" />
       <ChipRefinementList
         title="Filter by Category"
