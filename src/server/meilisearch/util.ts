@@ -1,35 +1,42 @@
 import { IndexOptions, MeiliSearchErrorInfo, MeiliSearchTimeOutError, Task } from 'meilisearch';
 import { client } from '~/server/meilisearch/client';
 import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { withRetries } from '~/server/utils/errorHandling';
 
-const WAIT_FOR_TASKS_MAX_RETRIES = 3;
+const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
 const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
-  if (!client) {
-    return null;
-  }
+  return withRetries(
+    async () => {
+      if (!client) {
+        return null;
+      }
 
-  try {
-    // Will swap if index is created.
-    const index = await client.getIndex(indexName);
+      try {
+        // Will swap if index is created.
+        const index = await client.getIndex(indexName);
 
-    if (options) {
-      await index.update(options);
-    }
+        if (options) {
+          await index.update(options);
+        }
 
-    return index;
-  } catch (e) {
-    const meiliSearchError = e as MeiliSearchErrorInfo;
+        return index;
+      } catch (e) {
+        const meiliSearchError = e as MeiliSearchErrorInfo;
 
-    if (meiliSearchError.code === 'index_not_found') {
-      const createdIndexTask = await client.createIndex(indexName, options);
-      await client.waitForTask(createdIndexTask.taskUid);
-      return await client.getIndex(indexName);
-    }
+        if (meiliSearchError.code === 'index_not_found') {
+          const createdIndexTask = await client.createIndex(indexName, options);
+          await client.waitForTask(createdIndexTask.taskUid);
+          return await client.getIndex(indexName);
+        }
 
-    // Don't handle it within this scope
-    throw e;
-  }
+        // Don't handle it within this scope
+        throw e;
+      }
+    },
+    3,
+    1500
+  );
 };
 
 /**

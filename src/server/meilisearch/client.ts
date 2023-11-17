@@ -1,6 +1,7 @@
 import { EnqueuedTask, MeiliSearch } from 'meilisearch';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
+import { sleep } from '~/server/utils/errorHandling';
 
 const log = createLogger('search', 'green');
 
@@ -32,6 +33,7 @@ export async function updateDocs({
     } catch (err) {
       retryCount++;
       if (retryCount >= RETRY_LIMIT) throw err;
+      sleep(5000 * (1 + RETRY_LIMIT - retryCount));
     }
   }
 }
