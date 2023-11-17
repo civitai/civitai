@@ -535,6 +535,15 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     dbWrite.post.deleteMany({ where: { userId: id } }),
     dbWrite.image.deleteMany({ where: { userId: id } }),
     dbWrite.article.deleteMany({ where: { userId: id } }),
+    dbWrite.userProfile.deleteMany({ where: { userId: id } }),
+    dbWrite.userLink.deleteMany({ where: { userId: id } }),
+    dbWrite.question.deleteMany({ where: { userId: id } }),
+    dbWrite.answer.deleteMany({ where: { userId: id } }),
+    dbWrite.collection.deleteMany({ where: { userId: id } }),
+    dbWrite.bounty.deleteMany({ where: { userId: id } }),
+    dbWrite.bountyEntry.deleteMany({
+      where: { userId: id, benefactors: { none: {} } },
+    }),
   ]);
 
   await modelsSearchIndex.queueUpdate(
