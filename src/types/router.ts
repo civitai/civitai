@@ -90,3 +90,6 @@ export type BountyEntryGetById = BountyEntryRouter['getById'];
 
 export type UserOverview = RouterOutput['userProfile']['overview'];
 export type UserWithProfile = RouterOutput['userProfile']['get'];
+
+export type ImageModerationReviewQueueImage =
+  RouterOutput['image']['getModeratorReviewQueue']['items'][number];

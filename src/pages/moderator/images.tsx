@@ -43,13 +43,12 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { ImageSort } from '~/server/common/enums';
-import { ImageInclude, ImageMetaProps } from '~/server/schema/image.schema';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { ImageGetInfinite } from '~/types/router';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { getImageEntityUrl } from '~/pages/moderator/moderator.util';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -123,13 +122,11 @@ export default function Images() {
     () => ({
       needsReview: !viewingReported ? type : undefined,
       reportReview: viewingReported ? true : undefined,
-      include: viewingReported ? (['report'] as ImageInclude[]) : undefined,
-      sort: ImageSort.Newest,
     }),
     [type, viewingReported]
   );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.image.getInfinite.useInfiniteQuery(filters, {
+    trpc.image.getModeratorReviewQueue.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
@@ -206,7 +203,7 @@ function ModerationControls({
   filters,
   view,
 }: {
-  images: ImagesInfiniteModel[];
+  images: ImageModerationReviewQueueImage[];
   filters: any;
   view: ImageReviewType | 'reported';
 }) {
@@ -224,8 +221,8 @@ function ModerationControls({
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
     async onMutate({ ids, needsReview, delete: deleted }) {
-      await queryUtils.image.getInfinite.cancel();
-      queryUtils.image.getInfinite.setInfiniteData(
+      await queryUtils.image.getModeratorReviewQueue.cancel();
+      queryUtils.image.getModeratorReviewQueue.setInfiniteData(
         filters,
         produce((data) => {
           if (!data?.pages?.length) return;
@@ -252,8 +249,8 @@ function ModerationControls({
 
   const reportMutation = trpc.report.bulkUpdateStatus.useMutation({
     async onMutate({ ids, status }) {
-      await queryUtils.image.getInfinite.cancel();
-      queryUtils.image.getInfinite.setInfiniteData(
+      await queryUtils.image.getModeratorReviewQueue.cancel();
+      queryUtils.image.getModeratorReviewQueue.setInfiniteData(
         filters,
         produce((data) => {
           if (!data?.pages?.length) return;
@@ -330,7 +327,7 @@ function ModerationControls({
 
   const handleRefresh = () => {
     handleClearAll();
-    queryUtils.image.getInfinite.invalidate(filters);
+    queryUtils.image.getModeratorReviewQueue.invalidate(filters);
     showNotification({
       id: 'refreshing',
       title: 'Refreshing',
@@ -402,6 +399,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
 
   const hasReport = !!image.report;
   const pendingReport = hasReport && image.report?.status === 'Pending';
+  const entityUrl = getImageEntityUrl(image);
 
   return (
     <Card
@@ -452,8 +450,8 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                   width={450}
                   placeholder="empty"
                 />
-                {image.postId && (
-                  <Link href={`/posts/${image.postId}`} passHref>
+                {!!entityUrl && (
+                  <Link href={entityUrl} passHref>
                     <ActionIcon
                       component="a"
                       variant="transparent"
@@ -551,7 +549,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
 }
 
 type ImageGridItemProps = {
-  data: ImageGetInfinite[number];
+  data: ImageModerationReviewQueueImage;
   index: number;
   width: number;
 };

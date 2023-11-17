@@ -188,6 +188,7 @@ export const ingestImageSchema = z.object({
 const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report', 'meta']);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
+
 export const getInfiniteImagesSchema = z
   .object({
     limit: z.number().min(0).max(200).default(100),
@@ -211,9 +212,6 @@ export const getInfiniteImagesSchema = z
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
     withTags: z.boolean().optional(),
     browsingMode: z.nativeEnum(BrowsingMode).optional(),
-    needsReview: z.string().nullish(),
-    tagReview: z.boolean().optional(),
-    reportReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
@@ -281,4 +279,14 @@ export const getEntitiesCoverImage = z.object({
       entityId: z.number(),
     })
   ),
+});
+
+export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
+
+export const imageReviewQueueInputSchema = z.object({
+  limit: z.number().min(0).max(200).default(100),
+  cursor: z.union([z.bigint(), z.number()]).optional(),
+  needsReview: z.string().nullish(),
+  tagReview: z.boolean().optional(),
+  reportReview: z.boolean().optional(),
 });

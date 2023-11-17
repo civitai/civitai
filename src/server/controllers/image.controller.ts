@@ -3,12 +3,15 @@ import {
   GetImageInput,
   GetInfiniteImagesInput,
   ImageModerationSchema,
+  ImageReviewQueueInput,
+  imageReviewQueueInputSchema,
 } from './../schema/image.schema';
 import {
   getAllImages,
   getEntityCoverImage,
   getImage,
   getImageDetail,
+  getImageModerationReviewQueue,
   getImageResources,
   moderateImages,
 } from './../services/image.service';
@@ -405,3 +408,19 @@ export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntiti
 //     throw throwDbError(error);
 //   }
 // };
+export const getModeratorReviewQueueHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ImageReviewQueueInput;
+  ctx: Context;
+}) => {
+  try {
+    return await getImageModerationReviewQueue({
+      ...input,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
