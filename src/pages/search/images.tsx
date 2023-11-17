@@ -4,6 +4,7 @@ import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import {
   ChipRefinementList,
+  DateRangeRefinement,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
@@ -49,6 +50,7 @@ function RenderFilters() {
           { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
         ]}
       />
+      <DateRangeRefinement title="Filter by creation date" attribute="createdAtUnix" />
       <ChipRefinementList
         title="Filter by Aspect Ratio"
         sortBy={['name']}

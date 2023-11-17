@@ -20,6 +20,7 @@ const imageSearchParamsSchema = searchParamsSchema
   .extend({
     imageId: z.coerce.number(),
     index: z.literal('images'),
+    createdAt: z.string(),
     sortBy: z.enum(ImagesSearchIndexSortBy),
     generationTool: z
       .union([z.array(z.string()), z.string()])
@@ -62,6 +63,9 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       'tags.name': images.tags,
       'user.username': images.users,
     });
+    const range = removeEmpty({
+      createdAtUnix: images.createdAt,
+    });
 
     const { query, sortBy, imageId } = images;
 
@@ -71,6 +75,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
         refinementList,
         query,
         imageId,
+        range,
       },
     };
   },
@@ -81,6 +86,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       };
     }
 
+    const createdAt = uiState[IMAGES_SEARCH_INDEX].range?.['createdAtUnix'];
     const generationTool = uiState[IMAGES_SEARCH_INDEX].refinementList?.['generationTool'];
     const aspectRatio = uiState[IMAGES_SEARCH_INDEX].refinementList?.['aspectRatio'];
     const baseModel = uiState[IMAGES_SEARCH_INDEX].refinementList?.['baseModel'];
@@ -101,6 +107,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       baseModel,
       aspectRatio,
       generationTool,
+      createdAt,
     };
 
     return { [IMAGES_SEARCH_INDEX]: state };
