@@ -54,7 +54,7 @@ import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { useWindowScrollRestore } from '~/hooks/useScrollRestore';
+import { ScrollRestoration } from '~/components/ScrollRestoration/ScrollRestoration';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -114,8 +114,6 @@ function MyApp(props: CustomAppProps) {
     [Component.getLayout]
   );
 
-  useWindowScrollRestore();
-
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
   ) : (
@@ -136,6 +134,7 @@ function MyApp(props: CustomAppProps) {
                           <CustomModalsProvider>
                             <NotificationsProvider zIndex={9999}>
                               <BrowserRouterProvider>
+                                <ScrollRestoration />
                                 <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                                 <GenerationPanel />
                                 <DialogProvider />

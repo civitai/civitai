@@ -1,83 +1,64 @@
-import Router from 'next/router';
-import React, { cloneElement, useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 
 import { createKeyDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
-import { ExponentialBackoff } from '~/utils/exponentialBackoff';
 
 type ScrollPosition = { scrollTop: number; scrollLeft: number };
 const scrollMap = new Map<string, ScrollPosition>();
 
 const debounce = createKeyDebouncer(300);
 
-const emitter = new EventEmitter<{ scroll: ScrollPosition & { key: string } }>();
-emitter.on('scroll', ({ key, ...scrollPosition }) => {
-  debounce(key, () => scrollMap.set(key, scrollPosition));
-});
-
-export const useScrollRestore = () => {
-  const ref = useRef<HTMLElement | null>(null);
+export const useScrollRestore = ({
+  key,
+  defaultPosition = 'top',
+}: {
+  key: string;
+  defaultPosition?: 'top' | 'bottom';
+}) => {
+  const [node, setRef] = useState<Element | null>(null);
+  const [emitter] = useState(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
 
   useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
+    const cb = emitter.on('scroll', ({ key, ...scrollPosition }) =>
+      debounce(key, () => scrollMap.set(key, scrollPosition))
+    );
+    return () => emitter.off('scroll', cb);
   });
 
-  return ref;
-};
-
-export const useWindowScrollRestore = () => {
   useEffect(() => {
-    history.scrollRestoration = 'manual';
-
-    let ignoreScrollEvents = false;
-    let backoff: ExponentialBackoff | undefined;
-    const node = document.querySelector('html');
-
-    const handleRouteChangeComplete = () => {
-      ignoreScrollEvents = true;
-      const record = scrollMap.get(history.state.key);
-      if (record) {
-        backoff = new ExponentialBackoff({
-          startingDelay: 50,
-          growthFactor: 1,
-          maxAttempts: 10,
-        });
-        backoff.execute(() => {
-          if (node) {
-            if (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft) {
-              backoff?.abort();
-            } else {
-              ignoreScrollEvents = true;
-
-              node.scrollTop = record.scrollTop;
-              node.scrollLeft = record.scrollLeft;
-            }
-          }
-        });
-      }
-    };
-
-    const handleScroll = () => {
-      if (node) {
-        if (ignoreScrollEvents) {
-          ignoreScrollEvents = false;
-        } else {
-          backoff?.abort();
-          emitter.emit('scroll', {
-            key: history.state.key,
-            scrollTop: node.scrollTop,
-            scrollLeft: node.scrollLeft,
-          });
+    if (!node) return;
+    const _key = `${key}_${location.pathname.substring(1)}`;
+    const record = scrollMap.get(_key);
+    if (!record) {
+      switch (defaultPosition) {
+        case 'top': {
+          if (node.scrollTop !== 0) node.scrollTop = 0;
+          break;
+        }
+        case 'bottom': {
+          const scrollBottom = node.scrollHeight - node.clientHeight;
+          if (node.scrollTop < scrollBottom) node.scrollTop = scrollBottom;
+          break;
         }
       }
+    } else {
+      node.scrollTop = record.scrollTop;
+      node.scrollLeft = record.scrollLeft;
+    }
+
+    const handleScroll = () => {
+      emitter.emit('scroll', {
+        key: _key,
+        scrollTop: node.scrollTop,
+        scrollLeft: node.scrollLeft,
+      });
     };
 
-    addEventListener('scroll', handleScroll, { passive: true });
-    Router.events.on('routeChangeComplete', handleRouteChangeComplete);
+    node.addEventListener('scroll', handleScroll);
     return () => {
-      removeEventListener('scroll', handleScroll);
-      Router.events.off('routeChangeComplete', handleRouteChangeComplete);
+      node.removeEventListener('scroll', handleScroll);
     };
-  }, []);
+  }, [key, node, defaultPosition]); //eslint-disable-line
+
+  return { setRef, node: node };
 };
