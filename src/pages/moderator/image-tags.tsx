@@ -43,6 +43,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { getImageEntityUrl } from '~/pages/moderator/moderator.util';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -256,20 +257,7 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
     [image.tags]
   );
   const needsReview = tags.toReview.length > 0;
-  const entityUrl = useMemo(() => {
-    if (image.postId) {
-      return `/posts/${image.postId}`;
-    }
-
-    switch (image.entityType) {
-      case 'Bounty':
-        return `/bounties/${image.entityId}`;
-      case 'BountyEntry':
-        return `/bounties/entries/${image.entityId}`;
-      default:
-        return `/images/${image.id}`;
-    }
-  }, [image]);
+  const entityUrl = getImageEntityUrl(image);
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>

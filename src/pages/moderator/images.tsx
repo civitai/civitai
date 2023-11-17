@@ -50,6 +50,7 @@ import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/route
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { getImageEntityUrl } from '~/pages/moderator/moderator.util';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -405,20 +406,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
 
   const hasReport = !!image.report;
   const pendingReport = hasReport && image.report?.status === 'Pending';
-  const entityUrl = useMemo(() => {
-    if (image.postId) {
-      return `/posts/${image.postId}`;
-    }
-
-    switch (image.entityType) {
-      case 'Bounty':
-        return `/bounties/${image.entityId}`;
-      case 'BountyEntry':
-        return `/bounties/entries/${image.entityId}`;
-      default:
-        return `/images/${image.id}`;
-    }
-  }, [image]);
+  const entityUrl = getImageEntityUrl(image);
 
   return (
     <Card
