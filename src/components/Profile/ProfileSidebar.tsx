@@ -8,10 +8,8 @@ import {
   Popover,
   Stack,
   Text,
-  Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
-import { IconMapPin, IconPencilMinus, IconRss } from '@tabler/icons-react';
+import { IconAlertCircle, IconMapPin, IconPencilMinus, IconRss } from '@tabler/icons-react';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -31,6 +29,7 @@ import { CosmeticType } from '@prisma/client';
 import { Username } from '~/components/User/Username';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -80,6 +79,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     username,
   });
   const isCurrentUser = currentUser?.id === user?.id;
+  const muted = !!user?.muted;
   const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
 
@@ -135,6 +135,12 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     />
   );
 
+  const mutedAlert = isCurrentUser && muted && (
+    <AlertWithIcon icon={<IconAlertCircle />} iconSize="sm">
+      You cannot edit your profile because your account has been muted
+    </AlertWithIcon>
+  );
+
   return (
     <Stack className={className} spacing={sizeOpts.spacing}>
       <Group noWrap position="apart">
@@ -149,7 +155,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </Group>
         {isMobile && (
           <Group noWrap spacing={4}>
-            {editProfileBtn}
+            {muted ? mutedAlert : editProfileBtn}
             {followUserBtn}
             {tipBuzzBtn}
             <UserContextMenu username={username} />
@@ -164,7 +170,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </Text>
       </Stack>
 
-      {profile.location && (
+      {profile.location && !muted && (
         <Group spacing="sm" noWrap>
           <IconMapPin size={16} style={{ flexShrink: 0 }} />
           <Text color="dimmed" truncate size={sizeOpts.text}>
@@ -172,28 +178,30 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           </Text>
         </Group>
       )}
-      {profile?.bio && (
+      {profile?.bio && !muted && (
         <ContentClamp maxHeight={sizeOpts.bio} style={{ wordWrap: 'break-word' }}>
           {profile.bio}
         </ContentClamp>
       )}
-      <Group spacing={4}>
-        {sortDomainLinks(user.links).map((link, index) => (
-          <ActionIcon
-            key={index}
-            component="a"
-            href={link.url}
-            target="_blank"
-            rel="nofollow noreferrer"
-            size={24}
-          >
-            <DomainIcon domain={link.domain} size={sizeOpts.icons} />
-          </ActionIcon>
-        ))}
-      </Group>
+      {!muted && (
+        <Group spacing={4}>
+          {sortDomainLinks(user.links).map((link, index) => (
+            <ActionIcon
+              key={index}
+              component="a"
+              href={link.url}
+              target="_blank"
+              rel="nofollow noreferrer"
+              size={24}
+            >
+              <DomainIcon domain={link.domain} size={sizeOpts.icons} />
+            </ActionIcon>
+          ))}
+        </Group>
+      )}
       {!isMobile && (
         <Group grow>
-          {editProfileBtn}
+          {muted ? mutedAlert : editProfileBtn}
           {followUserBtn}
         </Group>
       )}

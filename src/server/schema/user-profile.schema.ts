@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
-import { SearchIndexEntityType, SearchIndexEntityTypes } from '~/components/Search/parsers/base';
+import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '@prisma/client';
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;

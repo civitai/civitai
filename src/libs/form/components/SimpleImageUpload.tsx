@@ -161,6 +161,7 @@ export function SimpleImageUpload({
               type={MediaType.image}
               width={previewWidth}
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}
+              anim
             />
           </Box>
         </div>
