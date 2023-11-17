@@ -2,7 +2,7 @@ import { InstantSearchRoutingParser, searchParamsSchema } from '~/components/Sea
 import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { UiState } from 'instantsearch.js';
+import { IndexUiState, UiState } from 'instantsearch.js';
 import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ModelSearchIndexSortBy = [
@@ -44,6 +44,9 @@ const modelSearchParamsSchema = searchParamsSchema
   .partial();
 
 export type ModelSearchParams = z.output<typeof modelSearchParamsSchema>;
+type ModelUiState = UiState & {
+  [MODELS_SEARCH_INDEX]?: IndexUiState & { modelId?: number | null };
+};
 
 export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
@@ -80,10 +83,10 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       },
     };
   },
-  stateToRoute: (uiState: UiState) => {
+  stateToRoute: (uiState: ModelUiState) => {
     if (!uiState[MODELS_SEARCH_INDEX]) {
       return {
-        [IMAGES_SEARCH_INDEX]: {},
+        [MODELS_SEARCH_INDEX]: {},
       };
     }
 
