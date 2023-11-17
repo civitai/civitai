@@ -13,7 +13,7 @@ export const client = shouldConnect
     })
   : null;
 
-const RETRY_LIMIT = 3;
+const RETRY_LIMIT = 5;
 export async function updateDocs({
   indexName,
   documents,
