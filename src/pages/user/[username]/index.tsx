@@ -136,7 +136,6 @@ function ProfileOverview() {
   }
 
   if (!user || !user.username || !userOverview) {
-    console.error('User not found');
     return <NotFound />;
   }
 
