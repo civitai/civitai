@@ -245,7 +245,7 @@ const onFetchItemsToIndex = async ({
         };
       }
 
-      const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+      const modelVersionIds = models.flatMap((m) => m.modelVersions.map((m) => m.id));
       const images = !!modelVersionIds.length
         ? await getImagesForModelVersion({
             modelVersionIds,
