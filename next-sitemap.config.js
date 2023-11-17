@@ -15,10 +15,6 @@ const exclude = [
   '/user/notifications',
   '/user/transactions',
   '/user/buzz-dashboard',
-  // Add additional sitemaps here to be excluded from indexing
-  '/sitemap-articles.xml',
-  '/sitemap-models.xml',
-  '/sitemap-questions.xml',
 ];
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));
@@ -38,6 +34,7 @@ module.exports = {
         userAgent: '*',
         [process.env.NODE_ENV === 'prod' ? 'allow' : 'disallow']: '/',
         disallow,
+        allow: ['/api/trpc/*']
       },
     ],
     additionalSitemaps: [
