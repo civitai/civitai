@@ -419,7 +419,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   // Cleanup documents that require deletion:
   // Always pass INDEX_ID here, not index name, as pending to delete will
   // always use this name.
-  await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
+  await withRetries(
+    async () => await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID }),
+    3,
+    1500
+  );
 
   let offset = -1; // such that it starts on 0.
   const imageTasks: EnqueuedTask[] = [];
