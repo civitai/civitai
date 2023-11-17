@@ -158,7 +158,7 @@ export function SimpleImageUpload({
           >
             <EdgeMedia
               src={image.previewUrl ?? image.url}
-              type={MediaType.video}
+              type={MediaType.image}
               width={previewWidth}
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}
             />
