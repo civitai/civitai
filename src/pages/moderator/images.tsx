@@ -48,7 +48,7 @@ import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/route
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { getImageEntityUrl } from '~/pages/moderator/moderator.util';
+import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,

@@ -43,7 +43,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { getImageEntityUrl } from '~/pages/moderator/moderator.util';
+import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
