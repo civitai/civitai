@@ -763,7 +763,6 @@ export const getAllImages = async ({
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
-    -- ${Prisma.raw(queryHeader)}
     ${queryWith}
     SELECT
       i.id,
@@ -1566,7 +1565,6 @@ export const getImagesByCategory = async ({
       .join(', ');
 
     imagesRaw = await dbRead.$queryRaw<GetImageByCategoryRaw[]>`
-      -- ${Prisma.raw(queryHeader)}
       WITH targets AS (
         ${Prisma.join(targets, ' UNION ALL ')}
       )

@@ -426,7 +426,7 @@ export const getGenerationConfig = (baseModel?: string) => {
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
-export const MODELS_SEARCH_INDEX = 'models_v3';
+export const MODELS_SEARCH_INDEX = 'models_v4';
 export const IMAGES_SEARCH_INDEX = 'images_v3';
 export const ARTICLES_SEARCH_INDEX = 'articles_v2';
 export const USERS_SEARCH_INDEX = 'users_v2';
@@ -469,12 +469,12 @@ export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s
 export const STRIPE_PROCESSING_CHECK_INTERVAL = 1000; // 1s
 
 export const CacheTTL = {
-  xs: 60 * 60 * 1,
-  sm: 60 * 60 * 3,
-  md: 60 * 60 * 10,
-  lg: 60 * 60 * 30,
-  hour: 60 * 60 * 1,
-  day: 60 * 60 * 24 * 1,
-  week: 60 * 60 * 24 * 7 * 1,
-  month: 60 * 60 * 24 * 30 * 1,
+  xs: 60 * 1,
+  sm: 60 * 3,
+  md: 60 * 10,
+  lg: 60 * 30,
+  hour: 60 * 60,
+  day: 60 * 60 * 24,
+  week: 60 * 60 * 24 * 7,
+  month: 60 * 60 * 24 * 30,
 } as const;
