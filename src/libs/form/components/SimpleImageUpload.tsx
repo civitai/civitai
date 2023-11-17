@@ -20,7 +20,7 @@ import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -158,16 +158,17 @@ export function SimpleImageUpload({
           >
             <EdgeMedia
               src={image.previewUrl ?? image.url}
-              type={MediaType.image}
+              type={MediaType.video}
               width={previewWidth}
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}
+              anim
             />
           </Box>
         </div>
       ) : (
         <Dropzone
           onDrop={handleDrop}
-          accept={IMAGE_MIME_TYPE}
+          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           maxFiles={1}
           // maxSize={maxSize}
           mt={5}

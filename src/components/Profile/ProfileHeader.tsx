@@ -33,7 +33,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import React, { useMemo, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
@@ -179,7 +178,7 @@ export function ProfileHeader({ username }: { username: string }) {
                       ) : (
                         <ImagePreview
                           image={image}
-                          edgeImageProps={{ width: 1200 }}
+                          edgeImageProps={{ width: 1200, anim: true }}
                           radius="md"
                           style={{ width: '100%' }}
                         />
@@ -200,7 +199,7 @@ export function ProfileHeader({ username }: { username: string }) {
   };
 
   const renderMessage = () => {
-    if (!profile.message) {
+    if (!profile.message || user.muted) {
       return;
     }
 
