@@ -50,7 +50,7 @@ function RenderFilters() {
           { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
         ]}
       />
-      <DateRangeRefinement title="Filter by creation date" attribute="createdAtUnix" />
+      <DateRangeRefinement title="Filter by Creation Date" attribute="createdAtUnix" />
       <ChipRefinementList
         title="Filter by Aspect Ratio"
         sortBy={['name']}

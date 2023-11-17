@@ -367,6 +367,7 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             label="From"
             name="start"
             placeholder="Start date"
+            value={startDate}
             onChange={(date) => {
               onSetDate('start', date);
             }}
@@ -378,6 +379,7 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             label="To"
             name="end"
             placeholder="End date"
+            value={endDate}
             onChange={(date) => {
               onSetDate('end', date);
             }}
