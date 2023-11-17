@@ -905,6 +905,7 @@ export const getSimpleModelWithVersions = async ({ id, ctx }: GetByIdInput & { c
       name: true,
       createdAt: true,
       locked: true,
+      status: true,
       user: { select: userWithCosmeticsSelect },
     },
   });

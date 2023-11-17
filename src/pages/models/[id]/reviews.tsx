@@ -43,6 +43,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { StarRating } from '~/components/StartRating/StarRating';
 import { env } from '~/env/client.mjs';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -116,6 +117,8 @@ export default function ModelReviews() {
     router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
   };
 
+  if (!model || model?.status !== 'Published') return <NotFound />;
+
   const Model = loadingModel ? (
     <Skeleton height={44} />
   ) : (
@@ -165,6 +168,7 @@ export default function ModelReviews() {
 
   const ratingCount = getRatingCount(ratingTotals);
   const ratingAverage = getAverageRating(ratingTotals, ratingCount);
+
   return (
     <>
       <Meta
