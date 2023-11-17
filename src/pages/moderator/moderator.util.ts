@@ -1,8 +1,8 @@
 export const getImageEntityUrl = (image: {
   id: number;
-  entityId?: number;
-  entityType?: string;
-  postId?: number;
+  entityId?: number | null;
+  entityType?: string | null;
+  postId?: number | null;
 }) => {
   if (image.postId) {
     return `/posts/${image.postId}`;
