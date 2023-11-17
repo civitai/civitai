@@ -84,19 +84,25 @@ export function QueueItem({ request }: Props) {
     });
   };
 
-  const handleGenerate = () => generationStore.setData({ type: 'remix', data: request });
+  const handleGenerate = () => {
+    const { resources, params } = request;
+    generationStore.setData({
+      type: 'remix',
+      data: { resources, params: { ...params, seed: undefined } },
+    });
+  };
 
   const { prompt, ...details } = request.params;
 
-  const boost = (request: Generation.Request) => {
-    console.log('boost it', request);
-  };
+  // const boost = (request: Generation.Request) => {
+  //   console.log('boost it', request);
+  // };
 
   // TODO - enable this after boosting is ready
-  const handleBoostClick = () => {
-    if (showBoost) openBoostModal({ request, cb: boost });
-    else boost(request);
-  };
+  // const handleBoostClick = () => {
+  //   if (showBoost) openBoostModal({ request, cb: boost });
+  //   else boost(request);
+  // };
 
   return (
     <Card withBorder px="xs">
@@ -206,7 +212,7 @@ export function QueueItem({ request }: Props) {
         {!failed && !!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
-              <FeedItem key={image.id} image={image} request={request} />
+              <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </div>
         )}

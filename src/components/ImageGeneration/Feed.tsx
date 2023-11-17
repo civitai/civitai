@@ -1,40 +1,20 @@
 import {
   ActionIcon,
-  Autocomplete,
-  Card,
   Center,
   Group,
   Loader,
-  Overlay,
-  ScrollArea,
-  Stack,
   Text,
   Tooltip,
-  Transition,
   createStyles,
-  HoverCard,
   TooltipProps,
   LoadingOverlay,
-  Collapse,
   Box,
+  Stack,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import {
-  IconCloudUpload,
-  IconFilter,
-  IconLayoutGrid,
-  IconLayoutList,
-  IconSearch,
-  IconSortDescending2,
-  IconSquareOff,
-  IconTrash,
-  IconWindowMaximize,
-} from '@tabler/icons-react';
+import { IconCloudUpload, IconSquareOff, IconTrash, IconWindowMaximize } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
-
-import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
-import { FeedItem } from '~/components/ImageGeneration/FeedItem';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
   useDeleteGenerationRequestImages,
@@ -48,99 +28,21 @@ import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-type State = {
-  layout: 'list' | 'grid';
-  selectedItems: number[];
-  variantModalOpened: boolean;
-};
-
-/**
- * - add search by prompt
- * - add sort by
- * - add filter by
- * - add toggle layout
- * - add infinite scroll
- * - handle variant generation
- * - handle post images
- */
 export function Feed({
   requests,
   images: feed,
-  isLoading,
   fetchNextPage,
   hasNextPage,
   isRefetching,
-  isFetching,
-  isError,
+  isFetchingNextPage,
 }: ReturnType<typeof useGetGenerationRequests>) {
-  const [state, setState] = useState<State>({
-    layout: 'grid',
-    selectedItems: [],
-    variantModalOpened: false,
-  });
-
   const { classes } = useStyles();
 
   return (
     <Stack
+      spacing="xs"
       sx={{ position: 'relative', flex: 1, overflow: 'hidden', containerType: 'inline-size' }}
-      spacing={0}
     >
-      {/* <div className={classes.searchPanel}>
-        <HoverCard withArrow>
-          <HoverCard.Target>
-            <Overlay blur={1} opacity={0.3} color="#000" />
-          </HoverCard.Target>
-          <HoverCard.Dropdown maw={300}>
-            <Text weight={500}>Coming soon!</Text>
-            <Text size="xs">
-              Search through your generated images by prompt, sort them, filter them by resources
-              used, or switch your layout.
-            </Text>
-          </HoverCard.Dropdown>
-        </HoverCard>
-        <Card withBorder shadow="xl" p={0}>
-          <Group spacing="xs">
-            <Autocomplete
-              placeholder="Search by prompt"
-              data={[]}
-              icon={<IconSearch size={14} />}
-              sx={{ flex: 1 }}
-              styles={{
-                input: {
-                  border: 0,
-                },
-              }}
-            />
-            <Group spacing={4} pr="md">
-              <Tooltip label="Sort items">
-                <ActionIcon size="xs">
-                  <IconSortDescending2 />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label="Toggle filter toolbar">
-                <ActionIcon size="xs">
-                  <IconFilter />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label={state.layout === 'grid' ? 'List layout' : 'Grid layout'}>
-                <ActionIcon
-                  size="xs"
-                  onClick={() =>
-                    setState((current) => ({
-                      ...current,
-                      layout: current.layout === 'grid' ? 'list' : 'grid',
-                    }))
-                  }
-                >
-                  {state.layout === 'grid' ? <IconLayoutList /> : <IconLayoutGrid />}
-                </ActionIcon>
-              </Tooltip>
-            </Group>
-          </Group>
-        </Card>
-      </div> */}
-
       <div className={classes.grid}>
         {feed
           .map((image) => {
@@ -149,55 +51,17 @@ export function Feed({
             );
             if (!request) return null;
 
-            return (
-              <FeedItem
-                key={image.id}
-                image={image}
-                request={request}
-                // selected={selected}
-                // onCheckboxClick={({ image, checked }) => {
-                //   if (checked) {
-                //     setState((current) => ({
-                //       ...current,
-                //       selectedItems: [...current.selectedItems, image.id],
-                //     }));
-                //   } else {
-                //     setState((current) => ({
-                //       ...current,
-                //       selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                //     }));
-                //   }
-                // }}
-                onCreateVariantClick={(image) =>
-                  setState((current) => ({
-                    ...current,
-                    variantModalOpened: true,
-                    selectedItems: [image.id],
-                  }))
-                }
-              />
-            );
+            return <GeneratedImage key={image.id} request={request} image={image} />;
           })
           .filter(isDefined)}
-        {hasNextPage && (
-          <InViewLoader
-            loadFn={fetchNextPage}
-            loadCondition={!isRefetching}
-            style={{ gridColumn: '1/-1' }}
-          >
-            <Center p="xl" sx={{ height: 36 }} mt="md">
-              <Loader />
-            </Center>
-          </InViewLoader>
-        )}
       </div>
-
-      <CreateVariantsModal
-        opened={state.variantModalOpened}
-        onClose={() =>
-          setState((current) => ({ ...current, variantModalOpened: false, selectedItems: [] }))
-        }
-      />
+      {hasNextPage && (
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && !isFetchingNextPage}>
+          <Center sx={{ height: 60 }}>
+            <Loader />
+          </Center>
+        </InViewLoader>
+      )}
     </Stack>
   );
 }

@@ -9,6 +9,8 @@ import {
 import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useScrollRestore } from '~/hooks/useScrollRestore';
+import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
   const { classes } = useStyles();
@@ -27,6 +29,7 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
       header?: () => JSX.Element;
       render: () => JSX.Element;
       label: React.ReactNode;
+      // defaultPosition: 'top' | 'bottom';
     }
   >;
 
@@ -35,6 +38,7 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
       Icon: IconBrush,
       render: () => <Generate />,
       label: <>Generate</>,
+      // defaultPosition: 'top',
     },
     queue: {
       Icon: IconListDetails,
@@ -49,6 +53,7 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
           )}
         </Group>
       ),
+      // defaultPosition: 'top',
     },
     feed: {
       Icon: IconSlideshow,
@@ -63,8 +68,19 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
         </Stack>
       ),
       label: <>Feed</>,
+      // defaultPosition: 'top',
     },
   };
+
+  const { setRef, node } = useScrollRestore({
+    key: view,
+    // defaultPosition: tabs[view].defaultPosition,
+  });
+
+  // usePreserveVerticalScrollPosition({
+  //   data: result.requests,
+  //   node,
+  // });
 
   const header = tabs[view].header;
   const render = tabs[view].render;
@@ -72,7 +88,9 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
   return (
     <Stack h="100%" style={{ overflow: 'hidden' }} spacing={0} {...wrapperProps}>
       {header && <div>{header()}</div>}
-      <div style={{ flexGrow: 1, overflowY: 'auto' }}>{render()}</div>
+      <div ref={setRef} style={{ flexGrow: 1, overflowY: 'auto' }}>
+        {render()}
+      </div>
 
       {currentUser && (
         <Group spacing={0} grow className={classes.tabsList}>
