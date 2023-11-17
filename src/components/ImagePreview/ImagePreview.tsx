@@ -159,7 +159,7 @@ export function ImagePreview({
       src={url}
       name={name ?? id.toString()}
       alt={name ?? undefined}
-      // type={type}
+      type={type}
       {...edgeImageProps}
       onClick={onClick}
       style={edgeImageStyle}
