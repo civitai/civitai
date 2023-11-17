@@ -436,6 +436,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           baseModel: true,
           baseModelType: true,
           createdAt: true,
+          trainingStatus: true,
           generationCoverage: { select: { covered: true } },
         },
         where: modelVersionWhere,

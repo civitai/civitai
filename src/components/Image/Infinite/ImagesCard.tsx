@@ -29,6 +29,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
@@ -59,6 +60,8 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
     !!tags.length &&
     ingestionData.ingestion === ImageIngestionStatus.Scanned;
 
+  const onSite = image.meta && 'civitaiResources' in image.meta;
+
   return (
     <InView rootMargin="600px">
       {({ inView, ref }) => (
@@ -66,6 +69,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
           <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
             {inView && (
               <>
+                {onSite && <OnsiteIndicator />}
                 <ImageGuard
                   images={[image]}
                   render={(image) => (

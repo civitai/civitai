@@ -58,6 +58,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -180,6 +181,7 @@ export function ModelCard({ data }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const onSite = !!data.version.trainingStatus;
 
   const { useModelVersionRedirect } = useModelCardContext();
   let href = `/models/${data.id}/${slugit(data.name)}`;
@@ -448,6 +450,7 @@ export function ModelCard({ data }: Props) {
                     </Group>
                   </Group>
                 </Stack>
+                {onSite && <OnsiteIndicator />}
               </>
             )}
           </div>

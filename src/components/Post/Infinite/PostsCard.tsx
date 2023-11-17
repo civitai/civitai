@@ -7,6 +7,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 
 export function PostsCard({
   data: { image, id, stats, imageCount },
@@ -30,6 +31,9 @@ export function PostsCard({
                   <ImageGuard.Content>
                     {({ safe }) => (
                       <>
+                        {image.meta && 'civitaiResources' in (image.meta as object) && (
+                          <OnsiteIndicator />
+                        )}
                         <ImageGuard.Report context="post" />
                         <ImageGuard.ToggleConnect position="top-left" />
                         <RoutedDialogLink name="postDetail" state={{ postId: id }}>

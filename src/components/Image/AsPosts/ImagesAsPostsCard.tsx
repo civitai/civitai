@@ -20,6 +20,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { StarRating } from '~/components/StartRating/StarRating';
 import Link from 'next/link';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 
 export function ImagesAsPostsCard({
   data,
@@ -145,6 +146,9 @@ export function ImagesAsPostsCard({
                     <ImageGuard.Content>
                       {({ safe }) => (
                         <div className={classes.imageContainer}>
+                          {image.meta && 'civitaiResources' in (image.meta as object) && (
+                            <OnsiteIndicator />
+                          )}
                           <ImageGuard.Report />
                           <ImageGuard.ToggleImage position="top-left" />
                           <RoutedDialogLink
@@ -242,6 +246,9 @@ export function ImagesAsPostsCard({
                           <ImageGuard.Content>
                             {({ safe }) => (
                               <div className={classes.imageContainer}>
+                                {image.meta && 'civitaiResources' in (image.meta as object) && (
+                                  <OnsiteIndicator />
+                                )}
                                 <ImageGuard.Report />
                                 <ImageGuard.ToggleConnect position="top-left" />
                                 <RoutedDialogLink

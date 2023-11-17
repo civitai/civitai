@@ -17,6 +17,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 
 export function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -36,9 +37,11 @@ export function UnroutedImageCard({ data }: Props) {
                 // Small hack to prevent blurry landscape images
                 const originalAspectRatio =
                   image.width && image.height ? image.width / image.height : 1;
+                const onSite = image.meta && 'civitaiResources' in image.meta;
 
                 return (
                   <>
+                    {onSite && <OnsiteIndicator />}
                     <Group
                       position="apart"
                       align="start"
@@ -137,7 +140,7 @@ export function UnroutedImageCard({ data }: Props) {
                 imageId={data.id}
               >
                 <ActionIcon className={sharedClasses.infoChip} variant="light">
-                  <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                  <IconInfoCircle color="red" strokeWidth={2.5} size={18} />
                 </ActionIcon>
               </ImageMetaPopover>
             )}

@@ -74,7 +74,9 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
       hasControlNet = (meta.controlNets as string[])?.length > 0;
     }
 
-    return { long, medium, short, hasControlNet };
+    const onSite = 'civitaiResources' in meta;
+
+    return { long, medium, short, hasControlNet, onSite };
   }, [meta]);
 
   // TODO.optimize - can we get this data higher up?
@@ -125,6 +127,15 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
 
             {label === 'Prompt' && (
               <>
+                {metas.onSite ? (
+                  <Badge size="xs" radius="sm">
+                    Civitai Generator
+                  </Badge>
+                ) : (
+                  <Badge size="xs" radius="sm">
+                    External Generator
+                  </Badge>
+                )}
                 <Badge size="xs" radius="sm">
                   {meta.comfy
                     ? 'Comfy'

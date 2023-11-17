@@ -76,6 +76,7 @@ import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import Link from 'next/link';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { IconCivitai } from '~/components/SVG/IconCivitai';
 
 export function ModelVersionDetails({
   model,
@@ -395,6 +396,7 @@ export function ModelVersionDetails({
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
   const license = baseModelLicenses[version.baseModel];
+  const onSite = !!version.trainingStatus;
 
   return (
     <Grid gutter="xl">
@@ -785,6 +787,21 @@ export function ModelVersionDetails({
             )}
           </Accordion>
           <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
+          {onSite && (
+            <Group
+              align="flex-start"
+              position="right"
+              spacing={4}
+              mt={-10}
+              mb={-5}
+              style={{ opacity: 0.5 }}
+            >
+              <IconCivitai size={14} />
+              <Text size="xs" lh={1}>
+                Created on Civitai
+              </Text>
+            </Group>
+          )}
 
           <Group position="apart" align="flex-start" noWrap>
             {model.type === 'Checkpoint' && (

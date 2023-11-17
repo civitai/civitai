@@ -1299,6 +1299,7 @@ export const getImagesForPosts = async ({
       tippedAmountCount: number;
       type: MediaType;
       metadata: Prisma.JsonValue;
+      meta?: Prisma.JsonValue;
       reactions?: ReviewReactions[];
     }[]
   >`
@@ -1322,6 +1323,7 @@ export const getImagesForPosts = async ({
       i.hash,
       i.type,
       i.metadata,
+      i.meta,
       t."postId",
       t.count "imageCount",
       COALESCE(im."cryCount", 0) "cryCount",
