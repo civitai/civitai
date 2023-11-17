@@ -2,8 +2,8 @@ import { InstantSearchRoutingParser, searchParamsSchema } from '~/components/Sea
 import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { UiState } from 'instantsearch.js';
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { IndexUiState, UiState } from 'instantsearch.js';
+import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ModelSearchIndexSortBy = [
   MODELS_SEARCH_INDEX,
@@ -21,6 +21,7 @@ const ModelDefaultSortBy = ModelSearchIndexSortBy[0];
 const modelSearchParamsSchema = searchParamsSchema
   .extend({
     sortBy: z.enum(ModelSearchIndexSortBy),
+    lastVersionAt: z.string(),
     baseModel: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
@@ -43,6 +44,9 @@ const modelSearchParamsSchema = searchParamsSchema
   .partial();
 
 export type ModelSearchParams = z.output<typeof modelSearchParamsSchema>;
+type ModelUiState = UiState & {
+  [MODELS_SEARCH_INDEX]?: IndexUiState & { modelId?: number | null };
+};
 
 export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
@@ -64,6 +68,10 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       'user.username': models.users,
     });
 
+    const range = removeEmpty({
+      lastVersionAtUnix: models.lastVersionAt,
+    });
+
     const { query, sortBy } = models;
 
     return {
@@ -71,10 +79,18 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
         sortBy: sortBy ?? ModelDefaultSortBy,
         refinementList,
         query,
+        range,
       },
     };
   },
-  stateToRoute: (uiState: UiState) => {
+  stateToRoute: (uiState: ModelUiState) => {
+    if (!uiState[MODELS_SEARCH_INDEX]) {
+      return {
+        [MODELS_SEARCH_INDEX]: {},
+      };
+    }
+
+    const lastVersionAt = uiState[MODELS_SEARCH_INDEX].range?.['lastVersionAtUnix'];
     const baseModel = uiState[MODELS_SEARCH_INDEX].refinementList?.['version.baseModel'];
     const modelType = uiState[MODELS_SEARCH_INDEX].refinementList?.['type'];
     const category = uiState[MODELS_SEARCH_INDEX].refinementList?.['category.name'];
@@ -94,6 +110,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       tags,
       sortBy,
       query,
+      lastVersionAt,
     };
 
     return {

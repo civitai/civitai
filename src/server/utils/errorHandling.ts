@@ -153,7 +153,7 @@ export function handleLogError(e: Error) {
   else console.error(error);
 }
 
-async function sleep(timeout: number) {
+export async function sleep(timeout: number) {
   return new Promise((resolve) => setTimeout(resolve, timeout));
 }
 

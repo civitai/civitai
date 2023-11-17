@@ -1,9 +1,5 @@
 import { client, updateDocs } from '~/server/meilisearch/client';
-import {
-  getOrCreateIndex,
-  onSearchIndexDocumentsCleanup,
-  waitForTasksWithRetries,
-} from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import {
   EnqueuedTask,
   FilterableAttributes,
@@ -25,7 +21,7 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { chunk } from 'lodash-es';
@@ -59,14 +55,20 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes: SortableAttributes = [
     'createdAt',
-    'publishedAt',
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
     'rank.collectedCountAllTimeRank',
     'rank.tippedAmountCountAllTimeRank',
   ];
 
-  const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
+  const filterableAttributes: FilterableAttributes = [
+    'createdAtUnix',
+    'tags.name',
+    'user.username',
+    'baseModel',
+    'generationTool',
+    'aspectRatio',
+  ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
@@ -125,6 +127,7 @@ type ImageForSearchIndex = {
   index: number | null;
   scannedAt: Date | null;
   mimeType: string | null;
+  baseModel?: string | null;
   user: {
     id: number;
     image: string | null;
@@ -215,7 +218,14 @@ const onFetchItemsToIndex = async ({
     i."scannedAt",
     i."type",
     i."metadata",
-    i."userId"
+    i."userId",
+    (
+      SELECT mv."baseModel" FROM "ModelVersion" mv
+      RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+      JOIN "Model" m ON mv."modelId" = m.id
+      WHERE m."type" = 'Checkpoint'
+      LIMIT 1
+    ) "baseModel"
       FROM "Image" i
       JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
       WHERE ${Prisma.join(WHERE, ' AND ')}
@@ -339,6 +349,20 @@ const onFetchItemsToIndex = async ({
 
         return {
           ...imageRecord,
+          createdAtUnix: imageRecord.createdAt.getTime(),
+          aspectRatio:
+            !imageRecord.width || !imageRecord.height
+              ? 'Unknown'
+              : imageRecord.width > imageRecord.height
+              ? 'Landscape'
+              : imageRecord.width < imageRecord.height
+              ? 'Portrait'
+              : 'Square',
+          generationTool: meta?.hasOwnProperty('comfy')
+            ? 'Comfy'
+            : meta?.hasOwnProperty('prompt')
+            ? 'Automatic1111'
+            : 'Unknown',
           meta: parsed.success ? parsed.data : {},
           user: {
             ...user,
@@ -395,7 +419,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   // Cleanup documents that require deletion:
   // Always pass INDEX_ID here, not index name, as pending to delete will
   // always use this name.
-  await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
+  await withRetries(
+    async () => await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID }),
+    3,
+    1500
+  );
 
   let offset = -1; // such that it starts on 0.
   const imageTasks: EnqueuedTask[] = [];
