@@ -9,7 +9,10 @@ import { commaDelimitedStringArray } from "~/utils/zod-helpers";
  */
 export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
-  DATABASE_REPLICA_URL: z.string().url(),
+  DATABASE_REPLICA_URL: z.preprocess((value) => {
+    const str = String(value);
+    return str.split(',').map((x) => x.trim());
+  }, z.array(z.string().url()).optional()),
   REDIS_URL: z.string().url(),
   REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),

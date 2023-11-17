@@ -3,6 +3,7 @@ import client from 'prom-client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { EOL } from 'os';
+import { PrismaClient } from '@prisma/client';
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -17,7 +18,7 @@ client.collectDefaultMetrics({
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   const metrics = await client.register.metrics();
 
-  const readMetrics = await dbRead.$metrics.prometheus({
+  const readMetrics = await (dbRead as unknown as PrismaClient).$metrics.prometheus({
     globalLabels: {
       ...labels,
       type: 'read',

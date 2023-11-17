@@ -27,7 +27,7 @@ export function createSearchIndexUpdateProcessor({
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${indexName.toLowerCase()}`
       );
-      const ctx = { db: dbRead, lastUpdatedAt, indexName };
+      const ctx = { db: dbRead as unknown as PrismaClient, lastUpdatedAt, indexName };
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 

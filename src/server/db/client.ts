@@ -3,10 +3,11 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
+import { readReplicas } from '@prisma/extension-read-replicas';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
-  var globalDbRead: PrismaClient | undefined;
+  var globalDbRead: PrismaClientExtended | undefined;
   // eslint-disable-next-line no-var, vars-on-top
   var globalDbWrite: PrismaClient | undefined;
 }
@@ -30,8 +31,10 @@ const logFor = (target: 'write' | 'read') =>
     else await logToAxiom({ query, duration: e.duration, pod: env.PODNAME, target }, 'db-logs');
   };
 
-const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
-const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
+const replicaUrls = env.DATABASE_REPLICA_URL?.length
+  ? env.DATABASE_REPLICA_URL
+  : [env.DATABASE_URL];
+const rawCreateClient = () => {
   const log: Prisma.LogDefinition[] = env.LOGGING.filter((x) => x.startsWith('prisma:')).map(
     (x) => ({
       emit: 'stdout',
@@ -46,34 +49,42 @@ const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
       level: 'query',
     });
   }
-  const dbUrl = readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL;
-  const prisma = new PrismaClient({ log, datasources: { db: { url: dbUrl } } });
-  return prisma;
+
+  return new PrismaClient({ log, datasources: { db: { url: env.DATABASE_URL } } }).$extends(
+    readReplicas({ url: replicaUrls })
+  );
+};
+type PrismaClientExtended = ReturnType<typeof rawCreateClient>;
+
+let db: PrismaClientExtended;
+const createPrismaClient = () => {
+  if (!db) db = rawCreateClient();
+
+  return db;
+  // else return db.$primary() as unknown as PrismaClient;
 };
 
-export let dbRead: PrismaClient;
+export let dbRead: PrismaClientExtended;
 export let dbWrite: PrismaClient;
 
 if (isProd) {
-  dbWrite = createPrismaClient({ readonly: false });
-  dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
+  dbWrite = createPrismaClient().$primary() as unknown as PrismaClient;
+  dbRead = createPrismaClient();
 } else {
   if (!global.globalDbWrite) {
-    global.globalDbWrite = createPrismaClient({ readonly: false });
+    global.globalDbWrite = createPrismaClient().$primary() as unknown as PrismaClient;
 
     if (env.LOGGING.includes('prisma-slow-write'))
       // @ts-ignore - this is necessary to get the query event
       global.globalDbWrite.$on('query', logFor('write'));
   }
   if (!global.globalDbRead) {
-    global.globalDbRead = singleClient
-      ? global.globalDbWrite
-      : createPrismaClient({ readonly: true });
+    global.globalDbRead = createPrismaClient();
 
     if (env.LOGGING.includes('prisma-slow-read'))
       // @ts-ignore - this is necessary to get the query event
       global.globalDbRead.$on('query', logFor('read'));
   }
   dbWrite = global.globalDbWrite;
-  dbRead = singleClient ? dbWrite : global.globalDbRead;
+  dbRead = global.globalDbRead;
 }

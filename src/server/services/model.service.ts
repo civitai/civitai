@@ -65,6 +65,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
+import { PrismaClient } from '@prisma/client/extension';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -337,7 +338,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   else if (sort === ModelSort.ImageCount)
     orderBy = { rank: { [`imageCount${period}Rank`]: 'asc' } };
 
-  const items = await dbRead.model.findMany({
+  const items = await (dbRead.$replica() as PrismaClient).model.findMany({
     take,
     skip,
     where,
