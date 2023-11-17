@@ -1,6 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
@@ -15,6 +15,7 @@ export function Queue({
   fetchNextPage,
   hasNextPage,
   isRefetching,
+  isFetchingNextPage,
   isError,
 }: ReturnType<typeof useGetGenerationRequests>) {
   const mobile = useIsMobile({ breakpoint: 'md' });
@@ -32,23 +33,15 @@ export function Queue({
     </Center>
   ) : !!requests?.length ? (
     <>
-      {/* <Virtuoso
-        style={{
-          height: '100%',
-        }}
-        data={requests}
-        components={{
-          List: Stack,
-        }}
-        itemContent={(index, request) => createRenderElement(QueueItem, request.id, request)}
-      /> */}
       <Stack p="md">
         {requests.map((request) => (
-          <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
+          <div key={request.id} id={request.id.toString()}>
+            {createRenderElement(QueueItem, request.id, request)}
+          </div>
         ))}
         {hasNextPage && (
-          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-            <Center p="xl" sx={{ height: 36 }} mt="md">
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && !isFetchingNextPage}>
+            <Center sx={{ height: 60 }}>
               <Loader />
             </Center>
           </InViewLoader>

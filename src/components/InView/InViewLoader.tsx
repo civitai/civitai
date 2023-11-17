@@ -10,7 +10,7 @@ export function InViewLoader({
   style,
 }: {
   children: React.ReactNode;
-  loadFn: () => void;
+  loadFn: () => any | Promise<any>;
   loadCondition: boolean;
   loadTimeout?: number;
   className?: string;
@@ -21,9 +21,13 @@ export function InViewLoader({
 
   useEffect(() => {
     if (inView && loadCondition && canLoad) {
+      const handleLoad = async () => {
+        await loadFn();
+        setTimeout(() => setCanLoad(true), loadTimeout);
+      };
+
       setCanLoad(false);
-      loadFn();
-      setTimeout(() => setCanLoad(true), loadTimeout);
+      handleLoad();
     }
   }, [inView, loadCondition]); // eslint-disable-line
 

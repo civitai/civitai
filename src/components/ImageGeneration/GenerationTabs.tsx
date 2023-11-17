@@ -1,4 +1,4 @@
-import { createStyles, Badge, Card, Stack, Group, Button } from '@mantine/core';
+import { createStyles, Badge, Card, Stack, Group, Button, StackProps } from '@mantine/core';
 import { IconBrush, IconListDetails, IconSlideshow, TablerIconsProps } from '@tabler/icons-react';
 import { Feed, FloatingFeedActions } from './Feed';
 import { Queue } from './Queue';
@@ -9,8 +9,10 @@ import {
 import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useScrollRestore } from '~/hooks/useScrollRestore';
+import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
-export default function GenerationTabs({}) {
+export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
@@ -27,6 +29,7 @@ export default function GenerationTabs({}) {
       header?: () => JSX.Element;
       render: () => JSX.Element;
       label: React.ReactNode;
+      // defaultPosition: 'top' | 'bottom';
     }
   >;
 
@@ -35,6 +38,7 @@ export default function GenerationTabs({}) {
       Icon: IconBrush,
       render: () => <Generate />,
       label: <>Generate</>,
+      // defaultPosition: 'top',
     },
     queue: {
       Icon: IconListDetails,
@@ -49,6 +53,7 @@ export default function GenerationTabs({}) {
           )}
         </Group>
       ),
+      // defaultPosition: 'top',
     },
     feed: {
       Icon: IconSlideshow,
@@ -63,16 +68,29 @@ export default function GenerationTabs({}) {
         </Stack>
       ),
       label: <>Feed</>,
+      // defaultPosition: 'top',
     },
   };
+
+  const { setRef, node } = useScrollRestore({
+    key: view,
+    // defaultPosition: tabs[view].defaultPosition,
+  });
+
+  // usePreserveVerticalScrollPosition({
+  //   data: result.requests,
+  //   node,
+  // });
 
   const header = tabs[view].header;
   const render = tabs[view].render;
 
   return (
-    <Stack style={{ height: '100%', overflow: 'hidden' }} spacing={0}>
+    <Stack h="100%" style={{ overflow: 'hidden' }} spacing={0} {...wrapperProps}>
       {header && <div>{header()}</div>}
-      <div style={{ flexGrow: 1, overflowY: 'auto' }}>{render()}</div>
+      <div ref={setRef} style={{ flexGrow: 1, overflowY: 'auto' }}>
+        {render()}
+      </div>
 
       {currentUser && (
         <Group spacing={0} grow className={classes.tabsList}>

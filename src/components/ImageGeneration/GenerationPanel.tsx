@@ -1,4 +1,14 @@
-import { Drawer, Center, Loader, Text, Stack, ActionIcon, Tooltip } from '@mantine/core';
+import {
+  Drawer,
+  Center,
+  Loader,
+  Text,
+  Stack,
+  ActionIcon,
+  Group,
+  Button,
+  CloseButton,
+} from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconArrowsMaximize } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
@@ -105,38 +115,61 @@ export function GenerationPanel() {
       onClose={onClose}
       size={mobile ? '90%' : 600}
       position={mobile ? 'bottom' : 'right'}
-      withCloseButton={false}
       zIndex={constants.imageGeneration.drawerZIndex}
-      styles={{ body: { height: '100%' } }}
+      styles={{
+        body: { height: '100%' },
+        drawer: {
+          top: !mobile ? 'var(--mantine-header-height)' : undefined,
+          boxShadow:
+            '-3px 0px 8px 5px rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.05) 0px 20px 25px -5px, rgba(0, 0, 0, 0.04) 0px 10px 10px -5px',
+        },
+      }}
+      withCloseButton={false}
+      withOverlay={mobile}
+      trapFocus={mobile}
+      lockScroll={mobile}
     >
-      {showContent && (
-        <>
-          <GenerationTabs />
-          <Tooltip label="Expand">
-            <ActionIcon
-              radius="xl"
-              size="lg"
-              variant="filled"
-              onClick={() => router.push('/generate')}
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs,
-                left: -theme.spacing.xl - 17,
-                backgroundColor: theme.white,
-                '&:hover': {
-                  backgroundColor: theme.colors.gray[1],
-                },
+      {!mobile ? (
+        <Group spacing={8} pl="md" pr={8} pt="md" pb={8} position="apart">
+          <Button
+            radius="xl"
+            size="xs"
+            variant="filled"
+            color="gray"
+            onClick={() => router.push('/generate')}
+          >
+            <Group spacing={4}>
+              <IconArrowsMaximize size={16} /> Expand
+            </Group>
+          </Button>
+          <CloseButton onClick={onClose} radius="xl" />
+        </Group>
+      ) : (
+        <ActionIcon
+          radius="xl"
+          size="lg"
+          variant="filled"
+          onClick={() => router.push('/generate')}
+          sx={(theme) => ({
+            position: 'absolute',
+            top: theme.spacing.xs,
+            left: -theme.spacing.xl - 17,
+            backgroundColor: theme.white,
+            '&:hover': {
+              backgroundColor: theme.colors.gray[1],
+            },
 
-                [theme.fn.smallerThan('sm')]: {
-                  top: -theme.spacing.xl - 17,
-                  left: 'calc(100% - 48px)',
-                },
-              })}
-            >
-              <IconArrowsMaximize size={18} color="black" />
-            </ActionIcon>
-          </Tooltip>
-        </>
+            [theme.fn.smallerThan('sm')]: {
+              top: -theme.spacing.xl - 17,
+              left: 'calc(100% - 48px)',
+            },
+          })}
+        >
+          <IconArrowsMaximize size={18} color="black" />
+        </ActionIcon>
+      )}
+      {showContent && (
+        <GenerationTabs wrapperProps={!mobile ? { h: 'calc(100% - 54px)' } : undefined} />
       )}
     </Drawer>
   );

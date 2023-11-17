@@ -1,26 +1,24 @@
 import {
   Center,
   Container,
-  Divider,
-  Grid,
   Group,
-  Navbar,
   Stack,
   Tabs,
   Text,
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
+import { usePrevious } from '@mantine/hooks';
 import { IconLock } from '@tabler/icons-react';
-import React from 'react';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Feed, FloatingFeedActions } from '~/components/ImageGeneration/Feed';
-import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
+import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { IsClient } from '~/components/IsClient/IsClient';
+
+import { usePageScrollRestore } from '~/components/ScrollRestoration/ScrollRestoration';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -53,8 +51,18 @@ export default function GeneratePage() {
   const { classes, cx } = useStyles();
   const isMobile = useIsMobile();
   const isClient = useIsClient();
+  const [tab, setTab] = useState<string>('queue');
 
   const result = useGetGenerationRequests();
+  usePageScrollRestore({
+    key: tab,
+    condition: !!result.data,
+  });
+
+  // usePreserveVerticalScrollPosition({
+  //   data: result.requests,
+  //   node: typeof window !== 'undefined' ? document.querySelector('html') : null,
+  // });
 
   if (currentUser?.muted)
     return (
@@ -84,7 +92,17 @@ export default function GeneratePage() {
         <GenerationForm />
       </div>
       <div className={classes.content}>
-        <Tabs variant="pills" defaultValue="queue" radius="xl" color="gray" mb="md">
+        <Tabs
+          variant="pills"
+          value={tab}
+          onTabChange={(tab) => {
+            // tab can be null
+            if (tab) setTab(tab);
+          }}
+          radius="xl"
+          color="gray"
+          mb="md"
+        >
           <Tabs.List p="md" mt={-16} className={classes.tabList}>
             <Container fluid sx={{ width: '100%' }}>
               <Group position="apart">

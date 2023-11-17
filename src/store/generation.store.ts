@@ -2,13 +2,7 @@ import { ModelType } from '@prisma/client';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import {
-  BaseModel,
-  BaseModelSetType,
-  baseModelSets,
-  generation,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig } from '~/server/common/constants';
 import { GenerateFormModel, GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { showErrorNotification } from '~/utils/notifications';
@@ -94,6 +88,7 @@ export const generationPanel = {
   open: store.open,
   close: store.close,
   setView: store.setView,
+  isOpen: store.opened,
 };
 
 export const generationStore = {
@@ -144,7 +139,8 @@ const formatGenerationData = (
 
   const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
 
-  const formData: Partial<GenerateFormModel> = removeEmpty({ ...params, aspectRatio });
+  const formData: Partial<GenerateFormModel> =
+    type !== 'remix' ? removeEmpty({ ...params, aspectRatio }) : { ...params, aspectRatio };
   if (type === 'params') return formData;
   else if (type === 'run') {
     return {
