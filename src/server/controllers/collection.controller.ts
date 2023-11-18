@@ -385,7 +385,8 @@ export const updateCollectionItemsStatusHandler = async ({
   try {
     return updateCollectionItemsStatus({
       input,
-      sessionUser: ctx.user,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

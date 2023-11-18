@@ -408,6 +408,8 @@ export const saveItemInCollections = async ({
           status: permission.writeReview
             ? CollectionItemStatus.REVIEW
             : CollectionItemStatus.ACCEPTED,
+          reviewedById: permission.write ? userId : null,
+          reviewedAt: permission.write ? new Date() : null,
           [itemKey]: input[itemKey as keyof typeof input],
         };
       })
@@ -1089,13 +1091,14 @@ export const getAvailableCollectionItemsFilterForUser = ({
 
 export const updateCollectionItemsStatus = async ({
   input,
-  sessionUser,
+  userId,
+  isModerator,
 }: {
   input: UpdateCollectionItemsStatusInput;
-  sessionUser: SessionUser;
+  userId: number;
+  isModerator?: boolean;
 }) => {
   const { collectionId, collectionItemIds, status } = input;
-  const { id: userId, isModerator } = sessionUser;
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -1116,7 +1119,7 @@ export const updateCollectionItemsStatus = async ({
 
   await dbWrite.collectionItem.updateMany({
     where: { id: { in: collectionItemIds }, collectionId },
-    data: { status },
+    data: { status, reviewedById: userId, reviewedAt: new Date() },
   });
 
   if (collection.mode === CollectionMode.Contest) {
