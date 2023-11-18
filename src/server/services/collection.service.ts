@@ -1292,6 +1292,13 @@ export const bulkSaveItems = async ({
     postIds,
   });
 
+  const baseData = {
+    collectionId,
+    addedById: userId,
+    status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
+    reviewedAt: permissions.write ? new Date() : null,
+    reviewedById: permissions.write ? userId : null,
+  };
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (
     articleIds.length > 0 &&
@@ -1315,11 +1322,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingArticleIds.includes(id))
       .map((articleId) => ({
         articleId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
 
@@ -1338,11 +1341,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingModelIds.includes(id))
       .map((modelId) => ({
         modelId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
   if (
@@ -1360,11 +1359,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingImageIds.includes(id))
       .map((imageId) => ({
         imageId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
   if (postIds.length > 0 && (collection.type === CollectionType.Post || collection.type === null)) {
@@ -1379,11 +1374,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingPostIds.includes(id))
       .map((postId) => ({
         postId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
 
