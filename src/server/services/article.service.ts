@@ -216,6 +216,7 @@ export const getArticles = async ({
 
 type CivitaiNewsItemRaw = {
   id: number;
+  collection: string;
   cover: string;
   title: string;
   content: string;
@@ -237,6 +238,7 @@ export type CivitaiNewsItem = {
 export const getCivitaiNews = async () => {
   const articlesRaw = await dbRead.$queryRaw<CivitaiNewsItemRaw[]>`
     SELECT
+      c.name as "collection",
       a.id,
       cover,
       title,
@@ -248,7 +250,7 @@ export const getCivitaiNews = async () => {
     FROM "Article" a
     JOIN "CollectionItem" ci ON ci."articleId" = a.id
     JOIN "Collection" c ON c.id = ci."collectionId"
-    WHERE c.name = 'Newsroom' AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
+    WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
     ORDER BY a."createdAt" DESC
     LIMIT 10
   `;
@@ -258,21 +260,25 @@ export const getCivitaiNews = async () => {
     select: userWithCosmeticsSelect,
   });
 
-  const articles = articlesRaw.map(({ userId, summary, ...article }) => {
-    const user = users.find((x) => x.id === userId);
-    return {
+  const news: CivitaiNewsItem[] = [];
+  const updates: CivitaiNewsItem[] = [];
+  for (const article of articlesRaw) {
+    const user = users.find((x) => x.id === article.userId);
+    const item = {
       ...article,
-      summary: summary ?? truncate(removeTags(article.content), { length: 200 }),
       user: user ?? null,
+      summary: article.summary ?? truncate(removeTags(article.content), { length: 200 }),
     } as CivitaiNewsItem;
-  });
+    if (article.collection === 'Newsroom') news.push(item);
+    if (article.collection === 'Updates') updates.push(item);
+  }
 
   const pressMentions = await dbRead.pressMention.findMany({
     orderBy: { publishedAt: 'desc' },
     where: { publishedAt: { lte: new Date() } },
   });
 
-  return { articles, pressMentions };
+  return { news, updates, pressMentions };
 };
 
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
