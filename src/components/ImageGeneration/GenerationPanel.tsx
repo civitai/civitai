@@ -130,7 +130,20 @@ export function GenerationPanel() {
       lockScroll={mobile}
     >
       {!mobile ? (
-        <Group spacing={8} pl="md" pr={8} pt="md" pb={8} position="apart">
+        <Group
+          spacing={8}
+          pl="md"
+          pr={8}
+          pt="md"
+          pb={8}
+          position="apart"
+          sx={(theme) => ({
+            borderBottom: `1px solid ${
+              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+            }`,
+            boxShadow: theme.shadows.sm,
+          })}
+        >
           <Button
             radius="xl"
             size="xs"
