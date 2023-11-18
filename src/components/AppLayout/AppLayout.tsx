@@ -3,6 +3,7 @@ import {
   AppShell,
   Button,
   Center,
+  MantineNumberSize,
   Stack,
   Text,
   ThemeIcon,
@@ -20,8 +21,29 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { getScrollPosition } from '~/utils/window-helpers';
+import { SidebarLayout } from '~/components/AppLayout/SidebarLayout';
+import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 
-export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
+type AppLayoutPageProps = {
+  includeFooter?: boolean;
+  padding?: MantineNumberSize;
+  sidebarLeft?: () => JSX.Element;
+  sidebarRight?: () => JSX.Element;
+};
+
+type Props = {
+  children: React.ReactNode;
+  renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
+} & AppLayoutPageProps;
+
+export function AppLayout({
+  children,
+  renderSearchComponent,
+  includeFooter = true,
+  padding,
+  sidebarLeft = GenerationSidebar,
+  sidebarRight,
+}: Props) {
   const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
@@ -36,11 +58,10 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
 
   return (
     <AppShell
-      padding="md"
+      padding={0}
       header={!isBanned ? <AppHeader renderSearchComponent={renderSearchComponent} /> : undefined}
-      footer={<AppFooter />}
+      footer={includeFooter ? <AppFooter /> : undefined}
       className={`theme-${theme.colorScheme}`}
-      navbar={navbar}
       styles={{
         body: {
           display: 'block',
@@ -56,7 +77,10 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
     >
       {!isBanned ? (
         <>
-          {children}
+          <SidebarLayout left={sidebarLeft} right={sidebarRight}>
+            {children}
+          </SidebarLayout>
+
           {flags.assistant && (
             <Affix
               // @ts-ignore: ignoring cause target prop accepts string. See: https://v5.mantine.dev/core/portal#specify-target-dom-node
@@ -87,9 +111,3 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
     </AppShell>
   );
 }
-
-type Props = {
-  children: React.ReactNode;
-  navbar?: React.ReactElement;
-  renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
-};

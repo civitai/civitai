@@ -41,8 +41,6 @@ export function AppFooter() {
     setShowFooter(scroll.y < 10);
   });
 
-  if (router.asPath === '/generate') return null;
-
   return (
     <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">
       <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
