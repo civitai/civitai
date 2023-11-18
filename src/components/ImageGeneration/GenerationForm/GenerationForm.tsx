@@ -321,15 +321,25 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         name="prompt"
                         placeholder="Your prompt goes here..."
                         autosize
-                        styles={{
+                        unstyled
+                        styles={(theme) => ({
                           input: {
+                            background: 'transparent',
+                            width: '100%',
+                            resize: 'none',
                             border: 'none',
                             padding: '0',
+                            outline: 'none',
+                            fontFamily: theme.fontFamily,
+                            fontSize: theme.fontSizes.sm,
+                            lineHeight: theme.lineHeight,
+                            overflow: 'hidden',
+                            color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
                           },
                           // Prevents input from displaying form error
                           error: { display: 'none' },
                           wrapper: { margin: 0 },
-                        }}
+                        })}
                         onPaste={(event) => {
                           const text = event.clipboardData.getData('text/plain');
                           if (text) setShowFillForm(text.includes('Steps:'));
