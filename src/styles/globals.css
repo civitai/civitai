@@ -2,13 +2,18 @@ html,
 body {
   padding: 0;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
-    Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
+    Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  height: 100%;
+  width: 100%;
+}
+
+#__next {
+  height: 100%;
 }
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
-
   input:focus,
   select:focus,
   textarea:focus {
@@ -59,7 +64,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2+p {
+.markdown-content h2 + p {
   margin-top: 0;
 }
 

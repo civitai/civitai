@@ -231,7 +231,10 @@ function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSea
   return <AutocompleteSearch />;
 }
 
-export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent }: Props) {
+export function AppHeader({
+  renderSearchComponent = defaultRenderSearchComponent,
+  fixed = true,
+}: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -604,7 +607,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   };
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -856,7 +859,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   );
 }
 
-type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement };
+type Props = {
+  renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement;
+  fixed?: boolean;
+};
 export type RenderSearchComponentProps = {
   onSearchDone?: () => void;
   isMobile: boolean;

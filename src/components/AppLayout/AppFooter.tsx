@@ -28,9 +28,9 @@ const buttonProps: ButtonProps = {
 
 const hash = env.NEXT_PUBLIC_GIT_HASH;
 
-export function AppFooter() {
+export function AppFooter({ fixed = true }: { fixed?: boolean }) {
   const router = useRouter();
-  const { classes, cx } = useStyles();
+  const { classes, cx } = useStyles({ fixed });
   const [showHash, setShowHash] = useState(false);
   const [showFooter, setShowFooter] = useDebouncedState(true, 200);
   const mobile = useIsMobile();
@@ -44,7 +44,12 @@ export function AppFooter() {
   if (router.asPath === '/generate') return null;
 
   return (
-    <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">
+    <Footer
+      className={cx(classes.root, { [classes.down]: !showFooter })}
+      height="auto"
+      p="sm"
+      py={!fixed ? 4 : undefined}
+    >
       <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
         <Text
           weight={700}
@@ -140,6 +145,7 @@ export function AppFooter() {
             variant="light"
             color="yellow"
             target="_blank"
+            size={!fixed ? 'xs' : undefined}
             pl={4}
             pr="xs"
           >
@@ -151,9 +157,9 @@ export function AppFooter() {
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles((theme, args: { fixed: boolean }) => ({
   root: {
-    position: 'fixed',
+    position: args.fixed ? 'fixed' : undefined,
     bottom: 0,
     right: 0,
     left: 0,

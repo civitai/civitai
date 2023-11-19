@@ -64,6 +64,7 @@ dayjs.extend(utc);
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
+  options?: Record<string, unknown>;
 };
 
 type CustomAppProps = {
@@ -110,8 +111,10 @@ function MyApp(props: CustomAppProps) {
   }, [colorScheme]);
 
   const getLayout = useMemo(
-    () => Component.getLayout ?? ((page: React.ReactElement) => <AppLayout>{page}</AppLayout>),
-    [Component.getLayout]
+    () =>
+      Component.getLayout ??
+      ((page: React.ReactElement) => <AppLayout {...Component.options}>{page}</AppLayout>),
+    [Component.getLayout, Component.options]
   );
 
   const content = isMaintenanceMode ? (

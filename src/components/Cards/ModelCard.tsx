@@ -187,17 +187,17 @@ export function ModelCard({ data }: Props) {
   let href = `/models/${data.id}/${slugit(data.name)}`;
   if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
 
-  useEffect(() => {
-    if (!modelId || modelId !== data.id) return;
-    const elem = document.getElementById(`${modelId}`);
-    if (elem) {
-      elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-    }
-  }, [modelId, data.id]);
+  // useEffect(() => {
+  //   if (!modelId || modelId !== data.id) return;
+  //   const elem = document.getElementById(`${modelId}`);
+  //   if (elem) {
+  //     elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  //   }
+  // }, [modelId, data.id]);
 
   return (
     <FeedCard className={!data.image ? classes.noImage : undefined} href={href}>
-      <InView rootMargin="600px">
+      <InView rootMargin="600px" root={document.querySelector('#scrollArea')}>
         {({ ref, inView }) => (
           <div className={classes.root} ref={ref}>
             {inView && (
@@ -342,7 +342,7 @@ export function ModelCard({ data }: Props) {
                                       }
                                       placeholder="empty"
                                       className={classes.image}
-                                      loading="lazy"
+                                      // loading="lazy"
                                       wrapperProps={{ style: { height: '100%' } }}
                                       contain
                                     />
