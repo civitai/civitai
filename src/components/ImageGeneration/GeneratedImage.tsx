@@ -164,7 +164,7 @@ export function GeneratedImage({
                 }}
               />
             </label>
-            <Menu withinPortal>
+            <Menu zIndex={400} withinPortal>
               <Menu.Target>
                 <div className={classes.menuTarget}>
                   <ActionIcon variant="transparent">

@@ -1,13 +1,6 @@
 import { ActionIcon, Box, Button, createStyles, Group, ScrollArea } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
-import { useEffect, useRef, useState } from 'react';
-
-type State = {
-  scrollPosition: { x: number; y: number };
-  atStart: boolean;
-  atEnd: boolean;
-  largerThanViewport: boolean;
-};
+import { useEffect, useState } from 'react';
 
 type TagProps = { id: number; name: string };
 export function TagScroller({
@@ -21,27 +14,13 @@ export function TagScroller({
 }) {
   const { classes, cx, theme } = useStyles();
 
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<State>({
-    scrollPosition: { x: 0, y: 0 },
-    atStart: true,
-    atEnd: false,
-    largerThanViewport: false,
-  });
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const largerThanViewport = node && node.scrollWidth > node.offsetWidth;
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(true);
 
-  useEffect(() => {
-    if (viewportRef.current && data.length) {
-      const newValue = viewportRef.current.scrollWidth > viewportRef.current.offsetWidth;
-
-      if (newValue !== state.largerThanViewport)
-        setState((state) => ({ ...state, largerThanViewport: newValue }));
-    }
-  }, [data.length, state.largerThanViewport]);
-
-  if (!data.length) return null;
-
-  const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
-  const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
+  const scrollLeft = () => node?.scrollBy({ left: -200, behavior: 'smooth' });
+  const scrollRight = () => node?.scrollBy({ left: 200, behavior: 'smooth' });
 
   const handleChange = (tagId: number, shouldAdd: boolean) => {
     const tags = [...value];
@@ -56,28 +35,29 @@ export function TagScroller({
     }
   };
 
+  useEffect(() => {
+    if (!node) return;
+
+    const listener = () => {
+      const atStart = node?.scrollLeft === 0;
+      const atEnd = node.scrollLeft >= node.scrollWidth - node.offsetWidth - 1;
+      setAtStart(atStart);
+      setAtEnd(atEnd);
+    };
+
+    listener();
+
+    node.addEventListener('scroll', listener, { passive: true });
+    return () => {
+      node.removeEventListener('scroll', listener);
+    };
+  }, [node]);
+
+  if (!data.length) return null;
+
   return (
-    <ScrollArea
-      viewportRef={viewportRef}
-      classNames={classes}
-      className={classes.tagsContainer}
-      type="never"
-      onScrollPositionChange={(scrollPosition) =>
-        setState((state) => ({
-          ...state,
-          scrollPosition,
-          largerThanViewport:
-            !!viewportRef.current &&
-            viewportRef.current.scrollWidth > viewportRef.current.offsetWidth,
-          atStart: scrollPosition.x === 0,
-          atEnd:
-            !!viewportRef.current &&
-            scrollPosition.x >=
-              viewportRef.current.scrollWidth - viewportRef.current.offsetWidth - 1,
-        }))
-      }
-    >
-      <Box className={cx(classes.leftArrow, state.atStart && classes.hidden)}>
+    <div className={classes.tagsContainer}>
+      <Box className={cx(classes.leftArrow, atStart && classes.hidden)}>
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"
@@ -87,7 +67,7 @@ export function TagScroller({
           <IconChevronLeft />
         </ActionIcon>
       </Box>
-      <Group className={classes.tagsGroup} spacing={8} noWrap>
+      <Group ref={setNode} className={classes.tagsGroup} spacing={8} noWrap>
         {data.map((tag) => {
           const active = value.includes(tag.id);
           return (
@@ -107,12 +87,7 @@ export function TagScroller({
           );
         })}
       </Group>
-      <Box
-        className={cx(
-          classes.rightArrow,
-          (state.atEnd || !state.largerThanViewport) && classes.hidden
-        )}
-      >
+      <Box className={cx(classes.rightArrow, (atEnd || !largerThanViewport) && classes.hidden)}>
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"
@@ -122,23 +97,20 @@ export function TagScroller({
           <IconChevronRight />
         </ActionIcon>
       </Box>
-    </ScrollArea>
+    </div>
   );
 }
 
 const useStyles = createStyles((theme) => ({
   tagsContainer: {
     position: 'relative',
-
-    [theme.fn.largerThan('lg')]: {
-      // marginLeft: theme.spacing.xl * -1.5, // -36px
-      // marginRight: theme.spacing.xl * -1.5, // -36px
-    },
   },
   tagsGroup: {
-    [theme.fn.largerThan('lg')]: {
-      // marginLeft: theme.spacing.xl * 1.5, // 36px
-      // marginRight: theme.spacing.xl * 1.5, // 36px
+    overflowX: 'auto',
+    willChange: 'transform',
+    scrollbarWidth: 'none',
+    '::-webkit-scrollbar': {
+      display: 'none',
     },
   },
   tag: {
@@ -194,9 +166,5 @@ const useStyles = createStyles((theme) => ({
     [theme.fn.largerThan('md')]: {
       display: 'block',
     },
-  },
-  viewport: {
-    overflowX: 'scroll',
-    overflowY: 'hidden',
   },
 }));

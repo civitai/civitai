@@ -1117,10 +1117,18 @@ export const updateCollectionItemsStatus = async ({
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
-  await dbWrite.collectionItem.updateMany({
-    where: { id: { in: collectionItemIds }, collectionId },
-    data: { status, reviewedById: userId, reviewedAt: new Date() },
-  });
+  if (collectionItemIds.length > 0) {
+    console.log(collection.mode);
+    await dbWrite.$executeRaw`
+      UPDATE "CollectionItem" 
+      SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
+      collection.mode === CollectionMode.Contest
+        ? ', "randomId" = FLOOR(RANDOM() * 1000000000)'
+        : ''
+    )}
+      WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
+    `;
+  }
 
   if (collection.mode === CollectionMode.Contest) {
     const updatedItems = await dbWrite.collectionItem.findMany({
