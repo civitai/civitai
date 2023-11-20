@@ -92,25 +92,33 @@ const getMasonryColumns = <TData>(
   return columnItems;
 };
 
-export const useContainerWidth = (elementRef: React.MutableRefObject<HTMLElement | null>) => {
-  const { current: container } = elementRef;
+export const useContainerWidth = (container: HTMLElement | null) => {
   const [windowWidth, setWindowWidth] = useState(0);
   const [width, setWidth] = useState(0);
 
   const debouncer = useDebouncer(300);
 
-  useWindowEvent('resize', () =>
-    debouncer(() => {
-      setWindowWidth(window.innerWidth);
-    })
-  );
+  // useWindowEvent('resize', () =>
+  //   debouncer(() => {
+  //     setWindowWidth(window.innerWidth);
+  //   })
+  // );
+
+  useEffect(() => {
+    if (!container) return;
+    const handleResize = () =>
+      debouncer(() => {
+        setWindowWidth(container.clientWidth);
+      });
+
+    new ResizeObserver(handleResize).observe(container);
+  }, [container]);
 
   // using the extra `container?.offsetWidth` dependency because of rapid changes in offsetWidth value on initialize
   useEffect(() => {
-    const { current } = elementRef;
-    if (!current?.offsetWidth) return;
-    setWidth(current.offsetWidth);
-  }, [windowWidth, container?.offsetWidth, elementRef]);
+    if (!container?.offsetWidth) return;
+    setWidth(container.offsetWidth);
+  }, [windowWidth, container]);
 
   return width;
 };

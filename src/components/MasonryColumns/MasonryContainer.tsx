@@ -1,5 +1,5 @@
 import { createStyles, Container, ContainerProps } from '@mantine/core';
-import React, { CSSProperties, useRef, createContext, useContext } from 'react';
+import React, { CSSProperties, useRef, createContext, useContext, useState } from 'react';
 import { useColumnCount, useContainerWidth } from '~/components/MasonryColumns/masonry.utils';
 import {
   MasonryContextState,
@@ -23,7 +23,7 @@ export const useMasonryContainerContext = () => {
 };
 
 export function MasonryContainer({ children, ...containerProps }: MasonryContainerProps) {
-  const containerRef = useRef(null);
+  const [containerRef, setContainerRef] = useState<HTMLElement | null>(null);
   const masonryProviderState = useMasonryContext();
   const { columnWidth, columnGap, maxColumnCount } = masonryProviderState;
 
@@ -50,7 +50,7 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
 
   return (
     <Container {...containerProps}>
-      <div ref={containerRef} className={classes.container}>
+      <div ref={setContainerRef} className={classes.container}>
         <div
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}

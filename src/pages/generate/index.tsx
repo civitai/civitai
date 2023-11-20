@@ -128,6 +128,10 @@ export default function GeneratePage() {
   );
 }
 
+GeneratePage.layoutProps = {
+  includeFooter: false,
+};
+
 const useStyles = createStyles((theme) => {
   const sidebarWidth = 400;
   const sidebarWidthLg = 600;

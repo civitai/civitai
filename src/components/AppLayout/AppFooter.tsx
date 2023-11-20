@@ -41,8 +41,6 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
     setShowFooter(scroll.y < 10);
   });
 
-  if (router.asPath === '/generate') return null;
-
   return (
     <Footer
       className={cx(classes.root, { [classes.down]: !showFooter })}
