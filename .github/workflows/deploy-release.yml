@@ -1,0 +1,23 @@
+name: Docker Release Deploy
+
+on:
+  push:
+    branches:
+      # - main
+      - release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: convictional/trigger-workflow-and-wait@v1.6.1
+        with:
+          owner: civitai
+          repo: civitai-deployment
+          workflow_file_name: deploy.yml
+          github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
+          ref: main
+          client_payload: |
+            { "environment": "${{ github.ref_name == 'release' &&  'prod' || 'dev' }}", "branch": "${{ github.ref_name }}" }
+          wait_workflow: false
