@@ -23,10 +23,10 @@ export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?
     where: { id },
     select: {
       ...resourceReviewSelect,
-      model: { select: { name: true, id: true, userId: true } },
+      model: { select: { name: true, id: true, userId: true, status: true } },
     },
   });
-  if (!result) throw throwNotFoundError();
+  if (!result || result.model.status !== 'Published') throw throwNotFoundError();
   return result;
 };
 

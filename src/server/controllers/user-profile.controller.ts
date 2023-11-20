@@ -1,4 +1,4 @@
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview,
   getUserWithProfile,
@@ -11,7 +11,6 @@ import {
 } from '~/server/schema/user-profile.schema';
 import { Context } from '~/server/createContext';
 import { TRPCError } from '@trpc/server';
-import { dbRead } from '~/server/db/client';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
 
@@ -47,10 +46,15 @@ export const updateUserProfileHandler = async ({
   input: UserProfileUpdateSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
+  const { user: sessionUser } = ctx;
+
   try {
+    if ((!sessionUser.isModerator && input.userId !== sessionUser.id) || sessionUser.muted)
+      throw throwAuthorizationError();
+
     const user = await updateUserProfile({
       ...input,
-      userId: ctx.user.isModerator ? input.userId || ctx.user.id : ctx.user.id,
+      userId: sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id,
     });
 
     return user;

@@ -158,6 +158,7 @@ model User {
   engagedImages           ImageEngagement[]
   collections             Collection[]
   collectionItems         CollectionItem[]
+  reviewedCollectionItems CollectionItem[]         @relation("reviewedBy")
   contributingCollections CollectionContributor[]
   homeBlocks              HomeBlock[]
   bounties                Bounty[]
@@ -2034,6 +2035,9 @@ model CollectionItem {
   model        Model?               @relation(fields: [modelId], references: [id], onDelete: Cascade)
   addedById    Int?
   addedBy      User?                @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  reviewedById Int?
+  reviewedBy   User?                @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
   note         String?
   status       CollectionItemStatus @default(ACCEPTED)
   randomId     Int?

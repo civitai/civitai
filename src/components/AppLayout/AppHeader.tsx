@@ -27,7 +27,6 @@ import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
-  IconBrush,
   IconCircleDashed,
   IconCrown,
   IconHeart,
@@ -523,10 +522,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
 
-  const handleCloseMenu = () => {
+  const handleCloseMenu = useCallback(() => {
     closeBurger();
     setUserMenuOpened(false);
-  };
+  }, [closeBurger]);
 
   useEffect(() => {
     if (showSearch && searchRef.current) {
@@ -589,12 +588,12 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         </Link>
       );
     },
-    [currentUser, features.buzz, isMobile]
+    [currentUser, features.buzz, handleCloseMenu, isMobile]
   );
 
   const createButton =
     features.imageGeneration && !router.asPath.includes('/generate') ? (
-      <GenerateButton variant="light" py={8} px={12} h="auto" radius="xl" compact />
+      <GenerateButton variant="light" py={8} px={12} h="auto" radius="xl" mode="toggle" compact />
     ) : null;
 
   const handleSignOut = async () => {

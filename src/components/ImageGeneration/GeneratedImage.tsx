@@ -108,6 +108,8 @@ export function GeneratedImage({
                 boxShadow:
                   '0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
                 cursor: 'pointer',
+                width: '100%',
+                height: '100%',
                 [`&::after`]: {
                   content: '""',
                   display: 'block',
@@ -162,7 +164,7 @@ export function GeneratedImage({
                 }}
               />
             </label>
-            <Menu withinPortal>
+            <Menu zIndex={400} withinPortal>
               <Menu.Target>
                 <div className={classes.menuTarget}>
                   <ActionIcon variant="transparent">

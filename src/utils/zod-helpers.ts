@@ -30,6 +30,15 @@ export function commaDelimitedStringArray() {
   }, z.array(z.string()));
 }
 
+// include=tags,category
+export function commaDelimitedEnumArray<T extends [string, ...string[]]>(zodEnum: z.ZodEnum<T>) {
+  return z.preprocess((value) => {
+    if (!Array.isArray(value) && typeof value === 'string')
+      return value.split(',').map((x) => x.trim());
+    return value;
+  }, z.array(zodEnum));
+}
+
 /** Converts a comma delimited string to an array of numbers */
 export function commaDelimitedNumberArray(options?: { message?: string }) {
   return commaDelimitedStringArray()

@@ -21,9 +21,10 @@ export const getServerSideProps = createServerSideProps({
 export default function CivitaiNewsroom() {
   const { classes } = useStyles();
   const { data } = trpc.article.getCivitaiNews.useQuery();
-  const articles = data?.articles ?? [];
+  const news = data?.news ?? [];
+  const updates = data?.updates ?? [];
   const pressMentions = data?.pressMentions ?? [];
-  const featuredArticle = useMemo(() => data?.articles.find((article) => article.featured), [data]);
+  const featuredArticle = useMemo(() => data?.news.find((article) => article.featured), [data]);
   const features = useFeatureFlags();
   if (!features.newsroom) return <NotFound />;
 
@@ -94,12 +95,16 @@ export default function CivitaiNewsroom() {
             <Center>
               <Tabs.List mb="xl">
                 <Tabs.Tab value="news">News</Tabs.Tab>
+                <Tabs.Tab value="updates">Updates</Tabs.Tab>
                 <Tabs.Tab value="press-mentions">Press Mentions</Tabs.Tab>
                 <Tabs.Tab value="media-kit">Media Kit</Tabs.Tab>
               </Tabs.List>
             </Center>
             <Tabs.Panel value="news">
-              <News articles={articles} />
+              <News articles={news} />
+            </Tabs.Panel>
+            <Tabs.Panel value="updates">
+              <News articles={updates} />
             </Tabs.Panel>
             <Tabs.Panel value="press-mentions">
               <PressMentions pressMentions={pressMentions} />

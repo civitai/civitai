@@ -140,7 +140,7 @@ export function UnroutedImageCard({ data }: Props) {
                 imageId={data.id}
               >
                 <ActionIcon className={sharedClasses.infoChip} variant="light">
-                  <IconInfoCircle color="red" strokeWidth={2.5} size={18} />
+                  <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                 </ActionIcon>
               </ImageMetaPopover>
             )}

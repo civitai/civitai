@@ -114,33 +114,37 @@ function CollectionListForm({
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
+  // Needs to be outside the handleSubmit for it to pick up the right value for some reason :shrug:
+  const { isDirty } = form.formState;
+
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
-    const removeFromCollectionIds = collectionItems
-      .map((item) => item.collectionId)
-      .filter((collectionId) => !data.collectionIds.includes(collectionId));
+    if (!isDirty) return onSubmit();
+
+    // We'll avoid re-adding the item into the collection if it already exists, so we must check for that.
+    const existingCollectionIds = collectionItems.map((item) => item.collectionId);
+
+    const collectionIds = data.collectionIds.filter(
+      (collectionId) => !existingCollectionIds.includes(collectionId) && collectionId
+    );
+    const removeFromCollectionIds = existingCollectionIds.filter(
+      (collectionId) => !data.collectionIds.includes(collectionId)
+    );
+
+    if (!collectionIds.length && !removeFromCollectionIds.length) {
+      return onSubmit();
+    }
 
     addCollectionItemMutation.mutate(
-      { ...data, removeFromCollectionIds },
+      { ...data, collectionIds, removeFromCollectionIds },
       {
         async onSuccess(_, { type }) {
           showNotification({
             title: 'Item added',
             message: 'Your item has been added to the selected collections.',
           });
-          onSubmit();
 
-          // Invalidate the right query based on the collection type
-          const endpointTarget =
-            type === CollectionType.Article
-              ? queryUtils.article.getInfinite
-              : type === CollectionType.Model
-              ? queryUtils.model.getAll
-              : type === CollectionType.Post
-              ? queryUtils.post.getInfinite
-              : type === CollectionType.Image
-              ? queryUtils.image.getInfinite
-              : null;
+          onSubmit();
 
           // TODO.optimization: Invalidate only the collection that was updated
           await queryUtils.collection.getUserCollectionItemsByItem.invalidate();

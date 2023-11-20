@@ -8,13 +8,7 @@ import {
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageMetadata } from '~/server/schema/media.schema';
-import {
-  CollectionReadConfiguration,
-  ImageIngestionStatus,
-  LinkType,
-  Prisma,
-} from '@prisma/client';
+import { CollectionReadConfiguration, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';

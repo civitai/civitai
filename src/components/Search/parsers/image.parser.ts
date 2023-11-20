@@ -20,7 +20,17 @@ const imageSearchParamsSchema = searchParamsSchema
   .extend({
     imageId: z.coerce.number(),
     index: z.literal('images'),
+    createdAt: z.string(),
     sortBy: z.enum(ImagesSearchIndexSortBy),
+    generationTool: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+    baseModel: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+    aspectRatio: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
     tags: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
@@ -47,8 +57,14 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   routeToState: (routeState: ImageUiState) => {
     const images: ImageSearchParams = (routeState[IMAGES_SEARCH_INDEX] || {}) as ImageSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
+      generationTool: images.generationTool,
+      aspectRatio: images.aspectRatio,
+      baseModel: images.baseModel,
       'tags.name': images.tags,
       'user.username': images.users,
+    });
+    const range = removeEmpty({
+      createdAtUnix: images.createdAt,
     });
 
     const { query, sortBy, imageId } = images;
@@ -59,6 +75,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
         refinementList,
         query,
         imageId,
+        range,
       },
     };
   },
@@ -69,6 +86,10 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       };
     }
 
+    const createdAt = uiState[IMAGES_SEARCH_INDEX].range?.['createdAtUnix'];
+    const generationTool = uiState[IMAGES_SEARCH_INDEX].refinementList?.['generationTool'];
+    const aspectRatio = uiState[IMAGES_SEARCH_INDEX].refinementList?.['aspectRatio'];
+    const baseModel = uiState[IMAGES_SEARCH_INDEX].refinementList?.['baseModel'];
     const tags = uiState[IMAGES_SEARCH_INDEX].refinementList?.['tags.name'];
     const users = uiState[IMAGES_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
@@ -83,6 +104,10 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       sortBy,
       query,
       imageId,
+      baseModel,
+      aspectRatio,
+      generationTool,
+      createdAt,
     };
 
     return { [IMAGES_SEARCH_INDEX]: state };

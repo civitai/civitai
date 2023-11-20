@@ -408,6 +408,8 @@ export const saveItemInCollections = async ({
           status: permission.writeReview
             ? CollectionItemStatus.REVIEW
             : CollectionItemStatus.ACCEPTED,
+          reviewedById: permission.write ? userId : null,
+          reviewedAt: permission.write ? new Date() : null,
           [itemKey]: input[itemKey as keyof typeof input],
         };
       })
@@ -1089,13 +1091,14 @@ export const getAvailableCollectionItemsFilterForUser = ({
 
 export const updateCollectionItemsStatus = async ({
   input,
-  sessionUser,
+  userId,
+  isModerator,
 }: {
   input: UpdateCollectionItemsStatusInput;
-  sessionUser: SessionUser;
+  userId: number;
+  isModerator?: boolean;
 }) => {
   const { collectionId, collectionItemIds, status } = input;
-  const { id: userId, isModerator } = sessionUser;
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -1114,10 +1117,18 @@ export const updateCollectionItemsStatus = async ({
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
-  await dbWrite.collectionItem.updateMany({
-    where: { id: { in: collectionItemIds }, collectionId },
-    data: { status },
-  });
+  if (collectionItemIds.length > 0) {
+    console.log(collection.mode);
+    await dbWrite.$executeRaw`
+      UPDATE "CollectionItem" 
+      SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
+      collection.mode === CollectionMode.Contest
+        ? ', "randomId" = FLOOR(RANDOM() * 1000000000)'
+        : ''
+    )}
+      WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
+    `;
+  }
 
   if (collection.mode === CollectionMode.Contest) {
     const updatedItems = await dbWrite.collectionItem.findMany({
@@ -1289,6 +1300,13 @@ export const bulkSaveItems = async ({
     postIds,
   });
 
+  const baseData = {
+    collectionId,
+    addedById: userId,
+    status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
+    reviewedAt: permissions.write ? new Date() : null,
+    reviewedById: permissions.write ? userId : null,
+  };
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (
     articleIds.length > 0 &&
@@ -1312,11 +1330,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingArticleIds.includes(id))
       .map((articleId) => ({
         articleId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
 
@@ -1335,11 +1349,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingModelIds.includes(id))
       .map((modelId) => ({
         modelId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
   if (
@@ -1357,11 +1367,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingImageIds.includes(id))
       .map((imageId) => ({
         imageId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
   if (postIds.length > 0 && (collection.type === CollectionType.Post || collection.type === null)) {
@@ -1376,11 +1382,7 @@ export const bulkSaveItems = async ({
       .filter((id) => !existingPostIds.includes(id))
       .map((postId) => ({
         postId,
-        collectionId,
-        addedById: userId,
-        status: permissions.writeReview
-          ? CollectionItemStatus.REVIEW
-          : CollectionItemStatus.ACCEPTED,
+        ...baseData,
       }));
   }
 
