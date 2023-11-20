@@ -56,7 +56,6 @@ function CheckpointInfo({ resource, onRemove, onSwap }: Props) {
               component={NextLink}
               sx={{ cursor: 'pointer' }}
               href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
-              onClick={() => generationPanel.close()}
               rel="nofollow noindex"
               lineClamp={1}
               weight={590}
