@@ -460,6 +460,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         imagesPerVersion: 10,
         excludedTagIds: input.excludedImageTagIds,
         include: ['tags'],
+        currentUserId: user?.id,
       })
     : [];
 
