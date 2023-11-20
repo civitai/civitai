@@ -13,7 +13,6 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server.mjs';
-import { getDeliveryWorkerStatus } from './delivery-worker';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -66,8 +65,7 @@ export function getS3Client() {
 }
 
 export async function getBucket() {
-  const deliveryWorkerStatus = await getDeliveryWorkerStatus();
-  return deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
+  return env.S3_UPLOAD_BUCKET;
 }
 
 export async function getPutUrl(key: string, s3: S3Client | null = null) {
