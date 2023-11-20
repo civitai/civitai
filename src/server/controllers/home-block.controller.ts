@@ -1,5 +1,9 @@
 import { Context } from '~/server/createContext';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   deleteHomeBlockById,
   getHomeBlockById,
@@ -10,7 +14,10 @@ import {
   setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
-import { getCollectionById } from '~/server/services/collection.service';
+import {
+  getCollectionById,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
@@ -114,6 +121,16 @@ export const createCollectionHomeBlockHandler = async ({
 
   if (!collection) {
     throw throwNotFoundError('Collection not found');
+  }
+
+  const permission = await getUserCollectionPermissionsById({
+    id: collection.id,
+    isModerator: ctx.user.isModerator,
+    userId: ctx.user.id,
+  });
+
+  if (!permission.read) {
+    throw throwAuthorizationError('You do not have permission to view this collection');
   }
 
   const metadata: HomeBlockMetaSchema = {
