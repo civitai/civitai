@@ -114,8 +114,13 @@ function CollectionListForm({
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
+  // Needs to be outside the handleSubmit for it to pick up the right value for some reason :shrug:
+  const { isDirty } = form.formState;
+
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
+    if (!isDirty) return onSubmit();
+
     const removeFromCollectionIds = collectionItems
       .map((item) => item.collectionId)
       .filter((collectionId) => !data.collectionIds.includes(collectionId));
