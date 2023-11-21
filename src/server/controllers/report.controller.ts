@@ -287,6 +287,18 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        commentV2: {
+          select: {
+            commentV2: {
+              select: {
+                id: true,
+                user: { select: simpleUserSelect },
+                nsfw: true,
+                tosViolation: true,
+              },
+            },
+          },
+        },
       },
     });
     return {
