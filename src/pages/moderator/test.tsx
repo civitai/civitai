@@ -11,7 +11,7 @@ import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { setPageOptions } from '~/components/Layout/AppLayout';
-import { ScrollArea } from '~/components/Layout/ScrollArea';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';

@@ -17,7 +17,7 @@ import React, { ComponentType, cloneElement } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { ScrollArea } from '~/components/Layout/ScrollArea';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';

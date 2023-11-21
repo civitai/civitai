@@ -11,7 +11,7 @@ import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useScrollRestore } from '~/hooks/useScrollRestore';
 import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { ScrollArea } from '~/components/Layout/ScrollArea';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
   const { classes } = useStyles();

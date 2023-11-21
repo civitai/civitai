@@ -6,12 +6,10 @@ import {
   Box,
   Center,
   createStyles,
-  useMantineTheme,
   Button,
   Container,
   Text,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons-react';
 
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -24,6 +22,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export function ResourceReviewCarousel({
   username,
@@ -35,7 +34,7 @@ export function ResourceReviewCarousel({
   reviewId: number;
 }) {
   const { classes, theme } = useStyles();
-  const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
+  const mobile = useIsMobile();
 
   const filters = {
     username,
