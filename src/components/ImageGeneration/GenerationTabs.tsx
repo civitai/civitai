@@ -73,10 +73,10 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
     },
   };
 
-  const { setRef, node } = useScrollRestore({
-    key: view,
-    // defaultPosition: tabs[view].defaultPosition,
-  });
+  // const { setRef, node } = useScrollRestore({
+  //   key: view,
+  //   // defaultPosition: tabs[view].defaultPosition,
+  // });
 
   // usePreserveVerticalScrollPosition({
   //   data: result.requests,
@@ -89,7 +89,7 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
   return (
     <Stack h="100%" style={{ overflow: 'hidden' }} spacing={0} {...wrapperProps}>
       {header && <div>{header()}</div>}
-      <ScrollArea ref={setRef}>{render()}</ScrollArea>
+      <ScrollArea scrollRestore={{ key: view }}>{render()}</ScrollArea>
 
       {currentUser && (
         <Group spacing={0} grow className={classes.tabsList}>

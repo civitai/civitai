@@ -8,26 +8,28 @@ const scrollMap = new Map<string, ScrollPosition>();
 
 const debounce = createKeyDebouncer(300);
 
-export const useScrollRestore = ({
-  key,
-  defaultPosition = 'top',
-}: {
-  key: string;
+export type UseScrollRestoreProps = {
+  key?: string;
   defaultPosition?: 'top' | 'bottom';
-}) => {
-  const [node, setRef] = useState<Element | null>(null);
+  enabled?: boolean;
+};
+
+export const useScrollRestore = <T extends Element = Element>(args?: UseScrollRestoreProps) => {
+  const { key, defaultPosition = 'top', enabled = true } = args ?? {};
+  const [node, setRef] = useState<T | null>(null);
   const [emitter] = useState(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
 
   useEffect(() => {
+    if (!enabled) return;
     const cb = emitter.on('scroll', ({ key, ...scrollPosition }) =>
       debounce(key, () => scrollMap.set(key, scrollPosition))
     );
     return () => emitter.off('scroll', cb);
-  });
+  }, [enabled, emitter]);
 
   useEffect(() => {
-    if (!node) return;
-    const _key = `${key}_${location.pathname.substring(1)}`;
+    if (!node || !enabled) return;
+    const _key = `${key ?? history.state.key}_${location.pathname.substring(1)}`;
     const record = scrollMap.get(_key);
     if (!record) {
       switch (defaultPosition) {
@@ -58,7 +60,7 @@ export const useScrollRestore = ({
     return () => {
       node.removeEventListener('scroll', handleScroll);
     };
-  }, [key, node, defaultPosition]); //eslint-disable-line
+  }, [key, node, defaultPosition, enabled]); //eslint-disable-line
 
   return { setRef, node: node };
 };

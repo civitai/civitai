@@ -77,7 +77,9 @@ export function AppLayout({
                 {content}
               </div>
             ) : (
-              <ScrollArea style={pageStyle}>{content}</ScrollArea>
+              <ScrollArea style={pageStyle} py="md">
+                {content}
+              </ScrollArea>
             )}
           </main>
           <AppFooter fixed={false} />

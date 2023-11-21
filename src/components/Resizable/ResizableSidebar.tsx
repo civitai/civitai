@@ -71,6 +71,8 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
       },
     },
     content: {
+      containerName: 'sidebar',
+      containerType: 'inline-size',
       flex: 1,
       [borderOrientation]:
         theme.colorScheme === 'dark'
