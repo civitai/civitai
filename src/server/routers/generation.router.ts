@@ -17,7 +17,13 @@ import {
   getGenerationResources,
   getGenerationStatusMessage,
 } from '~/server/services/generation/generation.service';
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 
@@ -27,7 +33,7 @@ export const generationRouter = router({
     .input(getGenerationRequestsSchema)
     .use(isFlagProtected('imageGeneration'))
     .query(({ input, ctx }) => getGenerationRequests({ ...input, userId: ctx.user.id })),
-  createRequest: protectedProcedure
+  createRequest: guardedProcedure
     .input(createGenerationRequestSchema)
     .use(isFlagProtected('imageGeneration'))
     .mutation(({ input, ctx }) => createGenerationRequest({ ...input, userId: ctx.user.id })),

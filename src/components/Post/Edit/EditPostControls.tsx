@@ -20,6 +20,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
 import { IconClock } from '@tabler/icons-react';
+import { showErrorNotification } from '~/utils/notifications';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -60,7 +61,14 @@ export function ManagePostStatus() {
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
   const isReordering = useEditPostContext((state) => state.reorder);
 
-  const { mutate, isLoading } = trpc.post.update.useMutation();
+  const { mutate, isLoading } = trpc.post.update.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to publish',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const canPublish =
     tags.filter((x) => !!x.id).length > 0 &&

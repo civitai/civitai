@@ -1,4 +1,10 @@
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import {
   addEntityToShowcaseHandler,
   getUserContentOverviewHandler,
@@ -20,7 +26,7 @@ export const userProfileRouter = router({
     .use(isFlagProtected('profileOverhaul'))
     .input(getUserProfileSchema)
     .query(getUserContentOverviewHandler),
-  update: protectedProcedure
+  update: guardedProcedure
     .use(isFlagProtected('profileOverhaul'))
     .input(userProfileUpdateSchema)
     .mutation(updateUserProfileHandler),

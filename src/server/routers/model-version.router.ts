@@ -28,8 +28,10 @@ import {
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
+  guardedProcedure,
   isFlagProtected,
   middleware,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -66,12 +68,12 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('earlyAccessModel'))
     .mutation(toggleNotifyEarlyAccessHandler),
-  upsert: protectedProcedure.input(modelVersionUpsertSchema2).mutation(upsertModelVersionHandler),
+  upsert: guardedProcedure.input(modelVersionUpsertSchema2).mutation(upsertModelVersionHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelVersionHandler),
-  publish: protectedProcedure
+  publish: guardedProcedure
     .input(publishVersionSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelVersionHandler),
@@ -91,7 +93,7 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(requestReviewHandler),
-  declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
+  declineReview: moderatorProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
   getModelVersionsByModelType: protectedProcedure
     .input(getModelVersionByModelTypeSchema)
     .query(({ input }) => getModelVersionsByModelType(input)),
