@@ -18,6 +18,7 @@ import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
@@ -136,7 +137,7 @@ function ContentToggle({
       onChange={onChange}
       data={tabs}
       sx={(theme) => ({
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           // flex: 1,
           width: '100%',
         },

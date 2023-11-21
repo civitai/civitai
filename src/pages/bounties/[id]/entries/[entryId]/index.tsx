@@ -80,6 +80,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import Link from 'next/link';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -105,8 +106,8 @@ export const getServerSideProps = createServerSideProps({
 });
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = `@media (max-width: ${theme.breakpoints.md - 1}px)`;
-  const isDesktop = `@media (min-width: ${theme.breakpoints.md}px)`;
+  const isMobile = containerQuery.smallerThan('md');
+  const isDesktop = containerQuery.largerThan('md');
   return {
     root: {
       width: '100vw',

@@ -2,6 +2,7 @@ import { createStyles } from '@mantine/core';
 import { useMemo } from 'react';
 import { InstagramEmbed, TwitterEmbed, YouTubeEmbed } from 'react-social-media-embed';
 import { SocialBlockSchema } from '~/server/schema/home-block.schema';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export type SocialBlockProps = {
   url: string;
@@ -24,7 +25,7 @@ const useStyles = createStyles((theme, { type }: { type: SocialBlockSchema['type
     iframe: {
       border: 'none !important',
     },
-    [theme.fn.largerThan('sm')]: {
+    [containerQuery.largerThan('sm')]: {
       gridColumn: type === 'yt-long' ? 'span 2' : undefined,
     },
   },

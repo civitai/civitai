@@ -89,6 +89,10 @@ import { GenerateButton } from '../RunStrategy/GenerateButton';
 const HEADER_HEIGHT = 70;
 
 const useStyles = createStyles((theme) => ({
+  root: {
+    containerName: 'header',
+    containerType: 'inline-size',
+  },
   header: {
     display: 'flex',
     alignItems: 'center',
@@ -606,7 +610,7 @@ export function AppHeader({
   };
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed={fixed} zIndex={200} className={classes.root}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>

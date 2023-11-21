@@ -5,7 +5,6 @@ import {
   Center,
   Container,
   Divider,
-  Grid,
   Group,
   Loader,
   LoadingOverlay,
@@ -44,6 +43,7 @@ import { StarRating } from '~/components/StartRating/StarRating';
 import { env } from '~/env/client.mjs';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -195,8 +195,8 @@ export default function ModelReviews() {
             </Center>
           </Paper>
         ) : (
-          <Grid gutter="xl">
-            <Grid.Col sm={12} md={4}>
+          <ContainerGrid gutter="xl">
+            <ContainerGrid.Col sm={12} md={4}>
               <Stack>
                 {Versions}
                 {Summary}
@@ -208,8 +208,8 @@ export default function ModelReviews() {
                   </Alert>
                 )}
               </Stack>
-            </Grid.Col>
-            <Grid.Col sm={12} md={8}>
+            </ContainerGrid.Col>
+            <ContainerGrid.Col sm={12} md={8}>
               {loadingResourceReviews ? (
                 <Center p="xl">
                   <Loader />
@@ -229,8 +229,8 @@ export default function ModelReviews() {
                   )}
                 </Stack>
               )}
-            </Grid.Col>
-          </Grid>
+            </ContainerGrid.Col>
+          </ContainerGrid>
         )}
       </Container>
     </>

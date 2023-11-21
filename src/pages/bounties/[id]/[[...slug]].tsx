@@ -3,7 +3,6 @@ import {
   Button,
   Container,
   Divider,
-  Grid,
   Group,
   Stack,
   Text,
@@ -104,6 +103,8 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -336,11 +337,11 @@ export default function BountyDetailsPage({
             )}
           </Group>
         </Stack>
-        <Grid gutterMd={32} gutterLg={64}>
-          <Grid.Col xs={12} md={4} orderMd={2}>
+        <ContainerGrid gutterMd={32} gutterLg={64}>
+          <ContainerGrid.Col xs={12} md={4} orderMd={2}>
             <BountySidebar bounty={bounty} />
-          </Grid.Col>
-          <Grid.Col xs={12} md={8} orderMd={1}>
+          </ContainerGrid.Col>
+          <ContainerGrid.Col xs={12} md={8} orderMd={1}>
             <Stack spacing="xs">
               <ImageGuardReportContext.Provider
                 value={{
@@ -412,8 +413,8 @@ export default function BountyDetailsPage({
                 </Stack>
               </article>
             </Stack>
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid.Col>
+        </ContainerGrid>
       </Container>
       <BountyEntries bounty={bounty} />
       <Container ref={discussionSectionRef} size="xl" mt={32}>
@@ -894,7 +895,7 @@ const useStyles = createStyles((theme) => ({
   titleWrapper: {
     gap: theme.spacing.xs,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       gap: theme.spacing.xs * 0.4,
       alignItems: 'flex-start',
     },
@@ -902,7 +903,7 @@ const useStyles = createStyles((theme) => ({
 
   title: {
     wordBreak: 'break-word',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',
       paddingBottom: 0,

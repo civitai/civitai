@@ -41,6 +41,7 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { env } from '~/env/client.mjs';
 import { toStringList } from '~/utils/array-helpers';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -123,7 +124,7 @@ export function PostDetail({ postId }: { postId: number }) {
                   <>
                     <Divider
                       orientation="vertical"
-                      sx={(theme) => ({ [theme.fn.smallerThan('sm')]: { display: 'none' } })}
+                      sx={(theme) => ({ [containerQuery.smallerThan('sm')]: { display: 'none' } })}
                     />
                     <Collection
                       items={post.tags}
@@ -185,7 +186,7 @@ export function PostDetail({ postId }: { postId: number }) {
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                     size={30}
                     radius="xl"
-                    sx={(theme) => ({ [theme.fn.smallerThan('sm')]: { marginLeft: 'auto' } })}
+                    sx={(theme) => ({ [containerQuery.smallerThan('sm')]: { marginLeft: 'auto' } })}
                   >
                     <IconDotsVertical size={16} />
                   </ActionIcon>

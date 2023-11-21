@@ -15,7 +15,7 @@ import { signOut } from 'next-auth/react';
 
 import React, { ComponentType, cloneElement } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
-import { AppHeader } from '~/components/AppLayout/AppHeader';
+import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ScrollArea } from '~/components/Layout/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -33,7 +33,11 @@ export function AppLayout({
   innerLayout,
   pageClass,
   pageStyle,
-}: { children: React.ReactNode } & AppLayoutProps) {
+  renderSearchComponent,
+}: {
+  children: React.ReactNode;
+  renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
+} & AppLayoutProps) {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   const user = useCurrentUser();
@@ -63,7 +67,7 @@ export function AppLayout({
 
   return (
     <div className={cx(`theme-${theme.colorScheme}`, classes.root)}>
-      <AppHeader fixed={false} />
+      <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       <div className={classes.wrapper}>
         <GenerationSidebar />
         <div className={classes.content}>

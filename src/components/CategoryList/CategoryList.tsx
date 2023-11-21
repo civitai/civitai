@@ -18,6 +18,7 @@ import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryC
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props<Item> = {
   data: Array<TypeCategory & { items: Item[] }>;
@@ -168,7 +169,7 @@ function CategoryTitle({
         size="lg"
         lh={1}
         sx={(theme) => ({
-          [theme.fn.smallerThan('sm')]: {
+          [containerQuery.smallerThan('sm')]: {
             marginRight: 'auto',
           },
         })}

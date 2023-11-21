@@ -4,7 +4,6 @@ import {
   Center,
   Container,
   createStyles,
-  Grid,
   Group,
   List,
   Loader,
@@ -25,6 +24,7 @@ import FourOhFour from '~/pages/404';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const useStyles = createStyles((theme) => ({
   striped: {
@@ -59,8 +59,8 @@ export default function UserLists() {
 
   return (
     <Container size="xs">
-      <Grid gutter="xl">
-        <Grid.Col span={12}>
+      <ContainerGrid gutter="xl">
+        <ContainerGrid.Col span={12}>
           <Group spacing="xl">
             <Link href={`/user/${username}`} passHref>
               <ActionIcon component="a">
@@ -69,8 +69,8 @@ export default function UserLists() {
             </Link>
             <Title order={1}>{`@${username}`}</Title>
           </Group>
-        </Grid.Col>
-        <Grid.Col span={12}>
+        </ContainerGrid.Col>
+        <ContainerGrid.Col span={12}>
           <Tabs
             defaultValue={list}
             onTabChange={(value) => router.push(`/user/${username}/${value}`)}
@@ -195,8 +195,8 @@ export default function UserLists() {
               </>
             )}
           </Tabs>
-        </Grid.Col>
-      </Grid>
+        </ContainerGrid.Col>
+      </ContainerGrid>
     </Container>
   );
 }

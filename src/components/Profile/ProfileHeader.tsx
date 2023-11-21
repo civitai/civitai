@@ -48,10 +48,11 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { isDefined } from '~/utils/type-guards';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   message: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       borderRadius: 0,
       width: 'auto',
       marginLeft: '-16px',
@@ -72,7 +73,7 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 'auto',
       marginLeft: '-16px',
       marginRight: '-16px',
@@ -88,7 +89,7 @@ const useStyles = createStyles((theme) => ({
     height: 0,
     paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 'auto',
       borderRadius: 0,
       paddingBottom: `${(constants.profile.mobileCoverImageAspectRatio * 100).toFixed(3)}%`,

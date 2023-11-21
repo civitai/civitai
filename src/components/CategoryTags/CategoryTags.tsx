@@ -5,18 +5,19 @@ import { useRef, useState } from 'react';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   tagsContainer: {
     position: 'relative',
 
-    [theme.fn.largerThan('lg')]: {
+    [containerQuery.largerThan('lg')]: {
       // marginLeft: theme.spacing.xl * -1.5, // -36px
       // marginRight: theme.spacing.xl * -1.5, // -36px
     },
   },
   tagsGroup: {
-    [theme.fn.largerThan('lg')]: {
+    [containerQuery.largerThan('lg')]: {
       // marginLeft: theme.spacing.xl * 1.5, // 36px
       // marginRight: theme.spacing.xl * 1.5, // 36px
     },
@@ -27,7 +28,7 @@ const useStyles = createStyles((theme) => ({
   title: {
     display: 'none',
 
-    [theme.fn.largerThan('sm')]: {
+    [containerQuery.largerThan('sm')]: {
       display: 'block',
     },
   },
@@ -53,7 +54,7 @@ const useStyles = createStyles((theme) => ({
       deg: 90,
     }),
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'block',
     },
   },
@@ -71,7 +72,7 @@ const useStyles = createStyles((theme) => ({
       deg: 270,
     }),
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'block',
     },
   },

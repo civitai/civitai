@@ -1,4 +1,4 @@
-import { Grid, Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
+import { Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { IconMessageCancel } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -8,6 +8,7 @@ import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/Commen
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden }: Props) {
   const isMobile = useIsMobile();
@@ -32,8 +33,8 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
   const hasHiddenComments = hiddenCommentsCount > 0;
 
   return (
-    <Grid gutter="xl">
-      <Grid.Col span={12} sx={{ position: 'relative' }}>
+    <ContainerGrid gutter="xl">
+      <ContainerGrid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
           <Stack spacing={8}>
@@ -80,8 +81,8 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
             </Stack>
           </Paper>
         )}
-      </Grid.Col>
-    </Grid>
+      </ContainerGrid.Col>
+    </ContainerGrid>
   );
 }
 

@@ -24,6 +24,7 @@ import { SortFilter } from '~/components/Filters';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const segments = [
   { label: 'My Images', value: 'images' },
@@ -50,7 +51,7 @@ const useChipStyles = createStyles((theme) => ({
       },
     },
 
-    [theme.fn.smallerThan('xs')]: {
+    [containerQuery.smallerThan('xs')]: {
       padding: `4px ${theme.spacing.sm}px !important`,
       fontSize: 18,
       height: 'auto',
@@ -66,7 +67,7 @@ const useChipStyles = createStyles((theme) => ({
   },
 
   chipGroup: {
-    [theme.fn.smallerThan('xs')]: {
+    [containerQuery.smallerThan('xs')]: {
       width: '100%',
     },
   },
@@ -199,7 +200,7 @@ function ContentToggle({
       onChange={onChange}
       data={segments as unknown as SegmentedControlItem[]}
       sx={(theme) => ({
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           width: '100%',
         },
       })}

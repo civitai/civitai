@@ -26,6 +26,7 @@ import { QS } from '~/utils/qs';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function Questions({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
@@ -211,7 +212,7 @@ const useStyles = createStyles((theme) => ({
   title: {
     overflowWrap: 'break-word',
 
-    [`@media(max-width: ${theme.breakpoints.sm}px)`]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: 16,
     },
   },

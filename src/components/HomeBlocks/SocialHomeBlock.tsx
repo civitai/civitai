@@ -10,6 +10,7 @@ import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryC
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
   (theme, { columnGap, columnWidth }, getRef) => ({
@@ -19,7 +20,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
     },
 
     carousel: {
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         marginRight: -theme.spacing.md,
         marginLeft: -theme.spacing.md,
       },
@@ -35,7 +36,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
         opacity: 1,
       },
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         display: 'none',
       },
     },
@@ -54,7 +55,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
       overflowX: 'visible',
       paddingBottom: 4,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         marginRight: -theme.spacing.md,
         marginLeft: -theme.spacing.md,
         paddingLeft: theme.spacing.md,

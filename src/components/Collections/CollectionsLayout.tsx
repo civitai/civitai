@@ -17,6 +17,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyle = createStyles((theme) => ({
   container: {
@@ -25,7 +26,7 @@ const useStyle = createStyles((theme) => ({
     alignItems: 'flex-start',
   },
   sidebar: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
@@ -37,14 +38,14 @@ const useStyle = createStyles((theme) => ({
 const useStyleDrawer = createStyles((theme) => ({
   sidebar: {
     display: 'block',
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
 
   drawerButton: {
     display: 'none',
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'block',
     },
   },

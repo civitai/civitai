@@ -26,6 +26,7 @@ import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -35,7 +36,7 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       gap: theme.spacing.md,
     },
   },

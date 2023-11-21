@@ -5,7 +5,6 @@ import {
   Text,
   Alert,
   Group,
-  Grid,
   List,
   Center,
   Divider,
@@ -21,6 +20,7 @@ import { enterFall, jelloVertical } from '~/libs/animations';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import React, { useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const schema = z.object({
   returnUrl: z.string().optional(),
@@ -95,14 +95,14 @@ export default function PurchaseBuzz() {
           <Title order={2}>Buy Buzz now</Title>
         </Group>
       </Alert>
-      <Grid gutter={48}>
-        <Grid.Col xs={12} md={4}>
+      <ContainerGrid gutter={48}>
+        <ContainerGrid.Col xs={12} md={4}>
           <Stack>
             <Title order={2}>Buzz Benefits</Title>
             <BuzzFeatures />
           </Stack>
-        </Grid.Col>
-        <Grid.Col xs={12} md={8}>
+        </ContainerGrid.Col>
+        <ContainerGrid.Col xs={12} md={8}>
           <BuzzPurchase
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}
@@ -121,8 +121,8 @@ export default function PurchaseBuzz() {
                 : undefined
             }
           />
-        </Grid.Col>
-      </Grid>
+        </ContainerGrid.Col>
+      </ContainerGrid>
     </Container>
   );
 }

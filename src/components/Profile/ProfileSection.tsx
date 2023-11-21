@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import { UserWithProfile } from '~/types/router';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props = {
   title: string;
@@ -44,7 +45,7 @@ export const useProfileSectionStyles = createStyles<
     return {
       title: {
         fontSize: '32px',
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           fontSize: '24px',
         },
       },
@@ -155,7 +156,7 @@ export const useProfileSectionStyles = createStyles<
           marginTop: theme.spacing.md,
         },
 
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           gridAutoFlow: 'column',
           gridTemplateColumns: `repeat(${count}, ${widthCarousel})`,
           gridTemplateRows: 'auto',

@@ -52,6 +52,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -285,14 +286,14 @@ const useStyles = createStyles((theme) => ({
   titleWrapper: {
     gap: theme.spacing.xs,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       gap: theme.spacing.xs * 0.4,
     },
   },
 
   title: {
     wordBreak: 'break-word',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',
       paddingBottom: 0,
@@ -301,7 +302,7 @@ const useStyles = createStyles((theme) => ({
 
   badgeText: {
     fontSize: theme.fontSizes.md,
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.sm,
     },
   },

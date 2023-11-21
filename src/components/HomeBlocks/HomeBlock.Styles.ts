@@ -1,4 +1,5 @@
 import { createStyles } from '@mantine/core';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const useHomeBlockStyles = createStyles((theme, _, getRef) => {
   const expandButtonRef = getRef('expandButton');
@@ -6,7 +7,7 @@ export const useHomeBlockStyles = createStyles((theme, _, getRef) => {
     title: {
       fontSize: 32,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         fontSize: 24,
       },
     },
@@ -17,7 +18,7 @@ export const useHomeBlockStyles = createStyles((theme, _, getRef) => {
     },
 
     header: {
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         display: 'block',
         [`& .${expandButtonRef}`]: {
           paddingLeft: 0,

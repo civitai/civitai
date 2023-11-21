@@ -1,5 +1,6 @@
 import { Container, createStyles, Stack } from '@mantine/core';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const SIDEBAR_SIZE = 320;
 
@@ -21,7 +22,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
       paddingBottom: 'calc(var(--mantine-header-height, 50px))',
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         display: 'none',
       },
     },
@@ -31,7 +32,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       width: '100%',
       paddingLeft: `${SIDEBAR_SIZE}px`,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         paddingLeft: '0',
       },
     },

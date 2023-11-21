@@ -173,7 +173,14 @@ function MyApp(props: CustomAppProps) {
           theme={{
             colorScheme,
             components: {
-              Modal: { styles: { modal: { maxWidth: '100%' } } },
+              Modal: {
+                styles: {
+                  modal: { maxWidth: '100%', containerName: 'modal', containerType: 'inline-size' },
+                },
+              },
+              Drawer: {
+                styles: { drawer: { containerName: 'drawer', containerType: 'inline-size' } },
+              },
               Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
               Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
               Switch: {

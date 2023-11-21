@@ -29,6 +29,7 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 import { ModelById } from '~/types/router';
 
@@ -59,7 +60,7 @@ const useStyles = createStyles((theme) => ({
       deg: 90,
     }),
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'block',
     },
   },
@@ -77,7 +78,7 @@ const useStyles = createStyles((theme) => ({
       deg: 270,
     }),
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'block',
     },
   },

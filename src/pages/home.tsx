@@ -34,6 +34,7 @@ import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -141,7 +142,7 @@ export default function Home() {
                           sx={(theme) => ({
                             fontSize: 32,
 
-                            [theme.fn.smallerThan('sm')]: {
+                            [containerQuery.smallerThan('sm')]: {
                               fontSize: 24,
                             },
                           })}
@@ -205,7 +206,7 @@ export default function Home() {
                           sx={(theme) => ({
                             fontSize: 32,
 
-                            [theme.fn.smallerThan('sm')]: {
+                            [containerQuery.smallerThan('sm')]: {
                               fontSize: 24,
                             },
                           })}

@@ -57,6 +57,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import React, { useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ImageDetailByProps({
   imageId,
@@ -300,8 +301,8 @@ export function ImageDetailByProps({
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = `@media (max-width: ${theme.breakpoints.md - 1}px)`;
-  const isDesktop = `@media (min-width: ${theme.breakpoints.md}px)`;
+  const isMobile = containerQuery.smallerThan('md');
+  const isDesktop = containerQuery.largerThan('md');
   return {
     root: {
       width: '100vw',

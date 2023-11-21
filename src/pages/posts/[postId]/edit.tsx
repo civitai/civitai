@@ -1,4 +1,4 @@
-import { Container, Grid, Stack, Title, Group, Badge } from '@mantine/core';
+import { Container, Stack, Title, Group, Badge } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 
@@ -11,6 +11,7 @@ import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 export default function PostEdit() {
   const mutating = useIsMutating();
@@ -35,8 +36,8 @@ export default function PostEdit() {
           content="To complete your review give your post a tag and hit publish."
         />
       )}
-      <Grid gutter={30}>
-        <Grid.Col md={4} sm={6} orderSm={2}>
+      <ContainerGrid gutter={30}>
+        <ContainerGrid.Col md={4} sm={6} orderSm={2}>
           <Stack>
             <Group position="apart">
               <Title size="sm">POST</Title>
@@ -47,15 +48,15 @@ export default function PostEdit() {
             <EditPostControls />
             <EditPostReviews />
           </Stack>
-        </Grid.Col>
-        <Grid.Col md={8} sm={6} orderSm={1}>
+        </ContainerGrid.Col>
+        <ContainerGrid.Col md={8} sm={6} orderSm={1}>
           <Stack>
             <EditPostTitle />
             <EditPostDetail />
             {!reorder ? <EditPostImages /> : <ReorderImages />}
           </Stack>
-        </Grid.Col>
-      </Grid>
+        </ContainerGrid.Col>
+      </ContainerGrid>
     </Container>
   );
 }

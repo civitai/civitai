@@ -24,6 +24,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 /**
  * NOTE: This is still a WIP. We are currently working on a new design for the
@@ -155,7 +156,7 @@ const useStyles = createStyles((theme) => {
           ? `1px solid ${theme.colors.dark[5]}`
           : `1px solid ${theme.colors.gray[2]}`,
 
-      [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
+      [containerQuery.largerThan('lg')]: {
         width: sidebarWidthLg,
       },
     },
@@ -165,7 +166,7 @@ const useStyles = createStyles((theme) => {
       // overflow: 'hidden',
       // marginBottom: -61,
 
-      [`@media (min-width: ${theme.breakpoints.lg}px)`]: {
+      [containerQuery.largerThan('lg')]: {
         marginLeft: sidebarWidthLg,
       },
     },

@@ -23,6 +23,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ResourceReviewCarousel({
   username,
@@ -183,7 +184,7 @@ const useStyles = createStyles((theme) => ({
       width: 24,
       height: 24,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         minWidth: 16,
         minHeight: 16,
       },

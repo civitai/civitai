@@ -20,7 +20,6 @@ import {
   Button,
   Center,
   createStyles,
-  Grid,
   Group,
   Loader,
   Paper,
@@ -44,15 +43,17 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { isNumber } from '~/utils/type-guards';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: '24px',
     },
   },
-  grid: {
-    [theme.fn.smallerThan('sm')]: {
+  ContainerGrid: {
+    [containerQuery.smallerThan('sm')]: {
       flexDirection: 'column-reverse',
     },
   },
@@ -115,8 +116,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
         <ProfileSectionPreview />
       ) : (
         <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-          <Grid className={sectionClasses.grid}>
-            <Grid.Col sm={12} md={8}>
+          <ContainerGrid className={sectionClasses.ContainerGrid}>
+            <ContainerGrid.Col sm={12} md={8}>
               <Stack>
                 {resourceReviews.map((review) => {
                   const reviewer = review.user;
@@ -199,8 +200,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                   );
                 })}
               </Stack>
-            </Grid.Col>
-            <Grid.Col xs={12} md={4}>
+            </ContainerGrid.Col>
+            <ContainerGrid.Col xs={12} md={4}>
               {isLoadingTotals ? (
                 <Center>
                   <Loader />
@@ -261,8 +262,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                   )}
                 </Stack>
               )}
-            </Grid.Col>
-          </Grid>
+            </ContainerGrid.Col>
+          </ContainerGrid>
         </ProfileSection>
       )}
     </div>

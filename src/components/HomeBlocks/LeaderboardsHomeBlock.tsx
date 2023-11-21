@@ -19,13 +19,14 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
 
 const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
   (theme, { columnGap, columnWidth }, getRef) => ({
     carousel: {
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         marginRight: -theme.spacing.md,
         marginLeft: -theme.spacing.md,
       },
@@ -41,7 +42,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
         opacity: 1,
       },
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         display: 'none',
       },
     },
@@ -60,7 +61,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
       overflowX: 'visible',
       paddingBottom: 4,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         marginRight: -theme.spacing.md,
         marginLeft: -theme.spacing.md,
         paddingLeft: theme.spacing.md,

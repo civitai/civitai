@@ -22,13 +22,14 @@ import { constants } from '~/server/common/constants';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { useGenerationStore } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'), {
   loading: () => (
     <Center
       py="xl"
       sx={(theme) => ({
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           position: 'relative',
           height: '600px',
         },
@@ -172,7 +173,7 @@ export function GenerationPanel() {
               backgroundColor: theme.colors.gray[1],
             },
 
-            [theme.fn.smallerThan('sm')]: {
+            [containerQuery.smallerThan('sm')]: {
               top: -theme.spacing.xl - 17,
               left: 'calc(100% - 48px)',
             },

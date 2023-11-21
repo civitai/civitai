@@ -20,6 +20,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const homeOptions = {
   home: {
@@ -60,7 +61,7 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: 'transparent',
     gap: 8,
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       overflow: 'auto hidden',
       maxWidth: '100%',
     },

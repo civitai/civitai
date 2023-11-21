@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   createStyles,
-  Grid,
   Group,
   Stack,
   Text,
@@ -17,6 +16,8 @@ import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme, { color }: { color: string }, getRef) => ({
   card: {
@@ -34,7 +35,7 @@ const useStyles = createStyles((theme, { color }: { color: string }, getRef) => 
     height: 62,
   },
   imageCard: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       padding: 0,
       display: 'block',
       [`& .${getRef('stack')}`]: {
@@ -48,10 +49,10 @@ const useStyles = createStyles((theme, { color }: { color: string }, getRef) => 
     marginRight: theme.spacing.lg,
     borderRight: `1px solid ${theme.colors[color][4]}`,
 
-    [theme.fn.smallerThan('xl')]: {
+    [containerQuery.smallerThan('xl')]: {
       width: 120,
     },
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: 120,
       width: '100%',
       margin: 0,
@@ -70,7 +71,7 @@ const useStyles = createStyles((theme, { color }: { color: string }, getRef) => 
     flex: '1',
   },
   action: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'flex',
       flexGrow: 1,
       justifyContent: 'center',
@@ -146,12 +147,12 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
           </ReactMarkdown>
         </Text>
 
-        <Grid mt="auto">
+        <ContainerGrid mt="auto">
           {actions &&
             actions.map((action, index) => {
               if (action.type === 'button') {
                 return (
-                  <Grid.Col key={index} span="auto">
+                  <ContainerGrid.Col key={index} span="auto">
                     <Link href={action.link} passHref>
                       <Button
                         component="a"
@@ -162,13 +163,13 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
                         {action.linkText}
                       </Button>
                     </Link>
-                  </Grid.Col>
+                  </ContainerGrid.Col>
                 );
               }
 
               return null;
             })}
-        </Grid>
+        </ContainerGrid>
       </Stack>
     </Card>
   );
