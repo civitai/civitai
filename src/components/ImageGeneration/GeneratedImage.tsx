@@ -29,6 +29,7 @@ import { generationStore } from '~/store/generation.store';
 import { constants } from '~/server/common/constants';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { useInScrollAreaView } from '~/hooks/useInScrollAreaView';
 
 // type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
 
@@ -40,7 +41,7 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const { classes } = useStyles();
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const { ref, inView } = useInScrollAreaView({ rootMargin: '600px' });
   const selected = generationImageSelect.useSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
 
