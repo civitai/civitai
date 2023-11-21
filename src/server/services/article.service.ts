@@ -12,6 +12,7 @@ import { SessionUser } from 'next-auth';
 
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { eventEngine } from '~/server/events';
 import {
   GetArticlesByCategorySchema,
   GetInfiniteArticlesSchema,
@@ -461,6 +462,16 @@ export const upsertArticle = async ({
     // If tags changed, need to set is so it updates the queue.
     if (tags) {
       await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    }
+
+    // If it was published, process it.
+    if (result.publishedAt && result.publishedAt <= new Date()) {
+      await eventEngine.processEngagement({
+        userId: result.userId,
+        type: 'published',
+        entityType: 'article',
+        entityId: result.id,
+      });
     }
 
     return result;

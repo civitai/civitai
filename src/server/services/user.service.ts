@@ -50,7 +50,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
-import dayjs from 'dayjs';
+import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -886,7 +886,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
     select: { id: true, availableStart: true, availableEnd: true },
   });
   if (!cosmetic) return null;
-  if (!dayjs().isBetween(cosmetic.availableStart, cosmetic.availableEnd)) return null;
+  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
 
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: cosmetic.id },
@@ -903,23 +903,32 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
 };
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
+  let available = true;
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
     select: { obtainedAt: true, equippedAt: true },
   });
-  return userCosmetic ?? { obtainedAt: null, equippedAt: null };
+
+  // If the user doesn't have the cosmetic, check if it's available
+  if (!userCosmetic) available = await isCosmeticAvailable(id, userId);
+
+  return {
+    available,
+    obtained: !!userCosmetic,
+    equipped: !!userCosmetic?.equippedAt,
+  };
 }
 
 export async function equipCosmetic({ id, userId }: { id: number; userId: number }) {
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
-    select: { obtainedAt: true },
+    select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
   if (!userCosmetic) throw new Error("You don't have that cosmetic");
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
-      where: { userId, equippedAt: { not: null } },
+      where: { userId, equippedAt: { not: null }, cosmetic: { type: userCosmetic.cosmetic.type } },
       data: { equippedAt: null },
     }),
     dbWrite.userCosmetic.updateMany({

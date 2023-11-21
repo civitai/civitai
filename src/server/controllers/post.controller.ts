@@ -34,6 +34,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
+import { eventEngine } from '~/server/events';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -65,12 +66,18 @@ export const createPostHandler = async ({
       postId: post.id,
       tags: post.tags.map((x) => x.name),
     });
-    if (post.publishedAt) {
+    if (post.publishedAt && post.publishedAt <= new Date()) {
       await ctx.track.post({
         type: 'Publish',
         nsfw: post.nsfw,
         postId: post.id,
         tags: post.tags.map((x) => x.name),
+      });
+      await eventEngine.processEngagement({
+        userId: post.userId,
+        type: 'published',
+        entityType: 'post',
+        entityId: post.id,
       });
     }
 
@@ -134,6 +141,15 @@ export const updatePostHandler = async ({
         },
         ctx.ip
       );
+
+      if (updatedPost.publishedAt <= new Date()) {
+        await eventEngine.processEngagement({
+          userId: updatedPost.userId,
+          type: 'published',
+          entityType: 'post',
+          entityId: updatedPost.id,
+        });
+      }
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
