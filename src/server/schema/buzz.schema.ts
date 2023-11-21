@@ -57,7 +57,14 @@ export const getUserBuzzTransactionsResponse = z.object({
       toAccountId: z.coerce.number(),
       amount: z.coerce.number(),
       description: z.coerce.string().nullish(),
-      details: z.object({}).passthrough().nullish(),
+      details: z
+        .object({
+          entityId: z.number().optional(),
+          entityType: z.string().optional(),
+          url: z.string().optional(),
+        })
+        .passthrough()
+        .nullish(),
     })
     .array(),
 });

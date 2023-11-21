@@ -222,6 +222,10 @@ export const createBounty = async ({
             toAccountId: 0,
             amount: unitAmount,
             type: TransactionType.Bounty,
+            details: {
+              entityId: bounty.id,
+              entityType: 'Bounty',
+            },
           });
           break;
         default: // Do no checks
@@ -510,6 +514,11 @@ export const addBenefactorUnitAmount = async ({
         toAccountId: 0,
         amount: unitAmount,
         type: TransactionType.Bounty,
+        description: 'You have supported a bounty',
+        details: {
+          entityId: bountyId,
+          entityType: 'Bounty',
+        },
       });
       break;
     default: // Do no checks

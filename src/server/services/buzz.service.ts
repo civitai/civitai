@@ -147,7 +147,11 @@ export async function createBuzzTransaction({
 
   const body = JSON.stringify({
     ...payload,
-    details,
+    details: {
+      ...(details ?? {}),
+      entityId,
+      entityType,
+    },
     amount,
     toAccountId,
   });
@@ -185,6 +189,8 @@ export async function createBuzzTransaction({
         amount: amount,
         user: fromUser?.username,
         message: payload.description,
+        entityId,
+        entityType,
       },
     });
   }

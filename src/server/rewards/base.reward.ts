@@ -105,6 +105,7 @@ export function createBuzzEvent<T>({
               type: event.type,
               forId: event.forId,
               byUserId: event.byUserId,
+              ...(event.transactionDetails ?? {}),
             },
             externalTransactionId:
               event.type === 'userReferred' || event.type === 'refereeCreated'
@@ -358,6 +359,7 @@ type BuzzEventDefinitionBase<T> = {
   tooltip?: string;
   visible?: boolean;
   getKey: (input: T, ctx: GetKeyContext) => Promise<GetKeyOutput | false>;
+  transactionDetails?: MixedObject;
 };
 
 type CapInterval = 'day' | 'week' | 'month';
@@ -369,6 +371,7 @@ type ProcessableBuzzEventDefinition<T> = BuzzEventDefinitionBase<T> & {
     interval?: CapInterval;
   }[];
   preprocess?: (ctx: ProcessingContext) => Promise<void>;
+  transactionDetails?: MixedObject;
 };
 
 type OnEventBuzzEventDefinition<T> = BuzzEventDefinitionBase<T> & {

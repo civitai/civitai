@@ -1,13 +1,15 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { parseBuzzTransactionDetails } from '~/utils/buzz';
 
 export const buzzNotifications = createNotificationProcessor({
   'tip-received': {
     displayName: 'Tip Received',
-    prepareMessage: ({ details }) => ({
-      message: `You received a tip of ${details.amount} Buzz from ${
-        details.user ? `@${details.user}` : 'a user'
-      }!${details.message ? ` They said: "${details.message}".` : ''}`,
-      url: details.user !== 'a user' ? `/user/${details.user}` : '',
-    }),
+    prepareMessage: ({ details }) => {
+      const { url, notiifcation } = parseBuzzTransactionDetails(details);
+      return {
+        message: `${notiifcation}${details.message ? ` They said: "${details.message}".` : ''}`,
+        url,
+      };
+    },
   },
 });
