@@ -1,6 +1,7 @@
 import { useEditPostContext } from './EditPostProvider';
 import { trpc } from '~/utils/trpc';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { showErrorNotification } from '~/utils/notifications';
 
 let timer: NodeJS.Timeout | undefined;
 const debounce = (func: () => void, timeout = 1000) => {
@@ -14,7 +15,14 @@ export function EditPostDetail() {
   const id = useEditPostContext((state) => state.id);
   const detail = useEditPostContext((state) => state.detail ?? '');
   const setDetail = useEditPostContext((state) => state.setDetail);
-  const { mutate } = trpc.post.update.useMutation();
+  const { mutate } = trpc.post.update.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update post description',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const handleChange = (detail: string) => {
     setDetail(detail);

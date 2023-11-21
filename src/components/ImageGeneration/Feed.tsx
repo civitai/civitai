@@ -8,7 +8,6 @@ import {
   createStyles,
   TooltipProps,
   LoadingOverlay,
-  Box,
   Stack,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
@@ -27,6 +26,7 @@ import { generationPanel } from '~/store/generation.store';
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { showErrorNotification } from '~/utils/notifications';
 
 export function Feed({
   requests,
@@ -97,9 +97,9 @@ export function FloatingFeedActions({ images = [], children }: FloatingActionsPr
     });
   };
 
-  const createPostMuation = trpc.post.create.useMutation();
+  const createPostMutation = trpc.post.create.useMutation();
 
-  const loading = bulkDeleteImagesMutation.isLoading || createPostMuation.isLoading;
+  const loading = bulkDeleteImagesMutation.isLoading || createPostMutation.isLoading;
 
   const handlePostImages = async () => {
     const selectedImages = images.filter((x) => selected.includes(x.id));
@@ -116,12 +116,20 @@ export function FloatingFeedActions({ images = [], children }: FloatingActionsPr
       )
     ).filter(isDefined);
     if (!files.length) return;
-    const post = await createPostMuation.mutateAsync({});
-    const pathname = `/posts/${post.id}/edit`;
-    await router.push(pathname);
-    postImageTransmitter.setData(files);
-    generationPanel.close();
-    handleDeselect();
+    try {
+      const post = await createPostMutation.mutateAsync({});
+      const pathname = `/posts/${post.id}/edit`;
+      await router.push(pathname);
+      postImageTransmitter.setData(files);
+      generationPanel.close();
+      handleDeselect();
+    } catch (e) {
+      const error = e as Error;
+      showErrorNotification({
+        title: 'Failed to create post',
+        error: new Error(error.message),
+      });
+    }
   };
 
   const render = (
