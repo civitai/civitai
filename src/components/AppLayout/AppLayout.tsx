@@ -116,12 +116,11 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    containerName: 'main',
+    containerType: 'inline-size',
   },
 }));
 
 export function setPageOptions(Component: () => JSX.Element, options?: AppLayoutProps) {
-  (Component as any).getLayout = (page: React.ReactElement) => (
-    <AppLayout {...options}>{page}</AppLayout>
-  );
   (Component as any).options = options;
 }
