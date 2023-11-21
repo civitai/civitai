@@ -1,5 +1,10 @@
+import {
+  BuzzTransactionDetails,
+  GetUserBuzzTransactionsResponse,
+} from '~/server/schema/buzz.schema';
+
 export const parseBuzzTransactionDetails = (
-  details?: MixedObject | null
+  details?: BuzzTransactionDetails
 ): { url?: string; notification?: string; label?: string } => {
   if (!details) {
     return {

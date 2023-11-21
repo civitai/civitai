@@ -19,7 +19,11 @@ import { useMemo, useState } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GetUserBuzzTransactionsSchema, TransactionType } from '~/server/schema/buzz.schema';
+import {
+  BuzzTransactionDetails,
+  GetUserBuzzTransactionsSchema,
+  TransactionType,
+} from '~/server/schema/buzz.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -123,7 +127,9 @@ export default function UserTransactions() {
             {transactions.map((transaction) => {
               const { amount, date, fromUser, toUser, description, details } = transaction;
               const isDebit = amount < 0;
-              const { url, label } = parseBuzzTransactionDetails(details);
+              const { url, label }: { url?: string; label?: string } = details
+                ? parseBuzzTransactionDetails(details as BuzzTransactionDetails)
+                : {};
 
               return (
                 <Card key={date.toISOString()} withBorder>
