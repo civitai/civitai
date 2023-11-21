@@ -22,14 +22,13 @@ import {
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { useInView } from 'react-intersection-observer';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { generationStore } from '~/store/generation.store';
 import { constants } from '~/server/common/constants';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { useInScrollAreaView } from '~/hooks/useInScrollAreaView';
+import { useInView } from '~/hooks/useInView';
 
 // type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
 
@@ -41,7 +40,7 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const { classes } = useStyles();
-  const { ref, inView } = useInScrollAreaView({ rootMargin: '600px' });
+  const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = generationImageSelect.useSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
 
