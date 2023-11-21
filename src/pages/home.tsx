@@ -20,7 +20,7 @@ import { IconArrowRight, IconInfoCircle, IconSettings } from '@tabler/icons-reac
 import React, { useEffect, useState } from 'react';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';

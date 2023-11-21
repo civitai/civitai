@@ -9,8 +9,6 @@ import {
 import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useScrollRestore } from '~/hooks/useScrollRestore';
-import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
@@ -72,16 +70,6 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
       // defaultPosition: 'top',
     },
   };
-
-  // const { setRef, node } = useScrollRestore({
-  //   key: view,
-  //   // defaultPosition: tabs[view].defaultPosition,
-  // });
-
-  // usePreserveVerticalScrollPosition({
-  //   data: result.requests,
-  //   node,
-  // });
 
   const header = tabs[view].header;
   const render = tabs[view].render;

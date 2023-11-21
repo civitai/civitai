@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useEffect } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';

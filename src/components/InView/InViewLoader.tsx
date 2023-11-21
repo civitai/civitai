@@ -1,5 +1,5 @@
 import React, { CSSProperties, useEffect, useState } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 
 export function InViewLoader({
   children,

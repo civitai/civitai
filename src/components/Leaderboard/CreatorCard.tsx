@@ -2,7 +2,6 @@ import { createStyles, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { InView } from 'react-intersection-observer';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
