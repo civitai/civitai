@@ -1,113 +1,127 @@
 import {
-  Affix,
-  AppShell,
   Button,
-  Center,
-  MantineNumberSize,
+  createStyles,
+  useMantineTheme,
   Stack,
   Text,
-  ThemeIcon,
   Title,
-  useMantineTheme,
+  Center,
+  ThemeIcon,
+  Affix,
+  Box,
 } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
-import React from 'react';
 
+import React, { ComponentType, cloneElement } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
-import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { AppHeader } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { ScrollArea } from '~/components/Layout/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
-import { getScrollPosition } from '~/utils/window-helpers';
-import { SidebarLayout } from '~/components/AppLayout/SidebarLayout';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 
-type AppLayoutPageProps = {
-  includeFooter?: boolean;
-  padding?: MantineNumberSize;
-  sidebarLeft?: () => JSX.Element;
-  sidebarRight?: () => JSX.Element;
+type AppLayoutProps = {
+  innerLayout?: (page: React.ReactNode) => React.ReactNode;
+  pageClass?: string;
+  pageStyle?: React.CSSProperties;
 };
-
-type Props = {
-  children: React.ReactNode;
-  renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
-} & AppLayoutPageProps;
 
 export function AppLayout({
   children,
-  renderSearchComponent,
-  includeFooter = true,
-  padding,
-  sidebarLeft = GenerationSidebar,
-  sidebarRight,
-}: Props) {
+  innerLayout,
+  pageClass,
+  pageStyle,
+}: { children: React.ReactNode } & AppLayoutProps) {
   const theme = useMantineTheme();
+  const { classes, cx } = useStyles();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
 
-  const [hasFooter, setHasFooter] = useDebouncedState(true, 200);
+  // TODO - return banned
+  if (isBanned)
+    return (
+      <Center py="xl">
+        <Stack align="center">
+          <ThemeIcon size={128} radius={100} color="red">
+            <IconBan size={80} />
+          </ThemeIcon>
+          <Title order={1} align="center">
+            You have been banned
+          </Title>
+          <Text size="lg" align="center">
+            This account has been banned and cannot access the site
+          </Text>
+          <Button onClick={() => signOut()}>Sign out</Button>
+        </Stack>
+      </Center>
+    );
 
-  useWindowEvent('scroll', () => {
-    const scroll = getScrollPosition();
-    setHasFooter(scroll.y < 10);
-  });
+  const content = innerLayout ? innerLayout(children) : children;
 
   return (
-    <AppShell
-      padding={0}
-      header={!isBanned ? <AppHeader renderSearchComponent={renderSearchComponent} /> : undefined}
-      footer={includeFooter ? <AppFooter /> : undefined}
-      className={`theme-${theme.colorScheme}`}
-      styles={{
-        body: {
-          display: 'block',
-          maxWidth: '100vw',
-        },
-        main: {
-          paddingLeft: 0,
-          paddingRight: 0,
-          paddingBottom: 61,
-          maxWidth: '100%',
-        },
-      }}
-    >
-      {!isBanned ? (
-        <>
-          <SidebarLayout left={sidebarLeft} right={sidebarRight}>
-            {children}
-          </SidebarLayout>
-
-          {flags.assistant && (
-            <Affix
-              // @ts-ignore: ignoring cause target prop accepts string. See: https://v5.mantine.dev/core/portal#specify-target-dom-node
-              position={{ bottom: hasFooter ? 70 : 12, right: 12 }}
-              zIndex={199}
-              style={{ transition: 'bottom 300ms linear' }}
-            >
-              <AssistantButton mr={4} />
-            </Affix>
-          )}
-        </>
-      ) : (
-        <Center py="xl">
-          <Stack align="center">
-            <ThemeIcon size={128} radius={100} color="red">
-              <IconBan size={80} />
-            </ThemeIcon>
-            <Title order={1} align="center">
-              You have been banned
-            </Title>
-            <Text size="lg" align="center">
-              This account has been banned and cannot access the site
-            </Text>
-            <Button onClick={() => signOut()}>Sign out</Button>
-          </Stack>
-        </Center>
-      )}
-    </AppShell>
+    <div className={cx(`theme-${theme.colorScheme}`, classes.root)}>
+      <AppHeader fixed={false} />
+      <div className={classes.wrapper}>
+        <GenerationSidebar />
+        <div className={classes.content}>
+          <main className={classes.main}>
+            {pageClass ? (
+              <div className={pageClass} style={pageStyle}>
+                {content}
+              </div>
+            ) : (
+              <ScrollArea style={pageStyle}>{content}</ScrollArea>
+            )}
+          </main>
+          <AppFooter fixed={false} />
+        </div>
+      </div>
+      {/* {flags.assistant && (
+        <Affix
+          // @ts-ignore: ignoring cause target prop accepts string. See: https://v5.mantine.dev/core/portal#specify-target-dom-node
+          position={{ bottom: hasFooter ? 70 : 12, right: 12 }}
+          zIndex={199}
+          style={{ transition: 'bottom 300ms linear' }}
+        >
+          <AssistantButton mr={4} />
+        </Affix>
+      )} */}
+    </div>
   );
+}
+
+const useStyles = createStyles((theme) => ({
+  root: {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+  },
+  content: {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    flex: 1,
+    overflow: 'hidden',
+  },
+  wrapper: {
+    display: 'flex',
+    flex: 1,
+    overflow: 'hidden',
+  },
+  main: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+}));
+
+export function setPageOptions(Component: () => JSX.Element, options?: AppLayoutProps) {
+  (Component as any).getLayout = (page: React.ReactElement) => (
+    <AppLayout {...options}>{page}</AppLayout>
+  );
+  (Component as any).options = options;
 }

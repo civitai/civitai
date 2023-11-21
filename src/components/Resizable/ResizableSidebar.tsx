@@ -50,30 +50,32 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
   const borderOrientation = resizeFrom === 'left' ? 'borderLeft' : 'borderRight';
   return {
     sidebar: {
+      overflowX: 'visible',
+      position: 'relative',
       display: 'flex',
       height: '100%',
       alignItems: 'stretch',
     },
     resizer: {
-      flexGrow: 0,
-      flexShrink: 0,
-      flexBasis: 6,
-      resize: 'horizontal',
       cursor: 'col-resize',
-      padding: '0px 1px',
-      width: 3,
-      [borderOrientation]:
-        theme.colorScheme === 'dark'
-          ? `1px solid ${theme.colors.dark[5]}`
-          : `1px solid ${theme.colors.gray[2]}`,
+      position: 'absolute',
+      top: 0,
+      height: '100%',
+      [resizeFrom]: -5,
+      width: 7,
+      zIndex: 1002,
+      opacity: 0.2,
 
       '&:hover': {
-        width: 3,
-        background: '#c1c3c5b4', // TODO
+        background: theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 8],
       },
     },
     content: {
       flex: 1,
+      [borderOrientation]:
+        theme.colorScheme === 'dark'
+          ? `1px solid ${theme.colors.dark[5]}`
+          : `1px solid ${theme.colors.gray[2]}`,
     },
   };
 });

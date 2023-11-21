@@ -11,6 +11,7 @@ import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useScrollRestore } from '~/hooks/useScrollRestore';
 import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { ScrollArea } from '~/components/Layout/ScrollArea';
 
 export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
   const { classes } = useStyles();
@@ -88,9 +89,7 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
   return (
     <Stack h="100%" style={{ overflow: 'hidden' }} spacing={0} {...wrapperProps}>
       {header && <div>{header()}</div>}
-      <div ref={setRef} style={{ flexGrow: 1, overflowY: 'auto' }}>
-        {render()}
-      </div>
+      <ScrollArea ref={setRef}>{render()}</ScrollArea>
 
       {currentUser && (
         <Group spacing={0} grow className={classes.tabsList}>
