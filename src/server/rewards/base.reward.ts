@@ -95,23 +95,25 @@ export function createBuzzEvent<T>({
       createBuzzTransactionMany(
         events
           .filter((x) => x.awardAmount > 0)
-          .map((event) => ({
-            type: TransactionType.Reward,
-            toAccountId: event.toUserId,
-            fromAccountId: 0, // central bank
-            amount: event.awardAmount,
-            description: `Buzz Reward: ${description}`,
-            details: {
-              type: event.type,
-              forId: event.forId,
-              byUserId: event.byUserId,
-              ...(event.transactionDetails ?? {}),
-            },
-            externalTransactionId:
-              event.type === 'userReferred' || event.type === 'refereeCreated'
-                ? `${event.type}:${event.forId}-${event.ip}`
-                : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`,
-          }))
+          .map((event) => {
+            return {
+              type: TransactionType.Reward,
+              toAccountId: event.toUserId,
+              fromAccountId: 0, // central bank
+              amount: event.awardAmount,
+              description: `Buzz Reward: ${description}`,
+              details: {
+                type: event.type,
+                forId: event.forId,
+                byUserId: event.byUserId,
+                ...JSON.parse(event?.transactionDetails ?? '{}'),
+              },
+              externalTransactionId:
+                event.type === 'userReferred' || event.type === 'refereeCreated'
+                  ? `${event.type}:${event.forId}-${event.ip}`
+                  : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`,
+            };
+          })
       )
     );
   };
@@ -156,7 +158,7 @@ export function createBuzzEvent<T>({
       awardAmount,
       status: 'pending',
       ip: ['::1', ''].includes(ip ?? '') ? undefined : ip,
-      transactionDetails,
+      transactionDetails: JSON.stringify(transactionDetails ?? {}),
     };
 
     if (isOnDemand) {
@@ -341,7 +343,7 @@ export type BuzzEventLog = BuzzEventKey & {
   status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
   version?: number;
-  transactionDetails?: MixedObject;
+  transactionDetails?: string;
 };
 
 type ProcessingContext = {

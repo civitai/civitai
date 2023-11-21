@@ -33,7 +33,8 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
         awardAmount,
         status,
         ip,
-        version
+        version,
+        transactionDetails
       FROM buzzEvents
       WHERE status = 'pending'
         AND time >= parseDateTimeBestEffortOrNull('${chLastUpdate}')

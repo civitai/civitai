@@ -91,8 +91,9 @@ export const createBuzzTransactionInput = buzzTransactionSchema.refine(
     if (
       data.type === TransactionType.Tip &&
       ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
-    )
+    ) {
       return false;
+    }
 
     return true;
   },

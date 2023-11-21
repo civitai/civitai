@@ -27,6 +27,7 @@ export const collectedContentReward = createBuzzEvent({
         FROM "${input.entityType}"
         WHERE id = ${input.entityId}
       `);
+
       input.ownerId = userId;
     }
 
