@@ -85,6 +85,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
+import { constants } from '~/server/common/constants';
 
 const HEADER_HEIGHT = 70;
 
@@ -717,8 +718,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
+              zIndex={constants.imageGeneration.drawerZIndex + 1}
               // radius="lg"
               onClose={() => setUserMenuOpened(false)}
+              withinPortal
             >
               <Menu.Target>
                 <UnstyledButton

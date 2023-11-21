@@ -11,13 +11,15 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'random' | 'params';
+type DrawerOptions = { fullHeight?: boolean };
 type View = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: View;
+  drawerOptions: DrawerOptions;
   data?: { type: RunType; data: Partial<GenerateFormModel> };
   // used to populate form with model/image generation data
-  open: (input?: GetGenerationDataInput) => Promise<void>;
+  open: (input?: GetGenerationDataInput, drawerOptions?: DrawerOptions) => Promise<void>;
   close: () => void;
   setView: (view: View) => void;
   randomize: (includeResources?: boolean) => Promise<void>;
@@ -31,10 +33,12 @@ export const useGenerationStore = create<GenerationState>()(
     immer((set, get) => ({
       opened: false,
       view: 'generate',
-      open: async (input) => {
+      drawerOptions: { fullHeight: false },
+      open: async (input, drawerOptions) => {
         set((state) => {
           state.opened = true;
           if (input) state.view = 'generate';
+          if (drawerOptions) state.drawerOptions = drawerOptions;
         });
 
         if (!input) return;
@@ -50,6 +54,7 @@ export const useGenerationStore = create<GenerationState>()(
       close: () =>
         set((state) => {
           state.opened = false;
+          state.drawerOptions = {};
         }),
       setView: (view) =>
         set((state) => {
@@ -88,7 +93,6 @@ export const generationPanel = {
   open: store.open,
   close: store.close,
   setView: store.setView,
-  isOpen: store.opened,
 };
 
 export const generationStore = {
