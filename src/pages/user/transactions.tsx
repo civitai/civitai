@@ -123,7 +123,6 @@ export default function UserTransactions() {
             {transactions.map((transaction) => {
               const { amount, date, fromUser, toUser, description, details } = transaction;
               const isDebit = amount < 0;
-              console.log(details);
               const { url, label } = parseBuzzTransactionDetails(details);
 
               return (

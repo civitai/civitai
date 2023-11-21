@@ -1,15 +1,15 @@
 export const parseBuzzTransactionDetails = (
   details?: MixedObject | null
-): { url?: string; notiifcation?: string; label?: string } => {
+): { url?: string; notification?: string; label?: string } => {
   if (!details) {
     return {
       url: undefined,
-      notiifcation: undefined,
+      notification: undefined,
       label: undefined,
     };
   }
 
-  const fallbackUrl = details.user !== 'a user' ? `/user/${details.user}` : '';
+  const fallbackUrl = details.user && details.user !== 'a user' ? `/user/${details.user}` : '';
   const baseNotification = `You received a tip of ${details.amount} Buzz from ${
     details.user ? `@${details.user}` : 'a user'
   }`;
@@ -17,7 +17,7 @@ export const parseBuzzTransactionDetails = (
   if (!details.entityId || !details.entityType) {
     return {
       url: fallbackUrl,
-      notiifcation: `${baseNotification}!`,
+      notification: `${baseNotification}!`,
       label: 'User',
     };
   }

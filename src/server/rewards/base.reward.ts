@@ -146,12 +146,17 @@ export function createBuzzEvent<T>({
     const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
     if (!definedKey) return;
 
+    const transactionDetails = buzzEvent.getTransactionDetails
+      ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
+      : undefined;
+
     const key = { type, ...definedKey } as BuzzEventKey;
     const event: BuzzEventLog = {
       ...key,
       awardAmount,
       status: 'pending',
       ip: ['::1', ''].includes(ip ?? '') ? undefined : ip,
+      transactionDetails,
     };
 
     if (isOnDemand) {
@@ -336,6 +341,7 @@ export type BuzzEventLog = BuzzEventKey & {
   status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
   version?: number;
+  transactionDetails?: MixedObject;
 };
 
 type ProcessingContext = {
@@ -359,7 +365,7 @@ type BuzzEventDefinitionBase<T> = {
   tooltip?: string;
   visible?: boolean;
   getKey: (input: T, ctx: GetKeyContext) => Promise<GetKeyOutput | false>;
-  transactionDetails?: MixedObject;
+  getTransactionDetails?: (input: T, ctx: GetKeyContext) => Promise<MixedObject | undefined>;
 };
 
 type CapInterval = 'day' | 'week' | 'month';
@@ -371,7 +377,6 @@ type ProcessableBuzzEventDefinition<T> = BuzzEventDefinitionBase<T> & {
     interval?: CapInterval;
   }[];
   preprocess?: (ctx: ProcessingContext) => Promise<void>;
-  transactionDetails?: MixedObject;
 };
 
 type OnEventBuzzEventDefinition<T> = BuzzEventDefinitionBase<T> & {

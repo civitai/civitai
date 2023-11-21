@@ -5,9 +5,9 @@ export const buzzNotifications = createNotificationProcessor({
   'tip-received': {
     displayName: 'Tip Received',
     prepareMessage: ({ details }) => {
-      const { url, notiifcation } = parseBuzzTransactionDetails(details);
+      const { url, notification } = parseBuzzTransactionDetails(details);
       return {
-        message: `${notiifcation}${details.message ? ` They said: "${details.message}".` : ''}`,
+        message: `${notification}${details.message ? ` They said: "${details.message}".` : ''}`,
         url,
       };
     },

@@ -37,6 +37,12 @@ export const collectedContentReward = createBuzzEvent({
       type: `${type}:${input.entityType.toLowerCase()}`,
     };
   },
+  getTransactionDetails: async (input: CollectionEvent, ctx) => {
+    return {
+      entityId: input.entityId,
+      entityType: input.entityType,
+    };
+  },
 });
 
 type CollectionEvent = {

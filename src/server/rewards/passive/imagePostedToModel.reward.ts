@@ -1,4 +1,5 @@
 import { createBuzzEvent } from '../base.reward';
+import { CollectionType } from '@prisma/client';
 
 export const imagePostedToModelReward = createBuzzEvent({
   type: 'imagePostedToModel',
@@ -16,10 +17,17 @@ export const imagePostedToModelReward = createBuzzEvent({
       amount: 5000,
     },
   ],
-  getKey: async (
-    input: { modelVersionId: number; posterId: number; modelOwnerId?: number },
-    ctx
-  ) => {
+  getTransactionDetails: async (input: ImagePostedToModelEvent, ctx) => {
+    if (!input.modelId) {
+      return undefined;
+    }
+
+    return {
+      entityId: input.modelId,
+      entityType: 'Model',
+    };
+  },
+  getKey: async (input: ImagePostedToModelEvent, ctx) => {
     if (!input.modelOwnerId) {
       const [{ userId }] = await ctx.db.$queryRaw<[{ userId: number }]>`
         SELECT m."userId"
@@ -38,3 +46,10 @@ export const imagePostedToModelReward = createBuzzEvent({
     };
   },
 });
+
+type ImagePostedToModelEvent = {
+  modelId?: number;
+  modelVersionId: number;
+  posterId: number;
+  modelOwnerId?: number;
+};

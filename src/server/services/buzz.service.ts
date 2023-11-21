@@ -149,8 +149,8 @@ export async function createBuzzTransaction({
     ...payload,
     details: {
       ...(details ?? {}),
-      entityId,
-      entityType,
+      entityId: entityId ?? details?.entityId,
+      entityType: entityType ?? details?.entityType,
     },
     amount,
     toAccountId,
