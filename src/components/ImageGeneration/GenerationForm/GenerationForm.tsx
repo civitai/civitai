@@ -198,7 +198,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const [showFillForm, setShowFillForm] = useState(false);
   const handleParsePrompt = async () => {
     const prompt = form.getValues('prompt');
-    const metadata = await parsePromptMetadata(prompt);
+    const metadata = parsePromptMetadata(prompt);
     const result = imageGenerationSchema.safeParse(metadata);
     if (result.success) {
       generationStore.setParams(result.data);
@@ -235,7 +235,12 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { errors } = form.formState;
 
   return (
-    <Form form={form} onSubmit={handleSubmit} onError={handleError} style={{ width: '100%' }}>
+    <Form
+      form={form}
+      onSubmit={handleSubmit}
+      onError={handleError}
+      style={{ width: '100%', position: 'relative', height: '100%' }}
+    >
       <Stack spacing={0} h="100%">
         <ScrollArea sx={{ flex: 1 }}>
           <Stack p="md" pb={0}>
@@ -520,7 +525,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
           <Stack>
             <Text>TODO.hires</Text>
           </Stack>
-        </Card> */}
+          </Card> */}
           </Stack>
         </ScrollArea>
         <Stack spacing={4} p="md">
@@ -596,47 +601,47 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                 } more jobs`}
           </Text>
+          <GenerationStatusMessage />
+          {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
+          {isSDXL && (
+            <DismissibleAlert
+              id="sdxl-free-preview"
+              title="Free SDXL Generations!"
+              content={
+                <Text>
+                  To celebrate{' '}
+                  <Anchor
+                    href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
+                    target="_blank"
+                    underline
+                  >
+                    Civitai&apos;s Birthday
+                  </Anchor>{' '}
+                  we&apos;re letting everyone use SDXL for free!{' '}
+                  <Anchor
+                    href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
+                    rel="noopener nofollow"
+                    underline
+                  >
+                    After that it will cost a minimum of⚡3 Buzz per image
+                  </Anchor>
+                  . Complete our{' '}
+                  <Anchor
+                    href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
+                      currentUser?.username ?? 'Unauthed'
+                    }`}
+                    rel="noopener nofollow"
+                    target="_blank"
+                    underline
+                  >
+                    SDXL generation survey
+                  </Anchor>{' '}
+                  to let us know how we did.
+                </Text>
+              }
+            />
+          )}
         </Stack>
-        <GenerationStatusMessage />
-        {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-        {isSDXL && (
-          <DismissibleAlert
-            id="sdxl-free-preview"
-            title="Free SDXL Generations!"
-            content={
-              <Text>
-                To celebrate{' '}
-                <Anchor
-                  href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
-                  target="_blank"
-                  underline
-                >
-                  Civitai&apos;s Birthday
-                </Anchor>{' '}
-                we&apos;re letting everyone use SDXL for free!{' '}
-                <Anchor
-                  href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
-                  rel="noopener nofollow"
-                  underline
-                >
-                  After that it will cost a minimum of⚡3 Buzz per image
-                </Anchor>
-                . Complete our{' '}
-                <Anchor
-                  href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
-                    currentUser?.username ?? 'Unauthed'
-                  }`}
-                  rel="noopener nofollow"
-                  target="_blank"
-                  underline
-                >
-                  SDXL generation survey
-                </Anchor>{' '}
-                to let us know how we did.
-              </Text>
-            }
-          />
-        )}
       </Stack>
     </Form>
   );

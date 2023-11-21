@@ -24,7 +24,7 @@ import {
 } from '@tabler/icons-react';
 import { useInView } from 'react-intersection-observer';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { Generation } from '~/server/services/generation/generation.types';
 import { generationStore } from '~/store/generation.store';
 import { constants } from '~/server/common/constants';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -103,51 +103,38 @@ export function GeneratedImage({
           <Card p={0}>
             <Box
               onClick={handleImageClick}
-              sx={(theme) => ({
+              sx={{
                 position: 'relative',
                 boxShadow:
                   '0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
                 cursor: 'pointer',
                 width: '100%',
                 height: '100%',
-                [`&::after`]: {
-                  content: '""',
-                  display: 'block',
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
-                  borderRadius: theme.radius.sm,
-                },
-              })}
+              }}
             >
               {!image.available ? (
                 <Center
                   sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}
                   p="xs"
                 >
-                  {request.status === GenerationRequestStatus.Pending && (
-                    <Stack align="center">
-                      <IconHourglass />
-                      <Text color="dimmed" size="xs">
-                        Queued
-                      </Text>
-                    </Stack>
-                  )}
-                  {request.status === GenerationRequestStatus.Processing && (
+                  {image.status === 'Started' ? (
                     <Stack align="center">
                       <Loader size={24} />
                       <Text color="dimmed" size="xs" align="center">
                         Generating
                       </Text>
                     </Stack>
-                  )}
-                  {request.status === GenerationRequestStatus.Error && (
+                  ) : image.status === 'Error' ? (
                     <Text color="dimmed" size="xs" align="center">
                       Could not load image
                     </Text>
+                  ) : (
+                    <Stack align="center">
+                      <IconHourglass />
+                      <Text color="dimmed" size="xs">
+                        Queued
+                      </Text>
+                    </Stack>
                   )}
                 </Center>
               ) : (

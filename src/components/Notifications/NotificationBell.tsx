@@ -18,6 +18,7 @@ import { useState } from 'react';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
 export function NotificationBell() {
@@ -41,7 +42,14 @@ export function NotificationBell() {
   };
 
   return (
-    <Popover position="bottom-end" width={300} opened={opened} onChange={setOpened}>
+    <Popover
+      position="bottom-end"
+      width={300}
+      opened={opened}
+      onChange={setOpened}
+      zIndex={constants.imageGeneration.drawerZIndex + 1}
+      withinPortal
+    >
       <Popover.Target>
         <Indicator color="red" disabled={loadingCheck || !checkData?.count}>
           <ActionIcon
