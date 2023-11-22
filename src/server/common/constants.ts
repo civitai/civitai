@@ -214,6 +214,7 @@ export const constants = {
     referralBonusAmount: 500,
     maxTipAmount: 100000000,
     minTipAmount: 50,
+    maxEntityTip: 2000,
   },
   profile: {
     coverImageAspectRatio: 1 / 4,
