@@ -140,6 +140,7 @@ const tagCombos: ComputedTagCombo[] = [
       'panties under pantyhose',
       'pasties',
       'sports bra',
+      'covered navel + (leotard)',
     ],
     sources: [TagSource.WD14],
     temp: true,
