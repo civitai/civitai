@@ -196,7 +196,7 @@ function ReactionsList({
               count={count}
               entityType={entityType}
               entityId={entityId}
-              readonly={!currentUser || readonly}
+              readonly={!currentUser || currentUser.muted || readonly}
               noEmpty={noEmpty}
             >
               {ReactionBadge}
