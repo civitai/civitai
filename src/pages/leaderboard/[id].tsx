@@ -17,7 +17,6 @@ import {
   Title,
   createStyles,
   SegmentedControl,
-  HoverCard,
   SegmentedControlProps,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';

@@ -1,8 +1,8 @@
-import { useWindowScroll } from '@mantine/hooks';
 import { IconArrowUp } from '@tabler/icons-react';
-import React from 'react';
+import React, { useState } from 'react';
 
 import { FloatingActionButton } from './FloatingActionButton';
+import { useScrollAreaNode } from '~/components/ScrollArea/ScrollArea';
 
 type Props = Omit<
   React.ComponentProps<typeof FloatingActionButton>,
@@ -10,12 +10,18 @@ type Props = Omit<
 >;
 
 export function ScrollToTopFab(props: Props) {
-  const [scroll, scrollTo] = useWindowScroll();
+  const [show, setShow] = useState(false);
+  const node = useScrollAreaNode({
+    onScroll: () => {
+      if (!node) return;
+      setShow(node.scrollTop > 100);
+    },
+  });
 
   return (
     <FloatingActionButton
-      mounted={scroll.y > 100}
-      onClick={() => scrollTo({ y: 0 })}
+      mounted={show}
+      onClick={() => node?.scrollTo({ top: 0, behavior: 'smooth' })}
       leftIcon={<IconArrowUp size={16} />}
       {...props}
     >

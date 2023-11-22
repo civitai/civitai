@@ -1,7 +1,9 @@
 import { Center, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
+import { useScrollAreaNode } from '~/components/ScrollArea/ScrollArea';
 
 export function EndOfFeed() {
+  const node = useScrollAreaNode();
   return (
     <Stack mt="xl">
       <Divider
@@ -24,7 +26,7 @@ export function EndOfFeed() {
             variant="link"
             size="sm"
             onClick={() => {
-              window.scrollTo({ top: 0, behavior: 'smooth' });
+              node?.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             sx={{ cursor: 'pointer' }}
           >

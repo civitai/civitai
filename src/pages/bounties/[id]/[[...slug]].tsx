@@ -95,7 +95,6 @@ import { Collection } from '~/components/Collection/Collection';
 import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { scrollToTop } from '~/utils/scroll-utils';
 import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
@@ -297,7 +296,7 @@ export default function BountyDetailsPage({
                   {...defaultBadgeProps}
                   icon={<IconMessageCircle2 size={18} />}
                   onClick={() => {
-                    if (discussionSectionRef.current) scrollToTop(discussionSectionRef.current);
+                    discussionSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
                   }}
                 >
                   {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}

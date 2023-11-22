@@ -1,9 +1,22 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
 
 const ScrollAreaContext = createContext<HTMLDivElement | null>(null);
-export const useScrollAreaContext = () => useContext(ScrollAreaContext);
+export const useScrollAreaNode = (args?: { onScroll?: () => void }) => {
+  const { onScroll } = args ?? {};
+  const node = useContext(ScrollAreaContext);
+
+  useEffect(() => {
+    if (!onScroll) return;
+    node?.addEventListener('scroll', onScroll);
+    return () => {
+      node?.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+
+  return node;
+};
 
 export function ScrollArea({ children, className, scrollRestore, ...props }: Props) {
   const { classes, cx } = useStyles();

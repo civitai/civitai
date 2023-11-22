@@ -83,7 +83,6 @@ import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { scrollToTop } from '~/utils/scroll-utils';
 import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
@@ -581,8 +580,7 @@ export default function ModelDetailsV2({
                         rating={model.rank?.ratingAllTime}
                         count={model.rank?.ratingCountAllTime}
                         onClick={() => {
-                          if (!gallerySectionRef.current) return;
-                          scrollToTop(gallerySectionRef.current);
+                          gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
                         }}
                       />
                     </ResourceReviewSummary>
@@ -917,8 +915,7 @@ export default function ModelDetailsV2({
               isFavorite={isFavorite}
               onFavoriteClick={handleToggleFavorite}
               onBrowseClick={() => {
-                if (!gallerySectionRef.current) return;
-                scrollToTop(gallerySectionRef.current);
+                gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
             />
           )}

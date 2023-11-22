@@ -9,15 +9,12 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getScrollPosition } from '~/utils/window-helpers';
 
 const buttonProps: ButtonProps = {
   size: 'xs',
@@ -29,25 +26,13 @@ const buttonProps: ButtonProps = {
 const hash = env.NEXT_PUBLIC_GIT_HASH;
 
 export function AppFooter({ fixed = true }: { fixed?: boolean }) {
-  const router = useRouter();
   const { classes, cx } = useStyles({ fixed });
   const [showHash, setShowHash] = useState(false);
-  const [showFooter, setShowFooter] = useDebouncedState(true, 200);
   const mobile = useIsMobile();
   const features = useFeatureFlags();
 
-  useWindowEvent('scroll', () => {
-    const scroll = getScrollPosition();
-    setShowFooter(scroll.y < 10);
-  });
-
   return (
-    <Footer
-      className={cx(classes.root, { [classes.down]: !showFooter })}
-      height="auto"
-      p="sm"
-      py={!fixed ? 4 : undefined}
-    >
+    <Footer className={cx(classes.root)} height="auto" p="sm" py={4}>
       <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
         <Text
           weight={700}
