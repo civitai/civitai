@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Card,
@@ -18,11 +19,17 @@ import { useMemo, useState } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GetUserBuzzTransactionsSchema, TransactionType } from '~/server/schema/buzz.schema';
+import {
+  BuzzTransactionDetails,
+  GetUserBuzzTransactionsSchema,
+  TransactionType,
+} from '~/server/schema/buzz.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
+import { parseBuzzTransactionDetails } from '~/utils/buzz';
+import Link from 'next/link';
 
 const transactionTypes = [
   TransactionType[TransactionType.Tip],
@@ -118,8 +125,11 @@ export default function UserTransactions() {
         ) : transactions.length ? (
           <Stack spacing="md">
             {transactions.map((transaction) => {
-              const { amount, date, fromUser, toUser, description } = transaction;
+              const { amount, date, fromUser, toUser, description, details } = transaction;
               const isDebit = amount < 0;
+              const { url, label }: { url?: string; label?: string } = details
+                ? parseBuzzTransactionDetails(details as BuzzTransactionDetails)
+                : {};
 
               return (
                 <Card key={date.toISOString()} withBorder>
@@ -159,6 +169,15 @@ export default function UserTransactions() {
                       </Text>
                     )}
                     {description && <Text color="dimmed">{description}</Text>}
+                    {url && (
+                      <Link href={url} passHref>
+                        <Anchor size="xs">
+                          <Group spacing={4}>
+                            <Text inherit>View {label}</Text>
+                          </Group>
+                        </Anchor>
+                      </Link>
+                    )}
                   </Stack>
                 </Card>
               );

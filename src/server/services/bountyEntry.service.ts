@@ -207,6 +207,10 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
             amount: updatedBenefactor.unitAmount,
             type: TransactionType.Bounty,
             description: 'Reason: Bounty entry has been awarded!',
+            details: {
+              entityId: entry.bountyId,
+              entityType: 'Bounty',
+            },
           });
 
           break;

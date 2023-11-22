@@ -1,4 +1,4 @@
-import { ActionIcon, ActionIconProps, Menu } from '@mantine/core';
+import { ActionIcon, ActionIconProps, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
@@ -15,6 +15,8 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { CollectionType } from '@prisma/client';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ToggleLockComments } from '../CommentsV2';
+import { IconLock } from '@tabler/icons-react';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
@@ -148,6 +150,22 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             >
               Edit
             </Menu.Item>
+            {isModerator && (
+              <ToggleLockComments entityId={article.id} entityType="article">
+                {({ toggle, locked, isLoading }) => {
+                  return (
+                    <Menu.Item
+                      icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                      onClick={toggle}
+                      disabled={isLoading}
+                      closeMenuOnClick={false}
+                    >
+                      {locked ? 'Unlock' : 'Lock'} Comments
+                    </Menu.Item>
+                  );
+                }}
+              </ToggleLockComments>
+            )}
           </>
         )}
         {(!isOwner || isModerator) && (

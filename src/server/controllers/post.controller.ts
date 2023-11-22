@@ -117,8 +117,13 @@ export const updatePostHandler = async ({
 
       // Give reward to owner of modelVersion
       if (updatedPost.modelVersionId) {
+        const modelVersion = await dbRead.modelVersion.findUnique({
+          where: { id: updatedPost.modelVersionId },
+        });
+
         await imagePostedToModelReward.apply(
           {
+            modelId: modelVersion?.modelId,
             modelVersionId: updatedPost.modelVersionId,
             posterId: updatedPost.userId,
           },
