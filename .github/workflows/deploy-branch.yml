@@ -14,10 +14,8 @@ jobs:
     if: |
       contains(github.event.pull_request.labels.*.name, 'deploy-dev') && (
         github.event.review.state == 'APPROVED' || (
-          contains(fromJson('["COLLABORATOR", "MEMBER", "OWNER"]'), github.event.pull_request.author_association) && (
-            startsWith(github.event.pull_request.head.ref, 'feature/') ||
-            startsWith(github.event.pull_request.head.ref, 'fix/')
-          )
+          startsWith(github.event.pull_request.head.ref, 'feature/') ||
+          startsWith(github.event.pull_request.head.ref, 'fix/')
         )
       )
     steps:
