@@ -1,13 +1,22 @@
 name: Docker Branch Deploy
 
 on:
+  pull_request:
+    branches:
+      - "feature/**"
+      - "fix/**"
+    types: [labeled, opened, reopened, synchronize]
   pull_request_review:
     types: [submitted]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: github.event.review.state == 'APPROVED' && contains(github.event.pull_request.labels.*.name, 'deploy-dev')
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'deploy-dev') && (
+        github.event.review.state == 'APPROVED' ||
+        github.event.pull_request.author_association == 'MEMBER'
+      )
     steps:
       - uses: convictional/trigger-workflow-and-wait@v1.6.1
         with:
