@@ -12,22 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     if: |
-      contains(github.event.pull_request.labels.*.name, 'deploy-dev') && (
-        github.event.review.state == 'APPROVED' || (
-          contains(fromJson('["COLLABORATOR", "MEMBER", "OWNER"]'), github.event.pull_request.author_association) && (
-            startsWith(github.event.pull_request.head.ref, 'feature/') ||
-            startsWith(github.event.pull_request.head.ref, 'fix/')
-          )
-        )
-      )
+      contains(github.event.pull_request.labels.*.name, 'deploy-dev')
     steps:
-      - uses: convictional/trigger-workflow-and-wait@v1.6.1
-        with:
-          owner: civitai
-          repo: civitai-deployment
-          workflow_file_name: deploy.yml
-          github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
-          ref: main
-          client_payload: |
-            { "environment": "dev", "branch": "${{ github.ref_name }}" }
-          wait_workflow: false
+      - run: "echo 'association: ${{github.event.pull_request.author_association}}'"
+      - run: "echo 'head ref: ${{github.event.pull_request.head.ref}}'"
