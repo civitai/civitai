@@ -906,7 +906,7 @@ export async function cosmeticStatus({ id, userId }: { id: number; userId: numbe
   let available = true;
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
-    select: { obtainedAt: true, equippedAt: true },
+    select: { obtainedAt: true, equippedAt: true, data: true },
   });
 
   // If the user doesn't have the cosmetic, check if it's available
@@ -916,6 +916,7 @@ export async function cosmeticStatus({ id, userId }: { id: number; userId: numbe
     available,
     obtained: !!userCosmetic,
     equipped: !!userCosmetic?.equippedAt,
+    data: (userCosmetic?.data ?? {}) as Record<string, unknown>,
   };
 }
 

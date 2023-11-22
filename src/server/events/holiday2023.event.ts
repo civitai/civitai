@@ -1,5 +1,6 @@
 import { createNotification } from '~/server/services/notification.service';
 import { createEvent } from './base.event';
+import Rand, { PRNG } from 'rand-seed';
 
 type CosmeticData = {
   lights: number;
@@ -8,10 +9,12 @@ type CosmeticData = {
 };
 
 const milestones = [5, 10, 15, 20, 25, 30, 31];
-export const holiday2023 = createEvent({
-  name: 'holiday2023',
+export const holiday2023 = createEvent('holiday2023', {
+  title: 'Holiday 2023',
   startDate: new Date('2023-11-01T00:00:00.000Z'),
   endDate: new Date('2024-01-01T07:00:00.000Z'),
+  teams: ['Yellow', 'Red', 'Green', 'Blue'],
+  bankIndex: -100,
   cosmeticName: 'Holiday Garland 2023',
   async onEngagement({ entityType, entityId, userId, db }) {
     // Determine bulb type (post = standard, model = upgraded, article = upgraded)
@@ -22,7 +25,7 @@ export const holiday2023 = createEvent({
     if (engagedActivity[bulbType]) return;
 
     // Get User Cosmetic Data
-    const cosmeticId = await holiday2023.getCosmetic();
+    const cosmeticId = await holiday2023.getUserCosmeticId(userId);
     if (!cosmeticId) return;
     const userCosmetic = await db.userCosmetic.findFirst({
       where: { cosmeticId, userId },
@@ -72,5 +75,19 @@ export const holiday2023 = createEvent({
         url: `/claim/cosmetic/${milestoneCosmeticId}`,
       },
     });
+  },
+  async onDailyReset({ scores, db }) {
+    for (const { team, rank } of scores) {
+      const cosmeticId = await holiday2023.getTeamCosmetic(team);
+      if (!cosmeticId) continue;
+
+      // Update cosmetic brightness based on rank
+      const brightness = (scores.length - rank + 1) / scores.length;
+      await db.$executeRaw`
+        UPDATE "Cosmetic"
+        SET data = jsonb_set(data, '{brightness}', ${brightness})
+        WHERE id = ${cosmeticId}
+      `;
+    }
   },
 });
