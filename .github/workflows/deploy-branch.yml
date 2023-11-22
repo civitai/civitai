@@ -15,8 +15,8 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'deploy-dev') && (
         github.event.review.state == 'APPROVED' || (
           github.event.pull_request.author_association == 'MEMBER' && (
-            startsWith(github.head_ref, 'feature/') ||
-            startsWith(github.head_ref, 'fix/')
+            startsWith(github.event.pull_request.head.ref, 'feature/') ||
+            startsWith(github.event.pull_request.head.ref, 'fix/')
           )
         )
       )
