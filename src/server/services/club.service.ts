@@ -3,7 +3,7 @@ import { UpsertClubInput, UpsetClubTiersInput } from '~/server/schema/club.schem
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
 import { BountyEntryMode, Currency, Prisma, TagTarget } from '@prisma/client';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
 import { startOfDay, toUtc } from '~/utils/date-helpers';
 import { updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
@@ -30,48 +30,33 @@ export const createClub = async ({
   avatarImage,
   tiers = [],
   deleteTierIds = [],
+  userId,
   ...data
 }: Omit<UpsertClubInput, 'id'> & { userId: number }) => {
-  const { userId } = data;
-
   const club = await dbWrite.$transaction(
     async (tx) => {
+      const createdImages = await createEntityImages({
+        tx,
+        images: [coverImage, headerImage, avatarImage].filter((i) => isDefined(i) && !i.id),
+        userId,
+      });
+
       const club = await tx.club.create({
         data: {
           ...data,
-          avatar: {
-            connectOrCreate: {
-              where: { id: avatarImage.id ?? -1 },
-              create: {
-                ...avatarImage,
-                meta: (avatarImage?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                userId,
-                resources: undefined,
-              },
-            },
-          },
-          headerImage: {
-            connectOrCreate: {
-              where: { id: headerImage.id ?? -1 },
-              create: {
-                ...headerImage,
-                meta: (headerImage?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                userId,
-                resources: undefined,
-              },
-            },
-          },
-          coverImage: {
-            connectOrCreate: {
-              where: { id: coverImage.id ?? -1 },
-              create: {
-                ...coverImage,
-                meta: (coverImage?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                userId,
-                resources: undefined,
-              },
-            },
-          },
+          userId,
+          avatarId:
+            avatarImage !== undefined
+              ? avatarImage?.id ?? createdImages.find((i) => i.url === avatarImage.url)?.id
+              : undefined,
+          coverImageId:
+            coverImage !== undefined
+              ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
+              : undefined,
+          headerImageId:
+            headerImage !== undefined
+              ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
+              : undefined,
         },
       });
 
@@ -80,6 +65,7 @@ export const createClub = async ({
         clubId: club.id,
         tiers,
         deleteTierIds,
+        userId,
         tx,
       });
 
@@ -96,7 +82,9 @@ const upsertClubTiers = async ({
   tiers,
   deleteTierIds,
   tx,
+  userId,
 }: {
+  userId: number;
   clubId: number;
   deleteTierIds: number[];
   tiers: UpsetClubTiersInput[];
@@ -104,12 +92,53 @@ const upsertClubTiers = async ({
 }) => {
   const dbClient = tx ?? dbWrite;
 
+  if ((deleteTierIds?.length ?? 0) > 0) {
+    const deletingTierWithMembers = await dbClient.clubTier.findFirst({
+      where: {
+        id: {
+          in: deleteTierIds,
+        },
+        memberships: {
+          some: {},
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (deletingTierWithMembers) {
+      throw throwBadRequestError(
+        'Cannot delete tier with members. Please move the members out of this tier before deleting it.'
+      );
+    }
+
+    await dbClient.clubTier.deleteMany({
+      where: {
+        id: {
+          in: deleteTierIds,
+        },
+      },
+    });
+  }
+
+  const createdImages = await createEntityImages({
+    userId,
+    images: tiers
+      .filter((tier) => tier.coverImage?.id === undefined)
+      .map((tier) => tier.coverImage),
+    tx: dbClient,
+  });
+
   const toCreate = tiers.filter((tier) => !tier.id);
   if (toCreate.length > 0) {
     await dbClient.clubTier.createMany({
       data: toCreate.map((tier) => ({
         ...tier,
         clubId,
+        coverImageId:
+          tier.coverImage?.id ?? createdImages.find((i) => i.url === tier.coverImage?.url)?.id,
       })),
       skipDuplicates: true,
     });
@@ -123,20 +152,16 @@ const upsertClubTiers = async ({
           in: toUpdate.map((tier) => tier.id as number),
         },
       },
-      data: toUpdate.map((tier) => ({
+      data: toUpdate.map(({ coverImage, ...tier }) => ({
         ...tier,
+        coverImageId:
+          coverImage === null
+            ? null
+            : coverImage === undefined
+            ? undefined
+            : coverImage?.id ?? createdImages.find((i) => i.url === coverImage?.url)?.id,
         clubId,
       })),
-    });
-  }
-
-  if ((deleteTierIds?.length ?? 0) > 0) {
-    await dbClient.clubTier.deleteMany({
-      where: {
-        id: {
-          in: deleteTierIds,
-        },
-      },
     });
   }
 };

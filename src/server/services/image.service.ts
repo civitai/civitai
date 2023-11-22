@@ -1778,11 +1778,15 @@ export const createEntityImages = async ({
   userId,
 }: {
   tx: Prisma.TransactionClient;
-  entityId: number;
-  entityType: string;
+  entityId?: number;
+  entityType?: string;
   images: ImageUploadProps[];
   userId: number;
 }) => {
+  if (images.length === 0) {
+    return [];
+  }
+
   await tx.image.createMany({
     data: images.map((image) => ({
       ...image,
@@ -1806,13 +1810,15 @@ export const createEntityImages = async ({
     await Promise.all(batch.map((image) => ingestImage({ image, tx })));
   }
 
-  await tx.imageConnection.createMany({
-    data: imageRecords.map((image) => ({
-      imageId: image.id,
-      entityId,
-      entityType,
-    })),
-  });
+  if (entityType && entityId) {
+    await tx.imageConnection.createMany({
+      data: imageRecords.map((image) => ({
+        imageId: image.id,
+        entityId,
+        entityType,
+      })),
+    });
+  }
 
   return imageRecords;
 };

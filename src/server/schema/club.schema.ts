@@ -27,9 +27,9 @@ export const upsertClubInput = z.object({
   nsfw: z.boolean().optional(),
   billing: z.boolean().optional(),
   unlisted: z.boolean().optional(),
-  coverImage: imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }),
-  headerImage: imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }),
-  avatarImage: imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }),
+  coverImage: imageSchema,
+  headerImage: imageSchema,
+  avatarImage: imageSchema,
   tiers: z.array(upsertClubTiersInput).optional(),
   deleteTierIds: z.array(z.number()).optional(),
 });
