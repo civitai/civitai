@@ -167,6 +167,9 @@ model User {
   engagedBounties         BountyEngagement[]
   bountyEntryReactions    BountyEntryReaction[]
   referralCodes           UserReferralCode[]
+  clubs                   Club[]
+  memberships             ClubMembership[]
+  addedClubEntities       ClubEntity[]
 }
 
 enum OnboardingStep {
@@ -408,6 +411,8 @@ model Model {
   underAttack         Boolean         @default(false)
   earlyAccessDeadline DateTime?
   mode                ModelModifier?
+  availability        Availability    @default(Public)
+  unlisted            Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -1085,6 +1090,10 @@ model Image {
   collections     Collection[]
   connections     ImageConnection[]
   UserProfile     UserProfile[]
+  clubCover       Club[]                @relation("coverImage")
+  clubHeader      Club[]                @relation("headerImage")
+  clubAvatar      Club[]                @relation("avatarImage")
+  clubTierCover   ClubTier[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1809,18 +1818,20 @@ model UserCosmetic {
 }
 
 model Article {
-  id           Int       @id @default(autoincrement())
-  createdAt    DateTime? @default(now())
-  updatedAt    DateTime? @updatedAt
-  nsfw         Boolean   @default(false)
-  tosViolation Boolean   @default(false)
+  id           Int          @id @default(autoincrement())
+  createdAt    DateTime?    @default(now())
+  updatedAt    DateTime?    @updatedAt
+  nsfw         Boolean      @default(false)
+  tosViolation Boolean      @default(false)
   metadata     Json?
   title        String
   content      String
   cover        String
   publishedAt  DateTime?
   userId       Int
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability Availability @default(Public)
+  unlisted     Boolean      @default(false)
 
   thread          Thread?
   reactions       ArticleReaction[]
@@ -2283,6 +2294,126 @@ model BountyEntryMetric {
   tippedAmountCount Int             @default(0)
 
   @@id([bountyEntryId, timeframe])
+}
+
+model Link {
+  id         Int      @id @default(autoincrement())
+  url        String
+  type       LinkType
+  entityId   Int
+  entityType String
+}
+
+enum Availability {
+  Public
+  Private
+}
+
+model EntityAccess {
+  accessToId   Int
+  accessToType String
+  accessorId   Int
+  accessorType String
+
+  @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+model Club {
+  id            Int     @id @default(autoincrement())
+  userId        Int
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coverImageId  Int?
+  coverImage    Image?  @relation(name: "coverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
+  headerImageId Int?
+  headerImage   Image?  @relation(name: "headerImage", fields: [headerImageId], references: [id], onDelete: SetNull)
+  avatarId      Int?
+  avatar        Image?  @relation(name: "avatarImage", fields: [avatarId], references: [id], onDelete: SetNull)
+  name          String
+  description   String
+  nsfw          Boolean @default(false)
+  billing       Boolean @default(true)
+  unlisted      Boolean @default(false)
+  buzzAccountId Int?
+
+  tiers       ClubTier[]
+  memberships ClubMembership[]
+  ClubEntity  ClubEntity[]
+
+  @@index([userId])
+}
+
+model ClubTier {
+  id           Int              @id @default(autoincrement())
+  clubId       Int
+  club         Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  unitAmount   Int
+  currency     Currency         @default(BUZZ)
+  name         String
+  description  String
+  coverImageId Int?
+  coverImage   Image?           @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  // Whether or not this will be displayed in the common options for
+  // memberships.
+  unlisted     Boolean          @default(false)
+  // Can only be joined to via a club Admin adding the user.
+  joinable     Boolean
+  memberships  ClubMembership[]
+  entities     ClubEntity[]
+}
+
+enum ClubMembershipRole {
+  Admin // Can manage all content
+  Contributor // Can add and manage their own content
+  Member
+}
+
+model ClubMembership {
+  userId        Int
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clubId        Int
+  club          Club               @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  clubTierId    Int
+  clubTier      ClubTier           @relation(fields: [clubTierId], references: [id], onDelete: Cascade)
+  startedAt     DateTime
+  expiresAt     DateTime
+  cancelledAt   DateTime?
+  role          ClubMembershipRole @default(Member)
+  nextBillingAt DateTime
+  unitAmount    Int
+  currency      Currency           @default(BUZZ)
+
+  @@unique([userId, clubId])
+  @@index([userId])
+  @@index([clubId])
+
+}
+
+model ClubMembershipCharge {
+  id                  Int     @id @default(autoincrement())
+  userId              Int
+  clubId              Int
+  clubTierId          Int
+  chargedAt           DateTime
+  status              String?
+  invoiceId           String?
+  unitAmount          Int
+  unitAmountPurchased Int
+  currency            Currency @default(BUZZ)
+}
+
+model ClubEntity {
+  clubId      Int
+  club        Club      @relation(fields: [clubId], references: [id])
+  entityType  String
+  entityId    Int
+  addedById   Int
+  addedBy     User      @relation(fields: [userId], references: [id])
+  membersOnly Boolean
+  ClubTier    ClubTier? @relation(fields: [clubTierId], references: [id])
+  clubTierId  Int?
+  userId      Int
+
+  @@id([clubId, entityId])
 }
 
 /// @view
