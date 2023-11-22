@@ -1,6 +1,5 @@
 import { createNotification } from '~/server/services/notification.service';
 import { createEvent } from './base.event';
-import Rand, { PRNG } from 'rand-seed';
 
 type CosmeticData = {
   lights: number;

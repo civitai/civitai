@@ -1,7 +1,7 @@
 import { Group, createStyles } from '@mantine/core';
-import { Cosmetic } from '@prisma/client';
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 const useStyles = createStyles(() => ({
   root: {
@@ -53,7 +53,7 @@ export function HolidayFrame({ cosmetic, lights, lightUpdgrades, children }: Pro
 }
 
 type Props = {
-  cosmetic?: Cosmetic;
+  cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
   lights: number;
   lightUpdgrades?: number;
   children: React.ReactNode;
