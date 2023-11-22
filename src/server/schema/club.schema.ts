@@ -12,7 +12,7 @@ export const upsertClubTiersInput = z.object({
   }, 'Cannot be empty'),
   unitAmount: z.number().min(0),
   currency: z.nativeEnum(Currency).default(Currency.BUZZ),
-  coverImage: imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }),
+  coverImage: imageSchema.nullish(),
   unlisted: z.boolean().optional(),
   joinable: z.boolean().default(true),
 });
@@ -27,9 +27,9 @@ export const upsertClubInput = z.object({
   nsfw: z.boolean().optional(),
   billing: z.boolean().optional(),
   unlisted: z.boolean().optional(),
-  coverImage: imageSchema,
-  headerImage: imageSchema,
-  avatarImage: imageSchema,
+  coverImage: imageSchema.nullish(),
+  headerImage: imageSchema.nullish(),
+  avatarImage: imageSchema.nullish(),
   tiers: z.array(upsertClubTiersInput).optional(),
   deleteTierIds: z.array(z.number()).optional(),
 });

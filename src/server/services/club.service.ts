@@ -37,7 +37,7 @@ export const createClub = async ({
     async (tx) => {
       const createdImages = await createEntityImages({
         tx,
-        images: [coverImage, headerImage, avatarImage].filter((i) => isDefined(i) && !i.id),
+        images: [coverImage, headerImage, avatarImage].filter((i) => !i?.id).filter(isDefined),
         userId,
       });
 
@@ -46,15 +46,21 @@ export const createClub = async ({
           ...data,
           userId,
           avatarId:
-            avatarImage !== undefined
+            avatarImage === null
+              ? null
+              : avatarImage !== undefined
               ? avatarImage?.id ?? createdImages.find((i) => i.url === avatarImage.url)?.id
               : undefined,
           coverImageId:
-            coverImage !== undefined
+            coverImage === null
+              ? null
+              : coverImage !== undefined
               ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
               : undefined,
           headerImageId:
-            headerImage !== undefined
+            headerImage === null
+              ? null
+              : headerImage !== undefined
               ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
               : undefined,
         },
@@ -127,7 +133,8 @@ const upsertClubTiers = async ({
     userId,
     images: tiers
       .filter((tier) => tier.coverImage?.id === undefined)
-      .map((tier) => tier.coverImage),
+      .map((tier) => tier.coverImage)
+      .filter(isDefined),
     tx: dbClient,
   });
 

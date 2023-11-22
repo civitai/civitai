@@ -24,6 +24,7 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   onChange?: (value: string | null) => void;
   previewWidth?: number;
   maxSize?: number;
+  previewDisabled?: boolean;
 };
 
 export function ProfileImageUpload({
@@ -31,6 +32,7 @@ export function ProfileImageUpload({
   onChange,
   previewWidth = 96,
   maxSize = constants.mediaUpload.maxImageFileSize,
+  previewDisabled,
   ...props
 }: SimpleImageUploadProps) {
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
