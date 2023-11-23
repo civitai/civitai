@@ -1,5 +1,9 @@
 import { dbWrite, dbRead } from '~/server/db/client';
-import { UpsertClubInput, UpsetClubTiersInput } from '~/server/schema/club.schema';
+import {
+  GetClubTiersInput,
+  UpsertClubInput,
+  UpsetClubTiersInput,
+} from '~/server/schema/club.schema';
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
 import { BountyEntryMode, Currency, Prisma, TagTarget } from '@prisma/client';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
@@ -15,7 +19,10 @@ import { imageSelect } from '~/server/selectors/image.selector';
 
 export const getClub = async ({
   id,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+}) => {
   const club = await dbRead.club.findUniqueOrThrow({
     where: { id },
     select: {
@@ -28,6 +35,7 @@ export const getClub = async ({
       nsfw: true,
       billing: true,
       unlisted: true,
+      userId: true,
     },
   });
 
@@ -62,7 +70,10 @@ export function upsertClub({
   userId,
   id,
   ...input
-}: UpsertClubInput & { userId: number; isModerator: boolean }) {
+}: UpsertClubInput & {
+  userId: number;
+  isModerator: boolean;
+}) {
   if (id) {
     // TODO: Update club
     return updateClub({ ...input, id, userId });
@@ -78,7 +89,10 @@ export const updateClub = async ({
   id,
   userId,
   ...data
-}: Omit<UpsertClubInput, 'tiers' | 'deleteTierIds'> & { id: number; userId: number }) => {
+}: Omit<UpsertClubInput, 'tiers' | 'deleteTierIds'> & {
+  id: number;
+  userId: number;
+}) => {
   const club = await dbWrite.$transaction(
     async (tx) => {
       await tx.club.findUniqueOrThrow({ where: { id } });
@@ -129,7 +143,9 @@ export const createClub = async ({
   deleteTierIds = [],
   userId,
   ...data
-}: Omit<UpsertClubInput, 'id'> & { userId: number }) => {
+}: Omit<UpsertClubInput, 'id'> & {
+  userId: number;
+}) => {
   const club = await dbWrite.$transaction(
     async (tx) => {
       const createdImages = await createEntityImages({
@@ -268,4 +284,59 @@ const upsertClubTiers = async ({
       })),
     });
   }
+};
+
+export const getClubTiers = async ({
+  clubId,
+  listedOnly,
+  joinableOnly,
+  include,
+  userId,
+  isModerator,
+}: GetClubTiersInput & {
+  userId?: number;
+  isModerator?: boolean;
+}) => {
+  const club = await getClub({ id: clubId });
+
+  if (userId !== club?.userId && !isModerator) {
+    listedOnly = true;
+    joinableOnly = true;
+  }
+
+  const tiers = await dbRead.clubTier.findMany({
+    where: {
+      clubId,
+      unlisted: listedOnly || undefined,
+      joinable: joinableOnly || undefined,
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      coverImage: {
+        select: imageSelect,
+      },
+      unitAmount: true,
+      currency: true,
+      _count: include?.includes('membershipsCount')
+        ? {
+            select: {
+              memberships: true,
+            },
+          }
+        : undefined,
+    },
+  });
+
+  return tiers.map((t) => ({
+    ...t,
+    coverImage: t.coverImage
+      ? {
+          ...t.coverImage,
+          meta: t.coverImage.meta as ImageMetaProps,
+          metadata: t.coverImage.metadata as MixedObject,
+        }
+      : t.coverImage,
+  }));
 };

@@ -1,4 +1,4 @@
-import { Box, Center, Container, Grid, Loader, Paper, Stack, Title } from '@mantine/core';
+import { Anchor, Box, Center, Container, Grid, Loader, Paper, Stack, Title } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -19,6 +19,9 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import React from 'react';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
+import { trpc } from '~/utils/trpc';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { IconAlertCircle } from '@tabler/icons-react';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -81,9 +84,19 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
 
 export const ClubManagementLayout = (page: React.ReactElement) => {
   const router = useRouter();
-  const { id: stringId } = router.query as { id: string };
+  const { id: stringId } = router.query as {
+    id: string;
+  };
   const id = Number(stringId);
   const { club, loading } = useQueryClub({ id });
+  const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
+    {
+      clubId: club?.id as number,
+    },
+    {
+      enabled: !!club?.id,
+    }
+  );
 
   if (loading) {
     return <PageLoader />;
@@ -93,52 +106,59 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
     return <NotFound />;
   }
 
+  const hasJoinableTiers = club && !isLoadingTiers && tiers.length > 0;
+
   return (
     <AppLayout>
       <Container size="xl">
         <Stack spacing="md">
-          <Stack spacing={4}>
+          <Stack spacing={2}>
             {club.avatar && (
-              <Box
-                style={{
-                  width: 124,
-                  height: 124,
-                  position: 'relative',
-                  borderRadius: '8px',
-                  overflow: 'hidden',
+              <ImageGuard
+                images={[club.avatar]}
+                connect={{ entityId: club.avatar.id, entityType: 'club' }}
+                render={(image) => {
+                  return (
+                    <ImageGuard.Content>
+                      {({ safe }) => (
+                        <div
+                          style={{
+                            width: 124,
+                            position: 'relative',
+                            height: 'auto',
+                          }}
+                        >
+                          {!safe ? (
+                            <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                          ) : (
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 450 }}
+                              radius="md"
+                              style={{ width: '100%' }}
+                            />
+                          )}
+                          <div style={{ width: '100%', height: '100%' }}>
+                            <ImageGuard.ToggleConnect position="top-left" />
+                            <ImageGuard.Report />
+                          </div>
+                        </div>
+                      )}
+                    </ImageGuard.Content>
+                  );
                 }}
-              >
-                <ImageGuard
-                  images={[club.avatar]}
-                  connect={{ entityId: club.avatar.id, entityType: 'club' }}
-                  render={(image) => {
-                    return (
-                      <ImageGuard.Content>
-                        {({ safe }) => (
-                          <>
-                            {!safe ? (
-                              <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                            ) : (
-                              <ImagePreview
-                                image={image}
-                                edgeImageProps={{ width: 1200 }}
-                                radius="md"
-                                style={{ width: '100%' }}
-                              />
-                            )}
-                            <div style={{ width: '100%', height: '100%' }}>
-                              <ImageGuard.ToggleConnect position="top-left" />
-                              <ImageGuard.Report />
-                            </div>
-                          </>
-                        )}
-                      </ImageGuard.Content>
-                    );
-                  }}
-                />
-              </Box>
+              />
             )}
             <Title order={1}>{club.name}</Title>
+            {!hasJoinableTiers && (
+              <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconAlertCircle />}>
+                It looks like no you have not setup any joinable Club tier yet. Please go to the{' '}
+                <Anchor href={`/clubs/manage/${club.id}/tiers`} rel="nofollow" target="_blank">
+                  Club tiers&rsquo; management page
+                </Anchor>{' '}
+                to set these up. Other users will not be able to join your club otherwise.
+              </AlertWithIcon>
+            )}
           </Stack>
           <Grid>
             <Grid.Col xs={12} md={3}>

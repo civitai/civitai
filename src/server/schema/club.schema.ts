@@ -1,9 +1,9 @@
-import { TypeOf, z } from 'zod';
+import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
 
-export type UpsetClubTiersInput = TypeOf<typeof upsertClubTiersInput>;
+export type UpsetClubTiersInput = z.infer<typeof upsertClubTiersInput>;
 export const upsertClubTiersInput = z.object({
   id: z.number().optional(),
   name: z.string().trim().nonempty(),
@@ -17,7 +17,7 @@ export const upsertClubTiersInput = z.object({
   joinable: z.boolean().default(true),
 });
 
-export type UpsertClubInput = TypeOf<typeof upsertClubInput>;
+export type UpsertClubInput = z.infer<typeof upsertClubInput>;
 export const upsertClubInput = z.object({
   id: z.number().optional(),
   name: z.string().trim().nonempty(),
@@ -32,4 +32,13 @@ export const upsertClubInput = z.object({
   avatar: comfylessImageSchema.nullish(),
   tiers: z.array(upsertClubTiersInput).optional(),
   deleteTierIds: z.array(z.number()).optional(),
+});
+
+export type GetClubTiersInput = z.infer<typeof getClubTiersInput>;
+
+export const getClubTiersInput = z.object({
+  clubId: z.number(),
+  listedOnly: z.boolean().default(true),
+  joinableOnly: z.boolean().default(true),
+  include: z.array(z.enum(['membershipsCount'])).optional(),
 });
