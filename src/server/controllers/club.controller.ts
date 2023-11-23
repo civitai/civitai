@@ -1,7 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { GetClubTiersInput, UpsertClubInput } from '~/server/schema/club.schema';
-import { getClub, getClubTiers, upsertClub } from '~/server/services/club.service';
+import {
+  GetClubTiersInput,
+  UpsertClubInput,
+  UpsertClubTierInput,
+} from '~/server/schema/club.schema';
+import { getClub, getClubTiers, upsertClub, upsertClubTiers } from '~/server/services/club.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
 
@@ -49,6 +53,28 @@ export async function getClubTiersHandler({
       ...input,
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function upsertClubTierHandler({
+  input,
+  ctx,
+}: {
+  input: UpsertClubTierInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const { clubId, ...tier } = input;
+  try {
+    await upsertClubTiers({
+      clubId: clubId as number,
+      tiers: [tier],
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+      deleteTierIds: [],
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

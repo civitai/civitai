@@ -226,6 +226,12 @@ export const constants = {
     messageMaxLength: 1200,
     locationMaxLength: 30,
   },
+  clubs: {
+    tierImageAspectRatio: 1 / 1,
+    tierImageDisplayWidth: 124,
+    avatarDisplayWidth: 124,
+    minMonthlyBuzz: 5000,
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers'];

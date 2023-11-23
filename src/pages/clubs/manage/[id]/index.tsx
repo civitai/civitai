@@ -22,6 +22,8 @@ import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
+import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
+import { constants } from '~/server/common/constants';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -114,40 +116,40 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
         <Stack spacing="md">
           <Stack spacing={2}>
             {club.avatar && (
-              <ImageGuard
-                images={[club.avatar]}
-                connect={{ entityId: club.avatar.id, entityType: 'club' }}
-                render={(image) => {
-                  return (
-                    <ImageGuard.Content>
-                      {({ safe }) => (
-                        <div
-                          style={{
-                            width: 124,
-                            position: 'relative',
-                            height: 'auto',
-                          }}
-                        >
-                          {!safe ? (
-                            <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                          ) : (
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 450 }}
-                              radius="md"
-                              style={{ width: '100%' }}
-                            />
-                          )}
-                          <div style={{ width: '100%', height: '100%' }}>
-                            <ImageGuard.ToggleConnect position="top-left" />
-                            <ImageGuard.Report />
-                          </div>
-                        </div>
-                      )}
-                    </ImageGuard.Content>
-                  );
-                }}
-              />
+              <ImageCSSAspectRatioWrap
+                aspectRatio={1}
+                style={{ width: constants.clubs.avatarDisplayWidth }}
+              >
+                <ImageGuard
+                  images={[club.avatar]}
+                  connect={{ entityId: club.avatar.id, entityType: 'club' }}
+                  render={(image) => {
+                    return (
+                      <ImageGuard.Content>
+                        {({ safe }) => (
+                          <>
+                            {!safe ? (
+                              <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                            ) : (
+                              <ImagePreview
+                                image={image}
+                                edgeImageProps={{ width: 450 }}
+                                radius="md"
+                                style={{ width: '100%', height: '100%' }}
+                                aspectRatio={0}
+                              />
+                            )}
+                            <div style={{ width: '100%', height: '100%' }}>
+                              <ImageGuard.ToggleConnect position="top-left" />
+                              <ImageGuard.Report withinPortal />
+                            </div>
+                          </>
+                        )}
+                      </ImageGuard.Content>
+                    );
+                  }}
+                />
+              </ImageCSSAspectRatioWrap>
             )}
             <Title order={1}>{club.name}</Title>
             {!hasJoinableTiers && (
@@ -161,10 +163,10 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
             )}
           </Stack>
           <Grid>
-            <Grid.Col xs={12} md={3}>
+            <Grid.Col xs={12} md={2}>
               <ClubManagementNavigation id={id} />
             </Grid.Col>
-            <Grid.Col xs={12} md={9}>
+            <Grid.Col xs={12} md={10}>
               {page}
             </Grid.Col>
           </Grid>

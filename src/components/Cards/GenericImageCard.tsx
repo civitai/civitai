@@ -14,8 +14,8 @@ export function GenericImageCard({
   disabled,
 }: {
   image: ImageProps;
-  entityType: string;
-  entityId: number;
+  entityType?: string;
+  entityId?: number;
   disabled?: boolean;
 }) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -23,6 +23,8 @@ export function GenericImageCard({
   });
 
   const url = (() => {
+    if (!entityType || !entityId) return undefined;
+
     switch (entityType) {
       case 'Model': {
         return `/models/${entityId}`;

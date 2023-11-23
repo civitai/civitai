@@ -1,9 +1,14 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
-import { getClubTiersInput, upsertClubInput } from '~/server/schema/club.schema';
+import {
+  getClubTiersInput,
+  upsertClubInput,
+  upsertClubTierInput,
+} from '~/server/schema/club.schema';
 import {
   getClubHandler,
   getClubTiersHandler,
   upsertClubHandler,
+  upsertClubTierHandler,
 } from '~/server/controllers/club.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -17,4 +22,8 @@ export const clubRouter = router({
     .input(getClubTiersInput)
     .use(isFlagProtected('clubs'))
     .query(getClubTiersHandler),
+  upsertTier: protectedProcedure
+    .input(upsertClubTierInput)
+    .use(isFlagProtected('clubs'))
+    .mutation(upsertClubTierHandler),
 });

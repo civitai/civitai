@@ -95,3 +95,4 @@ export type ImageModerationReviewQueueImage =
   RouterOutput['image']['getModeratorReviewQueue']['items'][number];
 
 export type ClubGetById = RouterOutput['club']['getById'];
+export type ClubTier = RouterOutput['club']['getTiers'][number];

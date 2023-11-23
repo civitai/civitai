@@ -2,7 +2,7 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetClubTiersInput,
   UpsertClubInput,
-  UpsetClubTiersInput,
+  UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
 import { BountyEntryMode, Currency, Prisma, TagTarget } from '@prisma/client';
@@ -196,20 +196,27 @@ export const createClub = async ({
   return club;
 };
 
-const upsertClubTiers = async ({
+export const upsertClubTiers = async ({
   clubId,
   tiers,
   deleteTierIds,
   tx,
   userId,
+  isModerator,
 }: {
   userId: number;
+  isModerator?: boolean;
   clubId: number;
-  deleteTierIds: number[];
-  tiers: UpsetClubTiersInput[];
+  tiers?: UpsertClubTierInput[];
+  deleteTierIds?: number[];
   tx?: Prisma.TransactionClient;
 }) => {
   const dbClient = tx ?? dbWrite;
+  const club = await getClub({ id: clubId, userId });
+
+  if (userId !== club?.userId && !isModerator) {
+    throw throwBadRequestError('Only club owners can edit club tiers');
+  }
 
   if ((deleteTierIds?.length ?? 0) > 0) {
     const deletingTierWithMembers = await dbClient.clubTier.findFirst({
@@ -242,47 +249,50 @@ const upsertClubTiers = async ({
     });
   }
 
-  const createdImages = await createEntityImages({
-    userId,
-    images: tiers
-      .filter((tier) => tier.coverImage?.id === undefined)
-      .map((tier) => tier.coverImage)
-      .filter(isDefined),
-    tx: dbClient,
-  });
-
-  const toCreate = tiers.filter((tier) => !tier.id);
-  if (toCreate.length > 0) {
-    await dbClient.clubTier.createMany({
-      data: toCreate.map((tier) => ({
-        ...tier,
-        clubId,
-        coverImageId:
-          tier.coverImage?.id ?? createdImages.find((i) => i.url === tier.coverImage?.url)?.id,
-      })),
-      skipDuplicates: true,
+  if (tiers && tiers.length > 0) {
+    const createdImages = await createEntityImages({
+      userId,
+      images: tiers
+        .filter((tier) => tier.coverImage?.id === undefined)
+        .map((tier) => tier.coverImage)
+        .filter(isDefined),
+      tx: dbClient,
     });
-  }
 
-  const toUpdate = tiers.filter((tier) => tier.id !== undefined);
-  if (toUpdate.length > 0) {
-    await dbClient.clubTier.updateMany({
-      where: {
-        id: {
-          in: toUpdate.map((tier) => tier.id as number),
-        },
-      },
-      data: toUpdate.map(({ coverImage, ...tier }) => ({
-        ...tier,
-        coverImageId:
-          coverImage === null
-            ? null
-            : coverImage === undefined
-            ? undefined
-            : coverImage?.id ?? createdImages.find((i) => i.url === coverImage?.url)?.id,
-        clubId,
-      })),
-    });
+    const toCreate = tiers.filter((tier) => !tier.id);
+    if (toCreate.length > 0) {
+      await dbClient.clubTier.createMany({
+        data: toCreate.map(({ coverImage, ...tier }) => ({
+          ...tier,
+          clubId,
+          coverImageId: coverImage?.id ?? createdImages.find((i) => i.url === coverImage?.url)?.id,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    const toUpdate = tiers.filter((tier) => tier.id !== undefined);
+    if (toUpdate.length > 0) {
+      await Promise.all(
+        toUpdate.map((tier) => {
+          const { id, coverImage, clubId, ...data } = tier;
+          return dbClient.clubTier.update({
+            where: {
+              id: id as number,
+            },
+            data: {
+              ...data,
+              coverImageId:
+                coverImage === null
+                  ? null
+                  : coverImage === undefined
+                  ? undefined
+                  : coverImage?.id ?? createdImages.find((i) => i.url === coverImage?.url)?.id,
+            },
+          });
+        })
+      );
+    }
   }
 };
 
@@ -293,6 +303,7 @@ export const getClubTiers = async ({
   include,
   userId,
   isModerator,
+  tierId,
 }: GetClubTiersInput & {
   userId?: number;
   isModerator?: boolean;
@@ -300,6 +311,7 @@ export const getClubTiers = async ({
   const club = await getClub({ id: clubId });
 
   if (userId !== club?.userId && !isModerator) {
+    console.log('who are you??', userId, club?.userId, isModerator);
     listedOnly = true;
     joinableOnly = true;
   }
@@ -309,6 +321,7 @@ export const getClubTiers = async ({
       clubId,
       unlisted: listedOnly || undefined,
       joinable: joinableOnly || undefined,
+      id: tierId || undefined,
     },
     select: {
       id: true,
@@ -319,6 +332,9 @@ export const getClubTiers = async ({
       },
       unitAmount: true,
       currency: true,
+      clubId: true,
+      joinable: true,
+      unlisted: true,
       _count: include?.includes('membershipsCount')
         ? {
             select: {

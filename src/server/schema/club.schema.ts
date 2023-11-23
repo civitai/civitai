@@ -3,19 +3,24 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
 
-export type UpsetClubTiersInput = z.infer<typeof upsertClubTiersInput>;
-export const upsertClubTiersInput = z.object({
-  id: z.number().optional(),
-  name: z.string().trim().nonempty(),
-  description: getSanitizedStringSchema().refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
-  unitAmount: z.number().min(0),
-  currency: z.nativeEnum(Currency).default(Currency.BUZZ),
-  coverImage: comfylessImageSchema.nullish(),
-  unlisted: z.boolean().optional(),
-  joinable: z.boolean().default(true),
-});
+export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
+export const upsertClubTierInput = z
+  .object({
+    id: z.number().optional(),
+    name: z.string().trim().nonempty(),
+    description: getSanitizedStringSchema().refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty'),
+    unitAmount: z.number().min(0),
+    currency: z.nativeEnum(Currency).default(Currency.BUZZ),
+    coverImage: comfylessImageSchema.nullish(),
+    unlisted: z.boolean().default(false),
+    joinable: z.boolean().default(true),
+    clubId: z.number().optional(),
+  })
+  .refine((data) => !!data.clubId || !!data.id, {
+    message: 'When creating a new tier, clubId must be provided',
+  });
 
 export type UpsertClubInput = z.infer<typeof upsertClubInput>;
 export const upsertClubInput = z.object({
@@ -30,7 +35,7 @@ export const upsertClubInput = z.object({
   coverImage: comfylessImageSchema.nullish(),
   headerImage: comfylessImageSchema.nullish(),
   avatar: comfylessImageSchema.nullish(),
-  tiers: z.array(upsertClubTiersInput).optional(),
+  tiers: z.array(upsertClubTierInput).optional(),
   deleteTierIds: z.array(z.number()).optional(),
 });
 
@@ -41,4 +46,5 @@ export const getClubTiersInput = z.object({
   listedOnly: z.boolean().default(true),
   joinableOnly: z.boolean().default(true),
   include: z.array(z.enum(['membershipsCount'])).optional(),
+  tierId: z.number().optional(),
 });
