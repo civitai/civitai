@@ -2,7 +2,7 @@ import { dbWrite } from '~/server/db/client';
 import { EngagementEvent, TeamScore } from '~/server/events/base.event';
 import { holiday2023 } from '~/server/events/holiday2023.event';
 import { redis } from '~/server/redis/client';
-import { getUserBuzzAccount } from '~/server/services/buzz.service';
+import { getAccountSummary, getUserBuzzAccount } from '~/server/services/buzz.service';
 
 // Only include events that aren't completed
 const events = [holiday2023];
@@ -102,6 +102,28 @@ export const eventEngine = {
     teamScores.sort((a, b) => b.score - a.score);
     teamScores.forEach((x, i) => (x.rank = i + 1));
     return teamScores;
+  },
+  async getTeamScoreHistory(event: string) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    // Get team scores from buzz accounts
+    const accounts = this.getTeamAccounts(event);
+
+    const summaries = await getAccountSummary({
+      accountIds: Object.values(accounts),
+      start: eventDef.startDate,
+    });
+
+    const teamScoreHistory = Object.entries(accounts).map(([team, accountId]) => {
+      const summary = summaries[accountId];
+      return {
+        team,
+        scores: summary.map((x) => ({ date: x.date, score: x.balance })),
+      };
+    });
+
+    return teamScoreHistory;
   },
   async getUserData({ event, userId }: { event: string; userId: number }) {
     const eventDef = events.find((x) => x.name === event);

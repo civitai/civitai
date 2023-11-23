@@ -15,6 +15,10 @@ export const eventRouter = router({
     .input(eventSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getTeamScores(input)),
+  getTeamScoreHistory: publicProcedure
+    .input(eventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .query(({ input }) => getTeamScores(input)),
   getCosmetic: protectedProcedure
     .input(eventSchema)
     .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),

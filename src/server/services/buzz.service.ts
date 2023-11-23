@@ -119,7 +119,7 @@ export async function createBuzzTransaction({
       [{ userId?: number }]
     >(`
         SELECT i."userId"
-        FROM "${entityType}" i 
+        FROM "${entityType}" i
         WHERE i.id = ${entityId}
       `);
 
@@ -378,4 +378,44 @@ export async function refundTransaction(
   const resp: { transactionId: string } = await response.json();
 
   return resp;
+}
+
+type AccountSummaryRecord = {
+  accountId: number;
+  date: Date;
+  balance: number;
+  lifetimeBalance: number;
+};
+export async function getAccountSummary({
+  accountIds,
+  start,
+  end,
+}: {
+  accountIds: number | number[];
+  start?: Date;
+  end?: Date;
+}) {
+  if (!Array.isArray(accountIds)) accountIds = [accountIds];
+  const queryParams: [string, string][] = [];
+  if (start) queryParams.push(['start', start.toISOString().split('T')[0]]);
+  if (end) queryParams.push(['end', end.toISOString().split('T')[0]]);
+  for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
+
+  const response = await fetch(
+    `${env.BUZZ_ENDPOINT}/account/summary?${new URLSearchParams(queryParams).toString()}`
+  );
+
+  if (!response.ok) throw new Error('Failed to fetch account summary');
+
+  const dataRaw = (await response.json()) as Record<
+    string,
+    { data: AccountSummaryRecord[]; cursor: null }
+  >;
+
+  return Object.fromEntries(
+    Object.entries(dataRaw).map(([accountId, { data }]) => [
+      parseInt(accountId),
+      data.map((d) => ({ ...d, date: new Date(d.date) })),
+    ])
+  );
 }

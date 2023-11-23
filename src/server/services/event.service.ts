@@ -16,6 +16,14 @@ export function getTeamScores({ event }: EventInput) {
   }
 }
 
+export function getTeamScoreHistory({ event }: EventInput) {
+  try {
+    return eventEngine.getTeamScoreHistory(event);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
 type EventCosmetic = Awaited<ReturnType<typeof cosmeticStatus>> & {
   cosmetic: Awaited<ReturnType<typeof getCosmeticDetail>>;
 };
