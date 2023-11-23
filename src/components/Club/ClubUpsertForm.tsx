@@ -158,7 +158,6 @@ export function ClubUpsertForm({
                   label="Banner Image"
                   description={`Suggested resolution: ${constants.profile.coverImageWidth}x${constants.profile.coverImageHeight}px`}
                   aspectRatio={constants.profile.coverImageAspectRatio}
-                  // Im aware ideally this should ideally be 450, but images will look better on a higher res here
                   previewWidth={constants.profile.coverImageWidth}
                 />
                 <InputSwitch
@@ -184,13 +183,6 @@ export function ClubUpsertForm({
           </Grid.Col>
         </Grid>
         <Group position="right">
-          <NavigateBack url="/clubs">
-            {({ onClick }) => (
-              <Button variant="light" color="gray" onClick={onClick}>
-                Discard Changes
-              </Button>
-            )}
-          </NavigateBack>
           <Button loading={upserting} type="submit">
             Save
           </Button>
