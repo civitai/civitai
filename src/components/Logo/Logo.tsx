@@ -49,11 +49,14 @@ export function Logo({ ...props }: LogoProps) {
         <img src="/images/holiday/ghost.png" alt="ghost" className={classes.flyOver} />
       )}
       {holiday === 'christmas' && (
-        <div className={classes.deer}>
-          <img src="/images/holiday/deer.png" alt="deer" id="deer" />
-          <img src="/images/holiday/deer-nose.png" alt="deer nose" id="nose" />
-          <img src="/images/holiday/deer-glow.png" alt="deer glow" id="glow" />
-        </div>
+        <>
+          <img src="/images/holiday/santa-hat.png" alt="santa hat" className={classes.hat} />
+          <div className={classes.deer}>
+            <img src="/images/holiday/deer.png" alt="deer" id="deer" />
+            <img src="/images/holiday/deer-nose.png" alt="deer nose" id="nose" />
+            <img src="/images/holiday/deer-glow.png" alt="deer glow" id="glow" />
+          </div>
+        </>
       )}
       <svg className={classes.svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 107 22.7">
         <g className={classes.text}>
@@ -204,6 +207,18 @@ const useStyles = createStyles((theme, _, getRef) => ({
     [theme.fn.smallerThan('sm')]: {
       height: 40,
       width: 40,
+    },
+  },
+
+  hat: {
+    position: 'absolute',
+    height: 25,
+    left: 0,
+    top: 0,
+    transform: 'rotate(-20deg) translate(-14%, -75%)',
+    zIndex: 3,
+    [theme.fn.smallerThan('sm')]: {
+      display: 'none',
     },
   },
 
