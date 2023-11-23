@@ -311,7 +311,6 @@ export const getClubTiers = async ({
   const club = await getClub({ id: clubId });
 
   if (userId !== club?.userId && !isModerator) {
-    console.log('who are you??', userId, club?.userId, isModerator);
     listedOnly = true;
     joinableOnly = true;
   }
@@ -342,6 +341,9 @@ export const getClubTiers = async ({
             },
           }
         : undefined,
+    },
+    orderBy: {
+      unitAmount: 'asc',
     },
   });
 

@@ -46,17 +46,21 @@ export async function getClubTiersHandler({
   ctx,
 }: {
   input: GetClubTiersInput;
-  ctx: DeepNonNullable<Context>;
+  ctx: Context;
 }) {
   try {
-    return await getClubTiers({
+    const tiers = await getClubTiers({
       ...input,
-      userId: ctx.user.id,
-      isModerator: !!ctx.user.isModerator,
+      userId: ctx?.user?.id,
+      isModerator: !!ctx?.user?.isModerator,
     });
+
+    return tiers ?? [];
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
+    // Makes typescript happy :sweatsmile:...
+    return [];
   }
 }
 

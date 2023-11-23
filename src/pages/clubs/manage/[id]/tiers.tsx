@@ -79,7 +79,7 @@ export const getServerSideProps = createServerSideProps({
       await ssg.club.getById.prefetch({ id });
       await ssg.club.getTiers.prefetch({
         clubId: id,
-        unlistedOnly: false,
+        joinableOnly: false,
         listedOnly: false,
         include: ['membershipsCount'],
       });

@@ -21,16 +21,6 @@ const useStyles = createStyles((theme, { aspectRatio = 1 }: { aspectRatio: numbe
     height: 0,
     paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
 
-    [theme.fn.smallerThan('sm')]: {
-      width: 'auto',
-      borderRadius: 0,
-      paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
-
-      div: {
-        borderRadius: 0,
-      },
-    },
-
     '& > div': {
       position: 'absolute',
       top: '50%',
@@ -56,7 +46,6 @@ export const ImageCSSAspectRatioWrap = ({
   aspectRatio: number;
 }) => {
   const { classes } = useStyles({ aspectRatio });
-  console.log(classes);
   return (
     <div className={classes.wrap} style={style}>
       <div className={classes.cover}>{children}</div>
