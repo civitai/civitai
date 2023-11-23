@@ -100,21 +100,43 @@ export function GeneratedImage({
               setState((current) => ({ ...current, variantModalOpened: false, selectedItems: [] }))
             }
           /> */}
-          <Card p={0}>
+          <Card
+            p={0}
+            sx={{
+              position: 'relative',
+              boxShadow:
+                '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+              cursor: 'pointer',
+              width: '100%',
+              height: '100%',
+            }}
+          >
             <Box
               onClick={handleImageClick}
-              sx={{
-                position: 'relative',
-                boxShadow:
-                  '0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
-                cursor: 'pointer',
-                width: '100%',
-                height: '100%',
-              }}
+              sx={(theme) => ({
+                [`&::after`]: {
+                  content: '""',
+                  display: 'block',
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
+                  borderRadius: theme.radius.sm,
+                },
+              })}
             >
               {!image.available ? (
                 <Center
-                  sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}
+                  sx={(theme) => ({
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: theme.colors.dark[5],
+                  })}
                   p="xs"
                 >
                   {image.status === 'Started' ? (
