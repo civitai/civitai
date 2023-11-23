@@ -324,12 +324,12 @@ export const samplerOffsets = {
   'DPM++ 2M Karras': 4,
   DPM2: 4,
   'DPM2 a': 4,
-  LCM: 0,
 } as const;
 
 export const generation = {
   formStoreKey: 'generation-form',
   samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
+  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
     cfgScale: 7,
     steps: 25,
@@ -424,9 +424,6 @@ export const generationConfig = {
       baseModel: 'SDXL 1.0',
       strength: 1,
     } as Generation.Resource,
-  },
-  LCM: {
-    samplers: ['LCM', 'Euler A'],
   },
 };
 

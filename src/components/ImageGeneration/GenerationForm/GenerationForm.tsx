@@ -468,7 +468,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         <InputSelect
                           name="sampler"
                           label="Sampler"
-                          data={isLCM ? generationConfig.LCM.samplers : generation.samplers}
+                          data={isLCM ? generation.lcmSamplers : generation.samplers}
                           presets={
                             isLCM
                               ? []
