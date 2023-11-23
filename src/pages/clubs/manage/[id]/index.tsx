@@ -126,7 +126,7 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
                                 style={{ width: '100%' }}
                               />
                             )}
-                            <div className={{ width: '100%', height: '100%' }}>
+                            <div style={{ width: '100%', height: '100%' }}>
                               <ImageGuard.ToggleConnect position="top-left" />
                               <ImageGuard.Report />
                             </div>

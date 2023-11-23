@@ -62,86 +62,22 @@ const tooltipProps: Partial<TooltipProps> = {
 
 const formSchema = upsertClubInput;
 
-const useStyles = createStyles((theme) => ({
-  radioItemWrapper: {
-    '& .mantine-Group-root': {
-      alignItems: 'stretch',
-      [theme.fn.smallerThan('sm')]: {
-        flexDirection: 'column',
-      },
-    },
-  },
-
-  radioItem: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-    }`,
-    borderRadius: theme.radius.sm,
-    padding: theme.spacing.xs,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-    display: 'flex',
-    flex: 1,
-
-    '& > .mantine-Radio-body, & .mantine-Radio-label': {
-      width: '100%',
-    },
-
-    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
-      width: '100%',
-    },
-  },
-
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-  label: {
-    textTransform: 'capitalize',
-  },
-  active: {
-    border: `2px solid ${theme.colors.blue[5]}`,
-    backgroundColor: 'transparent',
-  },
-
-  title: {
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  sectionTitle: {
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: '18px',
-    },
-  },
-  fluid: {
-    [theme.fn.smallerThan('sm')]: {
-      maxWidth: '100% !important',
-    },
-  },
-  stickySidebar: {
-    position: 'sticky',
-    top: `calc(var(--mantine-header-height) + ${theme.spacing.md}px)`,
-
-    [theme.fn.smallerThan('md')]: {
-      position: 'relative',
-      top: 0,
-    },
-  },
-}));
-
-export function ClubUpsertForm({ club }: { club?: ClubGetById }) {
-  const router = useRouter();
-  const { classes } = useStyles();
-
+export function ClubUpsertForm({
+  club,
+  onSave,
+}: {
+  club?: ClubGetById;
+  onSave?: (club: { id: number }) => void;
+}) {
   const form = useForm({
     schema: formSchema,
     defaultValues: {
-      ...club,
-      avatarImage: club?.avatar,
+      ...(club ?? {}),
     },
     shouldUnregister: false,
   });
 
-  const [avatarImage] = form.watch(['avatarImage']);
+  const [avatar] = form.watch(['avatar']);
 
   const { upsertClub, upserting } = useMutateClub({ clubId: club?.id as number | undefined });
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
@@ -150,7 +86,9 @@ export function ClubUpsertForm({ club }: { club?: ClubGetById }) {
         ...data,
       });
 
-      await router.push(`/clubs/${result?.id}`);
+      if (result?.id) {
+        onSave?.(result);
+      }
     } catch (error) {
       // Do nothing since the query event will show an error notification
     }
@@ -178,10 +116,10 @@ export function ClubUpsertForm({ club }: { club?: ClubGetById }) {
                   stickyToolbar
                 />
                 <Group grow>
-                  {avatarImage && (
+                  {avatar && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
-                        src={getEdgeUrl(avatarImage?.url, { transcode: false })}
+                        src={getEdgeUrl(avatar?.url, { transcode: false })}
                         size={124}
                         radius="sm"
                       />
@@ -191,7 +129,7 @@ export function ClubUpsertForm({ club }: { club?: ClubGetById }) {
                           variant="filled"
                           color="red"
                           onClick={() =>
-                            form.setValue('avatarImage', club?.avatar?.id ? null : undefined)
+                            form.setValue('avatar', club?.avatar?.id ? null : undefined)
                           }
                           sx={(theme) => ({
                             position: 'absolute',
@@ -206,7 +144,7 @@ export function ClubUpsertForm({ club }: { club?: ClubGetById }) {
                     </div>
                   )}
                   <InputSimpleImageUpload
-                    name="avatarImage"
+                    name="avatar"
                     label="Profile Image"
                     aspectRatio={1}
                     // Im aware ideally this should ideally be 450, but images will look better on a higher res here

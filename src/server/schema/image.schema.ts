@@ -127,6 +127,10 @@ export const imageSchema = z.object({
   metadata: z.object({}).passthrough().optional(),
 });
 
+export const comfylessImageSchema = imageSchema.extend({
+  meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+});
+
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
 

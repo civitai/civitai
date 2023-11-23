@@ -11,10 +11,11 @@ export const useQueryClub = ({ id }: { id: number }) => {
 
 export const useMutateClub = (opts?: { clubId?: number }) => {
   const { clubId } = opts ?? {};
+  const queryUtils = trpc.useContext();
 
   const upsertClubMutation = trpc.club.upsert.useMutation({
     async onSuccess(result, payload) {
-      // if (payload.id) await queryUtils.bounty.getById.invalidate({ id: payload.id });
+      if (payload.id) await queryUtils.club.getById.invalidate({ id: payload.id });
     },
     onError(error) {
       try {

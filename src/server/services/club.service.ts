@@ -8,7 +8,7 @@ import { startOfDay, toUtc } from '~/utils/date-helpers';
 import { updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { ImageUploadProps } from '~/server/schema/image.schema';
+import { ImageMetaProps, ImageUploadProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -31,7 +31,30 @@ export const getClub = async ({
     },
   });
 
-  return club;
+  return {
+    ...club,
+    avatar: club.avatar
+      ? {
+          ...club.avatar,
+          meta: club.avatar.meta as ImageMetaProps,
+          metadata: club.avatar.metadata as MixedObject,
+        }
+      : club.avatar,
+    coverImage: club.coverImage
+      ? {
+          ...club.coverImage,
+          meta: club.coverImage.meta as ImageMetaProps,
+          metadata: club.coverImage.metadata as MixedObject,
+        }
+      : club.coverImage,
+    headerImage: club.headerImage
+      ? {
+          ...club.headerImage,
+          meta: club.headerImage.meta as ImageMetaProps,
+          metadata: club.headerImage.metadata as MixedObject,
+        }
+      : club.headerImage,
+  };
 };
 
 export function upsertClub({
@@ -42,15 +65,66 @@ export function upsertClub({
 }: UpsertClubInput & { userId: number; isModerator: boolean }) {
   if (id) {
     // TODO: Update club
+    return updateClub({ ...input, id, userId });
   } else {
     return createClub({ ...input, userId });
   }
 }
 
+export const updateClub = async ({
+  coverImage,
+  headerImage,
+  avatar,
+  id,
+  userId,
+  ...data
+}: Omit<UpsertClubInput, 'tiers' | 'deleteTierIds'> & { id: number; userId: number }) => {
+  const club = await dbWrite.$transaction(
+    async (tx) => {
+      await tx.club.findUniqueOrThrow({ where: { id } });
+      const createdImages = await createEntityImages({
+        tx,
+        images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
+        userId,
+      });
+
+      const club = await tx.club.update({
+        where: { id },
+        data: {
+          ...data,
+          avatarId:
+            avatar === null
+              ? null
+              : avatar !== undefined
+              ? avatar?.id ?? createdImages.find((i) => i.url === avatar.url)?.id
+              : undefined,
+          coverImageId:
+            coverImage === null
+              ? null
+              : coverImage !== undefined
+              ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
+              : undefined,
+          headerImageId:
+            headerImage === null
+              ? null
+              : headerImage !== undefined
+              ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
+              : undefined,
+        },
+      });
+
+      return club;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
+
+  return club;
+};
+
 export const createClub = async ({
   coverImage,
   headerImage,
-  avatarImage,
+  avatar,
   tiers = [],
   deleteTierIds = [],
   userId,
@@ -60,7 +134,7 @@ export const createClub = async ({
     async (tx) => {
       const createdImages = await createEntityImages({
         tx,
-        images: [coverImage, headerImage, avatarImage].filter((i) => !i?.id).filter(isDefined),
+        images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
         userId,
       });
 
@@ -69,10 +143,10 @@ export const createClub = async ({
           ...data,
           userId,
           avatarId:
-            avatarImage === null
+            avatar === null
               ? null
-              : avatarImage !== undefined
-              ? avatarImage?.id ?? createdImages.find((i) => i.url === avatarImage.url)?.id
+              : avatar !== undefined
+              ? avatar?.id ?? createdImages.find((i) => i.url === avatar.url)?.id
               : undefined,
           coverImageId:
             coverImage === null

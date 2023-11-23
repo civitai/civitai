@@ -568,7 +568,6 @@ export const upsertCollection = async ({
             WHERE ci."collectionId" = ${updated.id}
         `;
       }
-
       return updated;
     });
 

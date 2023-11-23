@@ -1,6 +1,6 @@
 import { TypeOf, z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
+import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
 
 export type UpsetClubTiersInput = TypeOf<typeof upsertClubTiersInput>;
@@ -12,7 +12,7 @@ export const upsertClubTiersInput = z.object({
   }, 'Cannot be empty'),
   unitAmount: z.number().min(0),
   currency: z.nativeEnum(Currency).default(Currency.BUZZ),
-  coverImage: imageSchema.nullish(),
+  coverImage: comfylessImageSchema.nullish(),
   unlisted: z.boolean().optional(),
   joinable: z.boolean().default(true),
 });
@@ -27,9 +27,9 @@ export const upsertClubInput = z.object({
   nsfw: z.boolean().optional(),
   billing: z.boolean().optional(),
   unlisted: z.boolean().optional(),
-  coverImage: imageSchema.nullish(),
-  headerImage: imageSchema.nullish(),
-  avatarImage: imageSchema.nullish(),
+  coverImage: comfylessImageSchema.nullish(),
+  headerImage: comfylessImageSchema.nullish(),
+  avatar: comfylessImageSchema.nullish(),
   tiers: z.array(upsertClubTiersInput).optional(),
   deleteTierIds: z.array(z.number()).optional(),
 });

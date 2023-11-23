@@ -7,6 +7,7 @@ import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { BackButton } from '~/components/BackButton/BackButton';
 import React from 'react';
+import { useRouter } from 'next/router';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -26,6 +27,9 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ClubCreate() {
+  const router = useRouter();
+  const onCreated = (club: { id: number }) => router.push(`/clubs/manage/${club.id}`);
+
   return (
     <Container size="md">
       <Stack>
@@ -33,7 +37,7 @@ export default function ClubCreate() {
           <BackButton url="/clubs" />
           <Title>Create new club</Title>
         </Group>
-        <ClubUpsertForm />
+        <ClubUpsertForm onSave={onCreated} />
       </Stack>
     </Container>
   );
