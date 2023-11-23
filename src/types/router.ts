@@ -93,3 +93,5 @@ export type UserWithProfile = RouterOutput['userProfile']['get'];
 
 export type ImageModerationReviewQueueImage =
   RouterOutput['image']['getModeratorReviewQueue']['items'][number];
+
+export type ClubGetById = RouterOutput['club']['getById'];

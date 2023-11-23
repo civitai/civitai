@@ -3,6 +3,12 @@ import { showErrorNotification } from '~/utils/notifications';
 import { UpsertBountyInput } from '~/server/schema/bounty.schema';
 import { UpsertClubInput } from '~/server/schema/club.schema';
 
+export const useQueryClub = ({ id }: { id: number }) => {
+  const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
+
+  return { club, loading };
+};
+
 export const useMutateClub = (opts?: { clubId?: number }) => {
   const { clubId } = opts ?? {};
 

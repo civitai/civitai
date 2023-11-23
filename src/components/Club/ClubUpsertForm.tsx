@@ -51,6 +51,7 @@ import { useMutateClub } from '~/components/Club/club.utils';
 import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
+import { ClubGetById } from '~/types/router';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -127,14 +128,16 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ClubUpsertForm({ club }: { club?: MixedObject }) {
+export function ClubUpsertForm({ club }: { club?: ClubGetById }) {
   const router = useRouter();
   const { classes } = useStyles();
 
   const form = useForm({
     schema: formSchema,
-    // defaultValues: {
-    // }
+    defaultValues: {
+      ...club,
+      avatarImage: club?.avatar,
+    },
     shouldUnregister: false,
   });
 
@@ -156,12 +159,6 @@ export function ClubUpsertForm({ club }: { club?: MixedObject }) {
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing={32}>
-        <Group spacing="md" noWrap>
-          <BackButton url="/bounties" />
-          <Title className={classes.title}>
-            {club ? `Editing ${club.name}` : 'Create a new club'}
-          </Title>
-        </Group>
         <Grid gutter="xl">
           <Grid.Col xs={12}>
             <Stack spacing={32}>

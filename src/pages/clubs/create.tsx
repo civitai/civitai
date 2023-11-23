@@ -1,10 +1,12 @@
-import { Container } from '@mantine/core';
+import { Container, Group, Stack, Title } from '@mantine/core';
 
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
+import { BackButton } from '~/components/BackButton/BackButton';
+import React from 'react';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -26,7 +28,13 @@ export const getServerSideProps = createServerSideProps({
 export default function ClubCreate() {
   return (
     <Container size="md">
-      <ClubUpsertForm />
+      <Stack>
+        <Group spacing="md" noWrap>
+          <BackButton url="/clubs" />
+          <Title>Create new club</Title>
+        </Group>
+        <ClubUpsertForm />
+      </Stack>
     </Container>
   );
 }

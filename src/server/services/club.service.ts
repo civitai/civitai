@@ -10,6 +10,29 @@ import { createEntityImages } from '~/server/services/image.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { imageSelect } from '~/server/selectors/image.selector';
+
+export const getClub = async ({
+  id,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  const club = await dbRead.club.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      avatar: { select: imageSelect },
+      coverImage: { select: imageSelect },
+      headerImage: { select: imageSelect },
+      nsfw: true,
+      billing: true,
+      unlisted: true,
+    },
+  });
+
+  return club;
+};
 
 export function upsertClub({
   isModerator,
