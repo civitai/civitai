@@ -3,6 +3,7 @@ import { EngagementEvent, TeamScore } from '~/server/events/base.event';
 import { holiday2023 } from '~/server/events/holiday2023.event';
 import { redis } from '~/server/redis/client';
 import { getAccountSummary, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 
 // Only include events that aren't completed
 const events = [holiday2023];
@@ -103,7 +104,7 @@ export const eventEngine = {
     teamScores.forEach((x, i) => (x.rank = i + 1));
     return teamScores;
   },
-  async getTeamScoreHistory(event: string) {
+  async getTeamScoreHistory({ event, window }: TeamScoreHistoryInput) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
@@ -113,6 +114,7 @@ export const eventEngine = {
     const summaries = await getAccountSummary({
       accountIds: Object.values(accounts),
       start: eventDef.startDate,
+      window,
     });
 
     const teamScoreHistory = Object.entries(accounts).map(([team, accountId]) => {

@@ -21,6 +21,7 @@ import {
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
+import { stripTime } from '~/utils/date-helpers';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   return withRetries(
@@ -390,19 +391,22 @@ export async function getAccountSummary({
   accountIds,
   start,
   end,
+  window,
 }: {
   accountIds: number | number[];
   start?: Date;
   end?: Date;
+  window?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }) {
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
-  const queryParams: [string, string][] = [];
-  if (start) queryParams.push(['start', start.toISOString().split('T')[0]]);
-  if (end) queryParams.push(['end', end.toISOString().split('T')[0]]);
+  const queryParams: [string, string][] = [['descending', 'false']];
+  if (start) queryParams.push(['start', stripTime(start)]);
+  if (end) queryParams.push(['end', stripTime(end)]);
+  if (window) queryParams.push(['window', window]);
   for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
 
   const response = await fetch(
-    `${env.BUZZ_ENDPOINT}/account/summary?${new URLSearchParams(queryParams).toString()}`
+    `${env.BUZZ_ENDPOINT}/account/User/summary?${new URLSearchParams(queryParams).toString()}`
   );
 
   if (!response.ok) throw new Error('Failed to fetch account summary');

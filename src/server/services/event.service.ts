@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { redis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { EventInput } from '~/server/schema/event.schema';
+import { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus } from '~/server/services/user.service';
@@ -16,9 +16,9 @@ export function getTeamScores({ event }: EventInput) {
   }
 }
 
-export function getTeamScoreHistory({ event }: EventInput) {
+export function getTeamScoreHistory({ event, window }: TeamScoreHistoryInput) {
   try {
-    return eventEngine.getTeamScoreHistory(event);
+    return eventEngine.getTeamScoreHistory({ event, window });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -97,8 +97,7 @@ export async function donate({
     await createBuzzTransaction({
       toAccountId: accountId,
       fromAccountId: userId,
-      // type: TransactionType.Donation,
-      type: TransactionType.Tip,
+      type: TransactionType.Donation,
       amount,
       description: `${title} Donation - ${team}`,
     });

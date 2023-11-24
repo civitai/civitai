@@ -73,7 +73,7 @@ export function getRandomInt(min: number, max: number) {
 }
 
 export function numberWithCommas(value: number | string | undefined) {
-  return value && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
+  return value != null && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
     ? `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
     : '';
 }

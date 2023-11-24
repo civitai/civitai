@@ -6,6 +6,7 @@ export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
     where: { id },
   });
+
   return cosmetic;
 }
 

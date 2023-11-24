@@ -22,7 +22,7 @@ export function Lightbulb({ variant, ...props }: Props) {
 }
 
 function DefaultVariant({ color, size, ...props }: Props) {
-  const { main, gradient } = colors[color];
+  const { main, gradient } = colors[color as LightbulbColor];
   const id = `lightbulb-${color}`;
 
   return (
@@ -72,7 +72,7 @@ function DefaultVariant({ color, size, ...props }: Props) {
 }
 
 function StarVariant({ color, size, ...props }: Omit<Props, 'variant'>) {
-  const { main, gradient } = colors[color];
+  const { main, gradient } = colors[color as LightbulbColor];
   const id = `star-${color}`;
 
   return (
@@ -127,7 +127,8 @@ function StarVariant({ color, size, ...props }: Omit<Props, 'variant'>) {
 
 type LightbulbColor = 'blue' | 'green' | 'red' | 'yellow';
 type Props = React.ComponentPropsWithoutRef<'svg'> & {
-  color: LightbulbColor;
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  color: LightbulbColor | (string & {});
   size?: number;
   variant?: 'default' | 'star';
 };

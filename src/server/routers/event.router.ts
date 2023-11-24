@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import { eventSchema } from '~/server/schema/event.schema';
+import { eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
 import {
   activateEventCosmetic,
   donate,
   getEventCosmetic,
+  getTeamScoreHistory,
   getTeamScores,
 } from '~/server/services/event.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -16,9 +17,10 @@ export const eventRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getTeamScores(input)),
   getTeamScoreHistory: publicProcedure
-    .input(eventSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ input }) => getTeamScores(input)),
+    // TODO.event: type window param better (day, week, month, etc.)
+    .input(teamScoreHistorySchema)
+    // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .query(({ input }) => getTeamScoreHistory(input)),
   getCosmetic: protectedProcedure
     .input(eventSchema)
     .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),
