@@ -90,7 +90,7 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
     id: string;
   };
   const id = Number(stringId);
-  const { club, loading } = useQueryClub({ id });
+  const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
       clubId: club?.id as number,

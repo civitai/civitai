@@ -25,6 +25,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { hasEntityAccess } from '~/server/services/common.service';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -101,6 +102,16 @@ export default RateLimitedEndpoint(
     const isMod = session?.user?.isModerator;
     const userId = session?.user?.id;
     const archived = modelVersion.model.mode === ModelModifier.Archived;
+    const [entityAccess] = await hasEntityAccess({
+      entityType: 'Model',
+      entityIds: [modelVersion?.model?.id],
+      userId,
+      isModerator: isMod,
+    });
+
+    if (!(entityAccess?.hasAccess ?? true)) {
+      return errorResponse(401, 'You do not have access to download this model.');
+    }
 
     if (archived) return errorResponse(410, 'Model archived, not available for download');
 
@@ -108,6 +119,7 @@ export default RateLimitedEndpoint(
       isMod ||
       (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published') ||
       (userId && modelVersion?.model?.userId === userId);
+
     if (!canDownload) return errorResponse(404, 'Model not found');
 
     // Handle unauthenticated downloads

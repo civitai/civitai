@@ -50,7 +50,7 @@ export const hasEntityAccess = async ({
 
   const privateRecords = data.filter((d) => d.availability === Availability.Private);
 
-  // All public stuff is accessible by everyone.
+  // All entities are public. Access granted to everyone.
   if (privateRecords.length === 0) {
     return res.map((r) => ({ ...r, hasAccess: true }));
   }
@@ -64,6 +64,7 @@ export const hasEntityAccess = async ({
   }
 
   if (!userId) {
+    // Unauthenticated user. Only grant access to public items.
     return data.map((d) => ({
       entityId: d.id,
       entityType: entityType,
@@ -91,6 +92,7 @@ export const hasEntityAccess = async ({
       AND ea."accessToType" = ${entityType}
   `;
 
+  // Complex scenario - we have mixed entities with public/private access.
   return entityIds.map((id) => {
     const base = {
       entityId: id,
@@ -98,6 +100,7 @@ export const hasEntityAccess = async ({
     };
 
     const publicEntityAccess = data.find((entity) => entity.id === id);
+    // If the entity is public, we're ok to assume the user has access.
     if (publicEntityAccess) {
       return {
         ...base,
@@ -106,6 +109,8 @@ export const hasEntityAccess = async ({
     }
 
     const privateEntityAccess = entityAccess.find((entity) => entity.entityId === id);
+    // If we could not find a privateEntityAccess record, means the user is guaranteed not to have
+    // a link between the entity and himself.
     if (!privateEntityAccess) {
       return {
         ...base,
@@ -121,7 +126,12 @@ export const hasEntityAccess = async ({
   });
 };
 
-type ClubEntityAccessStatus = { entityId: number; requiresClub: boolean; clubId?: number };
+type ClubEntityAccessStatus = {
+  entityId: number;
+  requiresClub: boolean;
+  clubId?: number;
+  clubTierId?: number | null;
+};
 export const entityRequiresClub = async ({
   entityType,
   entityIds,
@@ -163,11 +173,13 @@ export const entityRequiresClub = async ({
     {
       entityId: number;
       clubId: number;
+      clubTierId: number | null;
     }[]
   >`
     SELECT 
       ea."accessToId" "entityId", 
-      COALESCE(c.id, cmt."clubId") as "clubId"
+      COALESCE(c.id, cmt."clubId") as "clubId",
+      cmt."clubTierId" as "clubTierId"
     FROM "EntityAccess" ea
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id
     LEFT JOIN "ClubMembership" cmt ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = cmt."clubTierId"

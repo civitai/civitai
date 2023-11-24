@@ -110,17 +110,50 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
   resolver: async ({ ssg, ctx, session = null }) => {
-    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
-    const query = ctx.query as { modelVersionId: string };
+    const params = (ctx.params ?? {}) as {
+      id: string;
+      slug: string[];
+    };
+    const query = ctx.query as {
+      modelVersionId: string;
+    };
     const id = Number(params.id);
     if (ssg) {
       const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
       if (!isNumber(id)) return { notFound: true };
+
+      const [entityAccess] = await hasEntityAccess({
+        entityIds: [id],
+        entityType: 'Model',
+        userId: session?.user?.id,
+        isModerator: session?.user?.isModerator,
+      });
+
+      if (!entityAccess?.hasAccess) {
+        const [clubAccess] = await entityRequiresClub({
+          entityIds: [id],
+          entityType: 'Model',
+        });
+
+        console.log(clubAccess);
+
+        if (clubAccess?.requiresClub && clubAccess?.clubId) {
+          return {
+            redirect: {
+              destination: `/clubs/${clubAccess.clubId}/model/${id}`,
+              permanent: false,
+            },
+          };
+        }
+
+        return { notFound: true };
+      }
 
       const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
         () => null
@@ -974,7 +1007,7 @@ export default function ModelDetailsV2({
             </Stack>
           </Container>
         ) : (
-          <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+          <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>
             <Center>
               <Group spacing="xs">
                 <ThemeIcon color="gray" size="xl" radius="xl">
