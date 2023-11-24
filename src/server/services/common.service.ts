@@ -37,14 +37,16 @@ export const hasEntityAccess = async ({
     return res.map((r) => ({ ...r, hasAccess: true }));
   }
 
-  const data = await dbRead.$queryRaw<{ availability: Availability; userId: number; id: number }[]>`
+  const data = await dbRead.$queryRawUnsafe<
+    { availability: Availability; userId: number; id: number }[]
+  >(`
     SELECT
         "availability",
         "userId",
         "id"
     FROM "${entityType}" t
-    WHERE t.id IN (${Prisma.join(entityIds, ', ')})
-  `;
+    WHERE t.id IN ((${entityIds.join(', ')}))
+  `);
 
   const privateRecords = data.filter((d) => d.availability === Availability.Private);
 
@@ -131,13 +133,15 @@ export const entityRequiresClub = async ({
     return [];
   }
 
-  const entitiesAvailability = await dbRead.$queryRaw<{ availability: Availability; id: number }[]>`
+  const entitiesAvailability = await dbRead.$queryRawUnsafe<
+    { availability: Availability; id: number }[]
+  >(`
     SELECT
         "availability",
         "id"
     FROM "${entityType}" t
-    WHERE t.id IN (${Prisma.join(entityIds, ', ')})
-  `;
+    WHERE t.id IN (${entityIds.join(', ')})
+  `);
 
   const publicEntities = entitiesAvailability.filter(
     (entity) => entity.availability !== Availability.Private

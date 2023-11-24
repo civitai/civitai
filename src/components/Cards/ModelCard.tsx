@@ -6,6 +6,8 @@ import {
   Menu,
   Stack,
   Text,
+  ThemeIcon,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -18,6 +20,7 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
+  IconClubs,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -292,6 +295,17 @@ export function ModelCard({ data }: Props) {
                                         {contextMenuItems.map((el) => el)}
                                       </Menu.Dropdown>
                                     </Menu>
+                                  )}
+                                  {data.requiresClub && (
+                                    <Tooltip
+                                      label="This model requires joining a club to get access to it."
+                                      withinPortal
+                                      maw={350}
+                                    >
+                                      <ThemeIcon size={30} radius="xl" color="blue">
+                                        <IconClubs stroke={2.5} size={16} />
+                                      </ThemeIcon>
+                                    </Tooltip>
                                   )}
                                   {features.imageGeneration && data.canGenerate && (
                                     <HoverActionButton

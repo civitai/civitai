@@ -1,4 +1,5 @@
 import {
+  Availability,
   CommercialUse,
   MetricTimeframe,
   ModelHashType,
@@ -65,6 +66,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
+import { entityRequiresClub } from '~/server/services/common.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -91,6 +93,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   select,
   user: sessionUser,
   count = false,
+  ignoreListedStatus,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -99,6 +102,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   select: TSelect;
   user?: SessionUser;
   count?: boolean;
+  ignoreListedStatus?: boolean;
 }) => {
   const {
     take,
@@ -294,6 +298,22 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
   }
 
+  if (!ignoreListedStatus) {
+    // TODO: This might be more conditional than anything really.
+    AND.push({
+      OR: [
+        {
+          unlisted: false,
+        },
+        sessionUser
+          ? {
+              userId: sessionUser.id,
+            }
+          : undefined,
+      ].filter(isDefined),
+    });
+  }
+
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
   const where: Prisma.ModelWhereInput = {
     tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
@@ -453,6 +473,12 @@ export const getModelsWithImagesAndModelVersions = async ({
     },
   });
 
+  const entityIds = items.map((i) => i.id);
+  const clubRequirement = await entityRequiresClub({
+    entityIds,
+    entityType: 'Model',
+  });
+
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
@@ -483,6 +509,8 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!versionImages.length && !showImageless) return null;
 
         const canGenerate = !!version.generationCoverage?.covered;
+        const requiresClub =
+          clubRequirement.find((r) => r.entityId === model.id)?.requiresClub ?? false;
 
         return {
           ...model,
@@ -500,6 +528,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           version,
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
+          requiresClub,
         };
       })
       .filter(isDefined),
@@ -526,7 +555,12 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const deleteModelById = async ({ id, userId }: GetByIdInput & { userId: number }) => {
+export const deleteModelById = async ({
+  id,
+  userId,
+}: GetByIdInput & {
+  userId: number;
+}) => {
   const deletedModel = await dbWrite.$transaction(async (tx) => {
     const model = await tx.model.update({
       where: { id },
@@ -576,7 +610,11 @@ export const restoreModelById = ({ id }: GetByIdInput) => {
   });
 };
 
-export const permaDeleteModelById = async ({ id }: GetByIdInput & { userId: number }) => {
+export const permaDeleteModelById = async ({
+  id,
+}: GetByIdInput & {
+  userId: number;
+}) => {
   const deletedModel = await dbWrite.$transaction(async (tx) => {
     const model = await tx.model.findUnique({
       where: { id },
@@ -637,7 +675,10 @@ export const upsertModel = async ({
   userId,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
+ModelUpsertInput & {
+  userId: number;
+  meta?: Prisma.ModelCreateInput['meta'];
+}) => {
   if (!id)
     return dbWrite.model.create({
       select: { id: true, nsfw: true },
@@ -706,7 +747,10 @@ export const publishModelById = async ({
   publishedAt,
   meta,
   republishing,
-}: PublishModelSchema & { meta?: ModelMeta; republishing?: boolean }) => {
+}: PublishModelSchema & {
+  meta?: ModelMeta;
+  republishing?: boolean;
+}) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
@@ -771,7 +815,10 @@ export const unpublishModelById = async ({
   customMessage,
   meta,
   user,
-}: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+}: UnpublishModelSchema & {
+  meta?: ModelMeta;
+  user: SessionUser;
+}) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
       const updatedModel = await tx.model.update({
@@ -897,7 +944,12 @@ export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   await dbWrite.model.update({ where: { id }, data: { locked } });
 };
 
-export const getSimpleModelWithVersions = async ({ id, ctx }: GetByIdInput & { ctx?: Context }) => {
+export const getSimpleModelWithVersions = async ({
+  id,
+  ctx,
+}: GetByIdInput & {
+  ctx?: Context;
+}) => {
   const model = await getModel({
     id,
     user: ctx?.user,
@@ -983,7 +1035,9 @@ export const getModelsByCategory = async ({
   tagname,
   cursor,
   ...input
-}: GetModelsByCategoryInput & { user?: SessionUser }) => {
+}: GetModelsByCategoryInput & {
+  user?: SessionUser;
+}) => {
   input.limit ??= 10;
   let categories = await getTypeCategories({
     type: 'model',
@@ -1155,7 +1209,9 @@ export const setModelsCategory = async ({
   categoryId,
   modelIds,
   userId,
-}: SetModelsCategoryInput & { userId: number }) => {
+}: SetModelsCategoryInput & {
+  userId: number;
+}) => {
   try {
     const modelCategories = await getCategoryTags('model');
     const category = modelCategories.find((c) => c.id === categoryId);

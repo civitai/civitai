@@ -9,7 +9,7 @@ import {
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
 import { BountyEntryMode, ClubMembershipRole, Currency, Prisma, TagTarget } from '@prisma/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, getEntityCoverImage } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -385,13 +385,6 @@ export const getClubTiers = async ({
   }));
 };
 
-export type ClubEntityWithData = {
-  entityType: SupportedClubEntities;
-  entityId: number;
-  title: string;
-  description: string;
-} & ({ entityType: 'Model'; data: MixedObject } | { entityType: 'Article'; data: MixedObject });
-
 export const getClubEntity = async ({
   clubId,
   entityId,
@@ -401,7 +394,7 @@ export const getClubEntity = async ({
 }: GetClubEntityInput & {
   userId?: number;
   isModerator?: boolean;
-}): Promise<ClubEntityWithData> => {
+}) => {
   const [entityAccess] = await hasEntityAccess({
     entityIds: [entityId],
     entityType,
@@ -415,46 +408,26 @@ export const getClubEntity = async ({
     throw throwAuthorizationError('You do not have access to this entity');
   }
 
-  const tiers = await dbRead.clubTier.findMany({
+  const clubEntity = await dbRead.clubEntity.findFirstOrThrow({
     where: {
+      entityId,
+      entityType,
       clubId,
-      unlisted: listedOnly || undefined,
-      joinable: joinableOnly || undefined,
-      id: tierId || undefined,
-    },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      coverImage: {
-        select: imageSelect,
-      },
-      unitAmount: true,
-      currency: true,
-      clubId: true,
-      joinable: true,
-      unlisted: true,
-      _count: include?.includes('membershipsCount')
-        ? {
-            select: {
-              memberships: true,
-            },
-          }
-        : undefined,
-    },
-    orderBy: {
-      unitAmount: 'asc',
     },
   });
 
-  return tiers.map((t) => ({
-    ...t,
-    coverImage: t.coverImage
-      ? {
-          ...t.coverImage,
-          meta: t.coverImage.meta as ImageMetaProps,
-          metadata: t.coverImage.metadata as MixedObject,
-        }
-      : t.coverImage,
-  }));
+  const [coverImage] = await getEntityCoverImage({
+    entities: [
+      {
+        entityId,
+        entityType,
+      },
+    ],
+    include: ['tags'],
+  });
+
+  return {
+    ...clubEntity,
+    coverImage,
+  };
 };
