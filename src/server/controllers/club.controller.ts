@@ -5,7 +5,13 @@ import {
   UpsertClubInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
-import { getClub, getClubTiers, upsertClub, upsertClubTiers } from '~/server/services/club.service';
+import {
+  getClub,
+  getClubTiers,
+  upsertClub,
+  upsertClubTiers,
+  userContributingClubs,
+} from '~/server/services/club.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
 
@@ -80,6 +86,17 @@ export async function upsertClubTierHandler({
       isModerator: !!ctx.user.isModerator,
       deleteTierIds: [],
     });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function userContributingClubsHandler({ ctx }: { ctx: Context }) {
+  try {
+    if (!ctx.user) return [];
+
+    return userContributingClubs({ userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);

@@ -1,22 +1,46 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
+  GetClubEntityInput,
   GetClubTiersInput,
   UpsertClubInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
-import { BountyEntryMode, Currency, Prisma, TagTarget } from '@prisma/client';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
-import { startOfDay, toUtc } from '~/utils/date-helpers';
-import { updateEntityFiles } from '~/server/services/file.service';
+import { BountyEntryMode, ClubMembershipRole, Currency, Prisma, TagTarget } from '@prisma/client';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createEntityImages } from '~/server/services/image.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { ImageMetaProps, ImageUploadProps } from '~/server/schema/image.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 
+export const userContributingClubs = async ({ userId }: { userId: number }) => {
+  const clubs = await dbRead.club.findMany({
+    select: {
+      id: true,
+      name: true,
+    },
+    where: {
+      OR: [
+        {
+          userId,
+        },
+        {
+          memberships: {
+            some: {
+              userId,
+              role: {
+                in: [ClubMembershipRole.Admin, ClubMembershipRole.Contributor],
+              },
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  return clubs;
+};
 export const getClub = async ({
   id,
 }: GetByIdInput & {
@@ -308,6 +332,66 @@ export const getClubTiers = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
+  const club = await getClub({ id: clubId });
+
+  if (userId !== club?.userId && !isModerator) {
+    listedOnly = true;
+    joinableOnly = true;
+  }
+
+  const tiers = await dbRead.clubTier.findMany({
+    where: {
+      clubId,
+      unlisted: listedOnly || undefined,
+      joinable: joinableOnly || undefined,
+      id: tierId || undefined,
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      coverImage: {
+        select: imageSelect,
+      },
+      unitAmount: true,
+      currency: true,
+      clubId: true,
+      joinable: true,
+      unlisted: true,
+      _count: include?.includes('membershipsCount')
+        ? {
+            select: {
+              memberships: true,
+            },
+          }
+        : undefined,
+    },
+    orderBy: {
+      unitAmount: 'asc',
+    },
+  });
+
+  return tiers.map((t) => ({
+    ...t,
+    coverImage: t.coverImage
+      ? {
+          ...t.coverImage,
+          meta: t.coverImage.meta as ImageMetaProps,
+          metadata: t.coverImage.metadata as MixedObject,
+        }
+      : t.coverImage,
+  }));
+};
+
+export const getClubEntity = async ({
+  clubId,
+  entityId,
+  entityType,
+}: GetClubEntityInput & {
+  userId?: number;
+  isModerator?: boolean;
+}) => {
+  const hasAccess = false;
   const club = await getClub({ id: clubId });
 
   if (userId !== club?.userId && !isModerator) {

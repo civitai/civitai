@@ -2358,7 +2358,6 @@ model ClubTier {
   // Can only be joined to via a club Admin adding the user.
   joinable     Boolean
   memberships  ClubMembership[]
-  entities     ClubEntity[]
 }
 
 enum ClubMembershipRole {
@@ -2385,11 +2384,10 @@ model ClubMembership {
   @@unique([userId, clubId])
   @@index([userId])
   @@index([clubId])
-
 }
 
 model ClubMembershipCharge {
-  id                  Int     @id @default(autoincrement())
+  id                  Int      @id @default(autoincrement())
   userId              Int
   clubId              Int
   clubTierId          Int
@@ -2403,17 +2401,17 @@ model ClubMembershipCharge {
 
 model ClubEntity {
   clubId      Int
-  club        Club      @relation(fields: [clubId], references: [id])
+  club        Club     @relation(fields: [clubId], references: [id])
   entityType  String
   entityId    Int
   addedById   Int
-  addedBy     User      @relation(fields: [userId], references: [id])
+  addedBy     User     @relation(fields: [addedById], references: [id])
   membersOnly Boolean
-  ClubTier    ClubTier? @relation(fields: [clubTierId], references: [id])
-  clubTierId  Int?
-  userId      Int
+  addedAt     DateTime @default(now())
+  title       String
+  description String
 
-  @@id([clubId, entityId])
+  @@id([clubId, entityId, entityType])
 }
 
 /// @view

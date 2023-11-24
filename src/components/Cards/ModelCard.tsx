@@ -59,6 +59,7 @@ import {
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -144,6 +145,12 @@ export function ModelCard({ data }: Props) {
   if (features.profileOverhaul && currentUser?.id === data.user.id) {
     contextMenuItems = contextMenuItems.concat([
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
+    ]);
+  }
+
+  if (features.clubs && currentUser?.id === data.user.id) {
+    contextMenuItems = contextMenuItems.concat([
+      <AddToClubMenuItem key="add-to-club" entityType="Model" entityId={data.id} />,
     ]);
   }
 

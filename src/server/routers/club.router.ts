@@ -9,11 +9,15 @@ import {
   getClubTiersHandler,
   upsertClubHandler,
   upsertClubTierHandler,
+  userContributingClubsHandler,
 } from '~/server/controllers/club.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
 export const clubRouter = router({
   getById: publicProcedure.input(getByIdSchema).use(isFlagProtected('clubs')).query(getClubHandler),
+  userContributingClubs: publicProcedure
+    .use(isFlagProtected('clubs'))
+    .query(userContributingClubsHandler),
   upsert: protectedProcedure
     .input(upsertClubInput)
     .use(isFlagProtected('clubs'))
