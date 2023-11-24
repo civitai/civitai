@@ -143,10 +143,10 @@ export const getServerSideProps = createServerSideProps({
 
         console.log(clubAccess);
 
-        if (clubAccess?.requiresClub && clubAccess?.clubId) {
+        if (clubAccess?.requiresClub && clubAccess?.clubs?.length > 0) {
           return {
             redirect: {
-              destination: `/clubs/${clubAccess.clubId}/model/${id}`,
+              destination: `/clubs/${clubAccess.clubs[0].clubId}/model/${id}`,
               permanent: false,
             },
           };

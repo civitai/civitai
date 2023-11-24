@@ -1,12 +1,14 @@
 import { TRPCError } from '@trpc/server';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
+  GetClubEntityInput,
   GetClubTiersInput,
   UpsertClubInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import {
   getClub,
+  getClubEntity,
   getClubTiers,
   upsertClub,
   upsertClubTiers,
@@ -97,6 +99,25 @@ export async function userContributingClubsHandler({ ctx }: { ctx: Context }) {
     if (!ctx.user) return [];
 
     return userContributingClubs({ userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function getClubEntityHandler({
+  input,
+  ctx,
+}: {
+  input: GetClubEntityInput;
+  ctx: Context;
+}) {
+  try {
+    return await getClubEntity({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: !!ctx.user?.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);

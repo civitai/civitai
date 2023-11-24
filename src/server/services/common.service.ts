@@ -129,15 +129,20 @@ export const hasEntityAccess = async ({
 type ClubEntityAccessStatus = {
   entityId: number;
   requiresClub: boolean;
-  clubId?: number;
-  clubTierId?: number | null;
+  clubs: {
+    clubId: number;
+    clubTierId: number | null;
+  }[];
+  availability: Availability;
 };
 export const entityRequiresClub = async ({
   entityType,
   entityIds,
+  clubId,
 }: {
   entityType: SupportedClubEntities;
   entityIds: number[];
+  clubId?: number;
 }): Promise<ClubEntityAccessStatus[]> => {
   if (entityIds.length === 0) {
     return [];
@@ -163,6 +168,8 @@ export const entityRequiresClub = async ({
   const publicEntitiesAccess = publicEntities.map((entity) => ({
     entityId: entity.id,
     requiresClub: false,
+    clubs: [],
+    availability: entity.availability,
   }));
 
   if (!privateEntities.length) {
@@ -181,11 +188,15 @@ export const entityRequiresClub = async ({
       COALESCE(c.id, cmt."clubId") as "clubId",
       cmt."clubTierId" as "clubTierId"
     FROM "EntityAccess" ea
-    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id
-    LEFT JOIN "ClubMembership" cmt ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = cmt."clubTierId"
+    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${Prisma.raw(
+      clubId ? `AND c.id = ${clubId}` : ''
+    )}
+    LEFT JOIN "ClubMembership" cmt ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = cmt."clubTierId" ${Prisma.raw(
+      clubId ? `AND cmt."clubId" = ${clubId}` : ''
+    )}
     WHERE ea."accessToId" IN (${Prisma.join(entityIds, ', ')})
       AND ea."accessToType" = ${entityType}
-    ORDER BY "clubId"
+    ORDER BY "clubTierId", "clubId"
   `;
 
   const access: ClubEntityAccessStatus[] = entityIds.map((id) => {
@@ -194,18 +205,27 @@ export const entityRequiresClub = async ({
       return publicEntityAccess;
     }
 
-    const privateEntityAccess = privateEntitiesAccess.find((entity) => entity.entityId === id);
+    const privateEntityAccesses = privateEntitiesAccess.filter((entity) => entity.entityId === id);
 
-    if (!privateEntityAccess) {
+    if (privateEntityAccesses.length === 0) {
       return {
         entityId: id,
         requiresClub: false,
+        clubs: [],
+        availability: Availability.Private,
       };
     }
 
     return {
-      ...privateEntityAccess,
+      entityId: id,
       requiresClub: true,
+      availability: Availability.Private,
+      clubs: privateEntityAccesses
+        .filter((privateEntityAccess) => privateEntityAccess.clubId)
+        .map((privateEntityAccess) => ({
+          clubId: privateEntityAccess.clubId,
+          clubTierId: privateEntityAccess.clubTierId,
+        })),
     };
   });
 

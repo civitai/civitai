@@ -7,14 +7,21 @@ import {
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
-import { BountyEntryMode, ClubMembershipRole, Currency, Prisma, TagTarget } from '@prisma/client';
+import {
+  Availability,
+  BountyEntryMode,
+  ClubMembershipRole,
+  Currency,
+  Prisma,
+  TagTarget,
+} from '@prisma/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { createEntityImages, getEntityCoverImage } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { hasEntityAccess } from '~/server/services/common.service';
+import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
 
 export const userContributingClubs = async ({ userId }: { userId: number }) => {
   const clubs = await dbRead.club.findMany({
@@ -385,6 +392,48 @@ export const getClubTiers = async ({
   }));
 };
 
+type ClubEntityByEntityIdWithAccess = {
+  type: 'hasAccess';
+  hasAccess: true;
+  title: string;
+  description: string;
+  coverImage: null | Awaited<ReturnType<typeof getEntityCoverImage>>[number];
+};
+
+type ClubEntityByEntityIdMembersOnlyNoAccess = {
+  type: 'membersOnlyNoAccess';
+  hasAccess: false;
+  membersOnly: true;
+  title: null;
+  description: null;
+  coverImage: null;
+  membership: null;
+};
+
+type ClubEntityByEntityIdNonMembersOnlyNoAccess = {
+  type: 'noAccess';
+  hasAccess: false;
+  title: string;
+  description: string;
+  coverImage: null | { id: number; hash: string };
+};
+
+type ClubEntityByEntityId = {
+  clubId: number;
+  entityId: number;
+  entityType: SupportedClubEntities;
+  type: 'hasAccess' | 'membersOnlyNoAccess' | 'noAccess';
+  availability: Availability;
+  availableInTierIds: number[];
+  membersOnly: boolean;
+  title: string | null;
+  description: string | null;
+  membership: null | { clubTierId: number };
+} & (
+  | ClubEntityByEntityIdWithAccess
+  | ClubEntityByEntityIdMembersOnlyNoAccess
+  | ClubEntityByEntityIdNonMembersOnlyNoAccess
+);
 export const getClubEntity = async ({
   clubId,
   entityId,
@@ -394,27 +443,81 @@ export const getClubEntity = async ({
 }: GetClubEntityInput & {
   userId?: number;
   isModerator?: boolean;
-}) => {
-  const [entityAccess] = await hasEntityAccess({
-    entityIds: [entityId],
-    entityType,
-    userId,
-    isModerator,
-  });
-
-  const { hasAccess } = entityAccess;
-
-  if (!hasAccess) {
-    throw throwAuthorizationError('You do not have access to this entity');
-  }
-
-  const clubEntity = await dbRead.clubEntity.findFirstOrThrow({
+}): Promise<ClubEntityByEntityId | null> => {
+  const club = await getClub({ id: clubId });
+  const clubEntity = await dbRead.clubEntity.findFirst({
     where: {
       entityId,
       entityType,
       clubId,
     },
+    select: {
+      clubId: true,
+      title: true,
+      description: true,
+      membersOnly: true,
+    },
   });
+
+  if (!clubEntity) {
+    return null;
+  }
+
+  const [entityClubRequirement] = await entityRequiresClub({
+    entityIds: [entityId],
+    entityType,
+    clubId,
+  });
+
+  const availableInTierIds = (entityClubRequirement?.clubs ?? [])
+    .map((c) => c.clubTierId)
+    .filter(isDefined);
+  const availability = entityClubRequirement?.availability ?? Availability.Public;
+
+  if (!userId && clubEntity.membersOnly) {
+    return {
+      type: 'membersOnlyNoAccess',
+      entityType,
+      entityId,
+      ...clubEntity,
+      membersOnly: true,
+      title: null,
+      description: null,
+      membership: null,
+      hasAccess: false,
+      availableInTierIds,
+      coverImage: null,
+      availability,
+    };
+  }
+
+  const membership = await dbRead.clubMembership.findFirst({
+    where: {
+      clubId,
+      userId,
+      startedAt: { gte: new Date() },
+      expiresAt: { lte: new Date() },
+    },
+  });
+
+  const isOwner = club.userId === userId;
+
+  if (!isModerator && !isOwner && !membership && clubEntity.membersOnly) {
+    return {
+      type: 'membersOnlyNoAccess',
+      entityType,
+      entityId,
+      ...clubEntity,
+      membersOnly: true,
+      title: null,
+      description: null,
+      membership: null,
+      hasAccess: false,
+      availableInTierIds,
+      coverImage: null,
+      availability,
+    };
+  }
 
   const [coverImage] = await getEntityCoverImage({
     entities: [
@@ -426,8 +529,43 @@ export const getClubEntity = async ({
     include: ['tags'],
   });
 
+  const [entityAccess] = await hasEntityAccess({
+    entityIds: [entityId],
+    entityType,
+    userId,
+    isModerator,
+  });
+
+  const { hasAccess } = entityAccess;
+
+  if (hasAccess) {
+    return {
+      type: 'hasAccess',
+      hasAccess: true,
+      entityType,
+      entityId,
+      ...clubEntity,
+      membership,
+      coverImage: !coverImage ? null : coverImage,
+      availableInTierIds,
+      availability,
+    };
+  }
+
   return {
+    type: 'noAccess',
+    hasAccess: false,
+    entityType,
+    entityId,
     ...clubEntity,
-    coverImage,
+    coverImage: !coverImage
+      ? null
+      : {
+          id: coverImage.id,
+          hash: coverImage.hash,
+        },
+    membership,
+    availableInTierIds,
+    availability,
   };
 };

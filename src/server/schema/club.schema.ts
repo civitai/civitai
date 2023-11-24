@@ -59,3 +59,17 @@ export const getClubEntity = z.object({
 });
 
 export type GetClubEntityInput = z.infer<typeof getClubEntity>;
+
+export const upsertClubEntitySchema = z.object({
+  clubId: z.number().optional(),
+  entityType: z.enum(supportedClubEntities).optional(),
+  entityId: z.number().optional(),
+  title: z.string().trim().nonempty(),
+  description: getSanitizedStringSchema().refine((data) => {
+    return data && data.length > 0 && data !== '<p></p>';
+  }, 'Cannot be empty'),
+  privatizeEntity: z.boolean(),
+  clubTierIds: z.array(z.number()).optional(),
+});
+
+export type UpsertClubEntityInput = z.infer<typeof upsertClubEntitySchema>;
