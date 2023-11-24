@@ -79,11 +79,12 @@ export const hasEntityAccess = async ({
     }[]
   >`
     SELECT 
-      COALESCE() as "hasAccess",
+      COALESCE(c.id IS NOT NULL, cmc."clubId" IS NOT NULL, cmt."clubId" IS NOT NULL, u.id IS NOT NULL, false) as "hasAccess",
     FROM "EntityAccess" ea
     JOIN "Club" c ON ea."accessorType" = "Club" AND ea."accessorId" = c.id AND c.userId = ${userId} 
     JOIN "ClubMembership" cmc ON ea."accessorType" = "Club" AND ea."accessorId" = cmc."clubId" AND cm.userId = ${userId}
     JOIN "ClubMembership" cmt ON ea."accessorType" = "ClubTier" AND ea."accessorId" = cmt."clubTierId" AND cmt.userId = ${userId}
+    JOIN "User" u ON ea."accessorType" = "User" AND ea."accessorId" = u.id AND u.id = ${userId}
     WHERE ea."accessToId" = ${entityId}
       AND ea."accessToType" = ${entityType}
   `;
