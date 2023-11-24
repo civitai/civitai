@@ -16,7 +16,9 @@ const { openModal, Modal } = createContextModal<{
   radius: 'lg',
   zIndex: 400,
   Element: ({ context, props: { entityType, entityId, clubId } }) => {
-    const { data: clubEntity, isLoading } = trpc.
+    // TOOD: fetch club entity.
+    // const { data: clubEntity, isLoading } = trpc.club
+
     const handleClose = () => {
       context.close();
     };
@@ -24,9 +26,7 @@ const { openModal, Modal } = createContextModal<{
     return (
       <Stack spacing="md">
         <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
-
-          </Text>
+          <Text size="lg" weight={700}></Text>
           <Group spacing="sm" noWrap>
             <Badge
               radius="xl"

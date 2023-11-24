@@ -52,11 +52,9 @@ export const getClubTiersInput = z.object({
 const supportedClubEntities = ['Model', 'Article'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
 
-export type GetClubTiersInput = z.infer<typeof getClubTiersInput>;
-
 export const getClubEntity = z.object({
   clubId: z.number(),
-  entityType: z.nativeEnum(supportedClubEntities),
+  entityType: z.enum(supportedClubEntities),
   entityId: z.number(),
 });
 

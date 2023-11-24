@@ -2,17 +2,19 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetClubEntityInput,
   GetClubTiersInput,
+  SupportedClubEntities,
   UpsertClubInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import { BountyDetailsSchema, CreateBountyInput } from '~/server/schema/bounty.schema';
 import { BountyEntryMode, ClubMembershipRole, Currency, Prisma, TagTarget } from '@prisma/client';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { createEntityImages } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { hasEntityAccess } from '~/server/services/common.service';
 
 export const userContributingClubs = async ({ userId }: { userId: number }) => {
   const clubs = await dbRead.club.findMany({
@@ -383,20 +385,34 @@ export const getClubTiers = async ({
   }));
 };
 
+export type ClubEntityWithData = {
+  entityType: SupportedClubEntities;
+  entityId: number;
+  title: string;
+  description: string;
+} & ({ entityType: 'Model'; data: MixedObject } | { entityType: 'Article'; data: MixedObject });
+
 export const getClubEntity = async ({
   clubId,
   entityId,
   entityType,
+  userId,
+  isModerator,
 }: GetClubEntityInput & {
   userId?: number;
   isModerator?: boolean;
-}) => {
-  const hasAccess = false;
-  const club = await getClub({ id: clubId });
+}): Promise<ClubEntityWithData> => {
+  const [entityAccess] = await hasEntityAccess({
+    entityIds: [entityId],
+    entityType,
+    userId,
+    isModerator,
+  });
 
-  if (userId !== club?.userId && !isModerator) {
-    listedOnly = true;
-    joinableOnly = true;
+  const { hasAccess } = entityAccess;
+
+  if (!hasAccess) {
+    throw throwAuthorizationError('You do not have access to this entity');
   }
 
   const tiers = await dbRead.clubTier.findMany({
