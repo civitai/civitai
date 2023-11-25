@@ -3,6 +3,7 @@ import {
   GetClubEntityInput,
   GetClubTiersInput,
   SupportedClubEntities,
+  UpsertClubEntityInput,
   UpsertClubInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -21,15 +22,37 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
+import {
+  entityAvailabilityUpdate,
+  entityOwnership,
+  entityRequiresClub,
+  hasEntityAccess,
+} from '~/server/services/common.service';
 
-export const userContributingClubs = async ({ userId }: { userId: number }) => {
+export const userContributingClubs = async ({
+  userId,
+  clubId,
+}: {
+  userId: number;
+  clubId?: number;
+}) => {
   const clubs = await dbRead.club.findMany({
     select: {
       id: true,
       name: true,
+      userId: true,
+      memberships: {
+        where: {
+          userId,
+        },
+        select: {
+          clubId: true,
+          role: true,
+        },
+      },
     },
     where: {
+      id: clubId,
       OR: [
         {
           userId,
@@ -52,11 +75,14 @@ export const userContributingClubs = async ({ userId }: { userId: number }) => {
 };
 export const getClub = async ({
   id,
+  tx,
 }: GetByIdInput & {
   userId?: number;
   isModerator?: boolean;
+  tx?: Prisma.TransactionClient;
 }) => {
-  const club = await dbRead.club.findUniqueOrThrow({
+  const dbClient = tx ?? dbRead;
+  const club = await dbClient.club.findUniqueOrThrow({
     where: { id },
     select: {
       id: true,
@@ -440,12 +466,15 @@ export const getClubEntity = async ({
   entityType,
   userId,
   isModerator,
+  tx,
 }: GetClubEntityInput & {
   userId?: number;
   isModerator?: boolean;
+  tx?: Prisma.TransactionClient;
 }): Promise<ClubEntityByEntityId | null> => {
-  const club = await getClub({ id: clubId });
-  const clubEntity = await dbRead.clubEntity.findFirst({
+  const dbClient = tx ?? dbRead;
+  const club = await getClub({ id: clubId, tx: dbClient });
+  const clubEntity = await dbClient.clubEntity.findFirst({
     where: {
       entityId,
       entityType,
@@ -491,7 +520,7 @@ export const getClubEntity = async ({
     };
   }
 
-  const membership = await dbRead.clubMembership.findFirst({
+  const membership = await dbClient.clubMembership.findFirst({
     where: {
       clubId,
       userId,
@@ -568,4 +597,150 @@ export const getClubEntity = async ({
     availableInTierIds,
     availability,
   };
+};
+
+export const upsertClubEntity = async ({
+  clubTierIds,
+  privatizeEntity,
+  userId,
+  isModerator,
+  ...data
+}: UpsertClubEntityInput & {
+  userId: number;
+  isModerator?: boolean;
+  tx?: Prisma.TransactionClient;
+}): Promise<ClubEntityByEntityId | null> => {
+  const [club] = await userContributingClubs({ userId: userId, clubId: data.clubId });
+
+  if (!club) {
+    throw throwBadRequestError('You do not have permission to add content to this club.');
+  }
+
+  const [ownership] = await entityOwnership({
+    entityType: data.entityType,
+    entityIds: [data.entityId],
+    userId,
+  });
+
+  if (!ownership?.isOwner) {
+    throw throwBadRequestError('You do not have permission to add this entity to a club.');
+  }
+
+  const tiers = await getClubTiers({
+    clubId: data.clubId,
+    userId,
+    isModerator,
+    joinableOnly: false,
+    listedOnly: false,
+  });
+
+  const allClubTierIds = tiers.map((t) => t.id);
+
+  const clubEntity = await dbWrite.$transaction(
+    async (tx) => {
+      const clubEntity = await tx.clubEntity.upsert({
+        where: {
+          clubId_entityId_entityType: {
+            entityId: data.entityId,
+            clubId: data.clubId,
+            entityType: data.entityType,
+          },
+        },
+        create: {
+          ...data,
+          addedById: userId,
+        },
+        update: {
+          ...data,
+        },
+      });
+
+      if (privatizeEntity) {
+        await entityAvailabilityUpdate({
+          entityType: data.entityType,
+          entityIds: [data.entityId],
+          availability: Availability.Private,
+        });
+
+        if (clubTierIds && clubTierIds.length > 0) {
+          // Ensures we have no record of this item beling locked to the clubId
+          await tx.entityAccess.deleteMany({
+            where: {
+              accessorId: data.clubId,
+              accessorType: 'Club',
+              accessToId: data.entityId,
+              accessToType: data.entityType,
+            },
+          });
+
+          // Link it to all tiers directly.
+          await tx.entityAccess.createMany({
+            data: clubTierIds.map((clubTierId) => ({
+              accessorId: clubTierId,
+              accessorType: 'ClubTier',
+              accessToId: data.entityId,
+              accessToType: data.entityType,
+            })),
+          });
+        } else {
+          await tx.entityAccess.deleteMany({
+            where: {
+              accessorId: {
+                in: allClubTierIds,
+              },
+              accessorType: 'ClubTier',
+              accessToId: data.entityId,
+              accessToType: data.entityType,
+            },
+          });
+
+          await tx.entityAccess.create({
+            data: {
+              accessorId: data.clubId,
+              accessorType: 'Club',
+              accessToId: data.entityId,
+              accessToType: data.entityType,
+            },
+          });
+        }
+      } else {
+        await tx.entityAccess.deleteMany({
+          where: {
+            OR: [
+              {
+                accessorId: {
+                  in: allClubTierIds,
+                },
+                accessorType: 'ClubTier',
+              },
+              {
+                accessorId: data.clubId,
+                accessorType: 'Club',
+              },
+            ],
+            accessToId: data.entityId,
+            accessToType: data.entityType,
+          },
+        });
+
+        await entityAvailabilityUpdate({
+          entityType: data.entityType,
+          entityIds: [data.entityId],
+          availability: Availability.Public,
+        });
+      }
+
+      return clubEntity;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
+
+  return getClubEntity({
+    clubId: clubEntity.clubId,
+    entityId: clubEntity.entityId,
+    entityType: clubEntity.entityType as SupportedClubEntities,
+    userId,
+    isModerator,
+    tx: dbWrite, // Ensures we get the latest.
+  });
 };

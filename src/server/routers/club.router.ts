@@ -2,6 +2,7 @@ import { isFlagProtected, protectedProcedure, publicProcedure, router } from '..
 import {
   getClubEntity,
   getClubTiersInput,
+  upsertClubEntitySchema,
   upsertClubInput,
   upsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -9,6 +10,7 @@ import {
   getClubEntityHandler,
   getClubHandler,
   getClubTiersHandler,
+  upsertClubEntityHandler,
   upsertClubHandler,
   upsertClubTierHandler,
   userContributingClubsHandler,
@@ -36,4 +38,8 @@ export const clubRouter = router({
     .input(upsertClubTierInput)
     .use(isFlagProtected('clubs'))
     .mutation(upsertClubTierHandler),
+  upsertClubEntity: protectedProcedure
+    .input(upsertClubEntitySchema)
+    .use(isFlagProtected('clubs'))
+    .mutation(upsertClubEntityHandler),
 });

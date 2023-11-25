@@ -1,4 +1,4 @@
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { Availability, Prisma } from '@prisma/client';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 
@@ -230,4 +230,46 @@ export const entityRequiresClub = async ({
   });
 
   return access;
+};
+
+export const entityOwnership = async ({
+  entityType,
+  entityIds,
+  userId,
+}: {
+  entityType: SupportedClubEntities;
+  entityIds: number[];
+  userId: number;
+}): Promise<{ entityId: number; isOwner: boolean }[]> => {
+  if (entityIds.length === 0) {
+    return [];
+  }
+
+  const entitiesOwnership = await dbRead.$queryRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
+    SELECT
+        t.id as "entityId",
+        "userId" = ${userId} as "isOwner"
+    FROM "${entityType}" t
+    WHERE t.id IN (${entityIds.join(', ')}) 
+  `);
+
+  return entitiesOwnership;
+};
+
+export const entityAvailabilityUpdate = async ({
+  entityType,
+  entityIds,
+  availability,
+}: {
+  entityType: SupportedClubEntities;
+  entityIds: number[];
+  availability: Availability;
+}) => {
+  if (entityIds.length === 0) {
+    return;
+  }
+
+  await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
+    UPDATE "${entityType}" t SET "availability" = ${availability}::"Availability" 
+  `);
 };

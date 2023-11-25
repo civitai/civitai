@@ -61,13 +61,14 @@ export const getClubEntity = z.object({
 export type GetClubEntityInput = z.infer<typeof getClubEntity>;
 
 export const upsertClubEntitySchema = z.object({
-  clubId: z.number().optional(),
-  entityType: z.enum(supportedClubEntities).optional(),
-  entityId: z.number().optional(),
+  clubId: z.number(),
+  entityType: z.enum(supportedClubEntities),
+  entityId: z.number(),
   title: z.string().trim().nonempty(),
   description: getSanitizedStringSchema().refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
+  membersOnly: z.boolean(),
   privatizeEntity: z.boolean(),
   clubTierIds: z.array(z.number()).optional(),
 });

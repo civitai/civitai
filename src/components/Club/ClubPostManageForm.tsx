@@ -53,7 +53,7 @@ export const ClubPostManageForm = ({
   ]);
   const { data: userContributingClubs = [], isLoading: isLoadingUserContributingClubs } =
     trpc.club.userContributingClubs.useQuery();
-  const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
+  const { data: tiers = [] } = trpc.club.getTiers.useQuery(
     {
       clubId: clubId as number,
       joinableOnly: false,
@@ -186,6 +186,20 @@ export const ClubPostManageForm = ({
               stickyToolbar
             />
 
+            <InputSwitch
+              name="membersOnly"
+              label={
+                <Stack spacing={4}>
+                  <Group spacing={4}>
+                    <Text inline>Members only</Text>
+                  </Group>
+                  <Text size="xs" color="dimmed">
+                    Make this post only available to members of the club. This will not affect the
+                    resource itself unless it is private.
+                  </Text>
+                </Stack>
+              }
+            />
             <InputSwitch
               name="privatizeEntity"
               label={

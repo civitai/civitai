@@ -3,6 +3,7 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   GetClubEntityInput,
   GetClubTiersInput,
+  UpsertClubEntityInput,
   UpsertClubInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -11,6 +12,7 @@ import {
   getClubEntity,
   getClubTiers,
   upsertClub,
+  upsertClubEntity,
   upsertClubTiers,
   userContributingClubs,
 } from '~/server/services/club.service';
@@ -114,6 +116,25 @@ export async function getClubEntityHandler({
 }) {
   try {
     return await getClubEntity({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: !!ctx.user?.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function upsertClubEntityHandler({
+  input,
+  ctx,
+}: {
+  input: UpsertClubEntityInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return await upsertClubEntity({
       ...input,
       userId: ctx.user?.id,
       isModerator: !!ctx.user?.isModerator,
