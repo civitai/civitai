@@ -37,7 +37,7 @@ export function showSuccessNotification({
   title,
   autoClose = 3000,
 }: {
-  message: string;
+  message: string | React.ReactNode;
   title?: string;
   autoClose?: number | false;
 }) {
@@ -49,6 +49,7 @@ export function showSuccessNotification({
     autoClose,
   });
 }
+
 export function showBuzzNotification({
   message,
   title,

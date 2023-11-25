@@ -270,6 +270,6 @@ export const entityAvailabilityUpdate = async ({
   }
 
   await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
-    UPDATE "${entityType}" t SET "availability" = ${availability}::"Availability" 
+    UPDATE "${entityType}" t SET "availability" = '${availability}'::"Availability" 
   `);
 };

@@ -16,6 +16,8 @@ import { Box, Button, Center, Group, Input, Loader, Paper, Stack, Text } from '@
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { Availability } from '@prisma/client';
+import { useMutateClub } from '~/components/Club/club.utils';
+import { showSuccessNotification } from '~/utils/notifications';
 
 const schema = upsertClubEntitySchema;
 
@@ -24,7 +26,17 @@ export type ClubPostManageFormProps = {
   entityType?: SupportedClubEntities;
   clubId?: number;
   title?: string;
-  onSave: () => void;
+  onSave: ({
+    entityId,
+    entityType,
+    clubId,
+    isUpdate,
+  }: {
+    entityId: number;
+    entityType: string;
+    clubId: number;
+    isUpdate: boolean;
+  }) => void;
   onCancel?: () => void;
 };
 export const ClubPostManageForm = ({
@@ -32,6 +44,7 @@ export const ClubPostManageForm = ({
   entityId: _entityId,
   clubId: _clubId,
   title: _title,
+  onSave,
 }: ClubPostManageFormProps) => {
   const form = useForm({
     schema,
@@ -51,6 +64,7 @@ export const ClubPostManageForm = ({
     'clubId',
     'privatizeEntity',
   ]);
+  const { upsertClubEntity, upsertingClubEntity } = useMutateClub();
   const { data: userContributingClubs = [], isLoading: isLoadingUserContributingClubs } =
     trpc.club.userContributingClubs.useQuery();
   const { data: tiers = [] } = trpc.club.getTiers.useQuery(
@@ -101,8 +115,14 @@ export const ClubPostManageForm = ({
 
   const [coverImage] = coverImages;
 
-  const handleSubmit = (data: z.infer<typeof schema>) => {
-    console.log(data);
+  const handleSubmit = async (data: z.infer<typeof schema>) => {
+    await upsertClubEntity(data);
+    onSave?.({
+      entityId: data.entityId,
+      entityType: data.entityType,
+      clubId: data.clubId,
+      isUpdate: !!clubEntity,
+    });
   };
 
   if (isLoadingUserContributingClubs) {
@@ -121,14 +141,14 @@ export const ClubPostManageForm = ({
         </Text>
 
         <Input.Wrapper label="Resource" labelProps={{ w: '100%' }} withAsterisk>
-          {(!_entityId || !_entityType) && (
+          {(!_entityId || !_entityType) && currentUser?.username && (
             <QuickSearchDropdown
               supportedIndexes={['models', 'articles']}
               onItemSelected={(item) => {
                 form.setValue('entityId', item.entityId);
                 form.setValue('entityType', item.entityType as SupportedClubEntities);
               }}
-              filters={`user.username='${currentUser?.username ?? 'lykon'}'`}
+              filters={`user.username='${currentUser?.username}'`}
               dropdownItemLimit={25}
             />
           )}
@@ -237,7 +257,7 @@ export const ClubPostManageForm = ({
           </Center>
         ) : null}
 
-        <Button type="submit" fullWidth>
+        <Button type="submit" fullWidth loading={upsertingClubEntity}>
           Save
         </Button>
       </Stack>
