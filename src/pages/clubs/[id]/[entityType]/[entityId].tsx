@@ -11,8 +11,30 @@ import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { SupportedClubEntities } from '~/server/schema/club.schema';
+import { capitalize } from 'lodash-es';
+import Link from 'next/link';
 
-const querySchema = z.object({ id: z.coerce.number(), modelId: z.coerce.number() });
+const getEntityUrl = ({
+  entityType,
+  entityId,
+}: {
+  entityType: SupportedClubEntities;
+  entityId: number;
+}) => {
+  switch (entityType) {
+    case 'Model':
+      return `/models/${entityId}`;
+    case 'Article':
+      return `/articles/${entityId}`;
+  }
+};
+
+const querySchema = z.object({
+  id: z.coerce.number(),
+  entityType: z.enum(['model', 'article']).transform((v) => capitalize(v)),
+  entityId: z.coerce.number(),
+});
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -23,29 +45,30 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.params);
     if (!result.success) return { notFound: true };
 
-    const { id, modelId } = result.data;
+    const { id, entityId, entityType } = result.data;
 
     if (ssg) {
       await ssg.club.getById.prefetch({ id });
       await ssg.club.getClubEntity.prefetch({
-        entityType: 'Model',
-        entityId: modelId,
+        entityType: entityType as SupportedClubEntities,
+        entityId: entityId,
         clubId: id,
       });
     }
 
-    return { props: { id, modelId } };
+    return { props: { id, entityId, entityType: entityType as SupportedClubEntities } };
   },
 });
 
 export default function ClubModelEntity({
   id,
-  modelId,
+  entityId,
+  entityType,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
   const { data: clubEntity, isLoading } = trpc.club.getClubEntity.useQuery({
-    entityType: 'Model',
-    entityId: modelId,
+    entityType,
+    entityId,
     clubId: id,
   });
 
@@ -95,6 +118,9 @@ export default function ClubModelEntity({
           <span>TODO: Cover image display</span>
           <Title order={3}>{clubEntity.title}</Title>
           <RenderHtml html={clubEntity.description} />
+          <Link href={getEntityUrl({ entityId, entityType })} passHref>
+            <Button fullWidth>Checkout this resource</Button>
+          </Link>
         </Paper>
       </Stack>
     </Container>
