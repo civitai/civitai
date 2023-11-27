@@ -28,7 +28,7 @@ export function Queue({
     <Center p="xl">
       <Loader />
     </Center>
-  ) : !requests?.length ? (
+  ) : !!requests?.length ? (
     <>
       <Stack p="md">
         {requests.map((request) => (
