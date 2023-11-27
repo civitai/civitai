@@ -475,8 +475,10 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const entityIds = items.map((i) => i.id);
   const clubRequirement = await entityRequiresClub({
-    entityIds,
-    entityType: 'Model',
+    entities: entityIds.map((id) => ({
+      entityId: id,
+      entityType: 'Model',
+    })),
   });
 
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);

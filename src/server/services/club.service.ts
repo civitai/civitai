@@ -1,5 +1,6 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
+  GetAllClubEntitiesInput,
   GetClubEntityInput,
   GetClubTiersInput,
   SupportedClubEntities,
@@ -501,8 +502,12 @@ export const getClubEntity = async ({
   }
 
   const [entityClubRequirement] = await entityRequiresClub({
-    entityIds: [entityId],
-    entityType,
+    entities: [
+      {
+        entityId,
+        entityType,
+      },
+    ],
     clubId,
   });
 
@@ -763,5 +768,198 @@ export const upsertClubEntity = async ({
     userId,
     isModerator,
     tx: dbWrite, // Ensures we get the latest.
+  });
+};
+
+export const getAllClubEntities = async ({
+  clubId,
+  userId,
+  isModerator,
+  limit,
+  cursor,
+  ...input
+}: GetAllClubEntitiesInput & {
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<{ items: ClubEntityByEntityId[]; nextCursor?: string | null }> => {
+  const club = await getClub({ id: clubId });
+  const take = limit + 1;
+
+  const clubEntities = await dbRead.clubEntity.findMany({
+    take,
+    cursor: cursor
+      ? {
+          clubId_entityId_entityType: cursor,
+        }
+      : undefined,
+    where: {
+      clubId,
+    },
+    select: {
+      clubId: true,
+      title: true,
+      description: true,
+      membersOnly: true,
+      addedAt: true,
+      addedBy: {
+        select: userWithCosmeticsSelect,
+      },
+    },
+  });
+
+  if (!clubEntities.length) {
+    return {
+      items: [] as ClubEntityByEntityId[],
+      nextCursor: null,
+    };
+  }
+
+  let nextCursor: string | undefined;
+  if (clubEntities.length > limit) {
+    const nextItem = clubEntities.pop();
+    nextCursor = nextItem
+      ? `${nextItem.clubId}_${nextItem.entityId}_${nextItem.entityType}`
+      : undefined;
+  }
+
+  const clubEntityRequirements: Record<
+    SupportedClubEntities,
+    {
+      access: Awaited<ReturnType<typeof hasEntityAccess>>;
+      clubRequirements: Awaited<ReturnType<typeof entityRequiresClub>>;
+    }
+  > = {
+    Model: {
+      access: [],
+      clubRequirements: [],
+    },
+    Article: {
+      access: [],
+      clubRequirements: [],
+    },
+  };
+
+  const clubRequirements = await entityRequiresClub({
+    entities: clubEntities.map((e) => ({
+      entityId: e.entityId,
+      entityType: e.entityType as SupportedClubEntities,
+    })),
+    clubId,
+  });
+
+  await Promise.all(
+    (['Model', 'Article'] as SupportedClubEntities[]).map(async (entityType) => {
+      const entities = clubEntities.filter((e) => e.entityType === entityType);
+      const entityIds = entities.map((e) => e.entityId);
+
+      const access = await hasEntityAccess({
+        entityIds,
+        entityType,
+        userId,
+        isModerator,
+      });
+
+      clubEntityRequirements[entityType].clubRequirements = clubRequirements;
+      clubEntityRequirements[entityType].access = access;
+    })
+  );
+
+  const membership = await dbRead.clubMembership.findFirst({
+    where: {
+      clubId,
+      userId,
+      startedAt: { gte: new Date() },
+      expiresAt: { lte: new Date() },
+    },
+  });
+
+  const coverImages = await getEntityCoverImage({
+    entities: clubEntities.map((e) => ({
+      entityId: e.entityId,
+      entityType: e.entityType as SupportedClubEntities,
+    })),
+    include: ['tags'],
+  });
+
+  const items = clubEntities.map((clubEntity) => {
+    const { entityType, entityId } = clubEntity;
+    const entityClubRequirement = clubEntityRequirements[
+      entityType as SupportedClubEntities
+    ].clubRequirements.find((r) => r.entityId === clubEntity.entityId);
+    const availableInTierIds = (entityClubRequirement?.clubs ?? [])
+      .map((c) => c.clubTierId)
+      .filter(isDefined);
+    const availability = entityClubRequirement?.availability ?? Availability.Public;
+
+    if (!userId && clubEntity.membersOnly) {
+      return {
+        type: 'membersOnlyNoAccess',
+        ...clubEntity,
+        membersOnly: true,
+        title: null,
+        description: null,
+        membership: null,
+        hasAccess: false,
+        availableInTierIds,
+        coverImage: null,
+        availability,
+      };
+    }
+
+    const isOwner = club.userId === userId;
+
+    if (!isModerator && !isOwner && !membership && clubEntity.membersOnly) {
+      return {
+        type: 'membersOnlyNoAccess',
+        ...clubEntity,
+        membersOnly: true,
+        title: null,
+        description: null,
+        membership: null,
+        hasAccess: false,
+        availableInTierIds,
+        coverImage: null,
+        availability,
+      };
+    }
+
+    const { hasAccess } = entityAccess;
+    const coverImage = coverImages.find(
+      (i) => i.entityId === entityId && i.entityType === entityType
+    );
+
+    if (hasAccess) {
+      return {
+        type: 'hasAccess',
+        hasAccess: true,
+        entityType,
+        entityId,
+        ...clubEntity,
+        membership,
+        coverImage: !coverImage ? null : coverImage,
+        availableInTierIds,
+        availability,
+      };
+    }
+
+    return {
+      type: 'noAccess',
+      hasAccess: false,
+      entityType,
+      entityId,
+      ...clubEntity,
+      coverImage: !coverImage
+        ? null
+        : {
+            id: coverImage.id,
+            hash: coverImage.hash,
+            width: coverImage.width,
+            height: coverImage.height,
+          },
+      description: getHtmlContentPreview({ html: clubEntity.description ?? '', lineClamp: 2 }),
+      membership,
+      availableInTierIds,
+      availability,
+    };
   });
 };

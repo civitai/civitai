@@ -128,6 +128,7 @@ export const hasEntityAccess = async ({
 
 type ClubEntityAccessStatus = {
   entityId: number;
+  entityType: SupportedClubEntities;
   requiresClub: boolean;
   clubs: {
     clubId: number;
@@ -136,27 +137,43 @@ type ClubEntityAccessStatus = {
   availability: Availability;
 };
 export const entityRequiresClub = async ({
-  entityType,
-  entityIds,
+  entities,
   clubId,
 }: {
-  entityType: SupportedClubEntities;
-  entityIds: number[];
+  entities: {
+    entityId: number;
+    entityType: SupportedClubEntities;
+  }[];
   clubId?: number;
 }): Promise<ClubEntityAccessStatus[]> => {
-  if (entityIds.length === 0) {
+  if (entities.length === 0) {
     return [];
   }
 
-  const entitiesAvailability = await dbRead.$queryRawUnsafe<
-    { availability: Availability; id: number }[]
-  >(`
+  const entitiesWith = `
+   WITH entities AS (
+      SELECT * FROM jsonb_to_recordset('${JSON.stringify(entities)}'::jsonb) AS v(
+        "entityId" INTEGER,
+        "entityType" VARCHAR
+      )
+    )`;
+
+  const entitiesAvailability = await dbRead.$queryRaw<
+    { availability: Availability; entityType: SupportedClubEntities; entityId: number }[]
+  >`
+   ${Prisma.raw(entitiesWith)}
     SELECT
-        "availability",
-        "id"
-    FROM "${entityType}" t
-    WHERE t.id IN (${entityIds.join(', ')})
-  `);
+        "entityType",
+        "entityId",
+         CASE
+            WHEN e."entityType" = 'Model'
+                THEN  (SELECT "availability" FROM "Model" WHERE id = e."entityId")
+            WHEN e."entityType" = 'Article'
+                THEN  (SELECT "availability" FROM "Article" WHERE id = e."entityId")
+            ELSE 'Public'::"Availability"
+        END as "availability"
+    FROM entities e
+  `;
 
   const publicEntities = entitiesAvailability.filter(
     (entity) => entity.availability !== Availability.Private
@@ -166,7 +183,8 @@ export const entityRequiresClub = async ({
   );
 
   const publicEntitiesAccess = publicEntities.map((entity) => ({
-    entityId: entity.id,
+    entityId: entity.entityId,
+    entityType: entity.entityType,
     requiresClub: false,
     clubs: [],
     availability: entity.availability,
@@ -179,37 +197,45 @@ export const entityRequiresClub = async ({
   const privateEntitiesAccess = await dbRead.$queryRaw<
     {
       entityId: number;
+      entityType: string;
       clubId: number;
       clubTierId: number | null;
     }[]
   >`
+    ${Prisma.raw(entitiesWith)}
     SELECT 
-      ea."accessToId" "entityId", 
+      e."entityId", 
+      e."accessToId" "entityType", 
       COALESCE(c.id, ct."clubId") as "clubId",
       ct."id" as "clubTierId"
-    FROM "EntityAccess" ea
+    FROM entities e
+    LEFT JOIN "EntityAccess" ea ON ea."accessToId" = e."entityId" AND ea."accessToType" = e."entityType"
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${Prisma.raw(
       clubId ? `AND c.id = ${clubId}` : ''
     )}
     LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" ${Prisma.raw(
       clubId ? `AND ct."clubId" = ${clubId}` : ''
     )}
-    WHERE ea."accessToId" IN (${Prisma.join(entityIds, ', ')})
-      AND ea."accessToType" = ${entityType}
     ORDER BY "clubTierId", "clubId"
   `;
 
-  const access: ClubEntityAccessStatus[] = entityIds.map((id) => {
-    const publicEntityAccess = publicEntitiesAccess.find((entity) => entity.entityId === id);
+  const access: ClubEntityAccessStatus[] = entities.map(({ entityId, entityType }) => {
+    const publicEntityAccess = publicEntitiesAccess.find(
+      (entity) => entity.entityId === entityId && entity.entityType === entityType
+    );
+
     if (publicEntityAccess) {
       return publicEntityAccess;
     }
 
-    const privateEntityAccesses = privateEntitiesAccess.filter((entity) => entity.entityId === id);
+    const privateEntityAccesses = privateEntitiesAccess.filter(
+      (entity) => entity.entityId === entityId && entity.entityType === entityType
+    );
 
     if (privateEntityAccesses.length === 0) {
       return {
-        entityId: id,
+        entityId,
+        entityType,
         requiresClub: false,
         clubs: [],
         availability: Availability.Private,
@@ -217,7 +243,8 @@ export const entityRequiresClub = async ({
     }
 
     return {
-      entityId: id,
+      entityId,
+      entityType,
       requiresClub: true,
       availability: Availability.Private,
       clubs: privateEntityAccesses
@@ -228,6 +255,8 @@ export const entityRequiresClub = async ({
         })),
     };
   });
+
+  console.log(access);
 
   return access;
 };

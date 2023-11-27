@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
+import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
 export const upsertClubTierInput = z
@@ -74,3 +75,13 @@ export const upsertClubEntitySchema = z.object({
 });
 
 export type UpsertClubEntityInput = z.infer<typeof upsertClubEntitySchema>;
+
+export const getAllClubEntities = infiniteQuerySchema.merge(
+  z.object({
+    clubId: z.number(),
+    limit: z.coerce.number().min(1).max(200).default(60),
+    cursor: z.string().optional(),
+  })
+);
+
+export type GetAllClubEntitiesInput = z.infer<typeof getAllClubEntities>;

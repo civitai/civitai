@@ -137,10 +137,14 @@ export const getServerSideProps = createServerSideProps({
 
       if (!entityAccess?.hasAccess) {
         const [clubAccess] = await entityRequiresClub({
-          entityIds: [id],
-          entityType: 'Model',
+          entities: [
+            {
+              entityId: id,
+              entityType: 'Model',
+            },
+          ],
         });
-        
+
         if (clubAccess?.requiresClub && clubAccess?.clubs?.length > 0) {
           return {
             redirect: {
