@@ -111,6 +111,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     additionalResourcesCount,
     samplerCfgOffset,
     isSDXL,
+    isLCM,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -467,24 +468,41 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         <InputSelect
                           name="sampler"
                           label="Sampler"
-                          data={generation.samplers}
-                          presets={[
-                            { label: 'Fast', value: 'Euler a' },
-                            { label: 'Popular', value: 'DPM++ 2M Karras' },
-                          ]}
+                          data={isLCM ? generation.lcmSamplers : generation.samplers}
+                          presets={
+                            isLCM
+                              ? []
+                              : [
+                                  { label: 'Fast', value: 'Euler a' },
+                                  { label: 'Popular', value: 'DPM++ 2M Karras' },
+                                ]
+                          }
                         />
                         <InputNumberSlider
                           name="steps"
                           label="Steps"
-                          min={10}
-                          max={generation.maxValues.steps}
+                          min={isLCM ? 3 : 10}
+                          max={isLCM ? 12 : generation.maxValues.steps}
                           sliderProps={sharedSliderProps}
                           numberProps={sharedNumberProps}
-                          presets={[
-                            { label: 'Fast', value: Number(10 + samplerCfgOffset).toString() },
-                            { label: 'Balanced', value: Number(20 + samplerCfgOffset).toString() },
-                            { label: 'High', value: Number(30 + samplerCfgOffset).toString() },
-                          ]}
+                          presets={
+                            isLCM
+                              ? []
+                              : [
+                                  {
+                                    label: 'Fast',
+                                    value: Number(10 + samplerCfgOffset).toString(),
+                                  },
+                                  {
+                                    label: 'Balanced',
+                                    value: Number(20 + samplerCfgOffset).toString(),
+                                  },
+                                  {
+                                    label: 'High',
+                                    value: Number(30 + samplerCfgOffset).toString(),
+                                  },
+                                ]
+                          }
                           reverse
                         />
                         <InputSeed
@@ -637,6 +655,17 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     SDXL generation survey
                   </Anchor>{' '}
                   to let us know how we did.
+                </Text>
+              }
+            />
+          )}
+          {isLCM && (
+            <DismissibleAlert
+              id="lcm-preview"
+              title="Initial LCM Support"
+              content={
+                <Text>
+                  {`We're still testing out LCM support, please let us know if you run into any issues.`}
                 </Text>
               }
             />

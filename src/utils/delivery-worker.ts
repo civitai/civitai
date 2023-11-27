@@ -21,10 +21,14 @@ export type DeliveryWorkerStatus = {
 export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   const { key } = parseKey(fileUrl);
 
+  const body = JSON.stringify({
+    key: decodeURIComponent(key),
+    fileName: fileName ? decodeURIComponent(fileName) : undefined,
+  });
   const response = await fetch(deliveryWorkerEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key, fileName }),
+    body,
   });
 
   if (!response.ok) throw new Error(response.statusText);

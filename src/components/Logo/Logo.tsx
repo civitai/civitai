@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
 import { useMemo } from 'react';
 
@@ -11,8 +12,8 @@ const gradients = {
     outer: ['#F78C22', '#C98C17'],
   },
   christmas: {
-    inner: ['#081692', '#1E043C'],
-    outer: ['#1284F7', '#0A20C9'],
+    inner: ['#126515', '#070F0C'],
+    outer: ['#45A72A', '#377B39'],
   },
   newyear: {
     inner: ['#081692', '#1E043C'],
@@ -30,7 +31,7 @@ export function Logo({ ...props }: LogoProps) {
     if (new Date().getMonth() === 9) return 'halloween';
 
     // Christmas
-    if (month === 11 && day <= 25) return 'christmas';
+    if ((month === 10 && day >= 22) || (month === 11 && day <= 25)) return 'christmas';
 
     // New Year
     if (month === 11 && day >= 26) return 'newyear';
@@ -45,8 +46,17 @@ export function Logo({ ...props }: LogoProps) {
   return (
     <Box className={cx(classes.root, holidayClass)} {...props}>
       {holiday === 'halloween' && (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src="/images/holiday/ghost.png" alt="ghost" className={classes.flyOver} />
+      )}
+      {holiday === 'christmas' && (
+        <>
+          <img src="/images/holiday/santa-hat.png" alt="santa hat" className={classes.hat} />
+          <div className={classes.deer}>
+            <img src="/images/holiday/deer.png" alt="deer" id="deer" />
+            <img src="/images/holiday/deer-nose.png" alt="deer nose" id="nose" />
+            <img src="/images/holiday/deer-glow.png" alt="deer glow" id="glow" />
+          </div>
+        </>
       )}
       <svg className={classes.svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 107 22.7">
         <g className={classes.text}>
@@ -172,6 +182,46 @@ const useStyles = createStyles((theme, _, getRef) => ({
     },
   },
 
+  deer: {
+    ref: getRef('deer'),
+    position: 'absolute',
+    height: 60,
+    width: 60,
+    zIndex: 3,
+
+    img: {
+      position: 'absolute',
+      height: '100%',
+
+      '&#deer': {},
+      '&#nose': {
+        zIndex: 2,
+      },
+      '&#glow': {
+        opacity: 0,
+        zIndex: 1,
+        animation: `${twinkle} 1s ease infinite`,
+      },
+    },
+
+    [theme.fn.smallerThan('sm')]: {
+      height: 40,
+      width: 40,
+    },
+  },
+
+  hat: {
+    position: 'absolute',
+    height: 25,
+    left: 0,
+    top: 0,
+    transform: 'rotate(-20deg) translate(-14%, -75%)',
+    zIndex: 3,
+    [theme.fn.smallerThan('sm')]: {
+      display: 'none',
+    },
+  },
+
   halloween: {
     [`.${getRef('ai')}`]: {
       fill: theme.colors.orange[6],
@@ -195,7 +245,28 @@ const useStyles = createStyles((theme, _, getRef) => ({
     },
   },
 
-  christmas: {},
+  christmas: {
+    [`.${getRef('ai')}`]: {
+      fill: theme.colors.red[8],
+    },
+    [`.${getRef('accent')}`]: {
+      fill: theme.colors.red[8],
+    },
+    [`.${getRef('svg')}`]: {
+      position: 'relative',
+      zIndex: 2,
+    },
+    [`.${getRef('deer')}`]: {
+      zIndex: 3,
+      animation: `${prance} 3s 4s linear`,
+      opacity: 0,
+      [theme.fn.smallerThan('sm')]: {
+        transform: 'rotate(-20deg)',
+        animation: `${peekOutDeer} 5s ease infinite alternate`,
+        zIndex: 1,
+      },
+    },
+  },
 
   newyear: {},
 }));
@@ -227,6 +298,51 @@ const flyOver = keyframes({
   },
 });
 
+const prance = keyframes({
+  '0%': {
+    top: 0,
+    left: '-20%',
+    opacity: 0,
+    transform: 'scale(0.5) rotate(-15deg)',
+  },
+  '15%': {
+    top: -25,
+    left: '0%',
+    opacity: 1,
+    transform: 'scale(1) rotate(-15deg)',
+  },
+  '50%': {
+    top: -40,
+    left: '30%',
+    opacity: 1,
+    transform: 'scale(1) rotate(0deg)',
+  },
+  '85%': {
+    top: -25,
+    left: '70%',
+    opacity: 0.8,
+    transform: 'scale(1) rotate(15deg)',
+  },
+  '100%': {
+    top: 0,
+    left: '80%',
+    opacity: 0,
+    transform: 'scale(0.5) rotate(15deg)',
+  },
+});
+
+const twinkle = keyframes({
+  '0%': {
+    opacity: 0,
+  },
+  '50%': {
+    opacity: 1,
+  },
+  '100%': {
+    opacity: 0,
+  },
+});
+
 const peekOut = keyframes({
   '0%': {
     top: 5,
@@ -251,5 +367,26 @@ const peekOut = keyframes({
     right: 10,
     opacity: 0,
     transform: 'scale(0.5) rotate(0deg)',
+  },
+});
+
+const peekOutDeer = keyframes({
+  '0%': {
+    top: 0,
+    right: 0,
+    opacity: 0,
+    transform: 'scale(0.5)',
+  },
+  '60%': {
+    top: -10,
+    right: -12,
+    opacity: 1,
+    transform: 'scale(1)',
+  },
+  '100%': {
+    top: 0,
+    right: 0,
+    opacity: 0,
+    transform: 'scale(0.5)',
   },
 });

@@ -56,6 +56,7 @@ export const constants = {
   baseModels: [
     'SD 1.4',
     'SD 1.5',
+    'SD 1.5 LCM',
     'SD 2.0',
     'SD 2.0 768',
     'SD 2.1',
@@ -63,6 +64,7 @@ export const constants = {
     'SD 2.1 Unclip',
     'SDXL 0.9',
     'SDXL 1.0',
+    'SDXL 1.0 LCM',
     'SDXL Distilled',
     'Other',
   ],
@@ -134,6 +136,7 @@ export const constants = {
     'DDIM',
     'PLMS',
     'UniPC',
+    'LCM',
   ],
   availableReactions: {
     [ReviewReactions.Like]: '👍',
@@ -248,9 +251,9 @@ export type BaseModel = (typeof constants.baseModels)[number];
 export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled'] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
-  SD1: ['SD 1.4', 'SD 1.5'],
+  SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
   SDXLDistilled: ['SDXL Distilled'],
 };
 
@@ -276,6 +279,7 @@ export const baseLicenses: Record<string, LicenseDetails> = {
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
   'SD 1.4': baseLicenses['openrail'],
   'SD 1.5': baseLicenses['openrail'],
+  'SD 1.5 LCM': baseLicenses['openrail++'],
   'SD 2.0': baseLicenses['openrail'],
   'SD 2.0 768': baseLicenses['openrail'],
   'SD 2.1': baseLicenses['openrail'],
@@ -283,6 +287,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 2.1 Unclip': baseLicenses['openrail'],
   'SDXL 0.9': baseLicenses['sdxl 0.9'],
   'SDXL 1.0': baseLicenses['openrail++'],
+  'SDXL 1.0 LCM': baseLicenses['openrail++'],
   'SDXL Distilled': baseLicenses['openrail++'],
   Other: undefined,
 };
@@ -313,6 +318,7 @@ export const samplerMap = new Map<Sampler, string[]>([
   ['DDIM', ['ddim']],
   ['PLMS', ['plms']],
   ['UniPC', ['uni_pc', 'uni_pc_bh2']],
+  ['LCM', ['lcm']],
 ]);
 
 export const samplerOffsets = {
@@ -329,6 +335,7 @@ export const samplerOffsets = {
 export const generation = {
   formStoreKey: 'generation-form',
   samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
+  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
     cfgScale: 7,
     steps: 25,

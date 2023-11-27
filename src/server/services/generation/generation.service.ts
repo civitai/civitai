@@ -328,6 +328,7 @@ const samplersToSchedulers: Record<Sampler, string> = {
   DDIM: 'DDIM',
   PLMS: 'PLMS',
   UniPC: 'UniPC',
+  LCM: 'LCM',
 };
 
 const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
