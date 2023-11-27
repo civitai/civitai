@@ -2,7 +2,7 @@ import { MantineNumberSize } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import {
   useContainerProviderStore,
-  useNodeContext,
+  useContainerContext,
 } from '~/components/ContainerProvider/ContainerProvider';
 import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
 
@@ -14,7 +14,7 @@ export const useContainerQuery = ({
   width: MantineNumberSize;
 }) => {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
-  const { nodeRef, containerName } = useNodeContext();
+  const { nodeRef, containerName } = useContainerContext();
   const [value, setValue] = useState(false);
 
   useEffect(() => {

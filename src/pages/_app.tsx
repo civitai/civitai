@@ -55,6 +55,7 @@ import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ScrollRestoration } from '~/components/ScrollRestoration/ScrollRestoration';
+import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -138,7 +139,9 @@ function MyApp(props: CustomAppProps) {
                             <NotificationsProvider zIndex={9999}>
                               <BrowserRouterProvider>
                                 {/* <ScrollRestoration /> */}
-                                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                                <TosProvider>
+                                  <BaseLayout>{getLayout(<Component {...pageProps} />)}</BaseLayout>
+                                </TosProvider>
                                 <GenerationPanel />
                                 <DialogProvider />
                                 <RoutedDialogProvider />
@@ -177,9 +180,17 @@ function MyApp(props: CustomAppProps) {
                 styles: {
                   modal: { maxWidth: '100%', containerName: 'modal', containerType: 'inline-size' },
                 },
+                defaultProps: {
+                  target:
+                    typeof window !== 'undefined' ? document.getElementById('root') : undefined,
+                },
               },
               Drawer: {
                 styles: { drawer: { containerName: 'drawer', containerType: 'inline-size' } },
+                defaultProps: {
+                  target:
+                    typeof window !== 'undefined' ? document.getElementById('root') : undefined,
+                },
               },
               Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
               Rating: { styles: { symbolBody: { cursor: 'pointer' } } },

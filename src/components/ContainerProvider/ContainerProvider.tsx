@@ -14,7 +14,7 @@ type ContainerState = {
 };
 
 const ContainerContext = createContext<ContainerState | null>(null);
-export const useNodeContext = () => {
+export const useContainerContext = () => {
   const context = useContext(ContainerContext);
   if (!context) throw 'missing NodeProvider';
   return context;
@@ -56,6 +56,11 @@ export const ContainerProvider = createPolymorphicComponent<'div', ContainerProv
 const useStyles = createStyles(() => ({
   root: {
     containerType: 'inline-size',
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    flex: 1,
+    overflow: 'clip',
   },
 }));
 

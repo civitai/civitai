@@ -1,13 +1,4 @@
-import {
-  Button,
-  createStyles,
-  useMantineTheme,
-  Stack,
-  Text,
-  Title,
-  Center,
-  ThemeIcon,
-} from '@mantine/core';
+import { Button, createStyles, Stack, Text, Title, Center, ThemeIcon } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 
@@ -18,6 +9,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
+import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
+import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 
 type AppLayoutProps = {
   innerLayout?: (page: React.ReactNode) => React.ReactNode;
@@ -31,8 +24,7 @@ export function AppLayout({
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
 } & AppLayoutProps) {
-  const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
 
@@ -57,35 +49,25 @@ export function AppLayout({
   const content = innerLayout ? innerLayout(children) : <ScrollAreaMain>{children}</ScrollAreaMain>;
 
   return (
-    <ContainerProvider
-      className={cx(`theme-${theme.colorScheme}`, classes.root)}
-      containerName="root"
-    >
+    <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       <div className={classes.wrapper}>
-        <GenerationSidebar />
-        <ContainerProvider className={classes.content} containerName="main">
+        <ResizableSidebar resizePosition="right" minWidth={300} maxWidth={800} defaultWidth={400}>
+          <ContainerProvider containerName="left-sidebar">
+            <GenerationTabs />
+          </ContainerProvider>
+        </ResizableSidebar>
+
+        <ContainerProvider containerName="main">
           <main className={classes.main}>{content}</main>
           <AppFooter fixed={false} />
         </ContainerProvider>
       </div>
-    </ContainerProvider>
+    </>
   );
 }
 
 const useStyles = createStyles((theme) => ({
-  root: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-  },
-  content: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    flex: 1,
-    overflow: 'clip',
-  },
   wrapper: {
     display: 'flex',
     flex: 1,
@@ -97,13 +79,6 @@ const useStyles = createStyles((theme) => ({
     flexDirection: 'column',
     overflow: 'clip',
     position: 'relative',
-  },
-  assistant: {
-    position: 'sticky',
-    bottom: 0,
-    left: '100%',
-    display: 'inline-block',
-    marginRight: theme.spacing.md,
   },
 }));
 
