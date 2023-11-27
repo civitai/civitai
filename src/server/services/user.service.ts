@@ -41,13 +41,14 @@ import blockedUsernames from '~/utils/blocklist-username.json';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import {
   articlesSearchIndex,
+  bountiesSearchIndex,
   collectionsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { userMetrics } from '~/server/metrics';
+import { articleMetrics, imageMetrics, userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import dayjs from 'dayjs';
@@ -526,6 +527,10 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     where: { userId: id },
     select: { id: true },
   });
+  const bounties = await dbRead.collection.findMany({
+    where: { userId: id },
+    select: { id: true },
+  });
 
   const res = await dbWrite.$transaction([
     dbWrite.model.deleteMany({ where: { userId: id } }),
@@ -544,6 +549,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     dbWrite.bountyEntry.deleteMany({
       where: { userId: id, benefactors: { none: {} } },
     }),
+    dbWrite.imageReaction.deleteMany({ where: { userId: id } }),
+    dbWrite.articleReaction.deleteMany({ where: { userId: id } }),
   ]);
 
   await modelsSearchIndex.queueUpdate(
@@ -558,9 +565,14 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await collectionsSearchIndex.queueUpdate(
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+  await bountiesSearchIndex.queueUpdate(
+    bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   await userMetrics.queueUpdate(id);
+  await Promise.all(images.map((i) => imageMetrics.queueUpdate(i.id)));
+  await Promise.all(articles.map((a) => articleMetrics.queueUpdate(a.id)));
 
   return res;
 };
