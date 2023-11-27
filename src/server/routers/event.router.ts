@@ -6,6 +6,7 @@ import {
   activateEventCosmetic,
   donate,
   getEventCosmetic,
+  getEventData,
   getEventRewards,
   getTeamScoreHistory,
   getTeamScores,
@@ -13,6 +14,10 @@ import {
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const eventRouter = router({
+  getData: publicProcedure
+    .input(eventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .query(({ input }) => getEventData(input)),
   getTeamScores: publicProcedure
     .input(eventSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
@@ -24,7 +29,10 @@ export const eventRouter = router({
   getCosmetic: protectedProcedure
     .input(eventSchema)
     .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),
-  getRewards: publicProcedure.input(eventSchema).query(({ input }) => getEventRewards(input)),
+  getRewards: publicProcedure
+    .input(eventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .query(({ input }) => getEventRewards(input)),
   activateCosmetic: protectedProcedure
     .input(eventSchema)
     .mutation(({ ctx, input }) => activateEventCosmetic({ userId: ctx.user.id, ...input })),

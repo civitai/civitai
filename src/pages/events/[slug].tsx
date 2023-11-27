@@ -10,50 +10,54 @@ import {
   Divider,
   Grid,
   Group,
+  Loader,
+  Modal,
   ModalProps,
   Paper,
   Stack,
   Text,
   Title,
-  useMantineTheme,
   createStyles,
-  Modal,
-  Loader,
+  useMantineTheme,
 } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
-import { Line } from 'react-chartjs-2';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
-import { Meta } from '~/components/Meta/Meta';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { env } from '~/env/client.mjs';
-import { eventSchema } from '~/server/schema/event.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { Currency } from '@prisma/client';
+import { IconBulb } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
-  LinearScale,
-  LineElement,
-  PointElement,
   Tooltip as ChartTooltip,
+  LineElement,
+  LinearScale,
+  PointElement,
 } from 'chart.js';
-import { formatDate } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
+import dayjs from 'dayjs';
+import { InferGetServerSidePropsType } from 'next';
+import Link from 'next/link';
 import { Fragment, useState } from 'react';
+import { Line } from 'react-chartjs-2';
+import { z } from 'zod';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useBuzz } from '~/components/Buzz/useBuzz';
+import { Countdown } from '~/components/Countdown/Countdown';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
-import { Form, InputChipGroup, InputNumber, useForm } from '~/libs/form';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { UserBuzz } from '~/components/User/UserBuzz';
-import { z } from 'zod';
-import { constants } from '~/server/common/constants';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
+import { Meta } from '~/components/Meta/Meta';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { env } from '~/env/client.mjs';
+import { Form, InputChipGroup, InputNumber, useForm } from '~/libs/form';
+import { constants } from '~/server/common/constants';
+import { eventSchema } from '~/server/schema/event.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { formatDate, stripTime } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -76,14 +80,13 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartToo
 const options = {
   aspectRatio: 2.5,
   plugins: {
-    legend: {
-      display: false,
-    },
-    title: {
-      display: false,
-    },
+    legend: { display: false },
+    title: { display: false },
   },
 };
+
+const resetTime = dayjs().utc().endOf('day').toDate();
+const startTime = dayjs().utc().startOf('day').toDate();
 
 export default function EventPageDetails({
   event,
@@ -93,6 +96,7 @@ export default function EventPageDetails({
   const [opened, setOpened] = useState(false);
 
   const {
+    eventData,
     teamScores,
     teamScoresHistory,
     eventCosmetic,
@@ -120,13 +124,14 @@ export default function EventPageDetails({
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
   const cosmeticData = eventCosmetic.data as { lights: number; lightUpgrades: number };
 
-  const labels = [
-    ...new Set(
+  const labels = Array.from(
+    new Set(
       teamScoresHistory
         .flatMap((teamScore) => teamScore.scores.map((score) => score.date))
-        .map((date) => formatDate(date, 'MMM-DD'))
-    ),
-  ];
+        .sort((a, b) => a.getTime() - b.getTime())
+        .map((date) => formatDate(stripTime(date), 'MMM-DD'))
+    )
+  );
 
   return (
     <>
@@ -141,14 +146,13 @@ export default function EventPageDetails({
             h="300px"
             radius="md"
             style={{
-              backgroundImage:
-                'url(https://cdn.discordapp.com/attachments/1176999301487018064/1177048050615722014/GetLitDay1.png?ex=6571166b&is=655ea16b&hm=b742306a02e951824de18b47028fac4376d51fbbb3f9ee588640ee07ef59a063&)',
+              backgroundImage: eventData?.coverImage ? `url(${eventData.coverImage})` : undefined,
               backgroundPosition: 'top',
             }}
           >
             <Center w="100%" h="100%" style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)' }}>
               <Title color="white" align="center">
-                Get Lit & Give Back
+                {eventData?.title}
               </Title>
             </Center>
           </Paper>
@@ -203,18 +207,19 @@ export default function EventPageDetails({
                       >
                         Equip cosmetic
                       </Button>
-                    ) : eventCosmetic.equipped ? (
-                      <Alert color="green" radius="xl" ta="center" w="100%" py={8}>
-                        You have this cosmetic equipped
-                      </Alert>
-                    ) : (
+                    ) : eventCosmetic.equipped ? null : (
                       <Alert color="red" radius="xl" ta="center" w="100%" py={8}>
                         This cosmetic is not available
                       </Alert>
                     )}
-                    <Button color="gray" variant="filled" radius="xl" fullWidth>
-                      Earn more lights
-                    </Button>
+                    <Link href="/posts/create">
+                      <Button color="gray" variant="filled" radius="xl" fullWidth>
+                        <Group spacing={4} noWrap>
+                          <IconBulb size={18} />
+                          Earn more lights
+                        </Group>
+                      </Button>
+                    </Link>
                   </Stack>
                 )}
               </Card>
@@ -275,6 +280,10 @@ export default function EventPageDetails({
                       );
                     })}
                   </Stack>
+                  <Text size="xs" color="dimmed">
+                    As of {formatDate(startTime, 'MMMM D, YYYY h:mma')}. Refreshes in:{' '}
+                    <Countdown endTime={resetTime} />
+                  </Text>
                 </Stack>
               </Card>
             </Grid.Col>
@@ -309,13 +318,7 @@ export default function EventPageDetails({
                       }}
                     />
                   )}
-                  <Button
-                    variant="filled"
-                    color="gray"
-                    radius="xl"
-                    onClick={() => setOpened(true)}
-                    sx={{ alignSelf: 'center' }}
-                  >
+                  <Button variant="filled" color="gray" radius="xl" onClick={() => setOpened(true)}>
                     <Group spacing={4}>
                       <CurrencyIcon currency={Currency.BUZZ} size={18} />
                       Boost your team

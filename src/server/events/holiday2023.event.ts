@@ -15,6 +15,8 @@ export const holiday2023 = createEvent('holiday2023', {
   teams: ['Yellow', 'Red', 'Green', 'Blue'],
   bankIndex: -100,
   cosmeticName: 'Holiday Garland 2023',
+  coverImage:
+    'https://cdn.discordapp.com/attachments/1176999301487018064/1177048050615722014/GetLitDay1.png?ex=6571166b&is=655ea16b&hm=b742306a02e951824de18b47028fac4376d51fbbb3f9ee588640ee07ef59a063&',
   async onEngagement({ entityType, entityId, userId, db }) {
     // Determine bulb type (post = standard, model = upgraded, article = upgraded)
     const bulbType = entityType === 'post' ? 'standard' : 'upgraded';

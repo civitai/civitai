@@ -8,6 +8,14 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus } from '~/server/services/user.service';
 
+export function getEventData({ event }: EventInput) {
+  try {
+    return eventEngine.getEventData(event);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
 export function getTeamScores({ event }: EventInput) {
   try {
     return eventEngine.getTeamScores(event);

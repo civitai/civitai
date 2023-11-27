@@ -236,7 +236,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                 As of{' '}
                 {leaderboardResults[0]
                   ? dayjs(leaderboardResults[0].date).format('MMMM D, YYYY h:mma')
-                  : 'loading..'}
+                  : 'loading...'}
                 . Refreshes in:{' '}
                 <Text span>
                   <Countdown endTime={endTime} />

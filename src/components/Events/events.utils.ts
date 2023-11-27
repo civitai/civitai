@@ -2,6 +2,7 @@ import { trpc } from '~/utils/trpc';
 import { EventInput } from '~/server/schema/event.schema';
 
 export const useQueryEvent = ({ event }: EventInput) => {
+  const { data: eventData, isLoading: loadingData } = trpc.event.getData.useQuery({ event });
   const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery({
     event,
   });
@@ -18,11 +19,12 @@ export const useQueryEvent = ({ event }: EventInput) => {
   });
 
   return {
+    eventData,
     teamScores,
     teamScoresHistory,
     eventCosmetic,
     rewards,
-    loading: loadingScores || loadingCosmetic,
+    loading: loadingScores || loadingCosmetic || loadingData,
     loadingHistory,
     loadingRewards,
   };

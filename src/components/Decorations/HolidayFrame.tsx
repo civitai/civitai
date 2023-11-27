@@ -45,7 +45,7 @@ export function HolidayFrame({ cosmetic, lights, lightUpdgrades, children }: Pro
       />
       {lights > 0 && (
         <div className={classes.overlay}>
-          <Group spacing="xs" p={4}>
+          <Group spacing={4} p={4} align="center" position="center">
             {Array.from({ length: lights }).map((_, index) => (
               <Lightbulb key={index} color={color} size={18} />
             ))}

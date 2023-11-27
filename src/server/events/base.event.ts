@@ -93,6 +93,7 @@ type HolidayEventDefinition = {
   teams: string[];
   bankIndex: number;
   cosmeticName: string;
+  coverImage?: string;
   onEngagement?: (ctx: ProcessingContext) => Promise<void>;
   onDailyReset?: (ctx: DailyResetContext) => Promise<void>;
 };

@@ -68,6 +68,7 @@ export const eventEngine = {
       endDate: eventDef.endDate,
       teams: eventDef.teams,
       cosmeticName: eventDef.cosmeticName,
+      coverImage: eventDef.coverImage,
     };
   },
   getTeamAccounts(event: string) {
