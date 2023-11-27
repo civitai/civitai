@@ -21,6 +21,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
+import { NodeProvider } from '~/components/NodeProvider/NodeProvider';
 
 type AppLayoutProps = {
   innerLayout?: (page: React.ReactNode) => React.ReactNode;
@@ -44,7 +45,6 @@ export function AppLayout({
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
 
-  // TODO - return banned
   if (isBanned)
     return (
       <Center py="xl">
@@ -66,7 +66,7 @@ export function AppLayout({
   const content = innerLayout ? innerLayout(children) : children;
 
   return (
-    <div className={cx(`theme-${theme.colorScheme}`, classes.root)}>
+    <NodeProvider className={cx(`theme-${theme.colorScheme}`, classes.root)}>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       <div className={classes.wrapper}>
         <GenerationSidebar />
@@ -81,21 +81,16 @@ export function AppLayout({
                 {content}
               </ScrollArea>
             )}
+            {flags.assistant && (
+              <div className={classes.assistant}>
+                <AssistantButton />
+              </div>
+            )}
           </main>
           <AppFooter fixed={false} />
         </div>
       </div>
-      {/* {flags.assistant && (
-        <Affix
-          // @ts-ignore: ignoring cause target prop accepts string. See: https://v5.mantine.dev/core/portal#specify-target-dom-node
-          position={{ bottom: hasFooter ? 70 : 12, right: 12 }}
-          zIndex={199}
-          style={{ transition: 'bottom 300ms linear' }}
-        >
-          <AssistantButton mr={4} />
-        </Affix>
-      )} */}
-    </div>
+    </NodeProvider>
   );
 }
 
@@ -124,6 +119,12 @@ const useStyles = createStyles((theme) => ({
     overflow: 'hidden',
     containerName: 'main',
     containerType: 'inline-size',
+    position: 'relative',
+  },
+  assistant: {
+    position: 'absolute',
+    bottom: 8,
+    right: 12,
   },
 }));
 

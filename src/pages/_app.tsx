@@ -137,7 +137,7 @@ function MyApp(props: CustomAppProps) {
                           <CustomModalsProvider>
                             <NotificationsProvider zIndex={9999}>
                               <BrowserRouterProvider>
-                                <ScrollRestoration />
+                                {/* <ScrollRestoration /> */}
                                 <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                                 <GenerationPanel />
                                 <DialogProvider />

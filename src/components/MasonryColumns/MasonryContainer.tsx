@@ -1,10 +1,12 @@
 import { createStyles, Container, ContainerProps } from '@mantine/core';
 import React, { CSSProperties, useRef, createContext, useContext, useState } from 'react';
-import { useColumnCount, useContainerWidth } from '~/components/MasonryColumns/masonry.utils';
+import { useColumnCount } from '~/components/MasonryColumns/masonry.utils';
 import {
   MasonryContextState,
   useMasonryContext,
 } from '~/components/MasonryColumns/MasonryProvider';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { useDebouncer } from '~/utils/debouncer';
 
 type MasonryContainerProps = Omit<ContainerProps, 'children'> & {
   children: React.ReactNode | ((state: MasonryContainerState) => React.ReactNode);
@@ -23,11 +25,19 @@ export const useMasonryContainerContext = () => {
 };
 
 export function MasonryContainer({ children, ...containerProps }: MasonryContainerProps) {
-  const [containerRef, setContainerRef] = useState<HTMLElement | null>(null);
   const masonryProviderState = useMasonryContext();
   const { columnWidth, columnGap, maxColumnCount } = masonryProviderState;
 
-  const containerWidth = useContainerWidth(containerRef);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  const debouncer = useDebouncer(300);
+  const containerRef = useResizeObserver((entries) =>
+    debouncer(() => {
+      const entry = entries[0];
+      if (entry) setContainerWidth(entries[0].contentRect.width);
+    })
+  );
+
   const [columnCount, combinedWidth] = useColumnCount(
     containerWidth,
     columnWidth,
@@ -50,7 +60,7 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
 
   return (
     <Container {...containerProps}>
-      <div ref={setContainerRef} className={classes.container}>
+      <div ref={containerRef} className={classes.container} id="test">
         <div
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}
