@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { createKeyDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
@@ -14,20 +14,22 @@ export type UseScrollRestoreProps = {
   enabled?: boolean;
 };
 
-export const useScrollRestore = <T extends Element = Element>(args?: UseScrollRestoreProps) => {
+export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRestoreProps) => {
   const { key, defaultPosition = 'top', enabled = true } = args ?? {};
-  const [node, setRef] = useState<T | null>(null);
-  const [emitter] = useState(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
+  const ref = useRef<T>(null);
+  const emitterRef = useRef(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
 
   useEffect(() => {
-    if (!enabled) return;
+    const emitter = emitterRef.current;
+    if (!enabled || !emitter) return;
     const cb = emitter.on('scroll', ({ key, ...scrollPosition }) =>
       debounce(key, () => scrollMap.set(key, scrollPosition))
     );
     return () => emitter.off('scroll', cb);
-  }, [enabled, emitter]);
+  }, [enabled]);
 
   useEffect(() => {
+    const node = ref.current;
     if (!node || !enabled) return;
     const _key = `${key ?? history.state.key}_${location.pathname.substring(1)}`;
     const record = scrollMap.get(_key);
@@ -49,7 +51,7 @@ export const useScrollRestore = <T extends Element = Element>(args?: UseScrollRe
     }
 
     const handleScroll = () => {
-      emitter.emit('scroll', {
+      emitterRef.current.emit('scroll', {
         key: _key,
         scrollTop: node.scrollTop,
         scrollLeft: node.scrollLeft,
@@ -60,7 +62,7 @@ export const useScrollRestore = <T extends Element = Element>(args?: UseScrollRe
     return () => {
       node.removeEventListener('scroll', handleScroll);
     };
-  }, [key, node, defaultPosition, enabled]); //eslint-disable-line
+  }, [key, defaultPosition, enabled]); //eslint-disable-line
 
-  return { setRef, node: node };
+  return ref;
 };

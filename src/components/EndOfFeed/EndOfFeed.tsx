@@ -26,7 +26,7 @@ export function EndOfFeed() {
             variant="link"
             size="sm"
             onClick={() => {
-              node?.scrollTo({ top: 0, behavior: 'smooth' });
+              node?.current?.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             sx={{ cursor: 'pointer' }}
           >

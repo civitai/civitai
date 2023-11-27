@@ -1,18 +1,19 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
-import { createContext, useContext, useEffect } from 'react';
-import { useNodeContext } from '~/components/NodeProvider/NodeProvider';
+import { BoxProps, createStyles } from '@mantine/core';
+import { RefObject, createContext, useContext, useEffect } from 'react';
+import { NodeProvider } from '~/components/NodeProvider/NodeProvider';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
 
-const ScrollAreaContext = createContext<HTMLDivElement | null>(null);
+const ScrollAreaContext = createContext<RefObject<HTMLDivElement> | null>(null);
 export const useScrollAreaNode = (args?: { onScroll?: () => void }) => {
   const { onScroll } = args ?? {};
   const node = useContext(ScrollAreaContext);
 
   useEffect(() => {
-    if (!onScroll) return;
-    node?.addEventListener('scroll', onScroll);
+    const elem = node?.current;
+    if (!onScroll || !elem) return;
+    elem?.addEventListener('scroll', onScroll);
     return () => {
-      node?.removeEventListener('scroll', onScroll);
+      elem?.removeEventListener('scroll', onScroll);
     };
   }, []);
 
@@ -21,13 +22,12 @@ export const useScrollAreaNode = (args?: { onScroll?: () => void }) => {
 
 export function ScrollArea({ children, className, scrollRestore, ...props }: Props) {
   const { classes, cx } = useStyles();
-  const { node, setRef } = useScrollRestore<HTMLDivElement>(scrollRestore);
-  const context = useNodeContext();
+  const ref = useScrollRestore<HTMLDivElement>(scrollRestore);
   return (
-    <ScrollAreaContext.Provider value={node}>
-      <Box ref={setRef} className={cx(classes.root, className)} {...props}>
+    <ScrollAreaContext.Provider value={ref}>
+      <NodeProvider ref={ref} className={cx(classes.root, className)} {...props}>
         {children}
-      </Box>
+      </NodeProvider>
     </ScrollAreaContext.Provider>
   );
 }

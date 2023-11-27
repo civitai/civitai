@@ -13,15 +13,15 @@ export function ScrollToTopFab(props: Props) {
   const [show, setShow] = useState(false);
   const node = useScrollAreaNode({
     onScroll: () => {
-      if (!node) return;
-      setShow(node.scrollTop > 100);
+      if (!node?.current) return;
+      setShow(node.current.scrollTop > 100);
     },
   });
 
   return (
     <FloatingActionButton
       mounted={show}
-      onClick={() => node?.scrollTo({ top: 0, behavior: 'smooth' })}
+      onClick={() => node?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
       leftIcon={<IconArrowUp size={16} />}
       {...props}
     >
