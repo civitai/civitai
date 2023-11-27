@@ -6,6 +6,7 @@ import {
   activateEventCosmetic,
   donate,
   getEventCosmetic,
+  getEventRewards,
   getTeamScoreHistory,
   getTeamScores,
 } from '~/server/services/event.service';
@@ -17,13 +18,13 @@ export const eventRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getTeamScores(input)),
   getTeamScoreHistory: publicProcedure
-    // TODO.event: type window param better (day, week, month, etc.)
     .input(teamScoreHistorySchema)
-    // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
     .query(({ input }) => getTeamScoreHistory(input)),
   getCosmetic: protectedProcedure
     .input(eventSchema)
     .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),
+  getRewards: publicProcedure.input(eventSchema).query(({ input }) => getEventRewards(input)),
   activateCosmetic: protectedProcedure
     .input(eventSchema)
     .mutation(({ ctx, input }) => activateEventCosmetic({ userId: ctx.user.id, ...input })),

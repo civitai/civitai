@@ -40,6 +40,15 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   function getUserCosmeticId(userId: number) {
     return getTeamCosmetic(getUserTeam(userId));
   }
+  async function getRewards() {
+    const eventName = definition.title;
+    const rewards = await dbWrite.cosmetic.findMany({
+      where: { name: { contains: eventName }, source: 'Claim' },
+      select: { id: true, name: true, data: true, type: true },
+    });
+
+    return rewards;
+  }
 
   return {
     getCosmetic,
@@ -49,6 +58,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     getTeamCosmetic,
     getUserTeam,
     getUserCosmeticId,
+    getRewards,
     name,
     ...definition,
   };

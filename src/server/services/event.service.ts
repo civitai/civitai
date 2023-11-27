@@ -107,3 +107,11 @@ export async function donate({
     throw getTRPCErrorFromUnknown(error);
   }
 }
+
+export async function getEventRewards({ event }: EventInput) {
+  try {
+    return eventEngine.getRewards(event);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}

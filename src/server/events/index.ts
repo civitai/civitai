@@ -137,4 +137,10 @@ export const eventEngine = {
 
     return { cosmeticId, team, accountId };
   },
+  async getRewards(event: string) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    return eventDef.getRewards();
+  },
 };

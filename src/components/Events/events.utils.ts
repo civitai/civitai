@@ -13,13 +13,18 @@ export const useQueryEvent = ({ event }: EventInput) => {
   const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery({
     event,
   });
+  const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery({
+    event,
+  });
 
   return {
     teamScores,
     teamScoresHistory,
     eventCosmetic,
+    rewards,
     loading: loadingScores || loadingCosmetic,
     loadingHistory,
+    loadingRewards,
   };
 };
 

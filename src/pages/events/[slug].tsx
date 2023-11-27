@@ -1,7 +1,6 @@
 import {
   Alert,
   Badge,
-  Box,
   Button,
   Card,
   Center,
@@ -19,6 +18,7 @@ import {
   useMantineTheme,
   createStyles,
   Modal,
+  Loader,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { Line } from 'react-chartjs-2';
@@ -42,7 +42,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '@prisma/client';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
@@ -53,6 +53,7 @@ import { UserBuzz } from '~/components/User/UserBuzz';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -91,7 +92,15 @@ export default function EventPageDetails({
 
   const [opened, setOpened] = useState(false);
 
-  const { teamScores, teamScoresHistory, eventCosmetic, loading } = useQueryEvent({ event });
+  const {
+    teamScores,
+    teamScoresHistory,
+    eventCosmetic,
+    rewards,
+    loading,
+    loadingHistory,
+    loadingRewards,
+  } = useQueryEvent({ event });
   const { activateCosmetic, equipping } = useMutateEvent();
 
   if (loading) return <PageLoader />;
@@ -126,8 +135,8 @@ export default function EventPageDetails({
         description={eventCosmetic.cosmetic?.description ?? undefined}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events/${event}`, rel: 'canonical' }]}
       />
-      <Container size="sm">
-        <Stack spacing="xl">
+      <Container size="md">
+        <Stack spacing={40}>
           <Paper
             h="300px"
             radius="md"
@@ -174,7 +183,7 @@ export default function EventPageDetails({
                         size={32}
                         weight={590}
                         display="flex"
-                        sx={{ alignItems: 'center' }}
+                        sx={{ alignItems: 'center', fontVariantNumeric: 'tabular-nums' }}
                         inline
                       >
                         <Text size={48} color={teamColorTheme[9]} mr={2} inline span>
@@ -211,41 +220,58 @@ export default function EventPageDetails({
               </Card>
             </Grid.Col>
             <Grid.Col xs={12} sm="auto">
-              <Card py="xl" px="lg" radius="lg">
-                <Stack>
-                  {/* <DonateInput event={event} /> */}
+              <Card
+                py="xl"
+                px="lg"
+                radius="lg"
+                h="100%"
+                style={{ display: 'flex', alignItems: 'center' }}
+              >
+                <Stack w="100%">
                   <Stack spacing={0} align="center">
                     <Text size="sm" weight={590}>
                       Total team donations
                     </Text>
-                    <Group spacing={4}>
+                    <Group spacing={4} noWrap>
                       <CurrencyIcon currency={Currency.BUZZ} />
-                      <Text size={32} weight={590}>
+                      <Text size={32} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
                         {numberWithCommas(totalTeamScores)}
                       </Text>
                     </Group>
                   </Stack>
                   <Stack spacing={8} sx={{ ['&>*']: { flexGrow: 1 } }}>
+                    <Group spacing={8} position="apart">
+                      <Text size="sm" weight={590}>
+                        Team Rank
+                      </Text>
+                      <Text size="sm" weight={590}>
+                        Team Donations
+                      </Text>
+                    </Group>
                     {teamScores.map((teamScore) => {
                       const color = teamScore.team.toLowerCase();
 
                       return (
-                        <Box key={teamScore.team} component={Stack} spacing={0} py={4} px={8}>
+                        <Fragment key={teamScore.team}>
                           <Group spacing={8} position="apart">
-                            <Stack spacing={0}>
-                              <Text size="sm" weight={590}>
-                                {teamScore.team} team donations
+                            <Group spacing={4} noWrap>
+                              <Text size="xl" weight={590} color={color}>
+                                {teamScore.rank}
                               </Text>
-                              <Group spacing={4}>
-                                <CurrencyIcon currency={Currency.BUZZ} />
-                                <Text size="xl" weight={590}>
-                                  {numberWithCommas(teamScore.score)}
-                                </Text>
-                              </Group>
-                            </Stack>
-                            <Lightbulb variant="star" color={color} size={32} />
+                              <Lightbulb variant="star" color={color} size={32} />
+                            </Group>
+                            <Group spacing={4} noWrap>
+                              <CurrencyIcon currency={Currency.BUZZ} />
+                              <Text
+                                size="xl"
+                                weight={590}
+                                sx={{ fontVariantNumeric: 'tabular-nums' }}
+                              >
+                                {numberWithCommas(teamScore.score)}
+                              </Text>
+                            </Group>
                           </Group>
-                        </Box>
+                        </Fragment>
                       );
                     })}
                   </Stack>
@@ -254,27 +280,35 @@ export default function EventPageDetails({
             </Grid.Col>
             <Grid.Col span={12}>
               <Card py="xl" px="lg" radius="lg">
-                <Stack>
-                  <Title order={2}>Team spirit donation history</Title>
-                  <Text>
-                    See how your team is doing. The team with the most donations at the end of the
-                    event will get a special prize
-                  </Text>
-                  <Line
-                    options={options}
-                    data={{
-                      labels,
-                      datasets: teamScoresHistory.map(({ team, scores }) => {
-                        const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
-                        return {
-                          label: team,
-                          data: scores.map((score) => score.score),
-                          borderColor: color,
-                          backgroundColor: color,
-                        };
-                      }),
-                    }}
-                  />
+                <Stack spacing="xl" align="center">
+                  <Stack spacing={0} align="center">
+                    <Title order={2}>Team spirit donation history</Title>
+                    <Text color="dimmed">
+                      See how your team is doing. The team with the most donations at the end of the
+                      event will get a special prize
+                    </Text>
+                  </Stack>
+                  {loadingHistory ? (
+                    <Center py="xl">
+                      <Loader variant="bars" />
+                    </Center>
+                  ) : (
+                    <Line
+                      options={options}
+                      data={{
+                        labels,
+                        datasets: teamScoresHistory.map(({ team, scores }) => {
+                          const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
+                          return {
+                            label: 'Buzz donated',
+                            data: scores.map((score) => score.score),
+                            borderColor: color,
+                            backgroundColor: color,
+                          };
+                        }),
+                      }}
+                    />
+                  )}
                   <Button
                     variant="filled"
                     color="gray"
@@ -291,29 +325,39 @@ export default function EventPageDetails({
               </Card>
             </Grid.Col>
           </Grid>
-          <Stack>
-            <Stack spacing={0}>
-              <Title order={2}>Event rewards</Title>
-              <Text>
-                For each milestone you reach, you will get a reward. Stay active while the event is
-                ongoing to get all the rewards.
-              </Text>
+          <Card py="xl" px="lg" radius="lg">
+            <Stack align="center" spacing="xl">
+              <Stack spacing={0} align="center">
+                <Title order={2}>Event rewards</Title>
+                <Text color="dimmed">
+                  For each milestone you reach, you will get a reward. Stay active while the event
+                  is ongoing to get all the rewards.
+                </Text>
+              </Stack>
+              <Group spacing={40} w="100%" position="center">
+                {loadingRewards ? (
+                  <Center py="xl">
+                    <Loader variant="bars" />
+                  </Center>
+                ) : rewards.length === 0 ? (
+                  <Alert color="red" radius="xl" ta="center" w="100%" py={8}>
+                    No rewards available
+                  </Alert>
+                ) : (
+                  rewards.map((reward) => (
+                    <Stack key={reward.id} spacing={8} align="center" w="calc(20% - 40px)">
+                      <div style={{ width: 96 }}>
+                        <EdgeMedia src={(reward.data as { url: string })?.url} width={256} />
+                      </div>
+                      <Text align="center" size="lg" weight={590} w="100%">
+                        {reward.name}
+                      </Text>
+                    </Stack>
+                  ))
+                )}
+              </Group>
             </Stack>
-            <Group w="100%" grow>
-              {Array.from({ length: 3 }).map((_, index) => (
-                <Card
-                  key={index}
-                  radius="lg"
-                  h={100}
-                  style={{ display: 'flex', alignItems: 'center' }}
-                >
-                  <Text align="center" size="lg" weight={590} w="100%">
-                    Reward {index + 1}
-                  </Text>
-                </Card>
-              ))}
-            </Group>
-          </Stack>
+          </Card>
           <Stack align="center">
             <Stack spacing={0}>
               <Title align="center" order={2}>
