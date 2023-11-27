@@ -223,7 +223,7 @@ export function ModelCategoryCard({
   }
   if (features.clubs && currentUser?.id === user.id) {
     contextMenuItems = contextMenuItems.concat([
-      <AddToClubMenuItem key="add-to-club" entityType="Model" entityId={data.id} />,
+      <AddToClubMenuItem key="add-to-club" entityType="ModelVersion" entityId={data.id} />,
     ]);
   }
 

@@ -128,9 +128,23 @@ export const getServerSideProps = createServerSideProps({
       const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
       if (!isNumber(id)) return { notFound: true };
 
+      const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
+        () => null
+      );
+
+      const modelVersionIdParsed = modelVersionId ?? version?.id;
+
+      if (!modelVersionIdParsed) {
+        return { notFound: true };
+      }
+
       const [entityAccess] = await hasEntityAccess({
-        entityIds: [id],
-        entityType: 'Model',
+        entities: [
+          {
+            entityId: modelVersionIdParsed as number,
+            entityType: 'ModelVersion',
+          },
+        ],
         userId: session?.user?.id,
         isModerator: session?.user?.isModerator,
       });
@@ -139,27 +153,17 @@ export const getServerSideProps = createServerSideProps({
         const [clubAccess] = await entityRequiresClub({
           entities: [
             {
-              entityId: id,
-              entityType: 'Model',
+              entityId: modelVersionIdParsed as number,
+              entityType: 'ModelVersion',
             },
           ],
         });
 
-        if (clubAccess?.requiresClub && clubAccess?.clubs?.length > 0) {
-          return {
-            redirect: {
-              destination: `/clubs/${clubAccess.clubs[0].clubId}/model/${id}`,
-              permanent: false,
-            },
-          };
-        }
+        console.log(clubAccess);
 
         return { notFound: true };
       }
 
-      const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
-        () => null
-      );
       if (version)
         await ssg.image.getInfinite.prefetchInfinite({
           modelVersionId: version.id,

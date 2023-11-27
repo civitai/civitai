@@ -96,4 +96,3 @@ export type ImageModerationReviewQueueImage =
 
 export type ClubGetById = RouterOutput['club']['getById'];
 export type ClubTier = RouterOutput['club']['getTiers'][number];
-export type ClubEntityById = RouterOutput['club']['getClubEntity'];

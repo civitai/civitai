@@ -473,15 +473,14 @@ export const getModelsWithImagesAndModelVersions = async ({
     },
   });
 
-  const entityIds = items.map((i) => i.id);
+  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
   const clubRequirement = await entityRequiresClub({
-    entities: entityIds.map((id) => ({
+    entities: modelVersionIds.map((id) => ({
       entityId: id,
-      entityType: 'Model',
+      entityType: 'ModelVersion',
     })),
   });
 
-  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
         modelVersionIds,
@@ -512,7 +511,7 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         const canGenerate = !!version.generationCoverage?.covered;
         const requiresClub =
-          clubRequirement.find((r) => r.entityId === model.id)?.requiresClub ?? false;
+          clubRequirement.find((r) => r.entityId === version.id)?.requiresClub ?? false;
 
         return {
           ...model,

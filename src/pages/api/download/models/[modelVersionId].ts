@@ -103,8 +103,12 @@ export default RateLimitedEndpoint(
     const userId = session?.user?.id;
     const archived = modelVersion.model.mode === ModelModifier.Archived;
     const [entityAccess] = await hasEntityAccess({
-      entityType: 'Model',
-      entityIds: [modelVersion?.model?.id],
+      entities: [
+        {
+          entityType: 'ModelVersion',
+          entityId: modelVersion?.id,
+        },
+      ],
       userId,
       isModerator: isMod,
     });

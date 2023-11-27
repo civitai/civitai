@@ -169,7 +169,8 @@ model User {
   referralCodes           UserReferralCode[]
   clubs                   Club[]
   memberships             ClubMembership[]
-  addedClubEntities       ClubEntity[]
+  addedClubPosts          ClubPost[]
+  accessGrantedBy         EntityAccess[]
 }
 
 enum OnboardingStep {
@@ -411,7 +412,6 @@ model Model {
   underAttack         Boolean         @default(false)
   earlyAccessDeadline DateTime?
   mode                ModelModifier?
-  availability        Availability    @default(Public)
   unlisted            Boolean         @default(false)
 
   // Licensing
@@ -541,6 +541,7 @@ model ModelVersion {
   earlyAccessTimeFrame Int             @default(0)
   requireAuth          Boolean         @default(false)
   settings             Json?
+  availability         Availability    @default(Public)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -2314,6 +2315,9 @@ model EntityAccess {
   accessToType String
   accessorId   Int
   accessorType String
+  addedById    Int
+  addedBy      User     @relation(fields: [addedById], references: [id])
+  addedAt      DateTime @default(now())
 
   @@id([accessToId, accessToType, accessorId, accessorType])
 }
@@ -2337,7 +2341,7 @@ model Club {
 
   tiers       ClubTier[]
   memberships ClubMembership[]
-  ClubEntity  ClubEntity[]
+  posts    ClubPost[]
 
   @@index([userId])
 }
@@ -2399,19 +2403,16 @@ model ClubMembershipCharge {
   currency            Currency @default(BUZZ)
 }
 
-model ClubEntity {
+model ClubPost {
+  id          Int      @id @default(autoincrement())
   clubId      Int
   club        Club     @relation(fields: [clubId], references: [id])
-  entityType  String
-  entityId    Int
-  addedById   Int
-  addedBy     User     @relation(fields: [addedById], references: [id])
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
   membersOnly Boolean
-  addedAt     DateTime @default(now())
   title       String
   description String
-
-  @@id([clubId, entityId, entityType])
 }
 
 /// @view

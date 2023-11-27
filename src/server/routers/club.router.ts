@@ -1,16 +1,12 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
 import {
-  getClubEntity,
   getClubTiersInput,
-  upsertClubEntitySchema,
   upsertClubInput,
   upsertClubTierInput,
 } from '~/server/schema/club.schema';
 import {
-  getClubEntityHandler,
   getClubHandler,
   getClubTiersHandler,
-  upsertClubEntityHandler,
   upsertClubHandler,
   upsertClubTierHandler,
   userContributingClubsHandler,
@@ -19,10 +15,6 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 
 export const clubRouter = router({
   getById: publicProcedure.input(getByIdSchema).use(isFlagProtected('clubs')).query(getClubHandler),
-  getClubEntity: publicProcedure
-    .input(getClubEntity)
-    .use(isFlagProtected('clubs'))
-    .query(getClubEntityHandler),
   userContributingClubs: publicProcedure
     .use(isFlagProtected('clubs'))
     .query(userContributingClubsHandler),
@@ -38,8 +30,4 @@ export const clubRouter = router({
     .input(upsertClubTierInput)
     .use(isFlagProtected('clubs'))
     .mutation(upsertClubTierHandler),
-  upsertClubEntity: protectedProcedure
-    .input(upsertClubEntitySchema)
-    .use(isFlagProtected('clubs'))
-    .mutation(upsertClubEntityHandler),
 });
