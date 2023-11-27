@@ -2,7 +2,7 @@ import { IconArrowUp } from '@tabler/icons-react';
 import React, { useState } from 'react';
 
 import { FloatingActionButton } from './FloatingActionButton';
-import { useScrollAreaNode } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 
 type Props = Omit<
   React.ComponentProps<typeof FloatingActionButton>,
@@ -11,7 +11,7 @@ type Props = Omit<
 
 export function ScrollToTopFab(props: Props) {
   const [show, setShow] = useState(false);
-  const node = useScrollAreaNode({
+  const node = useScrollAreaRef({
     onScroll: () => {
       if (!node?.current) return;
       setShow(node.current.scrollTop > 100);

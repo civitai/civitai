@@ -1,6 +1,6 @@
 import { MantineNumberSize } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { useNodeContext } from '~/components/NodeProvider/NodeProvider';
+import { useNodeContext } from '~/components/ContainerProvider/ContainerProvider';
 import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
 
 export const useContainerQuery = ({

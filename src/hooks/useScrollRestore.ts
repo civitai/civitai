@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { createKeyDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
@@ -14,10 +14,14 @@ export type UseScrollRestoreProps = {
   enabled?: boolean;
 };
 
+export const getScrollAreaKey = (key?: string) =>
+  `${key ?? history.state.key}_${location.pathname.substring(1)}`;
+
 export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRestoreProps) => {
   const { key, defaultPosition = 'top', enabled = true } = args ?? {};
   const ref = useRef<T>(null);
   const emitterRef = useRef(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
+  const ignoreScrollRef = useRef(false);
 
   useEffect(() => {
     const emitter = emitterRef.current;
@@ -31,8 +35,9 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
   useEffect(() => {
     const node = ref.current;
     if (!node || !enabled) return;
-    const _key = `${key ?? history.state.key}_${location.pathname.substring(1)}`;
+    const _key = getScrollAreaKey(key);
     const record = scrollMap.get(_key);
+    ignoreScrollRef.current = true;
     if (!record) {
       switch (defaultPosition) {
         case 'top': {
@@ -51,11 +56,15 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
     }
 
     const handleScroll = () => {
-      emitterRef.current.emit('scroll', {
-        key: _key,
-        scrollTop: node.scrollTop,
-        scrollLeft: node.scrollLeft,
-      });
+      if (ignoreScrollRef.current) {
+        ignoreScrollRef.current = false;
+      } else {
+        emitterRef.current.emit('scroll', {
+          key: _key,
+          scrollTop: node.scrollTop,
+          scrollLeft: node.scrollLeft,
+        });
+      }
     };
 
     node.addEventListener('scroll', handleScroll);
@@ -64,5 +73,15 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
     };
   }, [key, defaultPosition, enabled]); //eslint-disable-line
 
-  return ref;
+  const restore = useCallback(() => {
+    const node = ref.current;
+    const _key = getScrollAreaKey(key);
+    const record = scrollMap.get(_key);
+    if (!node || !record) return;
+    ignoreScrollRef.current = true;
+    node.scrollTop = record.scrollTop;
+    node.scrollLeft = record.scrollLeft;
+  }, [key]);
+
+  return { ref, restore };
 };

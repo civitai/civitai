@@ -1,5 +1,5 @@
 import { Affix, Button, ButtonProps, Transition, TransitionProps } from '@mantine/core';
-import { useScrollAreaNode } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 type Props = Omit<ButtonProps, 'style' | 'onClick'> &
   Pick<TransitionProps, 'transition' | 'mounted' | 'duration'> & {
     onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -12,7 +12,7 @@ export function FloatingActionButton({
   duration,
   ...buttonProps
 }: Props) {
-  const node = useScrollAreaNode();
+  const node = useScrollAreaRef();
 
   return (
     <Affix

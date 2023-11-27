@@ -55,10 +55,10 @@ export default function GeneratePage() {
   const [tab, setTab] = useState<string>('queue');
 
   const result = useGetGenerationRequests();
-  usePageScrollRestore({
-    key: tab,
-    condition: !!result.data,
-  });
+  // usePageScrollRestore({
+  //   key: tab,
+  //   condition: !!result.data,
+  // });
 
   // usePreserveVerticalScrollPosition({
   //   data: result.requests,

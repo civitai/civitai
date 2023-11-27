@@ -7,33 +7,25 @@ import {
   Title,
   Center,
   ThemeIcon,
-  Affix,
-  Box,
 } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 
-import React, { ComponentType, cloneElement } from 'react';
+import React from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
-import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
-import { NodeProvider } from '~/components/NodeProvider/NodeProvider';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
 
 type AppLayoutProps = {
   innerLayout?: (page: React.ReactNode) => React.ReactNode;
-  pageClass?: string;
-  pageStyle?: React.CSSProperties;
 };
 
 export function AppLayout({
   children,
   innerLayout,
-  pageClass,
-  pageStyle,
   renderSearchComponent,
 }: {
   children: React.ReactNode;
@@ -43,7 +35,6 @@ export function AppLayout({
   const { classes, cx } = useStyles();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
-  const flags = useFeatureFlags();
 
   if (isBanned)
     return (
@@ -63,34 +54,22 @@ export function AppLayout({
       </Center>
     );
 
-  const content = innerLayout ? innerLayout(children) : children;
+  const content = innerLayout ? innerLayout(children) : <ScrollAreaMain>{children}</ScrollAreaMain>;
 
   return (
-    <NodeProvider className={cx(`theme-${theme.colorScheme}`, classes.root)}>
+    <ContainerProvider
+      className={cx(`theme-${theme.colorScheme}`, classes.root)}
+      containerName="root"
+    >
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       <div className={classes.wrapper}>
         <GenerationSidebar />
-        <div className={classes.content}>
-          <main className={classes.main}>
-            {pageClass ? (
-              <div className={pageClass} style={pageStyle}>
-                {content}
-              </div>
-            ) : (
-              <ScrollArea style={pageStyle} py="md">
-                {content}
-              </ScrollArea>
-            )}
-            {flags.assistant && (
-              <div className={classes.assistant}>
-                <AssistantButton />
-              </div>
-            )}
-          </main>
+        <ContainerProvider className={classes.content} containerName="main">
+          <main className={classes.main}>{content}</main>
           <AppFooter fixed={false} />
-        </div>
+        </ContainerProvider>
       </div>
-    </NodeProvider>
+    </ContainerProvider>
   );
 }
 
@@ -105,26 +84,26 @@ const useStyles = createStyles((theme) => ({
     flexDirection: 'column',
     height: '100%',
     flex: 1,
-    overflow: 'hidden',
+    overflow: 'clip',
   },
   wrapper: {
     display: 'flex',
     flex: 1,
-    overflow: 'hidden',
+    overflow: 'clip',
   },
   main: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'hidden',
-    containerName: 'main',
-    containerType: 'inline-size',
+    overflow: 'clip',
     position: 'relative',
   },
   assistant: {
-    position: 'absolute',
-    bottom: 8,
-    right: 12,
+    position: 'sticky',
+    bottom: 0,
+    left: '100%',
+    display: 'inline-block',
+    marginRight: theme.spacing.md,
   },
 }));
 

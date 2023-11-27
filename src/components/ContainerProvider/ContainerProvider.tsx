@@ -1,4 +1,4 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
+import { Box, BoxProps, createPolymorphicComponent, createStyles } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { RefObject, createContext, forwardRef, useContext, useRef } from 'react';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
@@ -7,19 +7,21 @@ import { EventEmitter } from '~/utils/eventEmitter';
 
 type EmitterDict = { resize: ResizeObserverEntry };
 
-type NodeState = {
+type ContainerState = {
   nodeRef: RefObject<HTMLDivElement>;
   emitterRef: RefObject<EventEmitter<EmitterDict>>;
 };
 
-const NodeContext = createContext<NodeState | null>(null);
+const ContainerContext = createContext<ContainerState | null>(null);
 export const useNodeContext = () => {
-  const context = useContext(NodeContext);
+  const context = useContext(ContainerContext);
   if (!context) throw 'missing NodeProvider';
   return context;
 };
 
-export const NodeProvider = forwardRef<HTMLDivElement, BoxProps & { containerName?: string }>(
+type ContainerProviderProps = BoxProps & { containerName?: string };
+
+const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
   ({ children, containerName, ...props }, ref) => {
     const emitterRef = useRef(new EventEmitter<EmitterDict>());
     const debouncer = useDebouncer(300);
@@ -31,7 +33,7 @@ export const NodeProvider = forwardRef<HTMLDivElement, BoxProps & { containerNam
     const { classes, cx } = useStyles();
 
     return (
-      <NodeContext.Provider value={{ nodeRef: innerRef, emitterRef }}>
+      <ContainerContext.Provider value={{ nodeRef: innerRef, emitterRef }}>
         <Box
           ref={mergedRef}
           {...props}
@@ -40,12 +42,16 @@ export const NodeProvider = forwardRef<HTMLDivElement, BoxProps & { containerNam
         >
           {children}
         </Box>
-      </NodeContext.Provider>
+      </ContainerContext.Provider>
     );
   }
 );
 
-NodeProvider.displayName = 'NodeProvider';
+_ContainerProvider.displayName = 'ContainerProvider';
+
+export const ContainerProvider = createPolymorphicComponent<'div', ContainerProviderProps>(
+  _ContainerProvider
+);
 
 const useStyles = createStyles(() => ({
   root: {
