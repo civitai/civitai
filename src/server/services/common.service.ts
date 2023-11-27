@@ -205,7 +205,7 @@ export const entityRequiresClub = async ({
     ${Prisma.raw(entitiesWith)}
     SELECT 
       e."entityId", 
-      e."accessToId" "entityType", 
+      e."entityType", 
       COALESCE(c.id, ct."clubId") as "clubId",
       ct."id" as "clubTierId"
     FROM entities e
