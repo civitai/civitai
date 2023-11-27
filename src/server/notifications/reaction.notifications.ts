@@ -11,7 +11,7 @@ export const reactionNotifications = createNotificationProcessor({
     displayName: 'Comment reaction milestones',
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
-      url: `/models/${details.modelId}?modal=commentThread&commentId=${details.rootCommentId}`,
+      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
