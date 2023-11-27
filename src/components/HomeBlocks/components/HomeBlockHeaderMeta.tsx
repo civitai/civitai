@@ -4,7 +4,6 @@ import { Button, Group, Text, Title } from '@mantine/core';
 import Link from 'next/link';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 

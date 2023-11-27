@@ -1,8 +1,8 @@
 import { Box, BoxProps, createPolymorphicComponent, createStyles } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { RefObject, createContext, forwardRef, useContext, useRef } from 'react';
+import { create } from 'zustand';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { useDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
 
 type EmitterDict = { resize: ResizeObserverEntry };
@@ -10,6 +10,7 @@ type EmitterDict = { resize: ResizeObserverEntry };
 type ContainerState = {
   nodeRef: RefObject<HTMLDivElement>;
   emitterRef: RefObject<EventEmitter<EmitterDict>>;
+  containerName: string;
 };
 
 const ContainerContext = createContext<ContainerState | null>(null);
@@ -19,21 +20,20 @@ export const useNodeContext = () => {
   return context;
 };
 
-type ContainerProviderProps = BoxProps & { containerName?: string };
+type ContainerProviderProps = BoxProps & { containerName: string };
 
 const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
   ({ children, containerName, ...props }, ref) => {
     const emitterRef = useRef(new EventEmitter<EmitterDict>());
-    const debouncer = useDebouncer(300);
     const innerRef = useResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) debouncer(() => emitterRef.current.emit('resize', entry));
+      useContainerProviderStore.setState(() => ({ containerName: entry.contentBoxSize[0] }));
     });
     const mergedRef = useMergedRef(innerRef, ref);
     const { classes, cx } = useStyles();
 
     return (
-      <ContainerContext.Provider value={{ nodeRef: innerRef, emitterRef }}>
+      <ContainerContext.Provider value={{ nodeRef: innerRef, emitterRef, containerName }}>
         <Box
           ref={mergedRef}
           {...props}
@@ -58,3 +58,5 @@ const useStyles = createStyles(() => ({
     containerType: 'inline-size',
   },
 }));
+
+export const useContainerProviderStore = create<Record<string, ResizeObserverSize>>(() => ({}));

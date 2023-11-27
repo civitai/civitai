@@ -11,9 +11,9 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useState } from 'react';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const buttonProps: ButtonProps = {
@@ -28,7 +28,7 @@ const hash = env.NEXT_PUBLIC_GIT_HASH;
 export function AppFooter({ fixed = true }: { fixed?: boolean }) {
   const { classes, cx } = useStyles({ fixed });
   const [showHash, setShowHash] = useState(false);
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
   const features = useFeatureFlags();
 
   return (

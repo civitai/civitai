@@ -29,8 +29,8 @@ import { Currency } from '@prisma/client';
 import { useBuzzTransaction } from './buzz.utils';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { isTouchDevice } from '~/utils/device-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -109,7 +109,7 @@ export function InteractiveTipBuzzButton({
   ...buttonProps
 }: Props) {
   const { theme, classes, cx } = useStyle();
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { balance } = useBuzz();
   const features = useFeatureFlags();

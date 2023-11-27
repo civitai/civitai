@@ -34,7 +34,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -88,7 +87,6 @@ import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
@@ -104,6 +102,7 @@ import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -131,7 +130,7 @@ export default function BountyDetailsPage({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useContext();
   const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];

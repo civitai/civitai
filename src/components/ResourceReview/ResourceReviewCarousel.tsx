@@ -22,7 +22,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function ResourceReviewCarousel({
   username,
@@ -34,7 +34,7 @@ export function ResourceReviewCarousel({
   reviewId: number;
 }) {
   const { classes, theme } = useStyles();
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
 
   const filters = {
     username,

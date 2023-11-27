@@ -11,6 +11,7 @@ import {
 import { usePrevious } from '@mantine/hooks';
 import { IconLock } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { Feed, FloatingFeedActions } from '~/components/ImageGeneration/Feed';
 import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -21,7 +22,6 @@ import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/gen
 import { usePageScrollRestore } from '~/components/ScrollRestoration/ScrollRestoration';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -50,7 +50,7 @@ export const getServerSideProps = createServerSideProps({
 export default function GeneratePage() {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
   const isClient = useIsClient();
   const [tab, setTab] = useState<string>('queue');
 

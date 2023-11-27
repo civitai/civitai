@@ -1,6 +1,9 @@
 import { MantineNumberSize } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { useNodeContext } from '~/components/ContainerProvider/ContainerProvider';
+import {
+  useContainerProviderStore,
+  useNodeContext,
+} from '~/components/ContainerProvider/ContainerProvider';
 import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
 
 export const useContainerQuery = ({
@@ -11,7 +14,7 @@ export const useContainerQuery = ({
   width: MantineNumberSize;
 }) => {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
-  const { nodeRef, emitterRef } = useNodeContext();
+  const { nodeRef, containerName } = useNodeContext();
   const [value, setValue] = useState(false);
 
   useEffect(() => {
@@ -22,15 +25,13 @@ export const useContainerQuery = ({
   }, []); // eslint-disable-line
 
   useEffect(() => {
-    const emitter = emitterRef.current;
-    if (!emitter) return;
-    const callback = emitter.on('resize', (entry) => {
-      if (type === 'max-width') setValue(size > entry.contentBoxSize[0].inlineSize);
-      else if (type === 'min-width') setValue(size <= entry.contentBoxSize[0].inlineSize);
+    useContainerProviderStore.subscribe((state) => {
+      const entry = state[containerName];
+      if (entry) {
+        if (type === 'max-width') setValue(size > entry.inlineSize);
+        else if (type === 'min-width') setValue(size <= entry.inlineSize);
+      }
     });
-    return () => {
-      emitter.off('resize', callback);
-    };
   }, [size, type]); // eslint-disable-line
 
   return value;

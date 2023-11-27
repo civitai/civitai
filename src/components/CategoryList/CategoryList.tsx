@@ -17,8 +17,8 @@ import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 type Props<Item> = {
   data: Array<TypeCategory & { items: Item[] }>;
@@ -56,7 +56,7 @@ export function CategoryList<Item>({
   const { columnCount, maxSingleColumnWidth, columnWidth } = useMasonryContainerContext();
   const { classes } = useStyles();
 
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
 
   useEffect(() => {
     if (inView) fetchNextPage?.();

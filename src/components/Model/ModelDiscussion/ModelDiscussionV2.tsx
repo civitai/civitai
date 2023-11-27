@@ -5,13 +5,13 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden }: Props) {
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? initialLimit / 2 : initialLimit;
   const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
 

@@ -27,9 +27,9 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { CosmeticType } from '@prisma/client';
 import { Username } from '~/components/User/Username';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -73,7 +73,7 @@ const mapSize: Record<
 };
 
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
-  const isMobile = useIsMobile({ breakpoint: 'sm' });
+  const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,

@@ -18,6 +18,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const useStyle = createStyles((theme) => ({
   container: {
@@ -106,7 +107,7 @@ const MyCollectionsDrawer = () => {
 };
 
 const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { classes } = useStyle();
 

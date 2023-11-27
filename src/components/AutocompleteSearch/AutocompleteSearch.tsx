@@ -463,7 +463,6 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
             ['Escape', blurInput],
             ['Enter', handleSubmit],
           ])}
-          // onBlur={() => (!isMobile ? onClear?.() : undefined)}
           onItemSubmit={(item) => {
             item.hit
               ? router.push(processHitUrl(item.hit)) // when a model is clicked
