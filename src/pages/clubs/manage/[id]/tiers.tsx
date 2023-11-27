@@ -37,6 +37,7 @@ import { IconAlertCircle } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
+import { useClubFeedStyles } from '~/components/Club/ClubFeed';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -79,8 +80,6 @@ export const getServerSideProps = createServerSideProps({
       await ssg.club.getById.prefetch({ id });
       await ssg.club.getTiers.prefetch({
         clubId: id,
-        joinableOnly: false,
-        listedOnly: false,
         include: ['membershipsCount'],
       });
     }
@@ -92,6 +91,7 @@ export const getServerSideProps = createServerSideProps({
 export default function ManageClubTiers({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const { classes } = useClubFeedStyles();
   const { club, loading } = useQueryClub({ id });
   const {
     data: tiers = [],
@@ -99,8 +99,6 @@ export default function ManageClubTiers({
     isRefetching,
   } = trpc.club.getTiers.useQuery({
     clubId: id,
-    joinableOnly: false,
-    listedOnly: false,
     include: ['membershipsCount'],
   });
 
@@ -133,7 +131,7 @@ export default function ManageClubTiers({
       {club && (
         <>
           {addNewTier ? (
-            <Paper withBorder p="md">
+            <Paper className={classes.feedContainer}>
               <ClubTierUpsertForm
                 clubId={club.id}
                 onCancel={() => setAddNewTier(false)}

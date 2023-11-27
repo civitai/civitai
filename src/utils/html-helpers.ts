@@ -1,4 +1,5 @@
 import sanitize, { Transformer } from 'sanitize-html';
+import * as cheerio from 'cheerio';
 import linkBlocklist from '~/server/utils/link-blocklist.json';
 import { isNumber, isValidURL } from '~/utils/type-guards';
 
@@ -137,3 +138,29 @@ export function needsColorSwap({ hexColor, colorScheme, threshold = 0.5 }: Color
     }
   }
 }
+
+export const getHtmlContentPreview = ({
+  html,
+  maxCharacters = 150,
+  lineClamp = 2,
+}: {
+  html: string;
+  lineClamp: number;
+  maxCharacters?: number;
+}) => {
+  const $ = cheerio.load(html);
+  // Extract the first two lines of text from the body
+  const content = $('p')
+    .slice(0, lineClamp)
+    .map((i, e) => {
+      const text = $(e).text();
+      if (maxCharacters && text.length > maxCharacters) {
+        return `<p>${text.slice(0, maxCharacters)}...</p>`;
+      }
+
+      return `<p>${text}</p>`;
+    })
+    .get()
+    .join('');
+  return `<div>${content}<p>...</p></div>`;
+};

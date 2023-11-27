@@ -1,6 +1,5 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { UpsertBountyInput } from '~/server/schema/bounty.schema';
 import {
   UpsertClubEntityInput,
   UpsertClubInput,

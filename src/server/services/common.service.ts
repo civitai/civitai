@@ -185,14 +185,14 @@ export const entityRequiresClub = async ({
   >`
     SELECT 
       ea."accessToId" "entityId", 
-      COALESCE(c.id, cmt."clubId") as "clubId",
-      cmt."clubTierId" as "clubTierId"
+      COALESCE(c.id, ct."clubId") as "clubId",
+      ct."id" as "clubTierId"
     FROM "EntityAccess" ea
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${Prisma.raw(
       clubId ? `AND c.id = ${clubId}` : ''
     )}
-    LEFT JOIN "ClubMembership" cmt ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = cmt."clubTierId" ${Prisma.raw(
-      clubId ? `AND cmt."clubId" = ${clubId}` : ''
+    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" ${Prisma.raw(
+      clubId ? `AND ct."clubId" = ${clubId}` : ''
     )}
     WHERE ea."accessToId" IN (${Prisma.join(entityIds, ', ')})
       AND ea."accessToType" = ${entityType}

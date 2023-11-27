@@ -21,7 +21,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 
 const schema = upsertClubEntitySchema;
 
-export type ClubPostManageFormProps = {
+export type ClubEntityManageFormProps = {
   entityId?: number;
   entityType?: SupportedClubEntities;
   clubId?: number;
@@ -39,13 +39,14 @@ export type ClubPostManageFormProps = {
   }) => void;
   onCancel?: () => void;
 };
-export const ClubPostManageForm = ({
+export const ClubEntityManageForm = ({
   entityType: _entityType,
   entityId: _entityId,
   clubId: _clubId,
   title: _title,
   onSave,
-}: ClubPostManageFormProps) => {
+}: ClubEntityManageFormProps) => {
+  const utils = trpc.useContext();
   const form = useForm({
     schema,
     shouldUnregister: false,
@@ -70,8 +71,6 @@ export const ClubPostManageForm = ({
   const { data: tiers = [] } = trpc.club.getTiers.useQuery(
     {
       clubId: clubId as number,
-      joinableOnly: false,
-      listedOnly: false,
     },
     {
       enabled: !!clubId && !!userContributingClubs?.find((club) => club.id === clubId),
@@ -108,6 +107,7 @@ export const ClubPostManageForm = ({
     if (clubEntity && clubEntity.type === 'hasAccess') {
       form.reset({
         ...clubEntity,
+        clubTierIds: clubEntity.availableInTierIds ?? [],
         privatizeEntity: clubEntity.availability === Availability.Private,
       });
     }
@@ -117,6 +117,12 @@ export const ClubPostManageForm = ({
 
   const handleSubmit = async (data: z.infer<typeof schema>) => {
     await upsertClubEntity(data);
+    utils.club.getClubEntity.invalidate({
+      entityType: data.entityType,
+      entityId: data.entityId,
+      clubId: data.clubId,
+    });
+
     onSave?.({
       entityId: data.entityId,
       entityType: data.entityType,
@@ -242,7 +248,7 @@ export const ClubPostManageForm = ({
                   label: tier.name,
                   value: tier.id,
                 }))}
-                name="tierIds"
+                name="clubTierIds"
                 label="Select tiers to add this resource to"
                 placeholder="e.g.: Gold silver"
                 description="Leave this empty to make resource available to all tiers"

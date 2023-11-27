@@ -12,13 +12,15 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
+import { useClubFeedStyles } from '~/components/Club/ClubFeed';
 
 export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const { classes } = useClubFeedStyles();
 
   if (isEditing) {
     return (
-      <Paper withBorder p="md">
+      <Paper className={classes.feedContainer}>
         <ClubTierUpsertForm
           clubTier={clubTier}
           clubId={clubTier.clubId}
@@ -30,7 +32,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   }
 
   return (
-    <Paper withBorder p="md">
+    <Paper className={classes.feedContainer}>
       <Group align="flex-start">
         {clubTier.coverImage && (
           <ImageCSSAspectRatioWrap

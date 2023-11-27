@@ -1,12 +1,15 @@
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import React from 'react';
-import { ClubPostManageForm, ClubPostManageFormProps } from '~/components/Club/ClubPostManageForm';
+import {
+  ClubEntityManageForm,
+  ClubEntityManageFormProps,
+} from '~/components/Club/ClubEntityManageForm';
 import { showSuccessNotification } from '~/utils/notifications';
 import Link from 'next/link';
 import { Anchor } from '@mantine/core';
 
 const { openModal, Modal } = createContextModal<
-  Omit<ClubPostManageFormProps, 'onSave' | 'onCancel'>
+  Omit<ClubEntityManageFormProps, 'onSave' | 'onCancel'>
 >({
   name: 'manageClubPostModal',
   withCloseButton: false,
@@ -20,7 +23,7 @@ const { openModal, Modal } = createContextModal<
     };
 
     return (
-      <ClubPostManageForm
+      <ClubEntityManageForm
         {...props}
         onSave={({ entityId, entityType, isUpdate, clubId }) => {
           showSuccessNotification({

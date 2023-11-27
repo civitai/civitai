@@ -24,6 +24,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
+import { useClubFeedStyles } from '~/components/Club/ClubFeed';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -70,6 +71,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ManageClub({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
+  const { classes } = useClubFeedStyles();
 
   if (!loading && !club) return <NotFound />;
   if (loading) return <PageLoader />;
@@ -77,7 +79,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
   return (
     <Stack>
       <Title order={2}>General Settings</Title>
-      <Paper withBorder p="md">
+      <Paper className={classes.feedContainer}>
         <ClubUpsertForm club={club} />
       </Paper>
     </Stack>
@@ -94,6 +96,8 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
       clubId: club?.id as number,
+      listedOnly: true,
+      joinableOnly: true,
     },
     {
       enabled: !!club?.id,

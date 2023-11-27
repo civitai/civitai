@@ -28,6 +28,8 @@ import {
   entityRequiresClub,
   hasEntityAccess,
 } from '~/server/services/common.service';
+import { getHtmlContentPreview } from '~/utils/html-helpers';
+import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const userContributingClubs = async ({
   userId,
@@ -377,8 +379,8 @@ export const getClubTiers = async ({
   const tiers = await dbRead.clubTier.findMany({
     where: {
       clubId,
-      unlisted: listedOnly || undefined,
-      joinable: joinableOnly || undefined,
+      unlisted: listedOnly !== undefined ? !listedOnly : undefined,
+      joinable: joinableOnly !== undefined ? joinableOnly : undefined,
       id: tierId || undefined,
     },
     select: {
@@ -441,7 +443,7 @@ type ClubEntityByEntityIdNonMembersOnlyNoAccess = {
   hasAccess: false;
   title: string;
   description: string;
-  coverImage: null | { id: number; hash: string };
+  coverImage: null | { id: number; hash: string; width: number; height: number };
 };
 
 type ClubEntityByEntityId = {
@@ -455,6 +457,8 @@ type ClubEntityByEntityId = {
   title: string | null;
   description: string | null;
   membership: null | { clubTierId: number };
+  addedAt: Date;
+  addedBy: UserWithCosmetics | null;
 } & (
   | ClubEntityByEntityIdWithAccess
   | ClubEntityByEntityIdMembersOnlyNoAccess
@@ -485,6 +489,10 @@ export const getClubEntity = async ({
       title: true,
       description: true,
       membersOnly: true,
+      addedAt: true,
+      addedBy: {
+        select: userWithCosmeticsSelect,
+      },
     },
   });
 
@@ -592,7 +600,10 @@ export const getClubEntity = async ({
       : {
           id: coverImage.id,
           hash: coverImage.hash,
+          width: coverImage.width,
+          height: coverImage.height,
         },
+    description: getHtmlContentPreview({ html: clubEntity.description ?? '', lineClamp: 2 }),
     membership,
     availableInTierIds,
     availability,
@@ -666,8 +677,18 @@ export const upsertClubEntity = async ({
           // Ensures we have no record of this item beling locked to the clubId
           await tx.entityAccess.deleteMany({
             where: {
-              accessorId: data.clubId,
-              accessorType: 'Club',
+              OR: [
+                {
+                  accessorId: {
+                    in: allClubTierIds,
+                  },
+                  accessorType: 'ClubTier',
+                },
+                {
+                  accessorId: data.clubId,
+                  accessorType: 'Club',
+                },
+              ],
               accessToId: data.entityId,
               accessToType: data.entityType,
             },

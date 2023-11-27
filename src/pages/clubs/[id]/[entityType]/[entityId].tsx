@@ -13,22 +13,7 @@ import { IconAlertCircle } from '@tabler/icons-react';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { capitalize } from 'lodash-es';
-import Link from 'next/link';
-
-const getEntityUrl = ({
-  entityType,
-  entityId,
-}: {
-  entityType: SupportedClubEntities;
-  entityId: number;
-}) => {
-  switch (entityType) {
-    case 'Model':
-      return `/models/${entityId}`;
-    case 'Article':
-      return `/articles/${entityId}`;
-  }
-};
+import { ClubEntityItem } from '~/components/Club/ClubEntityItem';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -75,53 +60,12 @@ export default function ClubModelEntity({
   if (loading || isLoading) return <PageLoader />;
   if (!club || !clubEntity) return <NotFound />;
 
-  if (clubEntity.type === 'membersOnlyNoAccess') {
-    // Requires a club membership to view.
-    return (
-      <Container size="md">
-        <Stack>
-          <Title order={2}>Welcome to {club.name}</Title>
-          <Paper withBorder p="md">
-            <AlertWithIcon icon={<IconAlertCircle />} px="xs">
-              This model requires a membership to view.
-            </AlertWithIcon>
-          </Paper>
-        </Stack>
-      </Container>
-    );
-  }
-
-  if (clubEntity.type === 'noAccess') {
-    // Requires a club membership to view.
-    return (
-      <Container size="md">
-        <Stack>
-          <Title order={2}>Welcome to {club.name}</Title>
-          <Paper withBorder p="md">
-            <Stack>
-              <span>TODO: Cover image - display hash only </span>
-              <Title order={3}>{clubEntity.title}</Title>
-              <RenderHtml html={clubEntity.description} />
-              <Button onClick={() => {}}>Unlock this content</Button>
-            </Stack>
-          </Paper>
-        </Stack>
-      </Container>
-    );
-  }
-
+  // Requires a club membership to view.
   return (
     <Container size="md">
       <Stack>
         <Title order={2}>Welcome to {club.name}</Title>
-        <Paper withBorder p="md">
-          <span>TODO: Cover image display</span>
-          <Title order={3}>{clubEntity.title}</Title>
-          <RenderHtml html={clubEntity.description} />
-          <Link href={getEntityUrl({ entityId, entityType })} passHref>
-            <Button fullWidth>Checkout this resource</Button>
-          </Link>
-        </Paper>
+        <ClubEntityItem clubEntity={clubEntity} />
       </Stack>
     </Container>
   );

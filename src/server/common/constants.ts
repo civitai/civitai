@@ -234,6 +234,7 @@ export const constants = {
     tierImageDisplayWidth: 124,
     avatarDisplayWidth: 124,
     minMonthlyBuzz: 5000,
+    postCoverImageAspectRatio: 1 / 4,
   },
 } as const;
 

@@ -43,8 +43,8 @@ export type GetClubTiersInput = z.infer<typeof getClubTiersInput>;
 
 export const getClubTiersInput = z.object({
   clubId: z.number(),
-  listedOnly: z.boolean().default(true),
-  joinableOnly: z.boolean().default(true),
+  listedOnly: z.boolean().optional(),
+  joinableOnly: z.boolean().optional(),
   include: z.array(z.enum(['membershipsCount'])).optional(),
   tierId: z.number().optional(),
 });
