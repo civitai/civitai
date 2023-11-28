@@ -6,6 +6,7 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   GetClubTiersInput,
+  GetInfiniteClubPostsSchema,
   supportedClubEntities,
   SupportedClubEntities,
   UpsertClubInput,
@@ -13,6 +14,7 @@ import {
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import {
+  getAllClubPosts,
   getClub,
   getClubDetailsForResource,
   getClubTiers,
@@ -23,6 +25,10 @@ import {
 } from '~/server/services/club.service';
 import { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
+import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import { getAllBounties, getImagesForBounties } from '~/server/services/bounty.service';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { isDefined } from '~/utils/type-guards';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {
   try {
@@ -163,3 +169,34 @@ export async function getClubResourceDetailsHandler({ input }: { input: GetByEnt
     else throwDbError(error);
   }
 }
+
+export const getInfiniteClubPostsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetInfiniteClubPostsSchema;
+  ctx: Context;
+}) => {
+  const { user } = ctx;
+  const limit = input.limit + 1 ?? 10;
+
+  try {
+    const items = await getAllClubPosts({
+      input: { ...input, limit, userId: user?.id, isModerator: user?.isModerator },
+      select: {},
+    });
+
+    let nextCursor: number | undefined;
+    if (items.length > input.limit) {
+      const nextItem = items.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return {
+      nextCursor,
+      items,
+    };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};

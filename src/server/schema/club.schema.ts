@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
-import { Currency } from '@prisma/client';
+import { BountyMode, BountyType, Currency, MetricTimeframe } from '@prisma/client';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
+import { BountySort, BountyStatus } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 
 export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
 export const upsertClubTierInput = z
@@ -76,3 +78,12 @@ export const removeClubResourceInput = z.object({
 });
 
 export type RemoveClubResourceInput = z.infer<typeof removeClubResourceInput>;
+
+export const getInfiniteClubPostsSchema = infiniteQuerySchema.merge(
+  z.object({
+    clubId: z.number(),
+    limit: z.coerce.number().min(1).max(200).default(60),
+  })
+);
+
+export type GetInfiniteClubPostsSchema = z.infer<typeof getInfiniteClubPostsSchema>;

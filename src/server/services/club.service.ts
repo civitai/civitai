@@ -1,6 +1,7 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetClubTiersInput,
+  GetInfiniteClubPostsSchema,
   SupportedClubEntities,
   UpsertClubInput,
   UpsertClubResourceInput,
@@ -11,6 +12,7 @@ import {
   BountyEntryMode,
   ClubMembershipRole,
   Currency,
+  MetricTimeframe,
   Prisma,
   TagTarget,
 } from '@prisma/client';
@@ -25,6 +27,10 @@ import {
   entityOwnership,
   entityRequiresClub,
 } from '~/server/services/common.service';
+import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import { BountySort, BountyStatus } from '~/server/common/enums';
+import { decreaseDate } from '~/utils/date-helpers';
+import { ManipulateType } from 'dayjs';
 
 export const userContributingClubs = async ({
   userId,
@@ -592,4 +598,39 @@ export const getClubDetailsForResource = async ({
 }) => {
   const clubRequirements = await entityRequiresClub({ entities });
   return clubRequirements;
+};
+
+export const getAllClubPosts = <TSelect extends Prisma.ClubPostSelect>({
+  input: { cursor, limit: take, clubId, isModerator, userId },
+  select,
+}: {
+  input: GetInfiniteClubPostsSchema & { userId: number; isModerator: boolean };
+  select: TSelect;
+}) => {
+  const clubWithMembership = await dbRead.club.findUniqueOrThrow({
+    where: { id: clubId },
+    select: {
+      userId: true,
+      memberships: {
+        where: {
+          userId,
+        },
+      },
+    },
+  });
+
+  const includeMembersOnlyContent =
+    isModerator || userId === clubWithMembership.userId || clubWithMembership.memberships.length > 0
+      ? undefined
+      : false;
+
+  return dbRead.clubPost.findMany({
+    take,
+    cursor: cursor ? { id: cursor } : undefined,
+    select,
+    where: {
+      clubId,
+      membersOnly: includeMembersOnlyContent,
+    },
+  });
 };

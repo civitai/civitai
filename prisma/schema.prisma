@@ -1074,27 +1074,28 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
 
-  reports         ImageReport[]
-  reactions       ImageReaction[]
-  thread          Thread?
-  tags            TagsOnImage[]
-  tagVotes        TagsOnImageVote[]
-  tagComposites   ImageTag[]
-  metrics         ImageMetric[]
-  stats           ImageStat?
-  rank            ImageRank?
-  modHelper       ImageModHelper?
-  resources       ImageResource[]
-  resourceHelper  ImageResourceHelper[]
-  engagements     ImageEngagement[]
-  collectionItems CollectionItem[]
-  collections     Collection[]
-  connections     ImageConnection[]
-  UserProfile     UserProfile[]
-  clubCover       Club[]                @relation("coverImage")
-  clubHeader      Club[]                @relation("headerImage")
-  clubAvatar      Club[]                @relation("avatarImage")
-  clubTierCover   ClubTier[]
+  reports            ImageReport[]
+  reactions          ImageReaction[]
+  thread             Thread?
+  tags               TagsOnImage[]
+  tagVotes           TagsOnImageVote[]
+  tagComposites      ImageTag[]
+  metrics            ImageMetric[]
+  stats              ImageStat?
+  rank               ImageRank?
+  modHelper          ImageModHelper?
+  resources          ImageResource[]
+  resourceHelper     ImageResourceHelper[]
+  engagements        ImageEngagement[]
+  collectionItems    CollectionItem[]
+  collections        Collection[]
+  connections        ImageConnection[]
+  UserProfile        UserProfile[]
+  clubCover          Club[]                @relation("coverImage")
+  clubHeader         Club[]                @relation("headerImage")
+  clubAvatar         Club[]                @relation("avatarImage")
+  clubTierCover      ClubTier[]
+  clubPostCoverImage ClubPost[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2341,7 +2342,7 @@ model Club {
 
   tiers       ClubTier[]
   memberships ClubMembership[]
-  posts    ClubPost[]
+  posts       ClubPost[]
 
   @@index([userId])
 }
@@ -2404,15 +2405,17 @@ model ClubMembershipCharge {
 }
 
 model ClubPost {
-  id          Int      @id @default(autoincrement())
-  clubId      Int
-  club        Club     @relation(fields: [clubId], references: [id])
-  createdById Int
-  createdBy   User     @relation(fields: [createdById], references: [id])
-  createdAt   DateTime @default(now())
-  membersOnly Boolean
-  title       String
-  description String
+  id           Int      @id @default(autoincrement())
+  clubId       Int
+  club         Club     @relation(fields: [clubId], references: [id])
+  createdById  Int
+  createdBy    User     @relation(fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  membersOnly  Boolean
+  title        String
+  description  String
+  coverImageId Int?
+  coverImage   Image?   @relation(fields: [coverImageId], references: [id])
 }
 
 /// @view

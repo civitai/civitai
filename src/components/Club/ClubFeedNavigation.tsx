@@ -1,18 +1,6 @@
-import { Anchor, Badge, createStyles, Group, Tabs, Text } from '@mantine/core';
 import React from 'react';
-import {
-  IconAssembly,
-  IconCategory,
-  IconClubs,
-  IconLayoutList,
-  IconPencilMinus,
-  IconPhoto,
-  IconPlaylistAdd,
-} from '@tabler/icons-react';
-import { trpc } from '~/utils/trpc';
+import { IconCategory, IconClubs, IconPencilMinus } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import Link from 'next/link';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 
 const overviewPath = '[id]';
@@ -32,11 +20,11 @@ export const ClubFeedNavigation = ({ id }: { id: number }) => {
       icon: <IconClubs />,
       label: 'Feed',
     },
-    tiers: {
+    models: {
       url: `${baseUrl}/models`,
       icon: <IconCategory />,
     },
-    admins: {
+    articles: {
       url: `${baseUrl}/articles`,
       icon: <IconPencilMinus />,
     },

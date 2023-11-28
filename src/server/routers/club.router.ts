@@ -1,6 +1,7 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
 import {
   getClubTiersInput,
+  getInfiniteClubPostsSchema,
   upsertClubInput,
   upsertClubResourceInput,
   upsertClubTierInput,
@@ -9,12 +10,15 @@ import {
   getClubHandler,
   getClubResourceDetailsHandler,
   getClubTiersHandler,
+  getInfiniteClubPostsHandler,
   upsertClubHandler,
   upsertClubResourceHandler,
   upsertClubTierHandler,
   userContributingClubsHandler,
 } from '~/server/controllers/club.controller';
 import { getByEntitySchema, getByIdSchema } from '~/server/schema/base.schema';
+import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import { getInfiniteBountiesHandler } from '~/server/controllers/bounty.controller';
 
 export const clubRouter = router({
   getById: publicProcedure.input(getByIdSchema).use(isFlagProtected('clubs')).query(getClubHandler),
@@ -41,4 +45,8 @@ export const clubRouter = router({
     .input(getByEntitySchema)
     .use(isFlagProtected('clubs'))
     .query(getClubResourceDetailsHandler),
+  getInfinitePosts: publicProcedure
+    .input(getInfiniteClubPostsSchema)
+    .use(isFlagProtected('clubs'))
+    .query(getInfiniteClubPostsHandler),
 });

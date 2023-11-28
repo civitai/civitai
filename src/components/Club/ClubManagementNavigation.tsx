@@ -6,12 +6,8 @@ import {
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
-  IconPlaylistAdd,
 } from '@tabler/icons-react';
-import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
-import Link from 'next/link';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 
 const overviewPath = '[id]';
