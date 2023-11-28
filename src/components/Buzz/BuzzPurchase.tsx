@@ -118,7 +118,7 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   onCancel,
 }: Props) => {
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const isMobile = useIsMobile();
 
   const currentUser = useCurrentUser();
@@ -275,7 +275,7 @@ export const BuzzPurchase = ({
                             {buzzAmount.toLocaleString()} Buzz
                           </Text>
                           <Text
-                            color="initial"
+                            color={theme.colorScheme === 'dark' ? 'gray.0' : 'dark'}
                             size={20}
                             weight="bold"
                             sx={{ fontVariantNumeric: 'tabular-nums' }}

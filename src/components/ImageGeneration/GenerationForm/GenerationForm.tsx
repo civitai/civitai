@@ -111,6 +111,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     additionalResourcesCount,
     samplerCfgOffset,
     isSDXL,
+    isLCM,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -198,7 +199,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const [showFillForm, setShowFillForm] = useState(false);
   const handleParsePrompt = async () => {
     const prompt = form.getValues('prompt');
-    const metadata = await parsePromptMetadata(prompt);
+    const metadata = parsePromptMetadata(prompt);
     const result = imageGenerationSchema.safeParse(metadata);
     if (result.success) {
       generationStore.setParams(result.data);
@@ -235,7 +236,12 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { errors } = form.formState;
 
   return (
-    <Form form={form} onSubmit={handleSubmit} onError={handleError} style={{ width: '100%' }}>
+    <Form
+      form={form}
+      onSubmit={handleSubmit}
+      onError={handleError}
+      style={{ width: '100%', position: 'relative', height: '100%' }}
+    >
       <Stack spacing={0} h="100%">
         <ScrollArea sx={{ flex: 1 }}>
           <Stack p="md" pb={0}>
@@ -462,24 +468,41 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         <InputSelect
                           name="sampler"
                           label="Sampler"
-                          data={generation.samplers}
-                          presets={[
-                            { label: 'Fast', value: 'Euler a' },
-                            { label: 'Popular', value: 'DPM++ 2M Karras' },
-                          ]}
+                          data={isLCM ? generation.lcmSamplers : generation.samplers}
+                          presets={
+                            isLCM
+                              ? []
+                              : [
+                                  { label: 'Fast', value: 'Euler a' },
+                                  { label: 'Popular', value: 'DPM++ 2M Karras' },
+                                ]
+                          }
                         />
                         <InputNumberSlider
                           name="steps"
                           label="Steps"
-                          min={10}
-                          max={generation.maxValues.steps}
+                          min={isLCM ? 3 : 10}
+                          max={isLCM ? 12 : generation.maxValues.steps}
                           sliderProps={sharedSliderProps}
                           numberProps={sharedNumberProps}
-                          presets={[
-                            { label: 'Fast', value: Number(10 + samplerCfgOffset).toString() },
-                            { label: 'Balanced', value: Number(20 + samplerCfgOffset).toString() },
-                            { label: 'High', value: Number(30 + samplerCfgOffset).toString() },
-                          ]}
+                          presets={
+                            isLCM
+                              ? []
+                              : [
+                                  {
+                                    label: 'Fast',
+                                    value: Number(10 + samplerCfgOffset).toString(),
+                                  },
+                                  {
+                                    label: 'Balanced',
+                                    value: Number(20 + samplerCfgOffset).toString(),
+                                  },
+                                  {
+                                    label: 'High',
+                                    value: Number(30 + samplerCfgOffset).toString(),
+                                  },
+                                ]
+                          }
                           reverse
                         />
                         <InputSeed
@@ -520,7 +543,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
           <Stack>
             <Text>TODO.hires</Text>
           </Stack>
-        </Card> */}
+          </Card> */}
           </Stack>
         </ScrollArea>
         <Stack spacing={4} p="md">
@@ -596,47 +619,58 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                 } more jobs`}
           </Text>
+          <GenerationStatusMessage />
+          {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
+          {isSDXL && (
+            <DismissibleAlert
+              id="sdxl-free-preview"
+              title="Free SDXL Generations!"
+              content={
+                <Text>
+                  To celebrate{' '}
+                  <Anchor
+                    href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
+                    target="_blank"
+                    underline
+                  >
+                    Civitai&apos;s Birthday
+                  </Anchor>{' '}
+                  we&apos;re letting everyone use SDXL for free!{' '}
+                  <Anchor
+                    href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
+                    rel="noopener nofollow"
+                    underline
+                  >
+                    After that it will cost a minimum of⚡3 Buzz per image
+                  </Anchor>
+                  . Complete our{' '}
+                  <Anchor
+                    href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
+                      currentUser?.username ?? 'Unauthed'
+                    }`}
+                    rel="noopener nofollow"
+                    target="_blank"
+                    underline
+                  >
+                    SDXL generation survey
+                  </Anchor>{' '}
+                  to let us know how we did.
+                </Text>
+              }
+            />
+          )}
+          {isLCM && (
+            <DismissibleAlert
+              id="lcm-preview"
+              title="Initial LCM Support"
+              content={
+                <Text>
+                  {`We're still testing out LCM support, please let us know if you run into any issues.`}
+                </Text>
+              }
+            />
+          )}
         </Stack>
-        <GenerationStatusMessage />
-        {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-        {isSDXL && (
-          <DismissibleAlert
-            id="sdxl-free-preview"
-            title="Free SDXL Generations!"
-            content={
-              <Text>
-                To celebrate{' '}
-                <Anchor
-                  href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
-                  target="_blank"
-                  underline
-                >
-                  Civitai&apos;s Birthday
-                </Anchor>{' '}
-                we&apos;re letting everyone use SDXL for free!{' '}
-                <Anchor
-                  href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
-                  rel="noopener nofollow"
-                  underline
-                >
-                  After that it will cost a minimum of⚡3 Buzz per image
-                </Anchor>
-                . Complete our{' '}
-                <Anchor
-                  href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
-                    currentUser?.username ?? 'Unauthed'
-                  }`}
-                  rel="noopener nofollow"
-                  target="_blank"
-                  underline
-                >
-                  SDXL generation survey
-                </Anchor>{' '}
-                to let us know how we did.
-              </Text>
-            }
-          />
-        )}
       </Stack>
     </Form>
   );

@@ -8,11 +8,7 @@ import { useRouter } from 'next/router';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import {
-  hiddenLabel,
-  ManagePostMaturity,
-  ManagePostStatus,
-} from '~/components/Post/Edit/EditPostControls';
+import { hiddenLabel, ManagePostMaturity } from '~/components/Post/Edit/EditPostControls';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
@@ -50,6 +46,12 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
           await upload({ postId, modelVersionId }, files);
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
           await queryUtils.model.getById.invalidate({ id: modelId });
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to create post',
+            error: new Error(error.message),
+          });
         },
       }
     );

@@ -130,18 +130,21 @@ export function PostDetail({ postId }: { postId: number }) {
                       items={post.tags}
                       limit={2}
                       renderItem={(item) => (
-                        <Badge
-                          key={item.id}
-                          color="gray"
-                          radius="xl"
-                          size="lg"
-                          px={8}
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        >
-                          <Text size="xs" transform="capitalize" weight={500}>
-                            {item.name}
-                          </Text>
-                        </Badge>
+                        <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
+                          <Badge
+                            component="a"
+                            color="gray"
+                            radius="xl"
+                            size="lg"
+                            px={8}
+                            style={{ cursor: 'pointer' }}
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          >
+                            <Text size="xs" transform="capitalize" weight={500}>
+                              {item.name}
+                            </Text>
+                          </Badge>
+                        </Link>
                       )}
                       grouped
                     />

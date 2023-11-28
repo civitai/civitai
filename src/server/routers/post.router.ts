@@ -1,6 +1,6 @@
 import { applyUserPreferences, applyBrowsingMode, cacheIt } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
-import { publicProcedure } from './../trpc';
+import { guardedProcedure, publicProcedure } from './../trpc';
 import {
   createPostHandler,
   updatePostHandler,
@@ -84,8 +84,8 @@ export const postRouter = router({
     .query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
-  create: protectedProcedure.input(postCreateSchema).mutation(createPostHandler),
-  update: protectedProcedure
+  create: guardedProcedure.input(postCreateSchema).mutation(createPostHandler),
+  update: guardedProcedure
     .input(postUpdateSchema)
     .use(isOwnerOrModerator)
     .mutation(updatePostHandler),
@@ -93,15 +93,15 @@ export const postRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deletePostHandler),
-  addImage: protectedProcedure
+  addImage: guardedProcedure
     .input(addPostImageSchema)
     .use(isOwnerOrModerator)
     .mutation(addPostImageHandler),
-  updateImage: protectedProcedure
+  updateImage: guardedProcedure
     .input(updatePostImageSchema)
     .use(isImageOwnerOrModerator)
     .mutation(updatePostImageHandler),
-  reorderImages: protectedProcedure
+  reorderImages: guardedProcedure
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderPostImagesHandler),

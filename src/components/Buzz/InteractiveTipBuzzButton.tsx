@@ -31,6 +31,7 @@ import { useTrackEvent } from '../TrackView/track.utils';
 import { isTouchDevice } from '~/utils/device-helpers';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { constants } from '~/server/common/constants';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -123,7 +124,7 @@ export function InteractiveTipBuzzButton({
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
-      return Math.min(balance ?? 0, prevCounter + step);
+      return Math.min(constants.buzz.maxEntityTip, Math.min(balance ?? 0, prevCounter + step));
     });
   }, 100);
 
@@ -194,7 +195,7 @@ export function InteractiveTipBuzzButton({
   const processEnteredNumber = (value: string) => {
     let amount = Number(value);
     if (isNaN(amount) || amount < 1) amount = 1;
-    else if (amount > 9999) amount = 9999;
+    else if (amount > constants.buzz.maxEntityTip) amount = constants.buzz.maxEntityTip;
     else if (balance && amount > balance) amount = balance ?? 0;
     setBuzzCounter(amount);
 
@@ -263,7 +264,7 @@ export function InteractiveTipBuzzButton({
 
     if (startTimerTimeoutRef.current !== null) {
       // Was click
-      setBuzzCounter((x) => x + CLICK_AMOUNT);
+      setBuzzCounter((x) => Math.min(constants.buzz.maxEntityTip, x + CLICK_AMOUNT));
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
 

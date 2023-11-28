@@ -189,16 +189,21 @@ export const saveItemHandler = async ({
     const status = await saveItemInCollections({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
+
     if (status === 'added' && input.type) {
       const entityId = [input.articleId, input.modelId, input.postId, input.imageId].find(
         isDefined
       );
+
       if (entityId) {
-        await collectedContentReward.apply({
-          collectorId: user.id,
-          entityType: input.type,
-          entityId,
-        });
+        await collectedContentReward.apply(
+          {
+            collectorId: user.id,
+            entityType: input.type,
+            entityId,
+          },
+          ctx.ip
+        );
       }
     }
   } catch (error) {

@@ -449,7 +449,7 @@ const getReportLink = (report: ReportDetail) => {
   if (report.model) return `/models/${report.model.id}`;
   else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
-    return `/models/${report.comment.modelId}/?modal=commentThread&commentId=${
+    return `/models/${report.comment.modelId}/?dialog=commentThread&commentId=${
       report.comment.parentId ?? report.comment.id
     }&highlight=${report.comment.id}`;
   else if (report.image) return `/images/${report.image.id}`;
@@ -460,6 +460,7 @@ const getReportLink = (report: ReportDetail) => {
   else if (report.bounty) return `/bounties/${report.bounty.id}`;
   else if (report.bountyEntry)
     return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
+  else if (report.commentV2?.commentV2) return `/comments/v2/${report.commentV2.commentV2.id}`;
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {

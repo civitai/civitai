@@ -13,10 +13,10 @@ import {
   setReportStatusSchema,
   updateReportSchema,
 } from '~/server/schema/report.schema';
-import { protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
 
 export const reportRouter = router({
-  create: protectedProcedure.input(createReportInputSchema).mutation(createReportHandler),
+  create: guardedProcedure.input(createReportInputSchema).mutation(createReportHandler),
   getAll: protectedProcedure.input(getReportsSchema).use(isModerator).query(getReportsHandler),
   update: protectedProcedure
     .input(updateReportSchema)

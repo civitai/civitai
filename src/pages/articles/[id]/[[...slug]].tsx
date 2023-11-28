@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Badge,
   Box,
-  Button,
   Container,
   createStyles,
   Divider,

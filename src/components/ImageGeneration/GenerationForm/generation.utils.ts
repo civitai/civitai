@@ -20,6 +20,7 @@ export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 export const useTempGenerateStore = create<{
   baseModel?: BaseModelSetType;
   hasResources?: boolean;
+  isLCM?: boolean;
 }>(() => ({}));
 
 export const useDerivedGenerationState = () => {
@@ -38,6 +39,12 @@ export const useDerivedGenerationState = () => {
   const additionalResourcesCount = useGenerationFormStore(({ resources = [] }) => resources.length);
 
   const resources = useGenerationFormStore((state) => state.resources);
+  const isLCM = useGenerationFormStore(
+    (state) =>
+      (state.model?.baseModel.includes('LCM') ||
+        state.resources?.some((x) => x.baseModel.includes('LCM'))) ??
+      false
+  );
   const trainedWords = useMemo(
     () => resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [],
     [resources]
@@ -59,6 +66,7 @@ export const useDerivedGenerationState = () => {
     additionalResourcesCount,
     samplerCfgOffset,
     isSDXL: baseModel === 'SDXL',
+    isLCM,
   };
 };
 

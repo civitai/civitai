@@ -16,6 +16,12 @@ export const goodContentReward = createBuzzEvent({
       amount: 100,
     },
   ],
+  getTransactionDetails: async (input: ReactionEvent, ctx) => {
+    return {
+      entityId: input.entityId,
+      entityType: typeToTable[input.type],
+    };
+  },
   getKey: async (input: ReactionEvent, { db }) => {
     if (input.ownerId === input.reactorId) return false;
 
@@ -38,7 +44,6 @@ export const goodContentReward = createBuzzEvent({
         type: `${type}:${input.type}`,
       };
     } catch (e) {
-      console.log(e);
       return false;
     }
   },

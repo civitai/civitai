@@ -1,10 +1,23 @@
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 import { dbRead } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 
 export const pushDiscordMetadata = createJob('push-discord-metadata', '14 1 * * *', async () => {
+  const [lastUpdate, setLastUpdate] = await getJobDate('push-discord-metadata');
   const userMetadata = (await dbRead.$queryRaw`
-    WITH discord_users AS (
+    WITH updates AS (
+      SELECT 'image' as type, "userId", MAX("createdAt") as last
+      FROM "Image"
+      WHERE "createdAt" > ${lastUpdate}
+      GROUP BY "userId"
+
+      UNION
+
+      SELECT 'model' as type, "userId", MAX(GREATEST("publishedAt","lastVersionAt")) as last
+      FROM "Model"
+      WHERE "publishedAt" > ${lastUpdate} OR "lastVersionAt" > ${lastUpdate}
+      GROUP BY "userId"
+    ), discord_users AS (
       SELECT
         u.username,
         u.id user_id,
@@ -14,17 +27,7 @@ export const pushDiscordMetadata = createJob('push-discord-metadata', '14 1 * * 
         u."createdAt" user_since
       FROM "User" u
       JOIN "Account" a ON a."userId" = u.id AND a.provider = 'discord' AND scope LIKE '%role_connections.write%'
-    ), user_images AS (
-      SELECT "userId", MAX("createdAt") last
-      FROM "Image" i
-      JOIN discord_users du ON du.user_id = i."userId"
-      GROUP BY "userId"
-    ), creator_published  AS (
-      SELECT m."userId", MAX(GREATEST(m."publishedAt",m."lastVersionAt")) last
-      FROM "Model" m
-      JOIN discord_users du ON du.user_id = m."userId"
-      WHERE m."publishedAt" IS NOT NULL
-      GROUP BY m."userId"
+      WHERE u.id IN (SELECT "userId" FROM updates)
     )
     SELECT
       du.username,
@@ -40,11 +43,12 @@ export const pushDiscordMetadata = createJob('push-discord-metadata', '14 1 * * 
     FROM discord_users du
     LEFT JOIN "UserMetric" um ON um."userId" = du.user_id AND um.timeframe = 'AllTime'
     LEFT JOIN "UserRank" ur ON ur."userId" = du.user_id AND ur."leaderboardRank" <= 100
-    LEFT JOIN user_images ui ON ui."userId" = du.user_id
-    LEFT JOIN creator_published cp ON cp."userId" = du.user_id;
+    JOIN updates ui ON ui."userId" = du.user_id AND ui.type = 'image'
+    JOIN updates cp ON cp."userId" = du.user_id AND cp.type = 'model';
   `) as UserMetadataResult[];
 
   for (const metadata of userMetadata) await discord.pushMetadata(metadata);
+  setLastUpdate();
 });
 
 export async function getUserDiscordMetadata(userId: number): Promise<UserMetadataResult> {

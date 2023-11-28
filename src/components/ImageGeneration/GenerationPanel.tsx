@@ -1,27 +1,13 @@
-import {
-  Drawer,
-  Center,
-  Loader,
-  Text,
-  Stack,
-  ActionIcon,
-  Group,
-  Button,
-  CloseButton,
-} from '@mantine/core';
+import { Drawer, Center, Loader, Text, Stack, Group, Button, CloseButton } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconArrowsMaximize } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useEffect, useState, useTransition } from 'react';
-import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
-import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { useGenerationStore } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -53,6 +39,7 @@ export function GenerationPanel() {
 
   const opened = useGenerationStore((state) => state.opened);
   const onClose = useGenerationStore((state) => state.close);
+  const drawerOptions = useGenerationStore((state) => state.drawerOptions);
   const [showContent, setShowContent] = useState(false);
 
   useEffect(() => onClose(), [router, onClose]);
@@ -74,7 +61,7 @@ export function GenerationPanel() {
       styles={{
         body: { height: '100%' },
         drawer: {
-          top: !mobile ? 'var(--mantine-header-height)' : undefined,
+          top: !mobile && !drawerOptions?.fullHeight ? 'var(--mantine-header-height)' : undefined,
           boxShadow:
             '-3px 0px 8px 5px rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.05) 0px 20px 25px -5px, rgba(0, 0, 0, 0.04) 0px 10px 10px -5px',
         },
@@ -84,7 +71,7 @@ export function GenerationPanel() {
       trapFocus={mobile}
       lockScroll={mobile}
     >
-      {!mobile ? (
+      {!mobile && (
         <Group
           spacing={8}
           pl="md"

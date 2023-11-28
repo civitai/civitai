@@ -2,6 +2,7 @@ import { ActionIcon, Menu } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { constants } from '~/server/common/constants';
 
 export function ModerationNav() {
   const menuItems = useMemo(
@@ -22,7 +23,7 @@ export function ModerationNav() {
   );
 
   return (
-    <Menu>
+    <Menu zIndex={constants.imageGeneration.drawerZIndex + 1} withinPortal>
       <Menu.Target>
         <ActionIcon color="yellow" variant="transparent">
           <IconBadge />
