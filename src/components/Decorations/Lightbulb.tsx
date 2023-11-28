@@ -21,7 +21,7 @@ export function Lightbulb({ variant, ...props }: Props) {
   return variant === 'star' ? <StarVariant {...props} /> : <DefaultVariant {...props} />;
 }
 
-function DefaultVariant({ color, size, ...props }: Props) {
+function DefaultVariant({ color, size, brightness, ...props }: Props) {
   const { main, gradient } = colors[color as LightbulbColor];
   const id = `lightbulb-${color}`;
 
@@ -71,7 +71,7 @@ function DefaultVariant({ color, size, ...props }: Props) {
   );
 }
 
-function StarVariant({ color, size, ...props }: Omit<Props, 'variant'>) {
+function StarVariant({ color, size, brightness, ...props }: Omit<Props, 'variant'>) {
   const { main, gradient } = colors[color as LightbulbColor];
   const id = `star-${color}`;
 
@@ -129,6 +129,8 @@ type LightbulbColor = 'blue' | 'green' | 'red' | 'yellow';
 type Props = React.ComponentPropsWithoutRef<'svg'> & {
   // eslint-disable-next-line @typescript-eslint/ban-types
   color: LightbulbColor | (string & {});
+  brightness?: number;
   size?: number;
   variant?: 'default' | 'star';
+  className?: string;
 };

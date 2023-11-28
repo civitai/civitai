@@ -196,7 +196,7 @@ export function ModelCard({ data }: Props) {
     }
   }, [modelId, data.id]);
 
-  const cardDecoration = data.user.cosmetics.find(
+  const cardDecoration = data.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
   )?.cosmetic;
 
