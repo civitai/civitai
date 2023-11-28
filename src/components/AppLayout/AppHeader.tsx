@@ -610,7 +610,7 @@ export function AppHeader({
   };
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed={fixed} zIndex={200} className={classes.root}>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed={fixed} zIndex={100} className={classes.root}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>

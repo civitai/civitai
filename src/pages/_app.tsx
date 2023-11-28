@@ -45,7 +45,6 @@ import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
@@ -135,19 +134,21 @@ function MyApp(props: CustomAppProps) {
                     <FiltersProvider value={filters}>
                       <HiddenPreferencesProvider>
                         <CivitaiLinkProvider>
-                          <CustomModalsProvider>
-                            <NotificationsProvider zIndex={9999}>
-                              <BrowserRouterProvider>
-                                {/* <ScrollRestoration /> */}
-                                <TosProvider>
-                                  <BaseLayout>{getLayout(<Component {...pageProps} />)}</BaseLayout>
-                                </TosProvider>
-                                <GenerationPanel />
-                                <DialogProvider />
-                                <RoutedDialogProvider />
-                              </BrowserRouterProvider>
-                            </NotificationsProvider>
-                          </CustomModalsProvider>
+                          <NotificationsProvider zIndex={9999}>
+                            <BrowserRouterProvider>
+                              {/* <ScrollRestoration /> */}
+                              <BaseLayout>
+                                <CustomModalsProvider>
+                                  <TosProvider>
+                                    {getLayout(<Component {...pageProps} />)}
+                                  </TosProvider>
+                                  {/* <GenerationPanel /> */}
+                                  <DialogProvider />
+                                  <RoutedDialogProvider />
+                                </CustomModalsProvider>
+                              </BaseLayout>
+                            </BrowserRouterProvider>
+                          </NotificationsProvider>
                         </CivitaiLinkProvider>
                       </HiddenPreferencesProvider>
                     </FiltersProvider>
@@ -186,7 +187,16 @@ function MyApp(props: CustomAppProps) {
                 },
               },
               Drawer: {
-                styles: { drawer: { containerName: 'drawer', containerType: 'inline-size' } },
+                styles: {
+                  drawer: {
+                    containerName: 'drawer',
+                    containerType: 'inline-size',
+                    display: 'flex',
+                    flexDirection: 'column',
+                  },
+                  body: { flex: 1, overflow: 'hidden' },
+                  header: { margin: 0 },
+                },
                 defaultProps: {
                   target:
                     typeof window !== 'undefined' ? document.getElementById('root') : undefined,

@@ -52,11 +52,7 @@ export function AppLayout({
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       <div className={classes.wrapper}>
-        <ResizableSidebar resizePosition="right" minWidth={300} maxWidth={800} defaultWidth={400}>
-          <ContainerProvider containerName="left-sidebar">
-            <GenerationTabs />
-          </ContainerProvider>
-        </ResizableSidebar>
+        <GenerationSidebar />
 
         <ContainerProvider containerName="main">
           <main className={classes.main}>{content}</main>

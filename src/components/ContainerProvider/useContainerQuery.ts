@@ -9,12 +9,14 @@ import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
 export const useContainerQuery = ({
   type,
   width,
+  containerName,
 }: {
   type: 'min-width' | 'max-width';
   width: MantineNumberSize;
+  containerName?: string;
 }) => {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
-  const { nodeRef, containerName } = useContainerContext();
+  const { nodeRef, ...context } = useContainerContext();
   const [value, setValue] = useState(false);
 
   useEffect(() => {
@@ -26,13 +28,13 @@ export const useContainerQuery = ({
 
   useEffect(() => {
     useContainerProviderStore.subscribe((state) => {
-      const entry = state[containerName];
+      const entry = state[containerName ?? context.containerName];
       if (entry) {
         if (type === 'max-width') setValue(size > entry.inlineSize);
         else if (type === 'min-width') setValue(size <= entry.inlineSize);
       }
     });
-  }, [size, type]); // eslint-disable-line
+  }, [size, type, containerName]); // eslint-disable-line
 
   return value;
 };

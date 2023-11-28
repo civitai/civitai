@@ -1,6 +1,8 @@
 import React from 'react';
 import { useResize } from './useResize';
 import { createStyles } from '@mantine/core';
+import { create } from 'zustand';
+import { IsClient } from '~/components/IsClient/IsClient';
 
 export type ResizableSidebarProps = {
   resizePosition: 'left' | 'right'; // maybe rename to 'position'?
@@ -10,14 +12,16 @@ export type ResizableSidebarProps = {
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+  name: string;
 };
 
-export function ResizableSidebar({
+export function ResizableSidebarInner({
   children,
   resizePosition,
   minWidth,
   maxWidth,
   defaultWidth,
+  name,
   ...props
 }: ResizableSidebarProps) {
   const { classes, cx } = useStyles({ resizeFrom: resizePosition });
@@ -26,6 +30,7 @@ export function ResizableSidebar({
     minWidth,
     maxWidth,
     defaultWidth,
+    name,
   });
 
   const resizer = <div className={classes.resizer} ref={resizerRef} />;
@@ -81,3 +86,11 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
     },
   };
 });
+
+export const ResizableSidebar = (props: ResizableSidebarProps) => {
+  return (
+    <IsClient>
+      <ResizableSidebarInner {...props} />
+    </IsClient>
+  );
+};

@@ -17,6 +17,8 @@ import { useEffect, useState, useTransition } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
@@ -42,54 +44,6 @@ const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/Genera
     </Center>
   ),
 });
-
-type View = 'queue' | 'generate' | 'feed';
-type State = {
-  opened: boolean;
-  input?: GetGenerationDataInput;
-  view: View;
-  open: (input?: GetGenerationDataInput) => void;
-  close: () => void;
-  setView: (view: View) => void;
-};
-
-export const useGenerationPanelControls = create<State>()(
-  devtools(
-    immer((set) => ({
-      opened: false,
-      view: 'generate',
-      open: (input) => {
-        set((state) => {
-          state.opened = true;
-          if (input) {
-            state.input = input;
-            state.view = 'generate';
-          }
-        });
-      },
-      close: () => {
-        set((state) => {
-          state.opened = false;
-          state.input = undefined;
-        });
-      },
-      setView: (view) =>
-        set((state) => {
-          state.view = view;
-          state.input = undefined;
-        }),
-    })),
-    {
-      name: 'generation-panel-controls',
-    }
-  )
-);
-
-const store = useGenerationPanelControls.getState();
-export const generationPanel = {
-  open: store.open,
-  setView: store.setView,
-};
 
 export function GenerationPanel() {
   const debouncer = useDebouncer(300);
