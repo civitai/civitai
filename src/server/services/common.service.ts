@@ -150,12 +150,14 @@ type ClubEntityAccessStatus = {
 export const entityRequiresClub = async ({
   entities,
   clubId,
+  clubIds,
 }: {
   entities: {
     entityId: number;
     entityType: SupportedClubEntities;
   }[];
   clubId?: number;
+  clubIds?: number[];
 }): Promise<ClubEntityAccessStatus[]> => {
   if (entities.length === 0) {
     return [];
@@ -205,6 +207,17 @@ export const entityRequiresClub = async ({
     return publicEntitiesAccess;
   }
 
+  const getClubFilter = (accessor: string) => {
+    if (clubIds && clubIds.length > 0) {
+      return Prisma.raw(`AND ${accessor} IN (${Prisma.join(clubIds, ', ')})`);
+    }
+
+    if (clubId) {
+      return Prisma.raw(`AND ${accessor} = ${clubId}`);
+    }
+    return Prisma.raw('');
+  };
+
   const privateEntitiesAccess = await dbRead.$queryRaw<
     {
       entityId: number;
@@ -221,11 +234,11 @@ export const entityRequiresClub = async ({
       ct."id" as "clubTierId"
     FROM entities e
     LEFT JOIN "EntityAccess" ea ON ea."accessToId" = e."entityId" AND ea."accessToType" = e."entityType"
-    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${Prisma.raw(
-      clubId ? `AND c.id = ${clubId}` : ''
+    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${getClubFilter(
+      'c.id'
     )}
-    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" ${Prisma.raw(
-      clubId ? `AND ct."clubId" = ${clubId}` : ''
+    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" ${getClubFilter(
+      'ct."clubId"'
     )}
     ORDER BY "clubTierId", "clubId"
   `;
@@ -271,25 +284,41 @@ export const entityRequiresClub = async ({
 };
 
 export const entityOwnership = async ({
-  entityType,
-  entityIds,
+  entities,
   userId,
 }: {
-  entityType: SupportedClubEntities;
-  entityIds: number[];
+  entities: { entityType: SupportedClubEntities; entityId: number }[];
   userId: number;
-}): Promise<{ entityId: number; isOwner: boolean }[]> => {
-  if (entityIds.length === 0) {
+}): Promise<{ entityId: number; entityType: SupportedClubEntities; isOwner: boolean }[]> => {
+  if (entities.length === 0) {
     return [];
   }
 
-  const entitiesOwnership = await dbRead.$queryRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
+  const entitiesWith = `
+   WITH entities AS (
+      SELECT * FROM jsonb_to_recordset('${JSON.stringify(entities)}'::jsonb) AS v(
+        "entityId" INTEGER,
+        "entityType" VARCHAR
+      )
+    )`;
+
+  const entitiesOwnership = await dbRead.$queryRaw<
+    {
+      entityId: number;
+      entityType: SupportedClubEntities;
+      isOwner: boolean;
+    }[]
+  >`
+    ${Prisma.raw(entitiesWith)}
     SELECT
-        t.id as "entityId",
-        "userId" = ${userId} as "isOwner"
-    FROM "${entityType}" t
-    WHERE t.id IN (${entityIds.join(', ')}) 
-  `);
+        e."entityId",
+        e."entityType",
+        COALESCE(m."userId", mmv."userId", a."userId") = ${userId} as "isOwner"
+    FROM entities e
+    LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = m.id
+    LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
+    LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
+  `;
 
   return entitiesOwnership;
 };
@@ -308,8 +337,7 @@ export const entityAvailabilityUpdate = async ({
   }
 
   await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
-    UPDATE "${entityType}" t SET "availability" = '${availability}'::"Availability" WHERE t.id IN (${Prisma.join(
-    entityIds,
-    ', '
-  )})`);
+    UPDATE "${entityType}" t 
+    SET "availability" = '${availability}'::"Availability"
+    WHERE t.id IN (${Prisma.join(entityIds, ', ')})`);
 };

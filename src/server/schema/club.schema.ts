@@ -53,35 +53,23 @@ export const getClubTiersInput = z.object({
 const supportedClubEntities = ['ModelVersion', 'Article'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
 
-export const getClubEntity = z.object({
-  clubId: z.number(),
+export const upsertClubResourceInput = z.object({
   entityType: z.enum(supportedClubEntities),
   entityId: z.number(),
+  clubs: z.array(
+    z.object({
+      id: z.number(),
+      clubTierIds: z.array(z.number()).optional(),
+    })
+  ),
 });
 
-export type GetClubEntityInput = z.infer<typeof getClubEntity>;
+export type UpsertClubResourceInput = z.infer<typeof upsertClubResourceInput>;
 
-export const upsertClubEntitySchema = z.object({
-  clubId: z.number(),
+export const removeClubResourceInput = z.object({
   entityType: z.enum(supportedClubEntities),
   entityId: z.number(),
-  title: z.string().trim().nonempty(),
-  description: getSanitizedStringSchema().refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
-  membersOnly: z.boolean(),
-  privatizeEntity: z.boolean(),
-  clubTierIds: z.array(z.number()).optional(),
+  clubId: z.number(),
 });
 
-export type UpsertClubEntityInput = z.infer<typeof upsertClubEntitySchema>;
-
-export const getAllClubEntities = infiniteQuerySchema.merge(
-  z.object({
-    clubId: z.number(),
-    limit: z.coerce.number().min(1).max(200).default(60),
-    cursor: z.string().optional(),
-  })
-);
-
-export type GetAllClubEntitiesInput = z.infer<typeof getAllClubEntities>;
+export type RemoveClubResourceInput = z.infer<typeof removeClubResourceInput>;
