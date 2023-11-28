@@ -15,15 +15,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { SessionProvider, getSession } from 'next-auth/react';
-import React, {
-  ReactElement,
-  ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -142,7 +134,6 @@ function MyApp(props: CustomAppProps) {
                                   <TosProvider>
                                     {getLayout(<Component {...pageProps} />)}
                                   </TosProvider>
-                                  {/* <GenerationPanel /> */}
                                   <DialogProvider />
                                   <RoutedDialogProvider />
                                 </CustomModalsProvider>

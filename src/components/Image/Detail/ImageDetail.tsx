@@ -304,8 +304,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
   const isDesktop = containerQuery.largerThan('md');
   return {
     root: {
-      width: '100vw',
-      height: '100vh',
+      flex: 1,
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
