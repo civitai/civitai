@@ -43,7 +43,8 @@ export const upsertClubInput = z.object({
 export type GetClubTiersInput = z.infer<typeof getClubTiersInput>;
 
 export const getClubTiersInput = z.object({
-  clubId: z.number(),
+  clubId: z.number().optional(),
+  clubIds: z.array(z.number()).optional(),
   listedOnly: z.boolean().optional(),
   joinableOnly: z.boolean().optional(),
   include: z.array(z.enum(['membershipsCount'])).optional(),
@@ -53,15 +54,17 @@ export const getClubTiersInput = z.object({
 const supportedClubEntities = ['ModelVersion', 'Article'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
 
+export const clubResourceSchema = z.object({
+  id: z.number(),
+  clubTierIds: z.array(z.number()).optional(),
+});
+
+export type ClubResourceSchema = z.infer<typeof clubResourceSchema>;
+
 export const upsertClubResourceInput = z.object({
   entityType: z.enum(supportedClubEntities),
   entityId: z.number(),
-  clubs: z.array(
-    z.object({
-      id: z.number(),
-      clubTierIds: z.array(z.number()).optional(),
-    })
-  ),
+  clubs: z.array(clubResourceSchema),
 });
 
 export type UpsertClubResourceInput = z.infer<typeof upsertClubResourceInput>;

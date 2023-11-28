@@ -221,11 +221,6 @@ export function ModelCategoryCard({
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
     ]);
   }
-  if (features.clubs && currentUser?.id === user.id) {
-    contextMenuItems = contextMenuItems.concat([
-      <AddToClubMenuItem key="add-to-club" entityType="ModelVersion" entityId={data.id} />,
-    ]);
-  }
 
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([

@@ -354,6 +354,7 @@ export const upsertClubTiers = async ({
 
 export const getClubTiers = async ({
   clubId,
+  clubIds,
   listedOnly,
   joinableOnly,
   include,
@@ -364,16 +365,26 @@ export const getClubTiers = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const club = await getClub({ id: clubId });
+  if (!clubId && !clubIds?.length) {
+    return [];
+  }
 
-  if (userId !== club?.userId && !isModerator) {
+  const userClubs = userId ? await userContributingClubs({ userId }) : [];
+  const userClubIds = userClubs.map((c) => c?.id);
+
+  // Only if the user can actually view all tiers, we can ignore the listedOnly and joinableOnly flags:
+  const canViewAllTiers =
+    isModerator ||
+    (userClubIds.includes(clubId ?? -1) && !(clubIds ?? []).some((c) => !userClubIds.includes(c)));
+
+  if (!canViewAllTiers) {
     listedOnly = true;
     joinableOnly = true;
   }
 
   const tiers = await dbRead.clubTier.findMany({
     where: {
-      clubId,
+      clubId: clubId ? clubId : clubIds ? { in: clubIds } : undefined,
       unlisted: listedOnly !== undefined ? !listedOnly : undefined,
       joinable: joinableOnly !== undefined ? joinableOnly : undefined,
       id: tierId || undefined,
@@ -554,18 +565,12 @@ export const upsertClubResource = async ({
 
 export const getClubDetailsForResource = async ({
   entities,
-  userId,
-  isModerator,
 }: {
   entities: {
     entityType: SupportedClubEntities;
     entityId: number;
   }[];
-  userId: number;
-  isModerator?: boolean;
 }) => {
-  const userClubs = await userContributingClubs({ userId });
-  const clubIds = isModerator ? undefined : userClubs.map((c) => c.id);
-  const clubRequirements = await entityRequiresClub({ entities, clubIds });
+  const clubRequirements = await entityRequiresClub({ entities });
   return clubRequirements;
 };

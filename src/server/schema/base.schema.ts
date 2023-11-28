@@ -46,3 +46,6 @@ export const userPreferencesSchema = z
     excludedImageIds: z.array(z.number()),
   })
   .partial();
+
+export const getByEntitySchema = z.object({ entityId: z.number(), entityType: z.string() });
+export type GetByEntityInput = z.infer<typeof getByEntitySchema>;

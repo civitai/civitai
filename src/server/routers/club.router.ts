@@ -7,13 +7,14 @@ import {
 } from '~/server/schema/club.schema';
 import {
   getClubHandler,
+  getClubResourceDetailsHandler,
   getClubTiersHandler,
   upsertClubHandler,
   upsertClubResourceHandler,
   upsertClubTierHandler,
   userContributingClubsHandler,
 } from '~/server/controllers/club.controller';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByEntitySchema, getByIdSchema } from '~/server/schema/base.schema';
 
 export const clubRouter = router({
   getById: publicProcedure.input(getByIdSchema).use(isFlagProtected('clubs')).query(getClubHandler),
@@ -36,4 +37,8 @@ export const clubRouter = router({
     .input(upsertClubResourceInput)
     .use(isFlagProtected('clubs'))
     .mutation(upsertClubResourceHandler),
+  resourceDetails: publicProcedure
+    .input(getByEntitySchema)
+    .use(isFlagProtected('clubs'))
+    .query(getClubResourceDetailsHandler),
 });
