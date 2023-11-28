@@ -1,4 +1,16 @@
-import { Anchor, Box, Center, Container, Grid, Loader, Paper, Stack, Title } from '@mantine/core';
+import {
+  Anchor,
+  Box,
+  Center,
+  Container,
+  Grid,
+  Group,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -21,10 +33,13 @@ import React from 'react';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowLeft } from '@tabler/icons-react';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
 import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { showSuccessNotification } from '~/utils/notifications';
+import { BackButton } from '~/components/BackButton/BackButton';
+import Link from 'next/link';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -80,13 +95,21 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
     <Stack>
       <Title order={2}>General Settings</Title>
       <Paper className={classes.feedContainer}>
-        <ClubUpsertForm club={club} />
+        <ClubUpsertForm
+          club={club}
+          onSave={() => {
+            showSuccessNotification({
+              title: 'Club updated',
+              message: 'Your club has been updated successfully',
+            });
+          }}
+        />
       </Paper>
     </Stack>
   );
 }
 
-export const ClubManagementLayout = (page: React.ReactElement) => {
+export const ClubManagementLayout = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
   const { id: stringId } = router.query as {
     id: string;
@@ -118,7 +141,15 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
     <AppLayout>
       <Container size="xl">
         <Stack spacing="md">
-          <Stack spacing={2}>
+          <Stack spacing="md">
+            <Link href={`/clubs/${club.id}`} passHref shallow>
+              <Anchor size="sm">
+                <Group spacing={4}>
+                  <IconArrowLeft />
+                  <Text inherit>Back to club&rsquo;s feed page</Text>
+                </Group>
+              </Anchor>
+            </Link>
             {club.avatar && (
               <ImageCSSAspectRatioWrap
                 aspectRatio={1}
@@ -156,7 +187,7 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
               </ImageCSSAspectRatioWrap>
             )}
             <Title order={1}>{club.name}</Title>
-            {!hasJoinableTiers && (
+            {!hasJoinableTiers && !isLoadingTiers && (
               <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconAlertCircle />}>
                 It looks like no you have not setup any joinable Club tier yet. Please go to the{' '}
                 <Anchor href={`/clubs/manage/${club.id}/tiers`} rel="nofollow" target="_blank">
@@ -171,7 +202,7 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
               <ClubManagementNavigation id={id} />
             </Grid.Col>
             <Grid.Col xs={12} md={10}>
-              {page}
+              {children}
             </Grid.Col>
           </Grid>
         </Stack>
@@ -180,4 +211,6 @@ export const ClubManagementLayout = (page: React.ReactElement) => {
   );
 };
 
-ManageClub.getLayout = ClubManagementLayout;
+ManageClub.getLayout = function getLayout(page: React.ReactNode) {
+  return <ClubManagementLayout>{page}</ClubManagementLayout>;
+};

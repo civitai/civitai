@@ -33,7 +33,7 @@ import React, { useState } from 'react';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { IconAlertCircle, IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
@@ -141,7 +141,12 @@ export default function ManageClubTiers({
               />
             </Paper>
           ) : (
-            <Button onClick={() => setAddNewTier(true)} loading={isRefetching}>
+            <Button
+              onClick={() => setAddNewTier(true)}
+              loading={isRefetching}
+              variant="light"
+              leftIcon={<IconPlus />}
+            >
               Add new tier
             </Button>
           )}
@@ -151,4 +156,6 @@ export default function ManageClubTiers({
   );
 }
 
-ManageClubTiers.getLayout = ClubManagementLayout;
+ManageClubTiers.getLayout = function getLayout(page: React.ReactNode) {
+  return <ClubManagementLayout>{page}</ClubManagementLayout>;
+};

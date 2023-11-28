@@ -157,7 +157,7 @@ export function ClubUpsertForm({
                   name="headerImage"
                   label="Banner Image"
                   description={`Suggested resolution: ${constants.profile.coverImageWidth}x${constants.profile.coverImageHeight}px`}
-                  aspectRatio={constants.profile.coverImageAspectRatio}
+                  aspectRatio={constants.clubs.headerImageAspectRatio}
                   previewWidth={constants.profile.coverImageWidth}
                 />
                 <InputSwitch
