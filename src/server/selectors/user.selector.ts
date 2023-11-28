@@ -21,6 +21,7 @@ export const userWithCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
   cosmetics: {
     where: { equippedAt: { not: null } },
     select: {
+      data: true,
       cosmetic: {
         select: {
           id: true,

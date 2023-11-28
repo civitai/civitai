@@ -1,23 +1,17 @@
 import {
   Alert,
-  Badge,
   Button,
   Card,
   Center,
-  Chip,
-  CloseButton,
   Container,
-  Divider,
   Grid,
   Group,
   Loader,
-  Modal,
-  ModalProps,
+  NumberInput,
   Paper,
   Stack,
   Text,
   Title,
-  createStyles,
   useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
@@ -25,6 +19,7 @@ import { IconBulb } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
+  ChartOptions,
   Tooltip as ChartTooltip,
   LineElement,
   LinearScale,
@@ -33,13 +28,10 @@ import {
 import dayjs from 'dayjs';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { useBuzz } from '~/components/Buzz/useBuzz';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -49,9 +41,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { UserBuzz } from '~/components/User/UserBuzz';
 import { env } from '~/env/client.mjs';
-import { Form, InputChipGroup, InputNumber, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -79,8 +69,12 @@ export const getServerSideProps = createServerSideProps({
 });
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
-const options = {
+const options: ChartOptions<'line'> = {
   aspectRatio: 2.5,
+  scales: {
+    x: { grid: { display: false } },
+    y: { grid: { display: false } },
+  },
   plugins: {
     legend: { display: false },
     title: { display: false },
@@ -95,8 +89,6 @@ export default function EventPageDetails({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
 
-  const [opened, setOpened] = useState(false);
-
   const {
     eventData,
     teamScores,
@@ -109,6 +101,48 @@ export default function EventPageDetails({
   } = useQueryEvent({ event });
   const { activateCosmetic, equipping } = useMutateEvent();
 
+  const userTeam = (eventCosmetic?.cosmetic?.data as { type: string; color: string })?.color;
+  const teamColorTheme = theme.colors[userTeam.toLowerCase()];
+  const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
+  const cosmeticData = eventCosmetic?.data as { lights: number; lightUpgrades: number };
+
+  const labels = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          teamScoresHistory
+            .flatMap((teamScore) => teamScore.scores.map((score) => score.date))
+            .sort((a, b) => a.getTime() - b.getTime())
+            .map((date) => formatDate(stripTime(date), 'MMM-DD'))
+        )
+      ),
+    [teamScoresHistory]
+  );
+
+  const updatedTeamScoresHistory = useMemo(
+    () =>
+      teamScoresHistory.map((teamScore) => {
+        let lastMatchedIndex = -1;
+
+        return {
+          ...teamScore,
+          scores: labels.map((label, index) => {
+            const matchedScore = teamScore.scores.find(
+              (score) => formatDate(stripTime(score.date), 'MMM-DD') === label
+            );
+
+            if (matchedScore) {
+              lastMatchedIndex = index;
+              return { date: label, score: matchedScore?.score };
+            } else {
+              return { date: label, score: teamScore.scores[lastMatchedIndex]?.score ?? 0 };
+            }
+          }),
+        };
+      }),
+    [labels, teamScoresHistory]
+  );
+
   if (loading) return <PageLoader />;
   if (!eventCosmetic) return <NotFound />;
 
@@ -120,20 +154,6 @@ export default function EventPageDetails({
       showErrorNotification({ title: 'Unable to equip cosmetic', error });
     }
   };
-
-  const userTeam = (eventCosmetic.cosmetic?.data as { type: string; color: string })?.color;
-  const teamColorTheme = theme.colors[userTeam.toLowerCase()];
-  const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
-  const cosmeticData = eventCosmetic.data as { lights: number; upgradedLights: number };
-
-  const labels = Array.from(
-    new Set(
-      teamScoresHistory
-        .flatMap((teamScore) => teamScore.scores.map((score) => score.date))
-        .sort((a, b) => a.getTime() - b.getTime())
-        .map((date) => formatDate(stripTime(date), 'MMM-DD'))
-    )
-  );
 
   return (
     <>
@@ -193,11 +213,7 @@ export default function EventPageDetails({
               >
                 {eventCosmetic.cosmetic && (
                   <Stack align="center">
-                    <HolidayFrame
-                      cosmetic={eventCosmetic.cosmetic}
-                      lights={cosmeticData.lights ?? 0}
-                      lightUpgrades={cosmeticData.upgradedLights ?? 0}
-                    />
+                    <HolidayFrame cosmetic={eventCosmetic.cosmetic} />
                     <Text size="xl" weight={590}>
                       {eventCosmetic.cosmetic.name}
                     </Text>
@@ -317,6 +333,7 @@ export default function EventPageDetails({
                       event will get a special prize
                     </Text>
                   </Stack>
+                  <DonateInput event={event} />
                   {loadingHistory ? (
                     <Center py="xl">
                       <Loader variant="bars" />
@@ -326,11 +343,11 @@ export default function EventPageDetails({
                       options={options}
                       data={{
                         labels,
-                        datasets: teamScoresHistory.map(({ team, scores }) => {
+                        datasets: updatedTeamScoresHistory.map(({ team, scores }) => {
                           const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
                           return {
                             label: 'Buzz donated',
-                            data: scores.map((score) => score.score),
+                            data: scores.map(({ score }) => score),
                             borderColor: color,
                             backgroundColor: color,
                           };
@@ -338,12 +355,6 @@ export default function EventPageDetails({
                       }}
                     />
                   )}
-                  <Button variant="filled" color="gray" radius="xl" onClick={() => setOpened(true)}>
-                    <Group spacing={4}>
-                      <CurrencyIcon currency={Currency.BUZZ} size={18} />
-                      Boost your team
-                    </Group>
-                  </Button>
                 </Stack>
               </Card>
             </Grid.Col>
@@ -408,115 +419,13 @@ export default function EventPageDetails({
           </Stack>
         </Stack>
       </Container>
-      <DonationModal event={event} opened={opened} onClose={() => setOpened(false)} />
+      {/* <DonationModal event={event} opened={opened} onClose={() => setOpened(false)} /> */}
     </>
   );
 }
 
-// TODO.manuel: This all comes from the SendTipModal.tsx file and adjusted accordingly
-// We can consider moving this to a separate file and importing it here
-const useStyles = createStyles((theme) => ({
-  presetCard: {
-    position: 'relative',
-    width: '100%',
-    borderRadius: theme.radius.sm,
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
-
-    '&:hover:not([disabled])': {
-      borderColor: theme.colors.blue[6],
-    },
-
-    '&[disabled]': {
-      opacity: 0.5,
-      cursor: 'not-allowed',
-    },
-  },
-
-  sendIcon: {
-    backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-    color: theme.white,
-    borderTopRightRadius: theme.radius.sm,
-    borderBottomRightRadius: theme.radius.sm,
-  },
-
-  // Chip styling
-  label: {
-    padding: `0 ${theme.spacing.xs}px`,
-
-    '&[data-checked]': {
-      border: `2px solid ${theme.colors.accent[5]}`,
-      color: theme.colors.accent[5],
-
-      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-      },
-    },
-  },
-
-  // Chip styling
-  iconWrapper: {
-    display: 'none',
-  },
-
-  chipGroup: {
-    gap: 8,
-
-    [theme.fn.smallerThan('sm')]: {
-      gap: theme.spacing.md,
-    },
-  },
-
-  actions: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'column',
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      padding: theme.spacing.md,
-    },
-  },
-
-  cancelButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
-
-const presets = [
-  { label: 'xs', amount: '100' },
-  { label: 'sm', amount: '200' },
-  { label: 'md', amount: '500' },
-  { label: 'lg', amount: '1000' },
-];
-
-const schema = z
-  .object({
-    // Using string here since chip component only works with string values
-    amount: z.string(),
-    customAmount: z.number().positive().min(0).max(constants.buzz.maxTipAmount).optional(),
-  })
-  .refine((data) => data.amount !== '-1' || data.customAmount, {
-    message: 'Please enter a valid amount',
-    path: ['customAmount'],
-  });
-
-function DonationModal({ event, opened, onClose, ...modalProps }: ModalProps & { event: string }) {
-  const { classes } = useStyles();
-  const { balance } = useBuzz();
-
-  const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
+function DonateInput({ event }: { event: string }) {
+  const [amount, setAmount] = useState<number>();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance: number) =>
@@ -537,123 +446,47 @@ function DonationModal({ event, opened, onClose, ...modalProps }: ModalProps & {
 
   const { donate, donating } = useMutateEvent();
 
-  const handleSubmit = (data: z.infer<typeof schema>) => {
-    const { customAmount } = data;
-    const amount = Number(data.amount);
-    const amountToSend = Number(amount) === -1 ? customAmount ?? 0 : Number(amount);
+  const handleSubmit = () => {
+    if (!amount || amount <= 0 || amount > constants.buzz.maxTipAmount) return;
+
     const performTransaction = async () => {
       try {
-        await donate({ event, amount: amountToSend });
-        onClose();
+        await donate({ event, amount });
+        setAmount(undefined);
       } catch (e) {
         const error = e as Error;
         showErrorNotification({ title: 'Unable to donate', error });
       }
     };
 
-    conditionalPerformTransaction(amountToSend, performTransaction);
+    conditionalPerformTransaction(amount, performTransaction);
   };
 
-  const [amount, customAmount] = form.watch(['amount', 'customAmount']);
-  const amountToSend = Number(amount) === -1 ? customAmount : Number(amount);
-
   return (
-    <Modal opened={opened} onClose={onClose} withCloseButton={false} {...modalProps}>
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
-            Donate
-          </Text>
-          <Group spacing="sm" noWrap>
-            <Badge
-              radius="xl"
-              variant="filled"
-              h="auto"
-              py={4}
-              px={12}
-              sx={(theme) => ({
-                backgroundColor:
-                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
-              })}
-            >
-              <Group spacing={4} noWrap>
-                <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
-                  Available Buzz
-                </Text>
-                <UserBuzz iconSize={16} textSize="sm" withTooltip />
-              </Group>
-            </Badge>
-            <CloseButton radius="xl" iconSize={22} onClick={onClose} />
-          </Group>
-        </Group>
-        <Divider mx="-lg" />
-        <Text>How much buzz do you want to donate?</Text>
-        <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
-          <Stack spacing="md">
-            <InputChipGroup className={classes.chipGroup} name="amount" spacing={8}>
-              {presets.map((preset) => (
-                <Chip
-                  classNames={classes}
-                  variant="filled"
-                  key={preset.label}
-                  value={preset.amount}
-                >
-                  <Group spacing={4}>
-                    {preset.amount === amount && (
-                      <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                    )}
-                    {preset.amount}
-                  </Group>
-                </Chip>
-              ))}
-              <Chip classNames={classes} variant="filled" value="-1">
-                <Group spacing={4}>
-                  {amount === '-1' && <CurrencyIcon currency={Currency.BUZZ} size={16} />}
-                  Other
-                </Group>
-              </Chip>
-            </InputChipGroup>
-            {amount === '-1' && (
-              <InputNumber
-                name="customAmount"
-                placeholder="Your donation. Minimum 50 BUZZ"
-                variant="filled"
-                rightSectionWidth="10%"
-                min={1}
-                max={balance}
-                disabled={donating}
-                icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
-                hideControls
-              />
-            )}
-            <Group className={classes.actions} position="right" mt="xl">
-              <Button
-                className={classes.cancelButton}
-                variant="light"
-                color="gray"
-                onClick={onClose}
-              >
-                Cancel
-              </Button>
-              <BuzzTransactionButton
-                label="Donate"
-                className={classes.submitButton}
-                buzzAmount={amountToSend ?? 0}
-                disabled={(amountToSend ?? 0) === 0}
-                loading={donating}
-                color="yellow.7"
-                type="submit"
-              />
-            </Group>
-          </Stack>
-        </Form>
-      </Stack>
-    </Modal>
+    <Group spacing={8} noWrap>
+      <NumberInput
+        placeholder="Your donation"
+        icon={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+        formatter={numberWithCommas}
+        parser={(value?: string) => value && value.replace(/\$\s?|(,*)/g, '')}
+        value={amount}
+        onChange={setAmount}
+        min={1}
+        max={constants.buzz.maxTipAmount}
+        rightSection={<Text size="xs">Buzz</Text>}
+        rightSectionWidth="25%"
+        hideControls
+      />
+      <Button color="yellow.7" loading={donating} onClick={handleSubmit}>
+        Boost team
+      </Button>
+      {/* <BuzzTransactionButton
+        label="Boost team"
+        buzzAmount={amount ?? 0}
+        color="yellow.7"
+        loading={donating}
+        onPerformTransaction={handleSubmit}
+      /> */}
+    </Group>
   );
 }

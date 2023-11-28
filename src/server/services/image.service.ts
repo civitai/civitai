@@ -877,7 +877,7 @@ export const getAllImages = async ({
         username,
         image: userImage,
         deletedAt,
-        cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+        cosmetics: userCosmetics?.[creatorId] ?? [],
       },
       stats: {
         cryCountAllTime: cryCount,

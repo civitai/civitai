@@ -4,14 +4,14 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect } from 'react';
 
-import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 
 export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
   const articlesFilters = useArticleFilters();
@@ -39,7 +39,7 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
       ) : !!articles.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <UniformGrid
+          <MasonryGrid
             data={articles}
             render={ArticleCard}
             itemId={(x) => x.id}

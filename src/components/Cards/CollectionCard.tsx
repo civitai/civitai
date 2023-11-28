@@ -85,7 +85,9 @@ export function CollectionCard({ data, sx }: Props) {
               : undefined
           }
         >
-          {coverImages.length > 0 && <ImageCover data={data} coverImages={coverImages} />}
+          {coverImages.length > 0 && (
+            <ImageCover data={data} coverImages={coverImages.slice(0, 4)} />
+          )}
           {coverSrcs.length > 0 && coverImages.length === 0 && (
             <ImageSrcCover data={data} coverSrcs={coverSrcs} />
           )}

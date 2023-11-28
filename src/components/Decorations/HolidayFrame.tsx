@@ -1,9 +1,9 @@
-import { Group, createStyles } from '@mantine/core';
+import { createStyles } from '@mantine/core';
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles<string, { size: number }>((_, params) => ({
   root: {
     position: 'relative',
   },
@@ -30,21 +30,21 @@ const useStyles = createStyles(() => ({
     padding: '0 10px',
   },
   light: {
-    width: 32,
-    height: 32,
+    width: params.size,
+    height: params.size,
     marginLeft: -24,
     transform: 'translateY(50%) rotate(6deg)',
     transformOrigin: 'top center',
-    '&:first-child': {
+    '&:first-of-type': {
       marginLeft: 0,
     },
-    '&:nth-child(4n-2)': {
+    '&:nth-of-type(4n-2)': {
       transform: 'rotate(186deg) translateY(-60%)',
     },
-    '&:nth-child(4n-1)': {
+    '&:nth-of-type(4n-1)': {
       transform: 'translateY(40%) rotate(-6deg)',
     },
-    '&:nth-child(4n)': {
+    '&:nth-of-type(4n)': {
       transform: 'rotate(174deg) translateY(-55%)',
     },
   },
@@ -54,16 +54,16 @@ const useStyles = createStyles(() => ({
     marginLeft: -36,
     transformOrigin: 'top center',
     transform: 'translateY(45%) rotate(6deg)',
-    '&:first-child': {
+    '&:first-of-type': {
       marginLeft: '0',
     },
-    '&:nth-child(4n-2)': {
+    '&:nth-of-type(4n-2)': {
       transform: 'rotate(186deg) translateY(-70%)',
     },
-    '&:nth-child(4n-1)': {
+    '&:nth-of-type(4n-1)': {
       transform: 'translateY(50%) rotate(-6deg)',
     },
-    '&:nth-child(4n)': {
+    '&:nth-of-type(4n)': {
       transform: 'rotate(174deg) translateY(-75%)',
     },
   },
@@ -73,8 +73,9 @@ const cosmeticTypeImage = {
   'holiday-lights': '/images/holiday/wreath.png',
 };
 
-export function HolidayFrame({ cosmetic, lights, lightUpgrades, children }: Props) {
-  const { classes } = useStyles();
+export function HolidayFrame({ cosmetic, data, children }: Props) {
+  const { lights = 0, lightUpgrades = 0 } = data ?? {};
+  const { classes, cx } = useStyles({ size: Math.max(Math.ceil(((32 - lights) / 31) * 32), 18) });
   const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: false });
 
   if (!showDecorations || !cosmetic) return <>{children}</>;
@@ -111,14 +112,14 @@ export function HolidayFrame({ cosmetic, lights, lightUpgrades, children }: Prop
   return (
     <div className={classes.root}>
       {children}
-      <div className={classes.wrapper}>{decoration}</div>
+      {/* Fixed className to reference it in other components easily */}
+      <div className={cx('frame-decor', classes.wrapper)}>{decoration}</div>
     </div>
   );
 }
 
 type Props = {
   cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
-  lights: number;
-  lightUpgrades?: number;
+  data?: { lights?: number; lightUpgrades?: number } | null;
   children?: React.ReactNode;
 };

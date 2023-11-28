@@ -198,11 +198,13 @@ export function ModelCard({ data }: Props) {
 
   const cardDecoration = data.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
-  )?.cosmetic;
+  ) as (typeof data.user.cosmetics)[number] & {
+    data?: { lights?: number; lightUpgrades?: number };
+  };
 
   return (
-    <HolidayFrame cosmetic={cardDecoration} lights={5}>
-      <FeedCard className={!data.image ? classes.noImage : undefined} href={href}>
+    <HolidayFrame {...cardDecoration}>
+      <FeedCard className={cx(classes.link, !data.image && classes.noImage)} href={href}>
         <InView rootMargin="600px">
           {({ ref, inView }) => (
             <div className={classes.root} ref={ref}>

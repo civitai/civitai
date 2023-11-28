@@ -598,14 +598,15 @@ export const getCosmeticsForUsers = async (userIds: number[]) => {
     where: { userId: { in: users }, equippedAt: { not: null } },
     select: {
       userId: true,
+      data: true,
       cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
     },
   });
-  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic, data }) => {
     acc[userId] = acc[userId] ?? [];
-    acc[userId].push(cosmetic);
+    acc[userId].push({ cosmetic, data: data as MixedObject | null });
     return acc;
-  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+  }, {} as Record<number, Array<{ cosmetic: (typeof userCosmeticsRaw)[0]['cosmetic']; data: MixedObject | null }>>);
 
   return userCosmetics;
 };
