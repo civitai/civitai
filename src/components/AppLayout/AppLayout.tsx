@@ -71,13 +71,13 @@ const useStyles = createStyles((theme) => ({
   wrapper: {
     display: 'flex',
     flex: 1,
-    overflow: 'clip',
+    overflow: 'hidden',
   },
   main: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'clip',
+    overflow: 'hidden',
     position: 'relative',
   },
 }));

@@ -60,7 +60,7 @@ const useStyles = createStyles(() => ({
     flexDirection: 'column',
     height: '100%',
     flex: 1,
-    overflow: 'clip',
+    overflow: 'hidden',
   },
 }));
 
