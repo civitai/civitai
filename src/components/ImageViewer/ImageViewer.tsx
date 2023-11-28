@@ -35,7 +35,7 @@ type ImageViewerState = {
   nextImageId: number | null;
   prevImageId: number | null;
   onClose: () => void;
-  setOnDeleteImage: (callback: (imageId: number) => void) => void;
+  setOnDeleteImage: Dispatch<SetStateAction<((imageId: number) => void) | undefined>>;
   onSetImage: (imageId: number) => void;
   setEntityId: (entityId: number | null) => void;
   setEntityType: (entityType: ImageGuardConnect['entityType']) => void;
