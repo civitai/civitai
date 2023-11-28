@@ -1,9 +1,17 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SidebarLayout } from '~/components/Profile/SidebarLayout';
 import { trpc } from '~/utils/trpc';
-import { Center, Container, Loader, Stack, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
+import {
+  Center,
+  Container,
+  Loader,
+  Stack,
+  Text,
+  ThemeIcon,
+  createStyles,
+  useMantineTheme,
+} from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -24,6 +32,10 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client.mjs';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ProfileLayout({
   username,
@@ -37,13 +49,10 @@ export function ProfileLayout({
   });
 
   const stats = user?.stats;
+  const { classes } = useStyles();
 
   if (isLoading) {
-    return (
-      <Center>
-        <Loader />
-      </Center>
-    );
+    return <PageLoader />;
   }
 
   if (!user || !user.username) {
@@ -72,18 +81,33 @@ export function ProfileLayout({
         />
       )}
       {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}
-      <SidebarLayout.Root>
-        <SidebarLayout.Sidebar>
-          <ProfileSidebar username={username} />
-        </SidebarLayout.Sidebar>
-        <SidebarLayout.Content>
-          <Container fluid w="100%">
-            {children}
-          </Container>
-        </SidebarLayout.Content>
-      </SidebarLayout.Root>
+      <div className={classes.root}>
+        <div className={classes.sidebar}>
+          <ScrollArea>
+            <ProfileSidebar username={username} />
+          </ScrollArea>
+        </div>
+        <ScrollAreaMain p="md">{children}</ScrollAreaMain>
+      </div>
     </>
   );
 }
 
 export default ProfileLayout;
+
+const useStyles = createStyles((theme) => ({
+  sidebar: {
+    width: 320,
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+
+    [containerQuery.smallerThan('sm')]: {
+      display: 'none',
+    },
+  },
+  root: {
+    display: 'flex',
+    flex: 1,
+    height: '100%',
+  },
+}));

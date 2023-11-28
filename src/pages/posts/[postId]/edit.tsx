@@ -12,6 +12,7 @@ import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export default function PostEdit() {
   const mutating = useIsMutating();
@@ -61,4 +62,4 @@ export default function PostEdit() {
   );
 }
 
-PostEdit.getLayout = PostEditLayout;
+setPageOptions(PostEdit, { innerLayout: PostEditLayout });

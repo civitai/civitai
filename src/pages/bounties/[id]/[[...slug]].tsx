@@ -78,7 +78,7 @@ import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -103,6 +103,7 @@ import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -1075,10 +1076,10 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   );
 };
 
-BountyDetailsPage.getLayout = function getLayout(page: React.ReactNode) {
-  return (
+setPageOptions(BountyDetailsPage, {
+  innerLayout: (page) => (
     <ImageViewer>
-      <AppLayout>{page}</AppLayout>
+      <ScrollAreaMain>{page}</ScrollAreaMain>
     </ImageViewer>
-  );
-};
+  ),
+});

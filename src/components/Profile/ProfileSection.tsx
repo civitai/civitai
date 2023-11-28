@@ -164,6 +164,7 @@ export const useProfileSectionStyles = createStyles<
           marginRight: -theme.spacing.md,
           marginLeft: -theme.spacing.md,
           paddingLeft: theme.spacing.md,
+          paddingRight: theme.spacing.md,
 
           '& > *': {
             scrollSnapAlign: 'center',

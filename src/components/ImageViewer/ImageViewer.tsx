@@ -53,7 +53,7 @@ const imageViewerQueryParams = z
     imageId: z.coerce.number(),
   })
   .partial();
-export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
+export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
 
   const [onDeleteImage, setOnDeleteImage] = useState<((imageId: number) => void) | undefined>(

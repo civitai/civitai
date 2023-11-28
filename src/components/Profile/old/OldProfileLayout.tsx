@@ -65,6 +65,7 @@ import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useContext();
@@ -498,11 +499,11 @@ function LayoutSelector({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <NestedLayout>{children}</NestedLayout>;
+  return (
+    <ScrollAreaMain>
+      <NestedLayout>{children}</NestedLayout>
+    </ScrollAreaMain>
+  );
 }
 
-export const UserProfileLayout = (page: React.ReactElement) => (
-  <AppLayout>
-    <LayoutSelector>{page}</LayoutSelector>
-  </AppLayout>
-);
+export const UserProfileLayout = (page: React.ReactNode) => <LayoutSelector>{page}</LayoutSelector>;

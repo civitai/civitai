@@ -19,6 +19,7 @@ import { ModelSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
@@ -59,7 +60,7 @@ export default function UserModelsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer fluid p={0}>
           <Stack spacing="xs">
             <Group spacing={8}>
               {selfView && (
@@ -146,4 +147,4 @@ function ContentToggle({
   );
 }
 
-UserModelsPage.getLayout = UserProfileLayout;
+setPageOptions(UserModelsPage, { innerLayout: UserProfileLayout });

@@ -142,7 +142,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   );
 
   return (
-    <Stack className={className} spacing={sizeOpts.spacing}>
+    <Stack className={className} spacing={sizeOpts.spacing} p="md">
       <Group noWrap position="apart">
         <Group align="flex-start" position="apart" w={!isMobile ? '100%' : undefined}>
           <UserAvatar

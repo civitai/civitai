@@ -27,7 +27,7 @@ const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
     const emitterRef = useRef(new EventEmitter<EmitterDict>());
     const innerRef = useResizeObserver((entries) => {
       const entry = entries[0];
-      useContainerProviderStore.setState(() => ({ containerName: entry.contentBoxSize[0] }));
+      useContainerProviderStore.setState(() => ({ [containerName]: entry.contentBoxSize[0] }));
     });
     const mergedRef = useMergedRef(innerRef, ref);
     const { classes, cx } = useStyles();

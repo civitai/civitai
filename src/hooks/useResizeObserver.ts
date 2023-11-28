@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 export const useResizeObserver = <T extends HTMLElement = any>(
   callback: ResizeObserverCallback
 ) => {
+  const frameID = useRef(0);
   const ref = useRef<T>(null);
   const callbackRef = useRef<ResizeObserverCallback | null>(null);
 
@@ -13,14 +14,23 @@ export const useResizeObserver = <T extends HTMLElement = any>(
     if (!node) return;
 
     const handleResize = (entries: ResizeObserverEntry[], observer: ResizeObserver) => {
-      if (callbackRef.current) callbackRef.current(entries, observer);
+      if (entries.length > 0) cancelAnimationFrame(frameID.current);
+      frameID.current = requestAnimationFrame(() => {
+        if (callbackRef.current) {
+          callbackRef.current(entries, observer);
+        }
+      });
     };
 
     const observer = new ResizeObserver(handleResize);
     observer.observe(node);
 
     return () => {
-      observer.unobserve(node);
+      observer.disconnect();
+
+      if (frameID.current) {
+        cancelAnimationFrame(frameID.current);
+      }
     };
   }, []);
 

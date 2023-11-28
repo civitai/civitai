@@ -82,6 +82,6 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function setPageOptions(Component: () => JSX.Element, options?: AppLayoutProps) {
+export function setPageOptions(Component: (...args: any) => JSX.Element, options?: AppLayoutProps) {
   (Component as any).options = options;
 }

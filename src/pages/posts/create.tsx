@@ -15,6 +15,7 @@ import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
@@ -191,4 +192,4 @@ export default function PostCreate() {
   );
 }
 
-PostCreate.getLayout = PostEditLayout;
+setPageOptions(PostCreate, { innerLayout: PostEditLayout });

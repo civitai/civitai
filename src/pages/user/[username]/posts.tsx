@@ -18,6 +18,7 @@ import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropd
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -69,7 +70,7 @@ export default function UserPostsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer fluid p={0}>
           <Stack spacing="xs">
             <Group spacing={8} position="apart">
               {selfView && (
@@ -105,4 +106,4 @@ export default function UserPostsPage() {
   );
 }
 
-UserPostsPage.getLayout = UserProfileLayout;
+setPageOptions(UserPostsPage, { innerLayout: UserProfileLayout });
