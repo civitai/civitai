@@ -16,25 +16,8 @@ import {
 } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
-import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
-import { GenericImageCard } from '~/components/Cards/GenericImageCard';
-import { IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
-import {
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  rectIntersection,
-  UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
-import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
 
 type ClubResourceManagementInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -52,7 +35,7 @@ export const ClubResourceManagementInput = ({
   const [clubResources, setClubResources] = useState<ClubResourceSchema[]>(value || []);
   const { data: clubTiers = [], isFetching } = trpc.club.getTiers.useQuery(
     {
-      clubIds: clubResources.map((i) => i.id),
+      clubIds: clubResources.map((i) => i.clubId),
     },
     {
       enabled: clubResources.length > 0,
@@ -78,16 +61,16 @@ export const ClubResourceManagementInput = ({
 
   const onToggleClub = (clubId: number) => {
     setClubResources((current) =>
-      current.find((c) => c.id === clubId)
-        ? current.filter((c) => c.id !== clubId)
-        : [...current, { id: clubId, clubTierIds: [] }]
+      current.find((c) => c.clubId === clubId)
+        ? current.filter((c) => c.clubId !== clubId)
+        : [...current, { clubId, clubTierIds: [] }]
     );
   };
 
   const onToggleTierId = (clubId: number, clubTierId: number) => {
     setClubResources((current) =>
       current.map((c) =>
-        c.id === clubId
+        c.clubId === clubId
           ? {
               ...c,
               clubTierIds: (c.clubTierIds ?? []).includes(clubTierId)
@@ -102,7 +85,7 @@ export const ClubResourceManagementInput = ({
   const onSetAllTierAccess = (clubId: number) => {
     setClubResources((current) =>
       current.map((c) =>
-        c.id === clubId
+        c.clubId === clubId
           ? {
               ...c,
               clubTierIds: [],
@@ -113,7 +96,7 @@ export const ClubResourceManagementInput = ({
   };
 
   const unusedClubs = useMemo(() => {
-    return userClubs?.filter((c) => !clubResources.find((cr) => cr.id === c.id)) ?? [];
+    return userClubs?.filter((c) => !clubResources.find((cr) => cr.clubId === c.id)) ?? [];
   }, [clubResources, userClubs]);
 
   if (isLoadingUserClubs) {
@@ -157,20 +140,20 @@ export const ClubResourceManagementInput = ({
           </Group>
         )}
         {clubResources.map((clubResource, index) => {
-          const tiers = clubTiers.filter((t) => t.clubId === clubResource.id);
+          const tiers = clubTiers.filter((t) => t.clubId === clubResource.clubId);
           const clubTierIds = clubResource.clubTierIds ?? [];
 
           return (
-            <Paper key={clubResource.id} p="sm" radius="md" withBorder>
+            <Paper key={clubResource.clubId} p="sm" radius="md" withBorder>
               <Text size="sm" weight={500}>
-                {userClubs?.find((c) => c.id === clubResource.id)?.name ?? 'Unknown Club'}
+                {userClubs?.find((c) => c.id === clubResource.clubId)?.name ?? 'Unknown Club'}
               </Text>
               <Stack spacing="xs" mt="sm">
                 <Checkbox
                   label="All tiers"
                   checked={clubTierIds.length === 0}
                   onChange={() => {
-                    onSetAllTierAccess(clubResource.id);
+                    onSetAllTierAccess(clubResource.clubId);
                   }}
                 />
                 {tiers.map((tier) => (
@@ -178,7 +161,7 @@ export const ClubResourceManagementInput = ({
                     key={tier.id}
                     label={tier.name}
                     checked={clubTierIds.includes(tier.id)}
-                    onChange={() => onToggleTierId(clubResource.id, tier.id)}
+                    onChange={() => onToggleTierId(clubResource.clubId, tier.id)}
                   />
                 ))}
                 {tiers.length === 0 ? (
@@ -192,7 +175,7 @@ export const ClubResourceManagementInput = ({
                 ) : null}
               </Stack>
               <Divider my="md" />
-              <Button size="sm" onClick={() => onToggleClub(clubResource.id)} color="red">
+              <Button size="sm" onClick={() => onToggleClub(clubResource.clubId)} color="red">
                 Remove from this club
               </Button>
             </Paper>

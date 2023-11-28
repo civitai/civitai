@@ -150,12 +150,6 @@ export function ModelCard({ data }: Props) {
     ]);
   }
 
-  // if (features.clubs && currentUser?.id === data.user.id) {
-  //   contextMenuItems = contextMenuItems.concat([
-  //     <AddToClubMenuItem key="add-to-club" entityType="Model" entityId={data.id} />,
-  //   ]);
-  // }
-
   if (currentUser?.id !== data.user.id)
     contextMenuItems = contextMenuItems.concat([
       <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,

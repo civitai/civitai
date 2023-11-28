@@ -70,6 +70,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   meta: true,
   earlyAccessDeadline: true,
   mode: true,
+  unlisted: true,
   reportStats: {
     select: {
       ownershipProcessing: true,

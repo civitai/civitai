@@ -42,6 +42,7 @@ import { userReferralCodeRouter } from '~/server/routers/user-referral-code.rout
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { clubRouter } from '~/server/routers/club.router';
+import { commonRouter } from '~/server/routers/common.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -57,6 +58,7 @@ export const appRouter = router({
   collection: collectionRouter,
   comment: commentRouter,
   commentv2: commentv2Router,
+  common: commonRouter,
   content: contentRouter,
   download: downloadRouter,
   homeBlock: homeBlockRouter,

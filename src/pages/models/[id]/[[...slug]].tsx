@@ -17,6 +17,8 @@ import {
   Center,
   Box,
   Loader,
+  List,
+  Anchor,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -47,6 +49,7 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
+  IconClubs,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -110,7 +113,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
+import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -124,46 +127,16 @@ export const getServerSideProps = createServerSideProps({
       modelVersionId: string;
     };
     const id = Number(params.id);
+    const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
+    if (!isNumber(id)) return { notFound: true };
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
+    const modelVersionIdParsed = modelVersionId ?? version?.id;
+
+    if (!modelVersionIdParsed) {
+      return { notFound: true };
+    }
+
     if (ssg) {
-      const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
-      if (!isNumber(id)) return { notFound: true };
-
-      const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
-        () => null
-      );
-
-      const modelVersionIdParsed = modelVersionId ?? version?.id;
-
-      if (!modelVersionIdParsed) {
-        return { notFound: true };
-      }
-
-      const [entityAccess] = await hasEntityAccess({
-        entities: [
-          {
-            entityId: modelVersionIdParsed as number,
-            entityType: 'ModelVersion',
-          },
-        ],
-        userId: session?.user?.id,
-        isModerator: session?.user?.isModerator,
-      });
-
-      if (!entityAccess?.hasAccess) {
-        const [clubAccess] = await entityRequiresClub({
-          entities: [
-            {
-              entityId: modelVersionIdParsed as number,
-              entityType: 'ModelVersion',
-            },
-          ],
-        });
-
-        console.log(clubAccess);
-
-        return { notFound: true };
-      }
-
       if (version)
         await ssg.image.getInfinite.prefetchInfinite({
           modelVersionId: version.id,
@@ -174,6 +147,16 @@ export const getServerSideProps = createServerSideProps({
           browsingMode: parseBrowsingMode(ctx.req.cookies, session),
         });
 
+      if (modelVersionIdParsed) {
+        await ssg.common.getEntityAccess.prefetch({
+          entityId: modelVersionIdParsed as number,
+          entityType: 'ModelVersion',
+        });
+        await ssg.common.getEntityClubRequirement.prefetch({
+          entityId: modelVersionIdParsed as number,
+          entityType: 'ModelVersion',
+        });
+      }
       await ssg.model.getById.prefetch({ id });
     }
 
@@ -234,6 +217,10 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+  const { hasAccess, requiresClub, isLoadingAccess } = useEntityAccessRequirement({
+    entityType: 'ModelVersion',
+    entityId: modelVersionId,
+  });
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
@@ -444,7 +431,11 @@ export default function ModelDetailsV2({
     }
   }, [publishedVersions, selectedVersion, modelVersionId]);
 
-  if (loadingModel) return <PageLoader />;
+  if (loadingModel || isLoadingAccess) return <PageLoader />;
+
+  if (!hasAccess && model?.unlisted) {
+    return <NotFound />;
+  }
 
   // Handle missing and deleted models
   const modelDoesntExist = !model;
@@ -911,6 +902,21 @@ export default function ModelDetailsV2({
                   : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
               </AlertWithIcon>
             )}
+            {!hasAccess && requiresClub && (
+              <AlertWithIcon color="blue" icon={<IconClubs />} size="md">
+                <Text>
+                  This model version requires a club membership to access. To get access to this
+                  resource, join one of these creator clubs:
+                </Text>
+                <List size="xs" spacing={8}>
+                  <List.Item>
+                    <Anchor href="/clubs/{id}" span>
+                      Sample club
+                    </Anchor>
+                  </List.Item>
+                </List>
+              </AlertWithIcon>
+            )}
           </Stack>
           <Group spacing={4} noWrap>
             {isOwner ? (
@@ -958,6 +964,7 @@ export default function ModelDetailsV2({
                 if (!gallerySectionRef.current) return;
                 scrollToTop(gallerySectionRef.current);
               }}
+              hasAccess={hasAccess}
             />
           )}
         </Stack>

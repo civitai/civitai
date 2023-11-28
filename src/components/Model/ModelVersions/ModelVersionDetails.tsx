@@ -85,6 +85,7 @@ export function ModelVersionDetails({
   isFavorite,
   onFavoriteClick,
   onBrowseClick,
+  hasAccess,
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
@@ -113,7 +114,7 @@ export function ModelVersionDetails({
     { id: version.id },
     { enabled: features.imageGeneration && !!version }
   );
-  const canGenerate = features.imageGeneration && !!resourceCovered;
+  const canGenerate = features.imageGeneration && !!resourceCovered && hasAccess;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -311,7 +312,7 @@ export function ModelVersionDetails({
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
   const downloadMenuItems = version.files.map((file) =>
-    !archived ? (
+    !archived && hasAccess ? (
       <Menu.Item
         key={file.id}
         component="a"
@@ -350,20 +351,22 @@ export function ModelVersionDetails({
           <Text size="xs" weight={500} lineClamp={2}>
             {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
           </Text>
-          <Button
-            component="a"
-            variant="subtle"
-            size="xs"
-            href={createModelFileDownloadUrl({
-              versionId: version.id,
-              type: file.type,
-              meta: file.metadata,
-            })}
-            disabled={archived}
-            compact
-          >
-            Download
-          </Button>
+          {hasAccess && (
+            <Button
+              component="a"
+              variant="subtle"
+              size="xs"
+              href={createModelFileDownloadUrl({
+                versionId: version.id,
+                type: file.type,
+                meta: file.metadata,
+              })}
+              disabled={archived}
+              compact
+            >
+              Download
+            </Button>
+          )}
         </Group>
         {getFileDetails(file)}
       </Stack>
@@ -487,34 +490,42 @@ export function ModelVersionDetails({
                 {canGenerate && (
                   <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
                 )}
-                {displayCivitaiLink || canGenerate ? (
-                  <Menu position="bottom-end">
-                    <Menu.Target>
+                {hasAccess && (
+                  <>
+                    {displayCivitaiLink || canGenerate ? (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <DownloadButton
+                            canDownload={version.canDownload}
+                            disabled={!primaryFile || archived}
+                            iconOnly
+                          />
+                        </Menu.Target>
+                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                      </Menu>
+                    ) : (
                       <DownloadButton
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: version.id,
+                          primary: true,
+                        })}
                         canDownload={version.canDownload}
                         disabled={!primaryFile || archived}
-                        iconOnly
-                      />
-                    </Menu.Target>
-                    <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                  </Menu>
-                ) : (
-                  <DownloadButton
-                    component="a"
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      primary: true,
-                    })}
-                    canDownload={version.canDownload}
-                    disabled={!primaryFile || archived}
-                    sx={{ flex: 1 }}
-                  >
-                    <Text align="center">
-                      {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
-                    </Text>
-                  </DownloadButton>
+                        sx={{ flex: 1 }}
+                      >
+                        <Text align="center">
+                          {primaryFile
+                            ? `Download (${formatKBytes(primaryFile.sizeKB)})`
+                            : 'No file'}
+                        </Text>
+                      </DownloadButton>
+                    )}
+                    {!displayCivitaiLink && (
+                      <RunButton variant="light" modelVersionId={version.id} />
+                    )}
+                  </>
                 )}
-                {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
                 <Tooltip label="Share" position="top" withArrow>
                   <div>
                     <ShareButton
@@ -920,4 +931,5 @@ type Props = {
   user?: SessionUser | null;
   isFavorite?: boolean;
   onBrowseClick?: VoidFunction;
+  hasAccess?: boolean;
 };

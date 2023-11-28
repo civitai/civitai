@@ -1,7 +1,13 @@
 import { TRPCError } from '@trpc/server';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   GetClubTiersInput,
+  supportedClubEntities,
+  SupportedClubEntities,
   UpsertClubInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
@@ -127,8 +133,6 @@ export async function upsertClubResourceHandler({
           entityId: input.entityId,
         },
       ],
-      userId: ctx.user.id,
-      isModerator: !!ctx.user.isModerator,
     });
 
     return details;
@@ -138,12 +142,16 @@ export async function upsertClubResourceHandler({
   }
 }
 
-export async function getClubResourceDetailsHandler({ input, ctx }: { input: GetByEntityInput }) {
+export async function getClubResourceDetailsHandler({ input }: { input: GetByEntityInput }) {
   try {
+    if (!supportedClubEntities.some((e) => (e as string) === input.entityType)) {
+      throw throwBadRequestError(`Unsupported entity type: ${input.entityType}`);
+    }
+
     const [details] = await getClubDetailsForResource({
       entities: [
         {
-          entityType: input.entityType,
+          entityType: input.entityType as SupportedClubEntities,
           entityId: input.entityId,
         },
       ],

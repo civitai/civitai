@@ -51,11 +51,11 @@ export const getClubTiersInput = z.object({
   tierId: z.number().optional(),
 });
 
-const supportedClubEntities = ['ModelVersion', 'Article'] as const;
+export const supportedClubEntities = ['ModelVersion', 'Article'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
 
 export const clubResourceSchema = z.object({
-  id: z.number(),
+  clubId: z.number(),
   clubTierIds: z.array(z.number()).optional(),
 });
 

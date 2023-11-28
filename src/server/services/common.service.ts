@@ -1,6 +1,7 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Availability, Prisma } from '@prisma/client';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
+import { isDefined } from '~/utils/type-guards';
 
 const entityAccessOwnerTypes = ['User', 'Club', 'ClubTier'] as const;
 type EntityAccessOwnerType = (typeof entityAccessOwnerTypes)[number];
@@ -53,10 +54,10 @@ export const hasEntityAccess = async ({
     SELECT
         "entityType",
         "entityId",
-        COALESCE(m."userId", mmv."userId", a."userId") as "userId",
-        COALESCE(m."availability", mv."availability", a."availability") as "availability"
+        COALESCE(mmv."userId", a."userId") as "userId",
+        COALESCE(mv."availability", a."availability") as "availability"
     FROM entities e
-    LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = m.id
+    LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = mv.id
     LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
     LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
   `;
@@ -143,7 +144,7 @@ type ClubEntityAccessStatus = {
   requiresClub: boolean;
   clubs: {
     clubId: number;
-    clubTierId: number | null;
+    clubTierIds: number[];
   }[];
   availability: Availability;
 };
@@ -266,17 +267,24 @@ export const entityRequiresClub = async ({
       };
     }
 
+    console.log(privateEntityAccesses);
+
+    const clubIds = [
+      ...new Set(privateEntityAccesses.map((privateEntityAccess) => privateEntityAccess.clubId)),
+    ];
+
     return {
       entityId,
       entityType,
       requiresClub: true,
       availability: Availability.Private,
-      clubs: privateEntityAccesses
-        .filter((privateEntityAccess) => privateEntityAccess.clubId)
-        .map((privateEntityAccess) => ({
-          clubId: privateEntityAccess.clubId,
-          clubTierId: privateEntityAccess.clubTierId,
-        })),
+      clubs: clubIds.map((clubId) => ({
+        clubId,
+        clubTierIds: privateEntityAccesses
+          .filter((e) => e.clubId === clubId)
+          .map((e) => e.clubTierId)
+          .filter(isDefined),
+      })),
     };
   });
 
@@ -313,9 +321,9 @@ export const entityOwnership = async ({
     SELECT
         e."entityId",
         e."entityType",
-        COALESCE(m."userId", mmv."userId", a."userId") = ${userId} as "isOwner"
+        COALESCE(mmv."userId", a."userId") = ${userId} as "isOwner"
     FROM entities e
-    LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = m.id
+    LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = mv.id
     LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
     LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
   `;
@@ -339,5 +347,5 @@ export const entityAvailabilityUpdate = async ({
   await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
     UPDATE "${entityType}" t 
     SET "availability" = '${availability}'::"Availability"
-    WHERE t.id IN (${Prisma.join(entityIds, ', ')})`);
+    WHERE t.id IN (${entityIds.join(', ')})`);
 };

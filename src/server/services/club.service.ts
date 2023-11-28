@@ -439,11 +439,11 @@ export const upsertClubResource = async ({
   // First, check that the person is
   const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
 
-  if (!isModerator || ownership.isOwner) {
+  if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
   }
 
-  const clubIds = clubs.map((c) => c.id);
+  const clubIds = clubs.map((c) => c.clubId);
   const contributingClubs = await userContributingClubs({ userId, clubIds });
   if (!isModerator && clubIds.some((c) => !contributingClubs.find((cc) => cc.id === c))) {
     throw throwAuthorizationError(
@@ -460,10 +460,20 @@ export const upsertClubResource = async ({
         },
       })
     : [];
+
   const clubTierIds = clubTiers.map((t) => t.id);
 
   if (clubIds.length === 0) {
     // this resource will be made public:
+    const [details] = await getClubDetailsForResource({
+      entities: [
+        {
+          entityId,
+          entityType,
+        },
+      ],
+    });
+
     await dbWrite.entityAccess.deleteMany({
       where: {
         accessToId: entityId,
@@ -471,13 +481,16 @@ export const upsertClubResource = async ({
         OR: [
           {
             accessorId: {
-              in: clubIds,
+              in: details.clubs.map((c) => c.clubId),
             },
             accessorType: 'Club',
           },
           {
             accessorId: {
-              in: clubTierIds,
+              in: details.clubs
+                .map((c) => c.clubTierIds)
+                .filter(isDefined)
+                .flat(),
             },
             accessorType: 'ClubTier',
           },
@@ -533,7 +546,7 @@ export const upsertClubResource = async ({
 
     const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
     const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
-    const clubAccessIds = generalClubAccess.map((c) => c.id);
+    const clubAccessIds = generalClubAccess.map((c) => c.clubId);
     const tierAccessIds = tierClubAccess
       .map((c) => c.clubTierIds)
       .filter(isDefined)
@@ -559,6 +572,12 @@ export const upsertClubResource = async ({
         accessorType: 'ClubTier',
         addedById: userId,
       })),
+    });
+
+    await entityAvailabilityUpdate({
+      entityType,
+      entityIds: [entityId],
+      availability: Availability.Private,
     });
   });
 };
