@@ -18,6 +18,7 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
+import { upsertClubResource } from '~/server/services/club.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -103,11 +104,14 @@ export const upsertModelVersion = async ({
   monetization,
   settings,
   recommendedResources,
+  clubs,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
+  const model = await dbRead.model.findUniqueOrThrow({ where: { id: data.modelId } });
+
   if (!data.id) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
@@ -156,6 +160,15 @@ export const upsertModelVersion = async ({
         dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
+
+    if (clubs) {
+      await upsertClubResource({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        clubs,
+        userId: model.userId,
+      });
+    }
     return version;
   } else {
     const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
@@ -257,6 +270,15 @@ export const upsertModelVersion = async ({
           : undefined,
       },
     });
+
+    if (clubs) {
+      await upsertClubResource({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        clubs,
+        userId: model.userId,
+      });
+    }
 
     return version;
   }

@@ -113,7 +113,7 @@ export const ClubResourceManagementInput = ({
         {unusedClubs.length === 0 ? (
           <Center>
             <Text color="dimmed" size="sm">
-              Resource has been added to all clubs
+              No more clubs to select from
             </Text>
           </Center>
         ) : (
