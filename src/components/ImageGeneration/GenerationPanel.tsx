@@ -1,4 +1,14 @@
-import { Drawer, Center, Loader, Text, Stack, Group, Button, CloseButton } from '@mantine/core';
+import {
+  Drawer,
+  Center,
+  Loader,
+  Text,
+  Stack,
+  Group,
+  Button,
+  CloseButton,
+  ActionIcon,
+} from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconArrowsMaximize } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
@@ -71,7 +81,7 @@ export function GenerationPanel() {
       trapFocus={mobile}
       lockScroll={mobile}
     >
-      {!mobile && (
+      {!mobile ? (
         <Group
           spacing={8}
           pl="md"
