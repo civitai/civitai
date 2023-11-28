@@ -1,4 +1,4 @@
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { EngagementEvent, TeamScore } from '~/server/events/base.event';
 import { holiday2023 } from '~/server/events/holiday2023.event';
 import { redis } from '~/server/redis/client';
@@ -58,9 +58,28 @@ export const eventEngine = {
       await eventDef.clearKeys();
     }
   },
-  getEventData(event: string) {
+  async getEventData(event: string) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
+
+    let coverImage = eventDef.coverImage;
+    let coverImageUser;
+    if (eventDef.coverImageCollection) {
+      const [banner] = await dbRead.$queryRaw<{ url: string; username: string }[]>`
+        SELECT
+          i.url,
+          u.username
+        FROM "CollectionItem" ci
+        JOIN "Collection" c ON c.id = ci."collectionId"
+        JOIN "Image" i ON i.id = ci."imageId"
+        JOIN "User" u ON u.id = i."userId"
+        WHERE c."userId" = -1 AND c.name = ${eventDef.coverImageCollection}
+        ORDER BY ci."createdAt" DESC
+        LIMIT 1
+      `;
+      coverImage = banner.url;
+      coverImageUser = banner.username;
+    }
 
     return {
       title: eventDef.title,
@@ -68,7 +87,8 @@ export const eventEngine = {
       endDate: eventDef.endDate,
       teams: eventDef.teams,
       cosmeticName: eventDef.cosmeticName,
-      coverImage: eventDef.coverImage,
+      coverImage,
+      coverImageUser,
     };
   },
   getTeamAccounts(event: string) {

@@ -58,6 +58,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { NextLink } from '@mantine/next';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -122,7 +124,7 @@ export default function EventPageDetails({
   const userTeam = (eventCosmetic.cosmetic?.data as { type: string; color: string })?.color;
   const teamColorTheme = theme.colors[userTeam.toLowerCase()];
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
-  const cosmeticData = eventCosmetic.data as { lights: number; lightUpgrades: number };
+  const cosmeticData = eventCosmetic.data as { lights: number; upgradedLights: number };
 
   const labels = Array.from(
     new Set(
@@ -146,14 +148,31 @@ export default function EventPageDetails({
             h="300px"
             radius="md"
             style={{
-              backgroundImage: eventData?.coverImage ? `url(${eventData.coverImage})` : undefined,
+              backgroundImage: eventData?.coverImage
+                ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
+                : undefined,
               backgroundPosition: 'top',
             }}
           >
             <Center w="100%" h="100%" style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)' }}>
-              <Title color="white" align="center">
-                {eventData?.title}
-              </Title>
+              <Stack spacing={0}>
+                <Title color="white" align="center">
+                  {eventData?.title}
+                </Title>
+                {eventData?.coverImageUser && (
+                  <Text color="white" size="xs" align="center">
+                    Banner created by{' '}
+                    <Text
+                      component={NextLink}
+                      target="_blank"
+                      href={`/user/${eventData.coverImageUser}`}
+                      td="underline"
+                    >
+                      {eventData.coverImageUser}
+                    </Text>
+                  </Text>
+                )}
+              </Stack>
             </Center>
           </Paper>
           <Text>
@@ -177,6 +196,7 @@ export default function EventPageDetails({
                     <HolidayFrame
                       cosmetic={eventCosmetic.cosmetic}
                       lights={cosmeticData.lights ?? 0}
+                      lightUpgrades={cosmeticData.upgradedLights ?? 0}
                     />
                     <Text size="xl" weight={590}>
                       {eventCosmetic.cosmetic.name}

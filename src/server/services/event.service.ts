@@ -8,9 +8,9 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus } from '~/server/services/user.service';
 
-export function getEventData({ event }: EventInput) {
+export async function getEventData({ event }: EventInput) {
   try {
-    return eventEngine.getEventData(event);
+    return await eventEngine.getEventData(event);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

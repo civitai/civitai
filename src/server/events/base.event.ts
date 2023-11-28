@@ -41,9 +41,8 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(getUserTeam(userId));
   }
   async function getRewards() {
-    const eventName = definition.title;
     const rewards = await dbWrite.cosmetic.findMany({
-      where: { name: { contains: eventName }, source: 'Claim' },
+      where: { name: { startsWith: definition.badgePrefix }, source: 'Claim', type: 'Badge' },
       select: { id: true, name: true, data: true, type: true },
     });
 
@@ -93,7 +92,9 @@ type HolidayEventDefinition = {
   teams: string[];
   bankIndex: number;
   cosmeticName: string;
+  badgePrefix: string;
   coverImage?: string;
+  coverImageCollection?: string;
   onEngagement?: (ctx: ProcessingContext) => Promise<void>;
   onDailyReset?: (ctx: DailyResetContext) => Promise<void>;
 };
