@@ -50,7 +50,6 @@ import {
   Center,
   NumberInputProps,
   Paper,
-  ScrollArea,
   SliderProps,
   Stack,
   Group,
@@ -74,6 +73,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler } from '@mantine/hooks';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -243,7 +243,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       style={{ width: '100%', position: 'relative', height: '100%' }}
     >
       <Stack spacing={0} h="100%">
-        <ScrollArea sx={{ flex: 1 }}>
+        <ScrollArea>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
               <DismissibleAlert

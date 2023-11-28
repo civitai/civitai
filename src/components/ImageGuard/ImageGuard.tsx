@@ -51,7 +51,7 @@ import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 export type ImageGuardConnect = {
   entityType:
@@ -437,13 +437,21 @@ ImageGuard.Report = function ReportImage({
       ),
     });
 
-  if (image.postId && !router.query.postId)
+  const postId = image.postId;
+  if (postId && !router.query.postId)
     defaultMenuItems.push({
       key: 'view-post',
       component: (
-        <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} key="view-post">
-          <Menu.Item icon={<IconEye size={14} stroke={1.5} />}>View Post</Menu.Item>
-        </RoutedDialogLink>
+        <Menu.Item
+          key="view-post"
+          icon={<IconEye size={14} stroke={1.5} />}
+          onClick={(e) => {
+            e.stopPropagation();
+            triggerRoutedDialog({ name: 'postDetail', state: { postId: postId } });
+          }}
+        >
+          View Post
+        </Menu.Item>
       ),
     });
 
