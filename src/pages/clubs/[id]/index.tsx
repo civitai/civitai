@@ -123,7 +123,7 @@ const Feed = () => {
             <ClubPostUpsertForm
               clubId={id}
               onSuccess={() => {
-                utils.club.getInfiniteClubPosts.invalidate({ clubId: id });
+                utils.clubPost.getInfiniteClubPosts.invalidate({ clubId: id });
               }}
             />
           </Paper>

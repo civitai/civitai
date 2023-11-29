@@ -43,6 +43,7 @@ import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { clubRouter } from '~/server/routers/club.router';
 import { commonRouter } from '~/server/routers/common.router';
+import { clubPostRouter } from '~/server/routers/clubPost.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -55,6 +56,7 @@ export const appRouter = router({
   bountyEntry: bountyEntryRouter,
   buzz: buzzRouter,
   club: clubRouter,
+  clubPost: clubPostRouter,
   collection: collectionRouter,
   comment: commentRouter,
   commentv2: commentv2Router,

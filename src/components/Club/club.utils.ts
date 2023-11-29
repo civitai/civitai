@@ -93,9 +93,9 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     },
   });
 
-  const upsertClubPostMutation = trpc.club.upsertClubPost.useMutation({
+  const upsertClubPostMutation = trpc.clubPost.upsertClubPost.useMutation({
     async onSuccess() {
-      await queryUtils.club.getInfiniteClubPosts.invalidate();
+      await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
     },
     onError(error) {
       try {
@@ -185,7 +185,7 @@ export const useQueryClubPosts = (
   filters?: Partial<GetInfiniteClubPostsSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  const { data, ...rest } = trpc.club.getInfiniteClubPosts.useInfiniteQuery(
+  const { data, ...rest } = trpc.clubPost.getInfiniteClubPosts.useInfiniteQuery(
     {
       clubId,
       ...filters,

@@ -11,9 +11,7 @@ import {
   getClubHandler,
   getClubResourceDetailsHandler,
   getClubTiersHandler,
-  getInfiniteClubPostsHandler,
   upsertClubHandler,
-  upsertClubPostHandler,
   upsertClubResourceHandler,
   upsertClubTierHandler,
   userContributingClubsHandler,
@@ -45,12 +43,4 @@ export const clubRouter = router({
     .input(getByEntitySchema)
     .use(isFlagProtected('clubs'))
     .query(getClubResourceDetailsHandler),
-  getInfiniteClubPosts: publicProcedure
-    .input(getInfiniteClubPostsSchema)
-    .use(isFlagProtected('clubs'))
-    .query(getInfiniteClubPostsHandler),
-  upsertClubPost: protectedProcedure
-    .input(upsertClubPostInput)
-    .use(isFlagProtected('clubs'))
-    .mutation(upsertClubPostHandler),
 });
