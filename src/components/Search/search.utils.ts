@@ -331,3 +331,59 @@ export const applyUserPreferencesBounties = <
 
   return filtered;
 };
+
+export const applyUserPreferencesClubPost = <
+  T extends {
+    id: number;
+    createdById?: number;
+    createdBy?: {
+      id: number;
+    } | null;
+    coverImage?: {
+      id: number;
+      tags?:
+        | {
+            id: number;
+          }[]
+        | number[]
+        | null;
+    } | null;
+  }
+>({
+  items,
+  currentUserId,
+  hiddenImages,
+  hiddenUsers,
+  hiddenTags,
+}: {
+  items: T[];
+  hiddenImages: Map<number, boolean>;
+  hiddenUsers: Map<number, boolean>;
+  hiddenTags: Map<number, boolean>;
+  currentUserId?: number | null;
+}) => {
+  const filtered = items
+    .filter((x) => {
+      const userId = x.createdBy?.id || x.createdById;
+      if (userId === currentUserId) return true;
+      if (userId && hiddenUsers.get(userId)) return false;
+
+      const { coverImage: i } = x;
+
+      if (!i) return true;
+      if (hiddenImages.get(i.id)) return false;
+
+      for (const tag of i.tags ?? []) {
+        if (typeof tag === 'number') {
+          if (hiddenTags.get(tag)) return false;
+        } else {
+          if (hiddenTags.get(tag.id)) return false;
+        }
+      }
+
+      return true;
+    })
+    .filter(isDefined);
+
+  return filtered;
+};

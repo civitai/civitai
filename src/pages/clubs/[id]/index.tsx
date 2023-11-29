@@ -4,7 +4,20 @@ import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { Anchor, Button, Container, Grid, Group, Stack, Text, Title } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  Center,
+  Container,
+  Divider,
+  Grid,
+  Group,
+  Loader,
+  LoadingOverlay,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -13,6 +26,8 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
   IconAlertCircle,
+  IconClock,
+  IconClubs,
   IconManualGearbox,
   IconPencilMinus,
   IconSettings,
@@ -22,9 +37,64 @@ import { ClubFeedNavigation } from '~/components/Club/ClubFeedNavigation';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useQueryClubPosts } from '~/components/Club/club.utils';
+import { InViewLoader } from '~/components/InView/InViewLoader';
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { NoContent } from '~/components/NoContent/NoContent';
 
 const Feed = () => {
-  return <div>Feed</div>;
+  const router = useRouter();
+  const { id: stringId } = router.query as {
+    id: string;
+  };
+  const id = Number(stringId);
+  const { clubPosts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryClubPosts(id);
+  return (
+    <>
+      {isLoading ? (
+        <Center p="xl">
+          <Loader size="xl" />
+        </Center>
+      ) : !!clubPosts.length ? (
+        <div style={{ position: 'relative' }}>
+          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
+          )}
+          {!hasNextPage && <EndOfFeed />}
+        </div>
+      ) : (
+        <Stack mt="xl">
+          <Divider
+            size="sm"
+            label={
+              <Group spacing={4}>
+                <IconClubs size={16} stroke={1.5} />
+                Looks like this club has not posted anything yet
+              </Group>
+            }
+            labelPosition="center"
+            labelProps={{ size: 'sm' }}
+          />
+          <Center>
+            <Stack spacing={0} align="center">
+              <Text size="sm" color="dimmed">
+                Check back later and the owner might have posted something
+              </Text>
+            </Stack>
+          </Center>
+        </Stack>
+      )}
+    </>
+  );
 };
 
 export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
@@ -108,77 +178,77 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
             top: club.headerImage ? -constants.clubs.avatarDisplayWidth / 2 : undefined,
           }}
         >
-          <Stack spacing="md">
-            <Stack spacing="lg">
-              {club.avatar && (
-                <ImageCSSAspectRatioWrap
-                  aspectRatio={1}
-                  style={{ width: constants.clubs.avatarDisplayWidth }}
-                >
-                  <ImageGuard
-                    images={[club.avatar]}
-                    connect={{ entityId: club.avatar.id, entityType: 'club' }}
-                    render={(image) => {
-                      return (
-                        <ImageGuard.Content>
-                          {({ safe }) => (
-                            <>
-                              {!safe ? (
-                                <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                              ) : (
-                                <ImagePreview
-                                  image={image}
-                                  edgeImageProps={{ width: 450 }}
-                                  radius="md"
-                                  style={{ width: '100%', height: '100%' }}
-                                  aspectRatio={0}
-                                />
-                              )}
-                              <div style={{ width: '100%', height: '100%' }}>
-                                <ImageGuard.ToggleConnect position="top-left" />
-                                <ImageGuard.Report withinPortal />
-                              </div>
-                            </>
+          {club.avatar && (
+            <ImageCSSAspectRatioWrap
+              aspectRatio={1}
+              style={{ width: constants.clubs.avatarDisplayWidth }}
+            >
+              <ImageGuard
+                images={[club.avatar]}
+                connect={{ entityId: club.avatar.id, entityType: 'club' }}
+                render={(image) => {
+                  return (
+                    <ImageGuard.Content>
+                      {({ safe }) => (
+                        <>
+                          {!safe ? (
+                            <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                          ) : (
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 450 }}
+                              radius="md"
+                              style={{ width: '100%', height: '100%' }}
+                              aspectRatio={0}
+                            />
                           )}
-                        </ImageGuard.Content>
-                      );
-                    }}
-                  />
-                </ImageCSSAspectRatioWrap>
-              )}
-              <Title order={1}>{club.name}</Title>
-              {club.description && (
-                <ContentClamp maxHeight={145}>
-                  <RenderHtml html={club.description} />
-                </ContentClamp>
-              )}
-              {(canPost || isOwner) && (
-                <Group>
-                  {canPost && (
-                    <Button
-                      component={'a'}
-                      href={`/clubs/${club.id}/post`}
-                      leftIcon={<IconPencilMinus />}
-                    >
-                      Post content
-                    </Button>
-                  )}
-                  {isOwner && (
-                    <Button
-                      component={'a'}
-                      href={`/clubs/manage/${club.id}`}
-                      leftIcon={<IconSettings />}
-                      color="gray"
-                    >
-                      Manage
-                    </Button>
-                  )}
-                </Group>
-              )}
-              <ClubFeedNavigation id={club.id} />
-            </Stack>
+                          <div style={{ width: '100%', height: '100%' }}>
+                            <ImageGuard.ToggleConnect position="top-left" />
+                            <ImageGuard.Report withinPortal />
+                          </div>
+                        </>
+                      )}
+                    </ImageGuard.Content>
+                  );
+                }}
+              />
+            </ImageCSSAspectRatioWrap>
+          )}
+          <Stack spacing="md" mt="md">
             <Grid>
               <Grid.Col xs={12} md={10}>
+                <Stack spacing="lg">
+                  <Title order={1}>{club.name}</Title>
+                  {club.description && (
+                    <ContentClamp maxHeight={145}>
+                      <RenderHtml html={club.description} />
+                    </ContentClamp>
+                  )}
+                  {(canPost || isOwner) && (
+                    <Group>
+                      {canPost && (
+                        <Button
+                          component={'a'}
+                          href={`/clubs/${club.id}/post`}
+                          leftIcon={<IconPencilMinus />}
+                        >
+                          Post content
+                        </Button>
+                      )}
+                      {isOwner && (
+                        <Button
+                          component={'a'}
+                          href={`/clubs/manage/${club.id}`}
+                          leftIcon={<IconSettings />}
+                          color="gray"
+                        >
+                          Manage
+                        </Button>
+                      )}
+                    </Group>
+                  )}
+                  <ClubFeedNavigation id={club.id} />
+                </Stack>
                 {children}
               </Grid.Col>
               <Grid.Col xs={12} md={2}>

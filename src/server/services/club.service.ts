@@ -600,27 +600,31 @@ export const getClubDetailsForResource = async ({
   return clubRequirements;
 };
 
-export const getAllClubPosts = <TSelect extends Prisma.ClubPostSelect>({
+export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
   select,
 }: {
-  input: GetInfiniteClubPostsSchema & { userId: number; isModerator: boolean };
+  input: GetInfiniteClubPostsSchema & { userId?: number; isModerator?: boolean };
   select: TSelect;
 }) => {
-  const clubWithMembership = await dbRead.club.findUniqueOrThrow({
-    where: { id: clubId },
-    select: {
-      userId: true,
-      memberships: {
-        where: {
-          userId,
+  const clubWithMembership = userId
+    ? await dbRead.club.findUniqueOrThrow({
+        where: { id: clubId },
+        select: {
+          userId: true,
+          memberships: {
+            where: {
+              userId,
+            },
+          },
         },
-      },
-    },
-  });
+      })
+    : undefined;
 
   const includeMembersOnlyContent =
-    isModerator || userId === clubWithMembership.userId || clubWithMembership.memberships.length > 0
+    isModerator ||
+    (clubWithMembership &&
+      (userId === clubWithMembership.userId || clubWithMembership.memberships.length > 0))
       ? undefined
       : false;
 

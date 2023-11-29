@@ -1,11 +1,21 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import {
+  GetInfiniteClubPostsSchema,
   SupportedClubEntities,
   UpsertClubInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
+import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useMemo } from 'react';
+import {
+  applyUserPreferencesBounties,
+  applyUserPreferencesClubPost,
+} from '~/components/Search/search.utils';
+import { BountyGetAll, ClubPostGetAll } from '~/types/router';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -138,4 +148,42 @@ export const useEntityAccessRequirement = ({
     requiresClub,
     isLoadingAccess,
   };
+};
+
+export const useQueryClubPosts = (
+  clubId: number,
+  filters?: Partial<GetInfiniteClubPostsSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data, ...rest } = trpc.club.getInfiniteClubPosts.useInfiniteQuery(
+    {
+      clubId,
+      ...filters,
+    },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      ...options,
+    }
+  );
+  const currentUser = useCurrentUser();
+  const {
+    users: hiddenUsers,
+    images: hiddenImages,
+    tags: hiddenTags,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+
+  const clubPosts = useMemo(() => {
+    if (isLoadingHidden) return [];
+    const items = data?.pages.flatMap((x) => x.items) ?? [];
+    return applyUserPreferencesClubPost<ClubPostGetAll[number]>({
+      items,
+      currentUserId: currentUser?.id,
+      hiddenImages,
+      hiddenTags,
+      hiddenUsers,
+    });
+  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
+
+  return { data, clubPosts, ...rest };
 };

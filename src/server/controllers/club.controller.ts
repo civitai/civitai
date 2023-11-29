@@ -29,6 +29,7 @@ import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getAllBounties, getImagesForBounties } from '~/server/services/bounty.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {
   try {
@@ -183,7 +184,18 @@ export const getInfiniteClubPostsHandler = async ({
   try {
     const items = await getAllClubPosts({
       input: { ...input, limit, userId: user?.id, isModerator: user?.isModerator },
-      select: {},
+      select: {
+        id: true,
+        createdBy: {
+          select: userWithCosmeticsSelect,
+        },
+        coverImage: {
+          select: imageSelect,
+        },
+        title: true,
+        description: true,
+        createdAt: true,
+      },
     });
 
     let nextCursor: number | undefined;
@@ -194,7 +206,15 @@ export const getInfiniteClubPostsHandler = async ({
 
     return {
       nextCursor,
-      items,
+      items: items.map(({ coverImage, ...x }) => ({
+        ...x,
+        coverImage: coverImage
+          ? {
+              ...coverImage,
+              tags: coverImage.tags.map((t) => t.tag),
+            }
+          : null,
+      })),
     };
   } catch (error) {
     throw throwDbError(error);

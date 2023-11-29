@@ -45,7 +45,7 @@ export const clubRouter = router({
     .input(getByEntitySchema)
     .use(isFlagProtected('clubs'))
     .query(getClubResourceDetailsHandler),
-  getInfinitePosts: publicProcedure
+  getInfiniteClubPosts: publicProcedure
     .input(getInfiniteClubPostsSchema)
     .use(isFlagProtected('clubs'))
     .query(getInfiniteClubPostsHandler),
