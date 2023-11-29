@@ -74,7 +74,7 @@ const cosmeticTypeImage = {
 };
 
 export function HolidayFrame({ cosmetic, data, children }: Props) {
-  const { lights = 0, lightUpgrades = 0 } = data ?? {};
+  const { lights = 0, upgradedLights = 0 } = data ?? {};
   const { classes, cx } = useStyles({ size: Math.max(Math.ceil(((32 - lights) / 31) * 32), 18) });
   const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: false });
 
@@ -94,9 +94,9 @@ export function HolidayFrame({ cosmetic, data, children }: Props) {
           {Array.from({ length: lights }).map((_, index) => (
             <Lightbulb
               key={index}
-              variant={lightUpgrades && index < lightUpgrades ? 'star' : 'default'}
+              variant={upgradedLights && index < upgradedLights ? 'star' : 'default'}
               className={
-                lightUpgrades && index < lightUpgrades ? classes.upgradedLight : classes.light
+                upgradedLights && index < upgradedLights ? classes.upgradedLight : classes.light
               }
               color={color}
               brightness={1}
@@ -120,6 +120,6 @@ export function HolidayFrame({ cosmetic, data, children }: Props) {
 
 type Props = {
   cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
-  data?: { lights?: number; lightUpgrades?: number } | null;
+  data?: { lights?: number; upgradedLights?: number } | null;
   children?: React.ReactNode;
 };

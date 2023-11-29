@@ -1,11 +1,41 @@
-import { Anchor, Card, CardProps, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Card, CardProps, Group, Stack, Text, createStyles } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import Image from 'next/image';
 
-export function HeroCard({ imageUrl, title, description, externalLink, ...cardProps }: Props) {
+const useStyles = createStyles((theme) => ({
+  card: {
+    [theme.fn.largerThan('sm')]: {
+      display: 'flex',
+      gap: 40,
+    },
+  },
+  section: {
+    [theme.fn.largerThan('sm')]: {
+      marginRight: 0,
+      marginBottom: -40,
+    },
+  },
+  title: {
+    fontSize: 40,
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: 28,
+      marginTop: theme.spacing.xl,
+    },
+  },
+}));
+
+export function HeroCard({
+  imageUrl,
+  title,
+  description,
+  externalLink,
+  className,
+  ...cardProps
+}: Props) {
+  const { classes, cx } = useStyles();
+
   return (
-    <Card radius="lg" p={40} sx={{ display: 'flex', gap: 40 }} {...cardProps}>
-      <Card.Section sx={{ marginRight: 0, marginBottom: -40 }}>
+    <Card radius="lg" p={40} className={cx(classes.card, className)} {...cardProps}>
+      <Card.Section className={classes.section}>
         <img
           src={imageUrl}
           alt={title}
@@ -18,7 +48,7 @@ export function HeroCard({ imageUrl, title, description, externalLink, ...cardPr
         />
       </Card.Section>
       <Stack spacing={32}>
-        <Text size={40} weight={600}>
+        <Text className={classes.title} weight={600}>
           {title}
         </Text>
         <Text size={20}>{description}</Text>

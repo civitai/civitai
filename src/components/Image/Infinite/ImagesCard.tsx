@@ -66,7 +66,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
   const cardDecoration = image.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
   ) as (typeof image.user.cosmetics)[number] & {
-    data?: { lights?: number; lightUpgrades?: number };
+    data?: { lights?: number; upgradedLights?: number };
   };
 
   return (

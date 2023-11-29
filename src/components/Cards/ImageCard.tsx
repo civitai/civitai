@@ -31,7 +31,7 @@ export function UnroutedImageCard({ data }: Props) {
   const cardDecoration = data.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
   ) as (typeof data.user.cosmetics)[number] & {
-    data?: { lights?: number; lightUpgrades?: number };
+    data?: { lights?: number; upgradedLights?: number };
   };
 
   return (
