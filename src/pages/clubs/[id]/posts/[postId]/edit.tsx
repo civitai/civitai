@@ -31,11 +31,11 @@ export default function ClubPostEdit() {
   const canUpdatePost =
     isModerator ||
     isOwner ||
-    (clubPost.createdBy?.id === currentUser?.id && role === ClubMembershipRole.Contributor) ||
+    (clubPost?.createdBy?.id === currentUser?.id && role === ClubMembershipRole.Contributor) ||
     role === ClubMembershipRole.Admin;
 
   if (isLoading) return <PageLoader />;
-  if (!canUpdatePost) return <NotFound />;
+  if (!canUpdatePost || !clubPost) return <NotFound />;
 
   const handleClose = () => {
     router.push(`/clubs/${clubPost.clubId}`);

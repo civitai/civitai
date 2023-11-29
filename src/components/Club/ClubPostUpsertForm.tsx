@@ -59,6 +59,10 @@ export function ClubPostUpsertForm({
         clubId,
       });
 
+      if (!data.id) {
+        form.reset();
+      }
+
       onSuccess?.();
     } catch (error) {
       // Do nothing since the query event will show an error notification

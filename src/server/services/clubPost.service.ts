@@ -45,6 +45,9 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
       clubId,
       membersOnly: includeMembersOnlyContent,
     },
+    orderBy: {
+      createdAt: 'desc',
+    },
   });
 };
 
@@ -90,7 +93,7 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
       ? undefined
       : false;
 
-  if (post.membersOnly && !includeMembersOnlyContent) {
+  if (post.membersOnly && includeMembersOnlyContent === false) {
     throw throwAuthorizationError('You do not have permission to view this post.');
   }
 

@@ -94,7 +94,10 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
   });
 
   const upsertClubPostMutation = trpc.clubPost.upsertClubPost.useMutation({
-    async onSuccess() {
+    async onSuccess(_, payload) {
+      if (payload.id) {
+        await queryUtils.clubPost.getById.invalidate({ id: payload.id });
+      }
       await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
     },
     onError(error) {
@@ -225,7 +228,7 @@ export const getUserClubRole = ({ userId, userClub }: { userId: number; userClub
   return membership?.role;
 };
 
-export const useClubContributorStatus = ({ clubId }: { clubId: number }) => {
+export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
   const { data: userClubs = [] } = trpc.club.userContributingClubs.useQuery(undefined, {
     enabled: !!clubId,
   });

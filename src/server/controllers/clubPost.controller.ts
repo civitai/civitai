@@ -37,6 +37,7 @@ export const getInfiniteClubPostsHandler = async ({
         description: true,
         createdAt: true,
         clubId: true,
+        membersOnly: true,
       },
     });
 
@@ -93,6 +94,7 @@ export const getClubPostByIdHandler = async ({
         description: true,
         createdAt: true,
         clubId: true,
+        membersOnly: true,
       },
     });
 
