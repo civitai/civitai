@@ -111,14 +111,18 @@ export async function upsertClubTierHandler({
   }
 }
 
-export async function userContributingClubsHandler({ ctx }: { ctx: Context }) {
+export async function userContributingClubsHandler({
+  ctx,
+}: {
+  ctx: Context;
+}): ReturnType<typeof userContributingClubs> {
   try {
     if (!ctx.user) return [];
-
     return userContributingClubs({ userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
+    return [];
   }
 }
 

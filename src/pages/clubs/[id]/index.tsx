@@ -38,12 +38,12 @@ import { ClubFeedNavigation } from '~/components/Club/ClubFeedNavigation';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useQueryClubPosts } from '~/components/Club/club.utils';
+import { useClubContributorStatus, useQueryClubPosts } from '~/components/Club/club.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPostUpsertForm';
-import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubFeed';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -55,12 +55,11 @@ const Feed = () => {
   const { clubPosts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryClubPosts(id);
   const { data: userClubs = [], isLoading: isLoadingUserClubs } =
     trpc.club.userContributingClubs.useQuery();
-  const currentUser = useCurrentUser();
   const { classes } = useClubFeedStyles();
 
   const canPost = useMemo(() => {
     return userClubs.some((c) => c.id === id);
-  }, [userClubs]);
+  }, [userClubs, isLoadingUserClubs]);
 
   return (
     <>
@@ -71,6 +70,11 @@ const Feed = () => {
       ) : !!clubPosts.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          <Stack spacing="md" mt="md">
+            {clubPosts.map((clubPost) => (
+              <ClubPostItem key={clubPost.id} clubPost={clubPost} />
+            ))}
+          </Stack>
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
@@ -142,7 +146,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
 
   const canPost = useMemo(() => {
     return userClubs.some((c) => c.id === id);
-  }, [userClubs]);
+  }, [userClubs, isLoadingUserClubs]);
 
   const isOwner = currentUser && club?.userId === currentUser?.id;
 
@@ -248,7 +252,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
           )}
           <Stack spacing="md" mt="md">
             <Grid>
-              <Grid.Col xs={12} md={10}>
+              <Grid.Col xs={12} md={9}>
                 <Stack spacing="lg">
                   <Title order={1}>{club.name}</Title>
                   {club.description && (
@@ -283,7 +287,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                 </Stack>
                 {children}
               </Grid.Col>
-              <Grid.Col xs={12} md={2}>
+              <Grid.Col xs={12} md={3}>
                 <ClubManagementNavigation id={id} />
               </Grid.Col>
             </Grid>

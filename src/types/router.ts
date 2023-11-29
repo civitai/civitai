@@ -97,3 +97,5 @@ export type ImageModerationReviewQueueImage =
 export type ClubGetById = RouterOutput['club']['getById'];
 export type ClubTier = RouterOutput['club']['getTiers'][number];
 export type ClubPostGetAll = RouterOutput['club']['getInfiniteClubPosts']['items'];
+
+export type UserClub = RouterOutput['club']['userContributingClubs'][number];

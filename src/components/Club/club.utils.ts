@@ -16,7 +16,7 @@ import {
   applyUserPreferencesBounties,
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
-import { BountyGetAll, ClubPostGetAll } from '~/types/router';
+import { BountyGetAll, ClubPostGetAll, UserClub } from '~/types/router';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -216,4 +216,39 @@ export const useQueryClubPosts = (
   }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
 
   return { data, clubPosts, ...rest };
+};
+
+export const getUserClubRole = ({ userId, userClub }: { userId: number; userClub?: UserClub }) => {
+  if (!userClub) return null;
+
+  const membership = userClub.memberships.find((x) => x.userId === userId);
+  return membership?.role;
+};
+
+export const useClubContributorStatus = ({ clubId }: { clubId: number }) => {
+  const { data: userClubs = [] } = trpc.club.userContributingClubs.useQuery(undefined, {
+    enabled: !!clubId,
+  });
+  const currentUser = useCurrentUser();
+
+  const { userClub, role } = useMemo(() => {
+    if (!userClubs || !currentUser)
+      return {
+        userClub: null,
+        role: null,
+      };
+
+    const userClub = userClubs.find((x) => x.id === clubId);
+
+    return {
+      userClub,
+      role: getUserClubRole({ userId: currentUser.id, userClub }),
+    };
+  }, [userClubs, currentUser, clubId]);
+
+  return {
+    userClub,
+    isOwner: currentUser && userClub?.userId === currentUser?.id,
+    role,
+  };
 };

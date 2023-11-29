@@ -28,10 +28,6 @@ import {
   entityOwnership,
   entityRequiresClub,
 } from '~/server/services/common.service';
-import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
-import { BountySort, BountyStatus } from '~/server/common/enums';
-import { decreaseDate } from '~/utils/date-helpers';
-import { ManipulateType } from 'dayjs';
 
 export const userContributingClubs = async ({
   userId,
@@ -50,6 +46,7 @@ export const userContributingClubs = async ({
           userId,
         },
         select: {
+          userId: true,
           clubId: true,
           role: true,
         },
