@@ -15,6 +15,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 export const BountiesSearchItem = forwardRef<
   HTMLDivElement,

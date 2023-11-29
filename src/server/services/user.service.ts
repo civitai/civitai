@@ -100,6 +100,7 @@ export const getUserCreator = async ({
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
+          data: true,
           cosmetic: {
             select: {
               id: true,

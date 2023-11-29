@@ -90,13 +90,16 @@ type LeaderboardRaw = {
   image: string | null;
   cosmetics:
     | {
-        id: number;
-        data: string;
-        type: CosmeticType;
-        source: CosmeticSource;
-        name: string;
-        leaderboardId: string;
-        leaderboardPosition: number;
+        data: MixedObject | null;
+        cosmetic: {
+          id: number;
+          data: string;
+          type: CosmeticType;
+          source: CosmeticSource;
+          name: string;
+          leaderboardId: string;
+          leaderboardPosition: number;
+        };
       }[]
     | null;
   delta: {
@@ -232,6 +235,7 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
       u.image,
       (
         SELECT
+          uc.data,
           jsonb_agg(jsonb_build_object(
             'id', c.id,
             'data', c.data,
@@ -240,7 +244,7 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
             'name', c.name,
             'leaderboardId', c."leaderboardId",
             'leaderboardPosition', c."leaderboardPosition"
-          ))
+          )) cosmetic
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
         AND "equippedAt" IS NOT NULL
@@ -278,7 +282,7 @@ function formatLeaderboardResults(results: LeaderboardRaw[], metricSortOrder = m
           username,
           deletedAt,
           image,
-          cosmetics: cosmetics?.map((cosmetic) => ({ cosmetic })) ?? [],
+          cosmetics: cosmetics ?? [],
         },
         metrics,
       };

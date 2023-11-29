@@ -100,7 +100,7 @@ export async function donate({
     const { team, accountId } = await eventEngine.getUserData({ event, userId });
     if (!team || !accountId) throw new Error("You don't have a team for this event");
 
-    const { title } = eventEngine.getEventData(event);
+    const { title } = await eventEngine.getEventData(event);
 
     await createBuzzTransaction({
       toAccountId: accountId,
