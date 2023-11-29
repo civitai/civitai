@@ -91,16 +91,16 @@ export const useResize = (options: Props) => {
   // }, [resizerRef, startResizing]);
 
   useEffect(() => {
-    const handleContainerClick = (e: MouseEvent) => e.preventDefault();
+    // const handleContainerClick = (e: MouseEvent) => e.preventDefault();
     window.addEventListener('mousemove', resize);
     window.addEventListener('mouseup', stopResizing);
     resizerRef?.addEventListener('mousedown', startResizing);
-    ref?.addEventListener('mousedown', handleContainerClick);
+    // ref?.addEventListener('mousedown', handleContainerClick);
     return () => {
       window.removeEventListener('mousemove', resize);
       window.removeEventListener('mouseup', stopResizing);
       resizerRef?.removeEventListener('mousedown', startResizing);
-      ref?.removeEventListener('mousedown', handleContainerClick);
+      // ref?.removeEventListener('mousedown', handleContainerClick);
     };
   }, [resize, stopResizing, resizerRef, ref, startResizing]);
 

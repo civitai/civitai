@@ -14,8 +14,6 @@ import { IconArrowsMaximize } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useEffect, useState, useTransition } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { useGenerationStore } from '~/store/generation.store';
