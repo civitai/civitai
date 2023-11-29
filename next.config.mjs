@@ -31,6 +31,7 @@ export default defineNextConfig(withAxiom({
       'model-share.s3.us-west-1.wasabisys.com',
       'civitai-prod.s3.us-west-1.wasabisys.com',
       'civitai-dev.s3.us-west-1.wasabisys.com',
+      'image.civitai.com',
     ],
   },
   experimental: {

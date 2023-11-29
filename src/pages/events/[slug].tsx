@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Button,
   Card,
   Center,
@@ -49,7 +50,8 @@ import { formatDate, stripTime } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { NextLink } from '@mantine/next';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { HeroCard } from '~/components/HeroCard/HeroCard';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -165,36 +167,62 @@ export default function EventPageDetails({
       <Container size="md">
         <Stack spacing={40}>
           <Paper
-            h="300px"
             radius="md"
-            style={{
+            sx={(theme) => ({
               backgroundImage: eventData?.coverImage
                 ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
                 : undefined,
+              backgroundRepeat: 'no-repeat',
               backgroundPosition: 'top',
-            }}
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'flex-end',
+              aspectRatio: '3',
+
+              [theme.fn.smallerThan('sm')]: {
+                aspectRatio: '1',
+              },
+            })}
           >
-            <Center w="100%" h="100%" style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)' }}>
-              <Stack spacing={0}>
-                <Title color="white" align="center">
-                  {eventData?.title}
-                </Title>
+            <Stack
+              spacing={0}
+              py="sm"
+              px="md"
+              sx={(theme) => ({
+                width: '100%',
+                background: theme.fn.linearGradient(0, 'rgba(37,38,43,0.8)', 'rgba(37,38,43,0)'),
+              })}
+            >
+              <Title color="white" sx={hideMobile}>
+                {eventData?.title}
+              </Title>
+              <Group spacing="xs" position="apart">
+                <Text color="white" size="sm" sx={hideMobile}>
+                  {formatDate(eventData?.startDate, 'MMMM D, YYYY')} -{' '}
+                  {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
+                </Text>
                 {eventData?.coverImageUser && (
-                  <Text color="white" size="xs" align="center">
+                  <Text color="white" size="xs">
                     Banner created by{' '}
-                    <Text
-                      component={NextLink}
-                      target="_blank"
-                      href={`/user/${eventData.coverImageUser}`}
-                      td="underline"
-                    >
-                      {eventData.coverImageUser}
-                    </Text>
+                    <Link href={`/user/${eventData.coverImageUser}`} passHref>
+                      <Anchor target="_blank" td="underline" span>
+                        {eventData.coverImageUser}
+                      </Anchor>
+                    </Link>
                   </Text>
                 )}
-              </Stack>
-            </Center>
+              </Group>
+            </Stack>
           </Paper>
+          <Stack sx={showMobile} spacing={0}>
+            <Title color="white" sx={{ fontSize: '28px' }}>
+              {eventData?.title}
+            </Title>
+            <Text color="white" size="sm">
+              {formatDate(eventData?.startDate, 'MMMM D, YYYY')} -{' '}
+              {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
+            </Text>
+          </Stack>
           <Text>
             <b>This was made with GitHub Copilot :^)</b> The holidays are a time for giving, and we
             want to give back to the community that has given us so much. For the next 12 days,
@@ -202,6 +230,12 @@ export default function EventPageDetails({
             new cosmetic each day, and you can get involved by donating to the charity of the day.
           </Text>
           <Title order={2}>Event Overview</Title>
+          <HeroCard
+            title="Good World Charity"
+            description="lorem ipsum dolor sit amet"
+            imageUrl="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/aee7a902-f82f-4fd4-b6f1-4c1133d2b171/width=450,optimized=true/00594-1944862799.jpeg"
+            externalLink="https://example.com"
+          />
           <Grid gutter={48}>
             <Grid.Col xs={12} sm="auto">
               <Card
