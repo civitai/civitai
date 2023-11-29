@@ -2,12 +2,13 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   return {
-    model: `/models/${threadParentId}?modal=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
+    model: `/models/${threadParentId}?dialog=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
     image: `/images/${threadParentId}?highlight=${details.commentId}`,
     post: `/posts/${threadParentId}?highlight=${details.commentId}#comments`,
     article: `/articles/${threadParentId}?highlight=${details.commentId}#comments`,
     review: `/reviews/${threadParentId}?highlight=${details.commentId}`,
     bounty: `/bounties/${threadParentId}?highlight=${details.commentId}#comments`,
+    bountyEntry: `/bounties/entries/${threadParentId}?highlight=${details.commentId}#comments`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
@@ -18,7 +19,7 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New comments on your models',
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=commentThread&commentId=${details.commentId}`,
+      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comments AS (
@@ -62,7 +63,7 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New comment responses',
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=commentThread&commentId=${
+      url: `/models/${details.modelId}?dialog=commentThread&commentId=${
         details.parentId ?? details.commentId
       }&highlight=${details.commentId}`,
     }),
@@ -108,7 +109,7 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New responses to comments and reviews on your models',
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
+      url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comments_nested AS (
@@ -155,7 +156,7 @@ export const commentNotifications = createNotificationProcessor({
       if (!details.version) {
         return {
           message: `${details.username} responded to the ${details.parentType} thread on the ${details.modelName} model`,
-          url: `/models/${details.modelId}?modal=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
+          url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
         };
       }
 
@@ -239,7 +240,7 @@ export const commentNotifications = createNotificationProcessor({
       if (details.version !== 2) {
         return {
           message: `${details.username} responded to your review on the ${details.modelName} model`,
-          url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
+          url: `/models/${details.modelId}?dialog=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
         };
       }
 
@@ -313,7 +314,7 @@ export const commentNotifications = createNotificationProcessor({
       };
       if (details.reviewId) {
         searchParams.review = details.reviewId;
-        searchParams.returnUrl = `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`;
+        searchParams.returnUrl = `/models/${details.modelId}?dialog=reviewThread&reviewId=${details.reviewId}`;
       } else {
         searchParams.returnUrl = `/models/${details.modelId}`;
       }

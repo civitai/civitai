@@ -213,7 +213,9 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
             size="xs"
             variant="light"
             leftIcon={<IconBrush size={16} />}
-            onClick={() => generationPanel.open({ type: 'image', id: imageId ?? 0 })}
+            onClick={() =>
+              generationPanel.open({ type: 'image', id: imageId ?? 0 }, { fullHeight: true })
+            }
             sx={{ flex: 1 }}
           >
             Start Creating

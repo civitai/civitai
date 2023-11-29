@@ -1,6 +1,7 @@
 import { Textarea } from '@mantine/core';
 import { useEditPostContext } from './EditPostProvider';
 import { trpc } from '~/utils/trpc';
+import { showErrorNotification } from '~/utils/notifications';
 
 let timer: NodeJS.Timeout | undefined;
 const debounce = (func: () => void, timeout = 1000) => {
@@ -15,7 +16,14 @@ export function EditPostTitle() {
   const id = useEditPostContext((state) => state.id);
   const title = useEditPostContext((state) => state.title ?? '');
   const setTitle = useEditPostContext((state) => state.setTitle);
-  const { mutate } = trpc.post.update.useMutation();
+  const { mutate } = trpc.post.update.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update post title',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const handleChange = (title: string) => {
     const clipped = title.length > charLimit ? title.substring(0, charLimit) : title;

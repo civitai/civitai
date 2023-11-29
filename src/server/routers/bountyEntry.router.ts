@@ -1,5 +1,12 @@
 import { getByIdSchema } from '../schema/base.schema';
-import { isFlagProtected, middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '../trpc';
 import {
   awardBountyEntryHandler,
   deleteBountyEntryHandler,
@@ -43,7 +50,7 @@ export const bountyEntryRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
     .query(getBountyEntryFilteredFilesHandler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(upsertBountyEntryInputSchema)
     .use(isFlagProtected('bounties'))
     .mutation(upsertBountyEntryHandler),

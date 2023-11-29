@@ -85,6 +85,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
+import { constants } from '~/server/common/constants';
 
 const HEADER_HEIGHT = 70;
 
@@ -593,7 +594,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
 
   const createButton =
     features.imageGeneration && !router.asPath.includes('/generate') ? (
-      <GenerateButton variant="light" py={8} px={12} h="auto" radius="xl" mode="toggle" compact />
+      <GenerateButton
+        variant="light"
+        py={8}
+        px={12}
+        h="auto"
+        radius="xl"
+        mode="toggle"
+        // Quick hack to avoid svg from going over the button. cc: Justin 👀
+        style={{ zIndex: 3 }}
+        compact
+      />
     ) : null;
 
   const handleSignOut = async () => {
@@ -717,8 +728,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
+              zIndex={constants.imageGeneration.drawerZIndex + 1}
               // radius="lg"
               onClose={() => setUserMenuOpened(false)}
+              withinPortal
             >
               <Menu.Target>
                 <UnstyledButton

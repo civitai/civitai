@@ -81,9 +81,8 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
             item.images = item.images?.map((image) => {
               const match = request.images?.find((x) => x.hash === image.hash);
               if (!match) return image;
-              const status = image.status !== 'Started' ? image.status : match.status;
               const available = image.available ? image.available : match.available;
-              return { ...image, ...match, status, available };
+              return { ...image, ...match, available };
             });
           }
         }

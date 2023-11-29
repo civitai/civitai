@@ -173,7 +173,7 @@ export const modelRouter = router({
     .input(deleteModelSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
-  publish: protectedProcedure
+  publish: guardedProcedure
     .input(publishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelHandler),
@@ -229,7 +229,7 @@ export const modelRouter = router({
   getAssociatedResourcesSimple: publicProcedure
     .input(getAssociatedResourcesSchema)
     .query(({ input }) => getAssociatedResourcesSimple(input)),
-  setAssociatedResources: protectedProcedure
+  setAssociatedResources: guardedProcedure
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),

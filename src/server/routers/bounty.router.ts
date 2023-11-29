@@ -10,7 +10,14 @@ import {
   refundBountyHandler,
   upsertBountyHandler,
 } from '../controllers/bounty.controller';
-import { isFlagProtected, middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '../trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addBenefactorUnitAmountInputSchema,
@@ -80,16 +87,16 @@ export const bountyRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
     .query(getBountyBenefactorsHandler),
-  create: protectedProcedure
+  create: guardedProcedure
     .input(createBountyInputSchema)
     .use(isFlagProtected('bounties'))
     .mutation(createBountyHandler),
-  update: protectedProcedure
+  update: guardedProcedure
     .input(updateBountyInputSchema)
     .use(isFlagProtected('bounties'))
     .use(isOwnerOrModerator)
     .mutation(updateBountyHandler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(upsertBountyInputSchema)
     .use(isFlagProtected('bounties'))
     .use(isOwnerOrModerator)

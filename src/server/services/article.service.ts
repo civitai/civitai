@@ -33,7 +33,7 @@ import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
-import { removeTags } from '~/utils/string-helpers';
+import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 
@@ -62,7 +62,10 @@ export const getArticles = async ({
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
-    const isOwnerRequest = sessionUser && sessionUser.username === username;
+    const isOwnerRequest =
+      !!sessionUser &&
+      !!username &&
+      postgresSlugify(sessionUser.username) === postgresSlugify(username);
 
     const AND: Prisma.Enumerable<Prisma.ArticleWhereInput> = [];
     if (query) AND.push({ title: { contains: query } });

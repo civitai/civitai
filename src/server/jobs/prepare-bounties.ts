@@ -289,6 +289,10 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
             amount: awardedAmount,
             type: TransactionType.Bounty,
             description: 'Reason: Bounty entry has been awarded!',
+            details: {
+              entityId: id,
+              entityType: 'Bounty',
+            },
           });
 
           break;

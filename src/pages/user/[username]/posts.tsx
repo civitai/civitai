@@ -33,7 +33,7 @@ export default function UserPostsPage() {
   const currentUser = useCurrentUser();
   const {
     replace,
-    query: { followed = undefined, ...query },
+    query: { followed = undefined, section: querySection, ...query },
   } = usePostQueryParams();
   // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
@@ -44,7 +44,7 @@ export default function UserPostsPage() {
     postgresSlugify(currentUser.username) === postgresSlugify(query.username);
 
   const [section, setSection] = useState<'published' | 'draft'>(
-    selfView ? query.section ?? 'published' : 'published'
+    selfView ? querySection ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
   const features = useFeatureFlags();

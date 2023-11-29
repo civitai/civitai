@@ -26,6 +26,7 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export default function PostCreate() {
@@ -92,6 +93,12 @@ export default function PostCreate() {
           if (queryParams.length > 0) pathname += `?${queryParams.join('&')}`;
 
           await router.push(pathname);
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to create post',
+            error: new Error(error.message),
+          });
         },
       }
     );

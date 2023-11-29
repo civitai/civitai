@@ -3,7 +3,13 @@ import { setQuestionAnswerSchema } from './../schema/question.schema';
 import { getQuestionsSchema, upsertQuestionSchema } from '../schema/question.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
-import { middleware, router, publicProcedure, protectedProcedure } from '~/server/trpc';
+import {
+  middleware,
+  router,
+  publicProcedure,
+  protectedProcedure,
+  guardedProcedure,
+} from '~/server/trpc';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -40,7 +46,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 export const questionRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getQuestionDetailHandler),
   getPaged: publicProcedure.input(getQuestionsSchema).query(getQuestionsHandler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(upsertQuestionSchema)
     .use(isOwnerOrModerator)
     .mutation(upsertQuestionHandler),

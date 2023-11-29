@@ -41,6 +41,17 @@ export const getUserBuzzTransactionsSchema = z.object({
   descending: z.boolean().optional(),
 });
 
+export const buzzTransactionDetails = z
+  .object({
+    user: z.string().optional(),
+    entityId: z.number().optional(),
+    entityType: z.string().optional(),
+    url: z.string().optional(),
+  })
+  .passthrough();
+
+export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
+
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
 export const getUserBuzzTransactionsResponse = z.object({
   cursor: z.coerce.date().nullish(),
@@ -58,7 +69,7 @@ export const getUserBuzzTransactionsResponse = z.object({
       toAccountId: z.coerce.number(),
       amount: z.coerce.number(),
       description: z.coerce.string().nullish(),
-      details: z.object({}).passthrough().nullish(),
+      details: buzzTransactionDetails.nullish(),
     })
     .array(),
 });
@@ -81,8 +92,9 @@ export const createBuzzTransactionInput = buzzTransactionSchema.refine(
     if (
       data.type === TransactionType.Tip &&
       ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
-    )
+    ) {
       return false;
+    }
 
     return true;
   },

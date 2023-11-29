@@ -20,7 +20,7 @@ export const mentionNotifications = createNotificationProcessor({
 
         return {
           message: `${details.username} mentioned you in a ${details.parentType} on ${details.modelName}`,
-          url: `/models/${details.modelId}?modal=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
+          url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
         };
       }
       return {

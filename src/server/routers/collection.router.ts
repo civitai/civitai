@@ -31,6 +31,7 @@ import {
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import {
+  guardedProcedure,
   isFlagProtected,
   middleware,
   protectedProcedure,
@@ -76,8 +77,8 @@ export const collectionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))
     .query(getCollectionByIdHandler),
-  upsert: protectedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
-  updateCoverImage: protectedProcedure
+  upsert: guardedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
+  updateCoverImage: guardedProcedure
     .input(updateCollectionCoverImageInput)
     .mutation(updateCollectionCoverImageHandler),
   saveItem: protectedProcedure

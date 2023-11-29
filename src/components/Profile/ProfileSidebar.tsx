@@ -8,8 +8,16 @@ import {
   Popover,
   Stack,
   Text,
+  useMantineTheme,
 } from '@mantine/core';
-import { IconAlertCircle, IconMapPin, IconPencilMinus, IconRss } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconDotsVertical,
+  IconMapPin,
+  IconPencilMinus,
+  IconRss,
+  IconShare3,
+} from '@tabler/icons-react';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -25,11 +33,13 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { CosmeticType } from '@prisma/client';
+import { CollectionType, CosmeticType } from '@prisma/client';
 import { Username } from '~/components/User/Username';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { useRouter } from 'next/router';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -73,6 +83,8 @@ const mapSize: Record<
 };
 
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
+  const router = useRouter();
+  const theme = useMantineTheme();
   const isMobile = useIsMobile({ breakpoint: 'sm' });
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
@@ -134,6 +146,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       sx={{ fontSize: '14px', fontWeight: 590 }}
     />
   );
+  const shareBtn = (
+    <ShareButton url={router.asPath} title={`${user.username} Profile`}>
+      <ActionIcon
+        size={30}
+        radius="xl"
+        color="gray"
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        ml="auto"
+      >
+        <IconShare3 size={16} />
+      </ActionIcon>
+    </ShareButton>
+  );
 
   const mutedAlert = isCurrentUser && muted && (
     <AlertWithIcon icon={<IconAlertCircle />} iconSize="sm">
@@ -151,13 +176,20 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             size={sizeOpts.username}
             radius="md"
           />
-          {!isMobile && <UserContextMenu username={username} />}
+
+          {!isMobile && (
+            <Group>
+              {shareBtn}
+              <UserContextMenu username={username} />
+            </Group>
+          )}
         </Group>
         {isMobile && (
           <Group noWrap spacing={4}>
             {muted ? mutedAlert : editProfileBtn}
             {followUserBtn}
             {tipBuzzBtn}
+            {shareBtn}
             <UserContextMenu username={username} />
           </Group>
         )}

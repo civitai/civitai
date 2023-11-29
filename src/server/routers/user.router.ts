@@ -54,7 +54,13 @@ import {
   cosmeticStatus,
   removeAllContent,
 } from '~/server/services/user.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -76,7 +82,7 @@ export const userRouter = router({
     .input(getUserCosmeticsSchema.optional())
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
-  update: protectedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
+  update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavoriteModel: protectedProcedure
     .input(toggleModelEngagementInput)

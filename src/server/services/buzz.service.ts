@@ -148,7 +148,11 @@ export async function createBuzzTransaction({
 
   const body = JSON.stringify({
     ...payload,
-    details,
+    details: {
+      ...(details ?? {}),
+      entityId: entityId ?? details?.entityId,
+      entityType: entityType ?? details?.entityType,
+    },
     amount,
     toAccountId,
   });
@@ -186,6 +190,8 @@ export async function createBuzzTransaction({
         amount: amount,
         user: fromUser?.username,
         message: payload.description,
+        entityId,
+        entityType,
       },
     });
   }
@@ -240,7 +246,12 @@ export async function createBuzzTransaction({
 export async function createBuzzTransactionMany(
   transactions: (CreateBuzzTransactionInput & { fromAccountId: number })[]
 ) {
-  const body = JSON.stringify(transactions);
+  // Protect against transactions that are not valid. A transaction with from === to
+  // breaks the entire request.
+  const validTransactions = transactions.filter(
+    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId
+  );
+  const body = JSON.stringify(validTransactions);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

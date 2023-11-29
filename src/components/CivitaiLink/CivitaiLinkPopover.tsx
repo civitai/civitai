@@ -53,12 +53,18 @@ import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 
 export function CivitaiLinkPopover() {
   return (
-    <Popover position="bottom-end" width={400}>
+    <Popover
+      position="bottom-end"
+      width={400}
+      zIndex={constants.imageGeneration.drawerZIndex + 1}
+      withinPortal
+    >
       <Popover.Target>
         <span>
           <LinkButton />

@@ -41,6 +41,7 @@ import {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import { editPostSelect } from './../selectors/post.selector';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 type GetAllPostsRaw = {
   id: number;
@@ -84,7 +85,8 @@ export const getPostsInfinite = async ({
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND = [Prisma.sql`1 = 1`];
 
-  const isOwnerRequest = user && user.username === username;
+  const isOwnerRequest =
+    !!user && !!username && postgresSlugify(user.username) === postgresSlugify(username);
   let targetUser: number | undefined;
   if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });

@@ -27,6 +27,7 @@ export const collectedContentReward = createBuzzEvent({
         FROM "${input.entityType}"
         WHERE id = ${input.entityId}
       `);
+
       input.ownerId = userId;
     }
 
@@ -35,6 +36,12 @@ export const collectedContentReward = createBuzzEvent({
       forId: input.entityId,
       byUserId: input.collectorId,
       type: `${type}:${input.entityType.toLowerCase()}`,
+    };
+  },
+  getTransactionDetails: async (input: CollectionEvent, ctx) => {
+    return {
+      entityId: input.entityId,
+      entityType: input.entityType,
     };
   },
 });

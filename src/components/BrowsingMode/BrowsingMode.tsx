@@ -21,6 +21,7 @@ import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { constants } from '~/server/common/constants';
 import { BrowsingMode } from '~/server/common/enums';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
@@ -52,7 +53,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   }[browsingMode];
 
   return (
-    <Popover withArrow>
+    <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
       <Popover.Target>
         <Indicator
           color={indicatorColor}
