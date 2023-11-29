@@ -32,7 +32,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client.mjs';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -87,7 +86,7 @@ export function ProfileLayout({
             <ProfileSidebar username={username} />
           </ScrollArea>
         </div>
-        <ScrollAreaMain p="md">{children}</ScrollAreaMain>
+        <ScrollArea p="md">{children}</ScrollArea>
       </div>
     </>
   );

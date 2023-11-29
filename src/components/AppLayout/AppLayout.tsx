@@ -8,18 +8,20 @@ import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/Ap
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
-import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
-import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 type AppLayoutProps = {
   innerLayout?: (page: React.ReactNode) => React.ReactNode;
+  withScrollArea?: boolean;
 };
 
 export function AppLayout({
   children,
-  innerLayout,
   renderSearchComponent,
+  innerLayout,
+  withScrollArea = true,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
@@ -27,6 +29,7 @@ export function AppLayout({
   const { classes } = useStyles();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
+  const flags = useFeatureFlags();
 
   if (isBanned)
     return (
@@ -46,7 +49,13 @@ export function AppLayout({
       </Center>
     );
 
-  const content = innerLayout ? innerLayout(children) : <ScrollAreaMain>{children}</ScrollAreaMain>;
+  const content = innerLayout ? (
+    innerLayout(children)
+  ) : withScrollArea ? (
+    <ScrollArea>{children}</ScrollArea>
+  ) : (
+    children
+  );
 
   return (
     <>
@@ -55,7 +64,14 @@ export function AppLayout({
         <GenerationSidebar />
 
         <ContainerProvider containerName="main">
-          <main className={classes.main}>{content}</main>
+          <main className={classes.main}>
+            {content}
+            {flags.assistant && (
+              <div className={classes.assistant}>
+                <AssistantButton />
+              </div>
+            )}
+          </main>
           <AppFooter fixed={false} />
         </ContainerProvider>
       </div>
@@ -75,6 +91,16 @@ const useStyles = createStyles((theme) => ({
     flexDirection: 'column',
     overflow: 'hidden',
     position: 'relative',
+  },
+  assistant: {
+    position: 'absolute',
+    // top: '100%',
+    // left: '100%',
+    bottom: theme.spacing.xs,
+    right: theme.spacing.md,
+    display: 'inline-block',
+    zIndex: 20,
+    width: 42,
   },
 }));
 

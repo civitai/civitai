@@ -1,10 +1,11 @@
-import { Group, ActionIcon, CloseButton } from '@mantine/core';
+import { Group, ActionIcon, CloseButton, Button } from '@mantine/core';
 import { useWindowEvent } from '@mantine/hooks';
 import { IconArrowsMaximize } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
@@ -12,9 +13,11 @@ import { useResizeStore } from '~/components/Resizable/useResize';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
 
 export function GenerationSidebar() {
-  const opened = useGenerationStore((state) => state.opened);
+  const _opened = useGenerationStore((state) => state.opened);
   const router = useRouter();
   const [showDrawer, setShowDrawer] = useState(false);
+  const isGeneratePage = router.pathname.startsWith('/generate');
+  const opened = _opened || isGeneratePage;
 
   useEffect(() => {
     if (opened)
@@ -50,24 +53,38 @@ export function GenerationSidebar() {
       defaultWidth={400}
     >
       <ContainerProvider containerName="generation-sidebar">
-        <Group position="apart" p="xs">
-          <ActionIcon
-            radius="xl"
-            size="md"
-            variant="filled"
-            onClick={() => router.push('/generate')}
+        {!isGeneratePage && (
+          <Group
+            position="apart"
+            p="xs"
             sx={(theme) => ({
-              backgroundColor: theme.white,
-              '&:hover': {
-                backgroundColor: theme.colors.gray[1],
-              },
+              position: 'relative',
+              borderBottom: `1px solid ${
+                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+              }`,
             })}
           >
-            <IconArrowsMaximize size={16} color="black" />
-          </ActionIcon>
-          <CloseButton onClick={generationPanel.close} />
-        </Group>
-        <GenerationTabs />
+            <Button
+              radius="xl"
+              size="sm"
+              variant="filled"
+              onClick={() => router.push('/generate')}
+              leftIcon={<IconArrowsMaximize size={16} />}
+            >
+              Expand
+            </Button>
+            <GeneratedImageActions
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+              }}
+            />
+            <CloseButton onClick={generationPanel.close} size="lg" />
+          </Group>
+        )}
+        <GenerationTabs tabs={isGeneratePage ? ['generate'] : undefined} />
       </ContainerProvider>
     </ResizableSidebar>
   );

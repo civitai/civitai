@@ -1,6 +1,6 @@
 import { createStyles, Badge, Card, Stack, Group, Button, StackProps } from '@mantine/core';
 import { IconBrush, IconListDetails, IconSlideshow, TablerIconsProps } from '@tabler/icons-react';
-import { Feed, FloatingFeedActions } from './Feed';
+import { Feed } from './Feed';
 import { Queue } from './Queue';
 import {
   useGetGenerationRequests,
@@ -10,8 +10,13 @@ import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { useEffect } from 'react';
 
-export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackProps }) {
+export default function GenerationTabs({
+  tabs: tabsToInclude,
+}: {
+  tabs?: ('generate' | 'queue' | 'feed')[];
+}) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
@@ -25,10 +30,8 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
     typeof view,
     {
       Icon: (props: TablerIconsProps) => JSX.Element;
-      header?: () => JSX.Element;
       render: () => JSX.Element;
       label: React.ReactNode;
-      // defaultPosition: 'top' | 'bottom';
     }
   >;
 
@@ -37,7 +40,6 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
       Icon: IconBrush,
       render: () => <Generate />,
       label: <>Generate</>,
-      // defaultPosition: 'top',
     },
     queue: {
       Icon: IconListDetails,
@@ -52,36 +54,32 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
           )}
         </Group>
       ),
-      // defaultPosition: 'top',
     },
     feed: {
       Icon: IconSlideshow,
-      header: () => (
-        <FloatingFeedActions images={result.images}>
-          {({ selected, render }) => (selected.length ? <Card radius={0}>{render}</Card> : <></>)}
-        </FloatingFeedActions>
-      ),
-      render: () => (
-        <Stack spacing={0} p="md">
-          <Feed {...result} />
-        </Stack>
-      ),
+      render: () => <Feed {...result} />,
       label: <>Feed</>,
-      // defaultPosition: 'top',
     },
   };
 
-  const header = tabs[view].header;
   const render = tabs[view].render;
+  const tabEntries = Object.entries(tabs).filter(([key]) =>
+    tabsToInclude ? tabsToInclude.includes(key as any) : true
+  );
+
+  useEffect(() => {
+    if (tabsToInclude) {
+      if (!tabsToInclude.includes(view)) setView(tabsToInclude[0]);
+    }
+  }, [tabsToInclude, view]); //eslint-disable-line
 
   return (
-    <Stack h="100%" style={{ overflow: 'hidden' }} spacing={0} {...wrapperProps}>
-      {header && <div>{header()}</div>}
+    <>
       <ScrollArea scrollRestore={{ key: view }}>{render()}</ScrollArea>
 
-      {currentUser && (
+      {currentUser && tabEntries.length > 1 && (
         <Group spacing={0} grow className={classes.tabsList}>
-          {Object.entries(tabs).map(([key, { Icon, label }], index) => (
+          {tabEntries.map(([key, { Icon, label }], index) => (
             <Button
               key={index}
               data-autofocus={index === 0}
@@ -98,7 +96,7 @@ export default function GenerationTabs({ wrapperProps }: { wrapperProps?: StackP
           ))}
         </Group>
       )}
-    </Stack>
+    </>
   );
 }
 

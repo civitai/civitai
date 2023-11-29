@@ -1,37 +1,54 @@
-import { ActionIcon, Drawer, Title } from '@mantine/core';
-import { IconArrowsMaximize } from '@tabler/icons-react';
+import { CloseButton, Drawer, Group, Box } from '@mantine/core';
+import { useDidUpdate } from '@mantine/hooks';
 import { useRouter } from 'next/router';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function GenerationDrawer() {
   const dialog = useDialogContext();
-  // const router = useRouter();
+  const router = useRouter();
+  const browserRouter = useBrowserRouter();
+  const isGeneratePage = router.pathname.startsWith('/generate');
+
+  // close the generation drawer when navigating to a new page
+  useDidUpdate(() => {
+    if (!isGeneratePage) dialog.onClose();
+  }, [browserRouter.asPath]); //eslint-disable-line
 
   return (
-    <Drawer {...dialog} size={800} position="left">
-      {/* <ActionIcon
-        radius="xl"
-        size="lg"
-        variant="filled"
-        onClick={() => router.push('/generate')}
+    <Drawer
+      {...dialog}
+      size="100%"
+      position="left"
+      withOverlay={false}
+      withCloseButton={false}
+      styles={isGeneratePage ? { drawer: { top: `var(--mantine-header-height)` } } : undefined}
+      transitionDuration={isGeneratePage ? 0 : 300}
+    >
+      <Box
         sx={(theme) => ({
-          position: 'absolute',
-          top: theme.spacing.xs,
-          right: -theme.spacing.xl - 17,
-          backgroundColor: theme.white,
-          '&:hover': {
-            backgroundColor: theme.colors.gray[1],
-          },
-
-          [containerQuery.smallerThan(800 + theme.spacing.xl + 17)]: {
-            left: theme.spacing.xs,
-          },
+          borderBottom: `1px solid ${
+            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+          }`,
         })}
       >
-        <IconArrowsMaximize size={18} color="black" />
-      </ActionIcon> */}
+        <Group position="right" p="xs" spacing="xs" style={{ position: 'relative' }}>
+          <GeneratedImageActions
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+            }}
+          />
+          <CloseButton
+            size="lg"
+            onClick={!isGeneratePage ? dialog.onClose : () => history.go(-1)}
+          />
+        </Group>
+      </Box>
       <GenerationTabs />
     </Drawer>
   );

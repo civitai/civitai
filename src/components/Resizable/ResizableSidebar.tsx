@@ -1,7 +1,6 @@
 import React from 'react';
 import { useResize } from './useResize';
 import { createStyles } from '@mantine/core';
-import { create } from 'zustand';
 import { IsClient } from '~/components/IsClient/IsClient';
 
 export type ResizableSidebarProps = {

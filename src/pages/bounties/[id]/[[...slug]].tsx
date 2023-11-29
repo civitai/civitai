@@ -103,7 +103,7 @@ import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
+import { ScrollArea as ScrollAreaMain } from '~/components/ScrollArea/ScrollArea';
 
 const querySchema = z.object({
   id: z.coerce.number(),

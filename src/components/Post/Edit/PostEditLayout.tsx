@@ -4,15 +4,15 @@ import { trpc } from '~/utils/trpc';
 import { useEffect } from 'react';
 import { Center, Loader } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { ScrollAreaMain } from '~/components/AppLayout/ScrollAreaMain';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 // It turns out, you can't use hooks in a layout component
 // https://github.com/vercel/next.js/discussions/36341#discussioncomment-2628008
 export function PostEditLayout(page: any) {
   return (
-    <ScrollAreaMain>
+    <ScrollArea>
       <PostEditWrapper>{page}</PostEditWrapper>
-    </ScrollAreaMain>
+    </ScrollArea>
   );
 }
 

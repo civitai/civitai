@@ -185,7 +185,7 @@ function MyApp(props: CustomAppProps) {
                     display: 'flex',
                     flexDirection: 'column',
                   },
-                  body: { flex: 1, overflow: 'hidden' },
+                  body: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
                   header: { margin: 0 },
                 },
                 defaultProps: {

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { usePersistentStore } from '~/utils/zustand-helpers';
 
 type Props = {
   orientation?: 'horizontal' | 'vertical';

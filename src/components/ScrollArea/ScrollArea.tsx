@@ -38,7 +38,7 @@ export const useTriggerScrollRestore = ({ condition }: { condition?: boolean }) 
   }, [condition, restore]);
 };
 
-export function ScrollArea({ children, className, scrollRestore, ...props }: Props) {
+export function ScrollArea({ children, className, scrollRestore, ...props }: ScrollAreaProps) {
   const { classes, cx } = useStyles();
   const { ref, restore } = useScrollRestore<HTMLDivElement>(scrollRestore);
   return (
@@ -52,7 +52,7 @@ export function ScrollArea({ children, className, scrollRestore, ...props }: Pro
 
 ScrollArea.displayName = 'ScrollArea';
 
-type Props = BoxProps & {
+export type ScrollAreaProps = BoxProps & {
   scrollRestore?: UseScrollRestoreProps;
 };
 
@@ -61,9 +61,22 @@ const useStyles = createStyles(() => ({
     height: '100%',
     width: '100%',
     flex: 1,
-    // overflowY: 'auto',
     overflowX: 'hidden',
     willChange: 'transform',
     position: 'relative',
+    scrollbarWidth: 'thin',
+    // '&::-webkit-scrollbar': {
+    //   width: '10px',
+    //   height: '100%',
+    // },
+    // '&::-webkit-scrollbar-track': {
+    //   background: '#f1f1f1',
+    // },
+    // '&::-webkit-scrollbar-thumb': {
+    //   background: '#888',
+    // },
+    // '&::-webkit-scrollbar-thumb:hover': {
+    //   background: '#555',
+    // },
   },
 }));

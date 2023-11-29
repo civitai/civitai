@@ -14,6 +14,7 @@ import {
   MantineSize,
   Menu,
   Paper,
+  Portal,
   ScrollArea,
   Switch,
   Text,
@@ -808,64 +809,70 @@ export function AppHeader({
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Paper
-                  className={classes.dropdown}
-                  withBorder
-                  shadow="md"
-                  style={{ ...styles, borderLeft: 0, borderRight: 0 }}
-                  radius={0}
-                >
-                  {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                  <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
-                    <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
-                    {burgerMenuItems}
-                  </ScrollArea.Autosize>
-                  {currentUser && (
-                    <Box px="md">
-                      <BrowsingModeMenu />
-                    </Box>
-                  )}
-
-                  <Group p="md" position="apart" grow>
-                    <ActionIcon
-                      variant="default"
-                      onClick={() => toggleColorScheme()}
-                      size="lg"
-                      sx={(theme) => ({
-                        color:
-                          theme.colorScheme === 'dark'
-                            ? theme.colors.yellow[theme.fn.primaryShade()]
-                            : theme.colors.blue[theme.fn.primaryShade()],
-                      })}
-                    >
-                      {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-                    </ActionIcon>
+                <Portal>
+                  <Paper
+                    className={classes.dropdown}
+                    withBorder
+                    shadow="md"
+                    style={{ ...styles, borderLeft: 0, borderRight: 0 }}
+                    radius={0}
+                  >
+                    {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
+                    <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                      <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
+                      {burgerMenuItems}
+                    </ScrollArea.Autosize>
                     {currentUser && (
-                      <>
-                        {currentUser?.showNsfw && (
-                          <BlurToggle iconProps={{ stroke: 1.5 }}>
-                            {({ icon, toggle }) => (
-                              <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
-                                {icon}
-                              </ActionIcon>
-                            )}
-                          </BlurToggle>
-                        )}
-                        <Link href="/user/account">
-                          <ActionIcon variant="default" size="lg" onClick={closeBurger}>
-                            <IconSettings stroke={1.5} />
-                          </ActionIcon>
-                        </Link>
-                        <ActionIcon variant="default" onClick={() => signOut()} size="lg">
-                          <IconLogout
-                            stroke={1.5}
-                            color={theme.colors.red[theme.fn.primaryShade()]}
-                          />
-                        </ActionIcon>
-                      </>
+                      <Box px="md">
+                        <BrowsingModeMenu />
+                      </Box>
                     )}
-                  </Group>
-                </Paper>
+
+                    <Group p="md" position="apart" grow>
+                      <ActionIcon
+                        variant="default"
+                        onClick={() => toggleColorScheme()}
+                        size="lg"
+                        sx={(theme) => ({
+                          color:
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.yellow[theme.fn.primaryShade()]
+                              : theme.colors.blue[theme.fn.primaryShade()],
+                        })}
+                      >
+                        {colorScheme === 'dark' ? (
+                          <IconSun size={18} />
+                        ) : (
+                          <IconMoonStars size={18} />
+                        )}
+                      </ActionIcon>
+                      {currentUser && (
+                        <>
+                          {currentUser?.showNsfw && (
+                            <BlurToggle iconProps={{ stroke: 1.5 }}>
+                              {({ icon, toggle }) => (
+                                <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
+                                  {icon}
+                                </ActionIcon>
+                              )}
+                            </BlurToggle>
+                          )}
+                          <Link href="/user/account">
+                            <ActionIcon variant="default" size="lg" onClick={closeBurger}>
+                              <IconSettings stroke={1.5} />
+                            </ActionIcon>
+                          </Link>
+                          <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                            <IconLogout
+                              stroke={1.5}
+                              color={theme.colors.red[theme.fn.primaryShade()]}
+                            />
+                          </ActionIcon>
+                        </>
+                      )}
+                    </Group>
+                  </Paper>
+                </Portal>
               )}
             </Transition>
           </Group>
