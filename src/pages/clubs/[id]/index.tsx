@@ -14,6 +14,7 @@ import {
   Group,
   Loader,
   LoadingOverlay,
+  Paper,
   Stack,
   Text,
   Title,
@@ -41,14 +42,26 @@ import { useQueryClubPosts } from '~/components/Club/club.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { ClubPostUpsertForm } from '~/components/Club/ClubPostUpsertForm';
+import { useClubFeedStyles } from '~/components/Club/ClubFeed';
 
 const Feed = () => {
+  const utils = trpc.useContext();
   const router = useRouter();
   const { id: stringId } = router.query as {
     id: string;
   };
   const id = Number(stringId);
   const { clubPosts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryClubPosts(id);
+  const { data: userClubs = [], isLoading: isLoadingUserClubs } =
+    trpc.club.userContributingClubs.useQuery();
+  const currentUser = useCurrentUser();
+  const { classes } = useClubFeedStyles();
+
+  const canPost = useMemo(() => {
+    return userClubs.some((c) => c.id === id);
+  }, [userClubs]);
+
   return (
     <>
       {isLoading ? (
@@ -92,6 +105,25 @@ const Feed = () => {
             </Stack>
           </Center>
         </Stack>
+      )}
+      {canPost && (
+        <>
+          <Divider
+            size="sm"
+            labelProps={{ size: 'sm' }}
+            label="Create a new post"
+            labelPosition="center"
+            my="md"
+          />
+          <Paper className={classes.feedContainer}>
+            <ClubPostUpsertForm
+              clubId={id}
+              onSuccess={() => {
+                utils.club.getInfiniteClubPosts.invalidate({ clubId: id });
+              }}
+            />
+          </Paper>
+        </>
       )}
     </>
   );

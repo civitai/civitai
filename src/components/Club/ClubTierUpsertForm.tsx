@@ -1,42 +1,17 @@
 import {
-  Alert,
   Button,
   Group,
   Stack,
   Text,
-  ThemeIcon,
-  Title,
   Tooltip,
   TooltipProps,
-  SimpleGrid,
-  Paper,
   ActionIcon,
-  Progress,
-  Divider,
-  Input,
-  Radio,
-  createStyles,
   Grid,
-  Anchor,
-  List,
   Avatar,
-  Box,
 } from '@mantine/core';
-import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@prisma/client';
-import {
-  IconCalendar,
-  IconCalendarDue,
-  IconExclamationMark,
-  IconInfoCircle,
-  IconQuestionMark,
-  IconTrash,
-} from '@tabler/icons-react';
-import { useRouter } from 'next/router';
+import { IconTrash } from '@tabler/icons-react';
 import React, { useState } from 'react';
 
-import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
-import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputNumber,
@@ -53,13 +28,6 @@ import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ClubTier } from '~/types/router';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
 
 const formSchema = upsertClubTierInput;
 

@@ -10,6 +10,7 @@ import {
   supportedClubEntities,
   SupportedClubEntities,
   UpsertClubInput,
+  UpsertClubPostInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -19,6 +20,7 @@ import {
   getClubDetailsForResource,
   getClubTiers,
   upsertClub,
+  upsertClubPost,
   upsertClubResource,
   upsertClubTiers,
   userContributingClubs,
@@ -30,6 +32,7 @@ import { getAllBounties, getImagesForBounties } from '~/server/services/bounty.s
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {
   try {
@@ -195,6 +198,7 @@ export const getInfiniteClubPostsHandler = async ({
         title: true,
         description: true,
         createdAt: true,
+        clubId: true,
       },
     });
 
@@ -211,6 +215,8 @@ export const getInfiniteClubPostsHandler = async ({
         coverImage: coverImage
           ? {
               ...coverImage,
+              metadata: coverImage.metadata as MixedObject,
+              meta: coverImage.meta as ImageMetaProps,
               tags: coverImage.tags.map((t) => t.tag),
             }
           : null,
@@ -220,3 +226,22 @@ export const getInfiniteClubPostsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function upsertClubPostHandler({
+  input,
+  ctx,
+}: {
+  input: UpsertClubPostInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    await upsertClubPost({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}

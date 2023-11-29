@@ -87,3 +87,16 @@ export const getInfiniteClubPostsSchema = infiniteQuerySchema.merge(
 );
 
 export type GetInfiniteClubPostsSchema = z.infer<typeof getInfiniteClubPostsSchema>;
+
+export const upsertClubPostInput = z.object({
+  id: z.number().optional(),
+  title: z.string().trim().nonempty(),
+  description: getSanitizedStringSchema().refine((data) => {
+    return data && data.length > 0 && data !== '<p></p>';
+  }, 'Cannot be empty'),
+  coverImage: comfylessImageSchema.nullish(),
+  membersOnly: z.boolean().default(false),
+  clubId: z.number(),
+});
+
+export type UpsertClubPostInput = z.infer<typeof upsertClubPostInput>;

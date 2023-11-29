@@ -1777,17 +1777,19 @@ export const createEntityImages = async ({
   images,
   userId,
 }: {
-  tx: Prisma.TransactionClient;
+  tx?: Prisma.TransactionClient;
   entityId?: number;
   entityType?: string;
   images: ImageUploadProps[];
   userId: number;
 }) => {
+  const dbClient = tx ?? dbWrite;
+
   if (images.length === 0) {
     return [];
   }
 
-  await tx.image.createMany({
+  await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
       meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -1796,7 +1798,7 @@ export const createEntityImages = async ({
     })),
   });
 
-  const imageRecords = await tx.image.findMany({
+  const imageRecords = await dbClient.image.findMany({
     select: { id: true, url: true, type: true, width: true, height: true },
     where: {
       url: { in: images.map((i) => i.url) },
@@ -1807,11 +1809,11 @@ export const createEntityImages = async ({
 
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
-    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+    await Promise.all(batch.map((image) => ingestImage({ image, tx: dbClient })));
   }
 
   if (entityType && entityId) {
-    await tx.imageConnection.createMany({
+    await dbClient.imageConnection.createMany({
       data: imageRecords.map((image) => ({
         imageId: image.id,
         entityId,

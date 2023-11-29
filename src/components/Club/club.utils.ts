@@ -4,6 +4,7 @@ import {
   GetInfiniteClubPostsSchema,
   SupportedClubEntities,
   UpsertClubInput,
+  UpsertClubPostInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -91,6 +92,29 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
       }
     },
   });
+
+  const upsertClubPostMutation = trpc.club.upsertClubPost.useMutation({
+    async onSuccess() {
+      await queryUtils.club.getInfiniteClubPosts.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to save post changes',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to save post changes',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -102,6 +126,10 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     return upsertClubResourceMutation.mutateAsync(data);
   };
 
+  const handleUpsertClubPost = (data: UpsertClubPostInput) => {
+    return upsertClubPostMutation.mutateAsync(data);
+  };
+
   return {
     upsertClub: handleUpsertClub,
     upserting: upsertClubMutation.isLoading,
@@ -109,6 +137,8 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     upsertingTier: upsertClubTierMutation.isLoading,
     upsertClubResource: handleUpsertClubResource,
     upsertingResource: upsertClubResourceMutation.isLoading,
+    upsertClubPost: handleUpsertClubPost,
+    upsertingClubPost: upsertClubPostMutation.isLoading,
   };
 };
 

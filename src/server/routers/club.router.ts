@@ -3,6 +3,7 @@ import {
   getClubTiersInput,
   getInfiniteClubPostsSchema,
   upsertClubInput,
+  upsertClubPostInput,
   upsertClubResourceInput,
   upsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -12,13 +13,12 @@ import {
   getClubTiersHandler,
   getInfiniteClubPostsHandler,
   upsertClubHandler,
+  upsertClubPostHandler,
   upsertClubResourceHandler,
   upsertClubTierHandler,
   userContributingClubsHandler,
 } from '~/server/controllers/club.controller';
 import { getByEntitySchema, getByIdSchema } from '~/server/schema/base.schema';
-import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
-import { getInfiniteBountiesHandler } from '~/server/controllers/bounty.controller';
 
 export const clubRouter = router({
   getById: publicProcedure.input(getByIdSchema).use(isFlagProtected('clubs')).query(getClubHandler),
@@ -49,4 +49,8 @@ export const clubRouter = router({
     .input(getInfiniteClubPostsSchema)
     .use(isFlagProtected('clubs'))
     .query(getInfiniteClubPostsHandler),
+  upsertClubPost: protectedProcedure
+    .input(upsertClubPostInput)
+    .use(isFlagProtected('clubs'))
+    .mutation(upsertClubPostHandler),
 });

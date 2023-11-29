@@ -4,6 +4,7 @@ import {
   GetInfiniteClubPostsSchema,
   SupportedClubEntities,
   UpsertClubInput,
+  UpsertClubPostInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
@@ -604,7 +605,10 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
   select,
 }: {
-  input: GetInfiniteClubPostsSchema & { userId?: number; isModerator?: boolean };
+  input: GetInfiniteClubPostsSchema & {
+    userId?: number;
+    isModerator?: boolean;
+  };
   select: TSelect;
 }) => {
   const clubWithMembership = userId
@@ -637,4 +641,82 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
       membersOnly: includeMembersOnlyContent,
     },
   });
+};
+
+export const upsertClubPost = async ({
+  coverImage,
+  userId,
+  isModerator,
+  ...input
+}: UpsertClubPostInput & {
+  userId: number;
+  isModerator?: boolean;
+}) => {
+  const dbClient = dbWrite;
+  const club = await getClub({ id: input.clubId as number, userId });
+
+  const [userClub] = await userContributingClubs({ userId, clubIds: [input.clubId as number] });
+  const isOwner = userClub.userId === userId;
+
+  if (!userClub && !isModerator) {
+    throw throwAuthorizationError('You do not have permission to create posts on this club.');
+  }
+
+  if (input.id) {
+    const post = await dbClient.clubPost.findUniqueOrThrow({
+      where: {
+        id: input.id,
+      },
+      select: {
+        id: true,
+        createdById: true,
+      },
+    });
+
+    if (
+      post.createdById !== userId &&
+      !isModerator &&
+      !isOwner &&
+      userClub.memberships.find((m) => m.role === ClubMembershipRole.Admin)
+    ) {
+      throw throwAuthorizationError('You do not have permission to edit this post.');
+    }
+  }
+
+  const [createdCoverImage] =
+    coverImage && !coverImage.id
+      ? await createEntityImages({
+          userId: userClub.userId, // Belongs to the club owner basically.
+          images: [coverImage],
+        })
+      : [];
+
+  if (input.id) {
+    const post = await dbClient.clubPost.update({
+      where: {
+        id: input.id,
+      },
+      data: {
+        ...input,
+        coverImageId:
+          coverImage === null
+            ? null
+            : coverImage === undefined
+            ? undefined
+            : coverImage?.id ?? createdCoverImage?.id,
+      },
+    });
+
+    return post;
+  } else {
+    const post = await dbClient.clubPost.create({
+      data: {
+        ...input,
+        createdById: userId,
+        coverImageId: coverImage?.id ?? createdCoverImage?.id,
+      },
+    });
+
+    return post;
+  }
 };
