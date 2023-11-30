@@ -72,6 +72,7 @@ export function AppLayout({
                 <AssistantButton />
               </div>
             )} */}
+
             <FloatingActionButton2 mounted={flags.assistant} transition="slide-up">
               <AssistantButton />
             </FloatingActionButton2>
