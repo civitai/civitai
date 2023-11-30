@@ -61,6 +61,7 @@ export const getBountyEntryHandler = async ({
       type: 'BountyEntry',
       isModerator: ctx.user?.isModerator,
       userId: ctx.user?.id,
+      imagesPerId: 10,
     });
     const files = await getBountyEntryFilteredFiles({
       id: entry.id,
