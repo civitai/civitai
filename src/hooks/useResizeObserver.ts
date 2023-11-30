@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 
 export const useResizeObserver = <T extends HTMLElement = any>(
-  callback: ResizeObserverCallback
+  callback: ResizeObserverCallback,
+  options?: { observeChildren?: boolean }
 ) => {
+  const { observeChildren } = options ?? {};
   const frameID = useRef(0);
   const ref = useRef<T>(null);
   const callbackRef = useRef<ResizeObserverCallback | null>(null);
@@ -22,17 +24,34 @@ export const useResizeObserver = <T extends HTMLElement = any>(
       });
     };
 
-    const observer = new ResizeObserver(handleResize);
-    observer.observe(node);
+    let mutationObserver: MutationObserver | undefined;
+    const resizeObserver = new ResizeObserver(handleResize);
+    if (observeChildren) {
+      const startObserveChildren = () => {
+        for (const child of node.children) {
+          resizeObserver.observe(child);
+        }
+      };
+      // initial child observation
+      startObserveChildren();
+
+      // set up
+      mutationObserver = new MutationObserver((entries) => {
+        resizeObserver.disconnect();
+        startObserveChildren();
+      });
+      mutationObserver.observe(node, { childList: true });
+    } else resizeObserver.observe(node);
 
     return () => {
-      observer.disconnect();
+      resizeObserver.disconnect();
+      mutationObserver?.disconnect();
 
       if (frameID.current) {
         cancelAnimationFrame(frameID.current);
       }
     };
-  }, []);
+  }, [observeChildren]);
 
   return ref;
 };

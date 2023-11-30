@@ -17,7 +17,13 @@ export function InViewLoader({
   style?: CSSProperties;
 }) {
   const { ref, inView } = useInView();
-  const [canLoad, setCanLoad] = useState(true);
+  const [canLoad, setCanLoad] = useState(false);
+
+  useEffect(() => {
+    setTimeout(() => {
+      setCanLoad(true);
+    }, loadTimeout);
+  }, [loadTimeout]);
 
   useEffect(() => {
     if (inView && loadCondition && canLoad) {

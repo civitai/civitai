@@ -45,7 +45,6 @@ import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { ScrollRestoration } from '~/components/ScrollRestoration/ScrollRestoration';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 
 dayjs.extend(duration);
@@ -128,7 +127,6 @@ function MyApp(props: CustomAppProps) {
                         <CivitaiLinkProvider>
                           <NotificationsProvider zIndex={9999}>
                             <BrowserRouterProvider>
-                              {/* <ScrollRestoration /> */}
                               <BaseLayout>
                                 <CustomModalsProvider>
                                   <TosProvider>

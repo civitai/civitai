@@ -1,64 +1,70 @@
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useCallback, useEffect, useRef } from 'react';
 
 import { createKeyDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
 
-type ScrollPosition = { scrollTop: number; scrollLeft: number };
-const scrollMap = new Map<string, ScrollPosition>();
-
-const debounce = createKeyDebouncer(300);
+type ScrollPosition = {
+  scrollTop: number;
+  scrollLeft: number;
+};
 
 export type UseScrollRestoreProps = {
   key?: string;
-  defaultPosition?: 'top' | 'bottom';
   enabled?: boolean;
 };
 
-export const getScrollAreaKey = (key?: string) =>
-  `${key ?? history.state.key}_${location.pathname.substring(1)}`;
+const scrollMap = new Map<string, ScrollPosition>();
+const debounce = createKeyDebouncer(300);
 
 export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRestoreProps) => {
-  const { key, defaultPosition = 'top', enabled = true } = args ?? {};
-  const ref = useRef<T>(null);
-  const emitterRef = useRef(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
-  const ignoreScrollRef = useRef(false);
+  const { key, enabled = true } = args ?? {};
 
+  // #region [refs]
+  const emitterRef = useRef(new EventEmitter<{ scroll: ScrollPosition & { key: string } }>());
+  const manualScrolledRef = useRef(false);
+  const ignoreScrollRef = useRef(false);
+  const restoredRef = useRef(false);
+  const mountTimeRef = useRef(new Date());
+  // #endregion
+
+  const _key =
+    typeof window !== 'undefined'
+      ? `${key ?? history.state.key}_${location.pathname.substring(1)}`
+      : 'default';
+
+  // #region [scroll emitter]
   useEffect(() => {
+    const node = ref.current;
     const emitter = emitterRef.current;
-    if (!enabled || !emitter) return;
-    const cb = emitter.on('scroll', ({ key, ...scrollPosition }) =>
-      debounce(key, () => scrollMap.set(key, scrollPosition))
+    if (!enabled || !emitter || !node) return;
+    const cb = emitter.on('scroll', ({ key, ...curr }) =>
+      debounce(key, () => scrollMap.set(key, curr))
     );
     return () => emitter.off('scroll', cb);
   }, [enabled]);
+  // #endregion
 
   useEffect(() => {
     const node = ref.current;
     if (!node || !enabled) return;
-    const _key = getScrollAreaKey(key);
-    const record = scrollMap.get(_key);
+
+    manualScrolledRef.current = false;
     ignoreScrollRef.current = true;
+    restoredRef.current = false;
+    mountTimeRef.current = new Date();
+
+    const record = scrollMap.get(_key);
     if (!record) {
-      switch (defaultPosition) {
-        case 'top': {
-          if (node.scrollTop !== 0) node.scrollTop = 0;
-          break;
-        }
-        case 'bottom': {
-          const scrollBottom = node.scrollHeight - node.clientHeight;
-          if (node.scrollTop < scrollBottom) node.scrollTop = scrollBottom;
-          break;
-        }
-      }
-    } else {
-      node.scrollTop = record.scrollTop;
-      node.scrollLeft = record.scrollLeft;
+      node.scrollTop = 0;
+      node.scrollLeft = 0;
     }
 
     const handleScroll = () => {
       if (ignoreScrollRef.current) {
         ignoreScrollRef.current = false;
       } else {
+        manualScrolledRef.current = true;
         emitterRef.current.emit('scroll', {
           key: _key,
           scrollTop: node.scrollTop,
@@ -67,21 +73,38 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
       }
     };
 
-    node.addEventListener('scroll', handleScroll);
+    node.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       node.removeEventListener('scroll', handleScroll);
     };
-  }, [key, defaultPosition, enabled]); //eslint-disable-line
+  }, [_key, enabled]); //eslint-disable-line
 
   const restore = useCallback(() => {
     const node = ref.current;
-    const _key = getScrollAreaKey(key);
+    if (manualScrolledRef.current || !node) return;
+
     const record = scrollMap.get(_key);
-    if (!node || !record) return;
+
+    if (!record || (node.scrollTop === record.scrollTop && node.scrollLeft === record.scrollLeft)) {
+      restoredRef.current = true;
+      return;
+    }
+
     ignoreScrollRef.current = true;
     node.scrollTop = record.scrollTop;
     node.scrollLeft = record.scrollLeft;
-  }, [key]);
+  }, [_key]);
 
-  return { ref, restore };
+  const ref = useResizeObserver(
+    () => {
+      if (restoredRef.current) return;
+      const now = new Date();
+      if (mountTimeRef.current.getTime() + 5000 > now.getTime()) {
+        restore();
+      }
+    },
+    { observeChildren: true }
+  );
+
+  return ref;
 };

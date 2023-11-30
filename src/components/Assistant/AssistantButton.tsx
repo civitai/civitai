@@ -29,12 +29,14 @@ export function AssistantButton({ ...props }: ButtonProps) {
         }}
         p={0}
       >
-        <iframe
-          src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`}
-          width={WIDTH + 1}
-          height={HEIGHT}
-          style={{ margin: -1, background: 'transparent' }}
-        />
+        {env.NEXT_PUBLIC_GPTT_UUID && (
+          <iframe
+            src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`}
+            width={WIDTH + 1}
+            height={HEIGHT}
+            style={{ margin: -1, background: 'transparent' }}
+          />
+        )}
       </Card>
       <Button
         px="xs"

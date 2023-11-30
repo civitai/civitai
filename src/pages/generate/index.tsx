@@ -20,7 +20,6 @@ import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { usePageScrollRestore } from '~/components/ScrollRestoration/ScrollRestoration';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
