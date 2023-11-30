@@ -123,3 +123,24 @@ export async function getEventRewards({ event }: EventInput) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
+
+export async function getEventContributors({ event }: EventInput) {
+  try {
+    return eventEngine.getTopContributors(event);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getUserRank({ event, userId }: EventInput & { userId: number }) {
+  try {
+    const { team } = await eventEngine.getUserData({ event, userId });
+    const { teams } = await eventEngine.getTopContributors(event);
+    if (!teams[team]) return null;
+
+    const teamRankingIndex = teams[team].findIndex((x) => x.userId === userId);
+    return teamRankingIndex >= 0 ? teamRankingIndex + 1 : null;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}

@@ -10,6 +10,8 @@ import {
   getEventRewards,
   getTeamScoreHistory,
   getTeamScores,
+  getEventContributors,
+  getUserRank,
 } from '~/server/services/event.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -39,4 +41,16 @@ export const eventRouter = router({
   donate: protectedProcedure
     .input(eventSchema.extend({ amount: z.number() }))
     .mutation(({ input, ctx }) => donate({ userId: ctx.user.id, ...input })),
+  getContributors: publicProcedure
+    .input(eventSchema)
+    .use(
+      edgeCacheIt({
+        ttl: false,
+        tags: (input) => ['event-contributors', `event-contributors-${input.event}`],
+      })
+    )
+    .query(({ input }) => getEventContributors(input)),
+  getUserRank: protectedProcedure
+    .input(eventSchema)
+    .query(({ ctx, input }) => getUserRank({ userId: ctx.user.id, ...input })),
 });

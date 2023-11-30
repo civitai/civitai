@@ -2,8 +2,14 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { EngagementEvent, TeamScore } from '~/server/events/base.event';
 import { holiday2023 } from '~/server/events/holiday2023.event';
 import { redis } from '~/server/redis/client';
-import { getAccountSummary, getUserBuzzAccount } from '~/server/services/buzz.service';
+import {
+  getAccountSummary,
+  getTopContributors,
+  getUserBuzzAccount,
+} from '~/server/services/buzz.service';
 import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
+import dayjs from 'dayjs';
+import { purgeCache } from '~/server/cloudflare/client';
 
 // Only include events that aren't completed
 const events = [holiday2023];
@@ -56,6 +62,127 @@ export const eventEngine = {
       }
 
       await eventDef.clearKeys();
+    }
+  },
+  async updateLeaderboard() {
+    for (const eventDef of activeEvents) {
+      // Ignore events that aren't active yet
+      if (eventDef.startDate > new Date()) continue;
+
+      // If the event is over, don't update the leaderboard
+      if (eventDef.endDate < new Date()) continue;
+
+      const teamAccounts = this.getTeamAccounts(eventDef.name);
+      const accountTeams = Object.fromEntries(Object.entries(teamAccounts).map((x) => x.reverse()));
+      const accountIds = Object.values(teamAccounts);
+
+      // Create leaderboards if missing
+      const leaderboards = {
+        'all-time': 'Top Contributors',
+        day: 'Top Contributors Today',
+        ...Object.fromEntries(
+          eventDef.teams.map((x) => [x.toLowerCase(), `${x} Team Top Contributors`])
+        ),
+      };
+      await dbWrite.$executeRawUnsafe(`
+        INSERT INTO "Leaderboard" ("id", "index", "title", "description", "scoringDescription", "query", "active", "public") VALUES
+        ${Object.entries(leaderboards)
+          .map(
+            ([id, title], index) =>
+              `('${eventDef.name}:${id}', ${
+                100 + index
+              }, '${title}', 'The people that have given the most Buzz', 'Buzz donated', '', true, true)`
+          )
+          .join(',')}
+        ON CONFLICT DO NOTHING
+      `);
+
+      // Top each team all time
+      const allTimeContributorsByAccount = await getTopContributors({ accountIds, limit: 500 });
+      for (const [accountId, contributors] of Object.entries(allTimeContributorsByAccount)) {
+        const team = accountTeams[accountId];
+        const leaderboardId = `${eventDef.name}:${team.toLowerCase()}`;
+        const transaction = [
+          dbWrite.$executeRaw`
+            DELETE FROM "LeaderboardResult"
+            WHERE "leaderboardId" = ${leaderboardId} AND date = current_date
+          `,
+        ];
+        if (contributors.length > 0) {
+          transaction.push(
+            dbWrite.$executeRawUnsafe(`
+              INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "position")
+              SELECT
+                '${leaderboardId}' as "leaderboardId",
+                current_date as date,
+                *,
+                row_number() OVER (ORDER BY score DESC) as position
+              FROM (${contributors
+                .map((x) => `SELECT ${x.userId} as "userId", ${x.amount ?? 0} as "score"`)
+                .join(' UNION ')}) as scores
+            `)
+          );
+        }
+
+        await dbWrite.$transaction(transaction);
+      }
+
+      // Top all teams all time
+      const allTimeContributors = Object.values(allTimeContributorsByAccount)
+        .flat()
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 500);
+      await dbWrite.$transaction([
+        dbWrite.$executeRawUnsafe(`
+          DELETE FROM "LeaderboardResult"
+          WHERE "leaderboardId" = '${eventDef.name}:all-time' AND date = current_date
+        `),
+        dbWrite.$executeRawUnsafe(`
+          INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "position")
+          SELECT
+            '${eventDef.name}:all-time' as "leaderboardId",
+            current_date as date,
+            *,
+            row_number() OVER (ORDER BY score DESC) as position
+          FROM (${allTimeContributors
+            .map((x) => `SELECT ${x.userId} as "userId", ${x.amount} as "score"`)
+            .join(' UNION ')}) as scores
+        `),
+      ]);
+
+      // Top all teams 24 hours
+      const start = dayjs().subtract(1, 'day').toDate();
+      const dayContributorsByAccount = await getTopContributors({ accountIds, limit: 500, start });
+      const dayContributors = Object.values(dayContributorsByAccount)
+        .flat()
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 500);
+      await dbWrite.$transaction([
+        dbWrite.$executeRawUnsafe(`
+          DELETE FROM "LeaderboardResult"
+          WHERE "leaderboardId" = '${eventDef.name}:day' AND date = current_date
+        `),
+        dbWrite.$executeRawUnsafe(`
+          INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "position")
+          SELECT
+            '${eventDef.name}:day' as "leaderboardId",
+            current_date as date,
+            *,
+            row_number() OVER (ORDER BY score DESC) as position
+          FROM (${dayContributors
+            .map((x) => `SELECT ${x.userId} as "userId", ${x.amount} as "score"`)
+            .join(' UNION ')}) as scores
+        `),
+      ]);
+
+      // Purge cache
+      await redis.del(`eventContributors:${eventDef.name}`);
+      await purgeCache({
+        tags: [
+          `event-contributors-${eventDef.name}`,
+          ...Object.keys(leaderboards).map((id) => `${eventDef.name}:${id}`),
+        ],
+      });
     }
   },
   async getEventData(event: string) {
@@ -164,4 +291,56 @@ export const eventEngine = {
 
     return eventDef.getRewards();
   },
+  async getTopContributors(event: string, limit = 10) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    const cacheJson = await redis.get(`eventContributors:${event}`);
+    if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
+
+    const teamAccounts = this.getTeamAccounts(event);
+    const accountIds = Object.values(teamAccounts);
+
+    // Determine top contributors across all teams all time
+    const allTimeContributorsByAccount = await getTopContributors({ accountIds, limit });
+    const allTimeContributors = Object.values(allTimeContributorsByAccount)
+      .flat()
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, limit);
+
+    // Pivot back from accounts to team names
+    const accountTeams = Object.fromEntries(Object.entries(teamAccounts).map((x) => x.reverse()));
+    const allTimeContributorsByTeamName: Record<string, typeof allTimeContributors> =
+      Object.fromEntries(
+        Object.entries(allTimeContributorsByAccount).map(([accountId, contributors]) => [
+          accountTeams[accountId],
+          contributors,
+        ])
+      );
+
+    // Determine top contributors across all teams today
+    const start = dayjs().subtract(1, 'day').toDate();
+    const dayContributorsByAccount = await getTopContributors({ accountIds, limit, start });
+    const dayContributors = Object.values(dayContributorsByAccount)
+      .flat()
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, limit);
+
+    // Cache results for 24 hours
+    const result = {
+      allTime: allTimeContributors,
+      day: dayContributors,
+      teams: allTimeContributorsByTeamName,
+    } as TopContributors;
+    await redis.set(`eventContributors:${event}`, JSON.stringify(result), { EX: 60 * 60 * 24 });
+
+    return result;
+  },
+};
+
+type Contributor = { userId: number; amount: number };
+type TopContributors = {
+  allTime: Contributor[];
+  day: Contributor[];
+  teams: Record<string, Contributor[]>;
 };

@@ -8,3 +8,11 @@ export const eventEngineDailyReset = createJob(
     await eventEngine.dailyReset();
   }
 );
+
+export const eventEngineLeaderboardUpdate = createJob(
+  'event-engine-leaderboard-update',
+  '0 * * * *',
+  async () => {
+    await eventEngine.updateLeaderboard();
+  }
+);
