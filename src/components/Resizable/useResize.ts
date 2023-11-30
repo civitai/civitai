@@ -49,7 +49,8 @@ export const useResize = (options: Props) => {
 
   const mouseMoveClient = orientation === 'horizontal' ? 'clientX' : 'clientY';
 
-  const startResizing = useCallback(() => {
+  const startResizing = useCallback((e: MouseEvent) => {
+    e.preventDefault();
     setIsResizing(true);
   }, []);
 
