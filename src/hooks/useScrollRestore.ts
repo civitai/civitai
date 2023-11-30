@@ -95,7 +95,7 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
     node.scrollLeft = record.scrollLeft;
   }, [_key]);
 
-  const ref = useResizeObserver(
+  const ref = useResizeObserver<T>(
     () => {
       if (restoredRef.current) return;
       const now = new Date();
