@@ -63,7 +63,7 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
         if (option === 'twitch' && isLive) {
           optionProps.variant = 'filled';
           optionProps.color = 'red';
-          optionProps.title = 'Live now!';
+          (optionProps as HTMLBaseElement).title = 'Live now!';
         }
         return (
           <ActionIcon
