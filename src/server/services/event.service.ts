@@ -1,5 +1,5 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { redis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -126,7 +126,36 @@ export async function getEventRewards({ event }: EventInput) {
 
 export async function getEventContributors({ event }: EventInput) {
   try {
-    return eventEngine.getTopContributors(event);
+    const contributors = await eventEngine.getTopContributors(event);
+    const userIds = new Set<number>();
+    for (const team of Object.values(contributors.teams)) {
+      for (const user of team) userIds.add(user.userId);
+    }
+    for (const user of contributors.allTime) userIds.add(user.userId);
+    for (const user of contributors.day) userIds.add(user.userId);
+
+    const users = await dbRead.user.findMany({
+      where: { id: { in: [...userIds] } },
+      select: { id: true, username: true, image: true },
+    });
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    return {
+      allTime: contributors.allTime.map((user) => ({
+        ...user,
+        user: userMap.get(user.userId),
+      })),
+      day: contributors.day.map((user) => ({
+        ...user,
+        user: userMap.get(user.userId),
+      })),
+      teams: Object.fromEntries(
+        Object.entries(contributors.teams).map(([team, users]) => [
+          team,
+          users.map((user) => ({ ...user, user: userMap.get(user.userId) })),
+        ])
+      ),
+    };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

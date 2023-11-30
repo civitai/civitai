@@ -1,7 +1,6 @@
 import {
   Alert,
   Anchor,
-  Avatar,
   Button,
   Card,
   Center,
@@ -9,17 +8,19 @@ import {
   Divider,
   Grid,
   Group,
+  Image,
   Loader,
   NumberInput,
   Paper,
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
+import { IconBolt, IconBulb, IconChevronRight, IconClipboard } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -43,10 +44,12 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EventContributors } from '~/components/Events/EventContributors';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
 import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
+import { JdrfLogo } from '~/components/Logo/JdrfLogo';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client.mjs';
@@ -56,7 +59,7 @@ import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -68,7 +71,9 @@ export const getServerSideProps = createServerSideProps({
     const { event } = result.data;
     if (ssg) {
       await ssg.event.getTeamScores.prefetch({ event });
+      await ssg.event.getTeamScoreHistory.prefetch({ event });
       await ssg.event.getCosmetic.prefetch({ event });
+      await ssg.event.getData.prefetch({ event });
     }
 
     return { props: { event } };
@@ -77,7 +82,10 @@ export const getServerSideProps = createServerSideProps({
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 const options: ChartOptions<'line'> = {
-  aspectRatio: 2.5,
+  responsive: true,
+  elements: {
+    point: { pointStyle: 'cross' },
+  },
   scales: {
     x: { grid: { display: false } },
     y: { grid: { display: false } },
@@ -91,7 +99,8 @@ const options: ChartOptions<'line'> = {
 const resetTime = dayjs().utc().endOf('day').toDate();
 const startTime = dayjs().utc().startOf('day').toDate();
 
-const aboutText = `Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your wreath in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more buzz used to boost your team spirit bank, the brighter your lights shine. The brighter your lines shine, the bigger your bragging rights. The team with the brightest lights and highest spirit bank score wins a shiny new animated badge!`;
+const aboutText =
+  "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your wreath in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more buzz used to boost your team spirit bank, the brighter your lights shine. The brighter your lines shine, the bigger your bragging rights. The team with the brightest lights and highest spirit bank score wins a shiny new animated badge!";
 
 export default function EventPageDetails({
   event,
@@ -106,13 +115,14 @@ export default function EventPageDetails({
     teamScoresHistory,
     eventCosmetic,
     rewards,
+    userRank,
     loading,
     loadingHistory,
     loadingRewards,
+    loadingUserRank,
   } = useQueryEvent({ event });
 
   const userTeam = (eventCosmetic?.cosmetic?.data as { type: string; color: string })?.color;
-  const teamColorTheme = userTeam ? theme.colors[userTeam.toLowerCase()] : theme.primaryColor;
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
   const cosmeticData = eventCosmetic?.data as { lights: number; upgradedLights: number };
 
@@ -154,17 +164,16 @@ export default function EventPageDetails({
   );
 
   if (loading) return <PageLoader />;
-  if (!eventCosmetic) return <NotFound />;
+  if (!eventData) return <NotFound />;
 
   const handleFocusDonateInput = () => inputRef.current?.focus();
 
-  const equipped = eventCosmetic.obtained && eventCosmetic.equipped;
+  const equipped = eventCosmetic?.obtained && eventCosmetic?.equipped;
 
   return (
     <>
       <Meta
-        title={`${eventCosmetic.cosmetic?.name} | Civitai`}
-        description={eventCosmetic.cosmetic?.description ?? undefined}
+        title={`${eventData.title} | Civitai`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events/${event}`, rel: 'canonical' }]}
       />
       <Container size="md">
@@ -217,7 +226,7 @@ export default function EventPageDetails({
               </Group>
             </Stack>
           </Paper>
-          <Stack sx={showMobile} spacing={0}>
+          <Stack sx={showMobile} spacing={0} mt="-xl">
             <Title color="white" sx={{ fontSize: '28px' }}>
               {eventData?.title}
             </Title>
@@ -226,10 +235,10 @@ export default function EventPageDetails({
               {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
-          {eventCosmetic.available && !equipped && <WelcomeCard event={event} about={aboutText} />}
+          {!equipped && <WelcomeCard event={event} about={aboutText} />}
           <CharitySection visible={!equipped} />
           <Grid gutter={48}>
-            {eventCosmetic.cosmetic && equipped && (
+            {eventCosmetic?.cosmetic && equipped && (
               <>
                 <Grid.Col xs={12} sm="auto">
                   <Card
@@ -244,18 +253,12 @@ export default function EventPageDetails({
                       <Text size="xl" weight={590}>
                         {eventCosmetic.cosmetic.name}
                       </Text>
-                      <Group spacing="xs">
-                        <Lightbulb color={userTeam} size={32} transform="rotate(180)" />
-                        <Text
-                          size={32}
-                          weight={590}
-                          display="flex"
-                          sx={{ alignItems: 'center', fontVariantNumeric: 'tabular-nums' }}
-                          inline
-                        >
-                          <Text size={48} color={teamColorTheme[9]} mr={2} inline span>
-                            {cosmeticData.lights ?? 0}
-                          </Text>{' '}
+                      <Group spacing={4} align="center">
+                        <Lightbulb color={userTeam} size={48} transform="rotate(180)" />
+                        <Text size={80} weight={590} color={userTeam} inline>
+                          {cosmeticData.lights ?? 0}
+                        </Text>{' '}
+                        <Text size={32} weight={590} color="dimmed" inline>
                           / 31
                         </Text>
                       </Group>
@@ -286,7 +289,7 @@ export default function EventPageDetails({
                     </Stack>
                   </Card>
                 </Grid.Col>
-                <Grid.Col xs={12} sm="auto">
+                {/* <Grid.Col xs={12} sm="auto">
                   <Card
                     py="xl"
                     px="lg"
@@ -348,6 +351,39 @@ export default function EventPageDetails({
                       </Text>
                     </Stack>
                   </Card>
+                </Grid.Col> */}
+                <Grid.Col xs={12} sm="auto">
+                  <Card
+                    py="xl"
+                    px="lg"
+                    radius="lg"
+                    h="100%"
+                    style={{ display: 'flex', alignItems: 'center' }}
+                  >
+                    <Stack align="center" w="100%" spacing="lg">
+                      <Lightbulb variant="star" color={userTeam} size={80} />
+                      <Stack spacing={4} align="center">
+                        <Text size={24} weight={600} align="center" inline>
+                          Your rank in {userTeam} team
+                        </Text>
+                        {loadingUserRank ? (
+                          <Loader variant="bars" />
+                        ) : (
+                          <Text size={96} weight="bold" align="center" color={userTeam} inline>
+                            {userRank?.toLocaleString()}
+                          </Text>
+                        )}
+                      </Stack>
+                      <Link href={`/leaderboard/${event}:${userTeam}`}>
+                        <Button color="gray" radius="xl" fullWidth>
+                          <Group spacing={4} noWrap>
+                            <IconClipboard size={18} />
+                            Team leaderboard
+                          </Group>
+                        </Button>
+                      </Link>
+                    </Stack>
+                  </Card>
                 </Grid.Col>
               </>
             )}
@@ -356,27 +392,48 @@ export default function EventPageDetails({
                 title="Team spirit donation history"
                 subtitle="See how your team is doing. The team with the most donations at the end of the event will get a special prize"
               >
-                <DonateInput event={event} ref={inputRef} />
+                {equipped && <DonateInput event={event} ref={inputRef} />}
                 {loadingHistory ? (
                   <Center py="xl">
                     <Loader variant="bars" />
                   </Center>
                 ) : (
-                  <Line
-                    options={options}
-                    data={{
-                      labels,
-                      datasets: updatedTeamScoresHistory.map(({ team, scores }) => {
-                        const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
-                        return {
-                          label: 'Buzz donated',
-                          data: scores.map(({ score }) => score),
-                          borderColor: color,
-                          backgroundColor: color,
-                        };
-                      }),
-                    }}
-                  />
+                  <Stack spacing={40} w="100%" align="center">
+                    <Line
+                      options={options}
+                      data={{
+                        labels,
+                        datasets: updatedTeamScoresHistory.map(({ team, scores }) => {
+                          const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
+                          return {
+                            label: 'Buzz donated',
+                            data: scores.map(({ score }) => score),
+                            borderColor: color,
+                            backgroundColor: color,
+                          };
+                        }),
+                      }}
+                    />
+                    <Group spacing="md">
+                      {teamScores.length > 0 &&
+                        teamScores.map((teamScore) => (
+                          <Group key={teamScore.team} spacing={4} noWrap>
+                            <ThemeIcon color={teamScore.team.toLowerCase()} radius="xl" size={12}>
+                              {null}
+                            </ThemeIcon>
+                            <Text
+                              size="xs"
+                              color="dimmed"
+                              transform="uppercase"
+                              weight={500}
+                              lineClamp={1}
+                            >
+                              {abbreviateNumber(teamScore.score, { decimals: 2 })}
+                            </Text>
+                          </Group>
+                        ))}
+                    </Group>
+                  </Stack>
                 )}
               </SectionCard>
             </Grid.Col>
@@ -417,6 +474,7 @@ export default function EventPageDetails({
               </SectionCard>
             </Grid.Col>
           </Grid>
+          <EventContributors event={event} />
           {equipped && (
             <>
               <Divider w="80px" mx="auto" />
@@ -516,15 +574,26 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
 });
 DonateInput.displayName = 'DonateInput';
 
+const partners = [
+  {
+    title: 'RunDiffusion',
+    subtitle: 'Matching 500k Buzz to charity',
+    // TODO.justin: get the right image for runDiffusion
+    image:
+      'https://assets-global.website-files.com/634b388c3e23ccc5dec6843f/63bf61d57842c5d0a39255fb_Final-10-Small-2.png',
+  },
+];
+
 const CharitySection = ({ visible }: { visible: boolean }) => {
   if (!visible) return null;
 
   return (
     <>
       <HeroCard
-        title="JDRF"
+        title={<JdrfLogo width={145} height={40} />}
         description="Civitai is matching all purchased buzz spent across team spirit banks to donate to the global charity, the Juvenile Diabetes Research Foundation."
-        imageUrl="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/aee7a902-f82f-4fd4-b6f1-4c1133d2b171/width=450,optimized=true/00594-1944862799.jpeg"
+        // TODO.justin: get the right image for jdrf
+        imageUrl="https://www.jdrf.org/wp-content/uploads/2023/02/d-b-1-800x474-1.png"
         externalLink="https://www.jdrf.org/"
       />
       <SectionCard
@@ -532,7 +601,7 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
         subtitle="Each of our partners will match the buzz amount we donate at the end of the month, to the JDRF."
         headerAlign="left"
       >
-        {/* TODO.event: handle on click */}
+        {/* TODO.justin: handle on click */}
         <Button
           size="md"
           color="gray"
@@ -543,16 +612,33 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
           Become a partner
         </Button>
         <SimpleGrid
-          spacing={20}
           breakpoints={[
             { minWidth: 'xs', cols: 1 },
             { minWidth: 'sm', cols: 2 },
-            { minWidth: 'md', cols: 3 },
           ]}
         >
-          {/* TODO.event: replace this with partners image */}
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Avatar key={index} radius={80} size={160} />
+          {partners.map((partner, index) => (
+            <Group key={index} spacing="sm">
+              <Image
+                src={partner.image}
+                alt={partner.title}
+                width={120}
+                height={120}
+                radius={60}
+                sx={(theme) => ({ backgroundColor: theme.colors.dark[7], borderRadius: 60 })}
+                imageProps={{
+                  style: { objectFit: 'cover', objectPosition: 'left', width: 120, height: 120 },
+                }}
+              />
+              <Stack spacing={4}>
+                <Text size={20} weight={600}>
+                  {partner.title}
+                </Text>
+                <Text size={16} color="dimmed">
+                  {partner.subtitle}
+                </Text>
+              </Stack>
+            </Group>
           ))}
         </SimpleGrid>
       </SectionCard>

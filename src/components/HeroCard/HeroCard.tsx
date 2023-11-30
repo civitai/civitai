@@ -1,9 +1,11 @@
-import { Anchor, Card, CardProps, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Anchor, Card, CardProps, Group, Image, Stack, Text, createStyles } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
+import React from 'react';
 
 const useStyles = createStyles((theme) => ({
   card: {
     [theme.fn.largerThan('sm')]: {
+      maxHeight: 376,
       display: 'flex',
       gap: 40,
     },
@@ -21,6 +23,9 @@ const useStyles = createStyles((theme) => ({
       marginTop: theme.spacing.xl,
     },
   },
+  root: { height: '100%' },
+  figure: { height: '100%' },
+  imageWrapper: { height: '100%' },
 }));
 
 export function HeroCard({
@@ -36,19 +41,18 @@ export function HeroCard({
   return (
     <Card radius="lg" p={40} className={cx(classes.card, className)} {...cardProps}>
       <Card.Section className={classes.section}>
-        <img
+        <Image
           src={imageUrl}
-          alt={title}
-          width={480}
-          height={376}
-          style={{
-            objectFit: 'cover',
-            objectPosition: 'top',
+          width="auto"
+          alt={''}
+          classNames={classes}
+          imageProps={{
+            style: { objectFit: 'cover', objectPosition: 'top', height: '100%', width: 480 },
           }}
         />
       </Card.Section>
-      <Stack spacing={32}>
-        <Text className={classes.title} weight={600}>
+      <Stack spacing={32} justify="center">
+        <Text className={classes.title} color="white" weight={600} inline>
           {title}
         </Text>
         <Text size={20}>{description}</Text>
@@ -60,7 +64,7 @@ export function HeroCard({
           sx={{ color: 'white' }}
         >
           <Group spacing={8}>
-            Learn more about {title}
+            Learn more
             <IconExternalLink size={24} color="currentColor" />
           </Group>
         </Anchor>
@@ -71,7 +75,7 @@ export function HeroCard({
 
 type Props = Omit<CardProps, 'children'> & {
   imageUrl: string;
-  title: string;
+  title: React.ReactNode;
   description: string;
   externalLink?: string;
 };

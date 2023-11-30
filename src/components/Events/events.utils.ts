@@ -17,6 +17,10 @@ export const useQueryEvent = ({ event }: EventInput) => {
   const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery({
     event,
   });
+  const { data: userRank, isLoading: loadingUserRank } = trpc.event.getUserRank.useQuery(
+    { event },
+    { enabled: eventCosmetic?.available && eventCosmetic?.obtained && eventCosmetic?.equipped }
+  );
 
   return {
     eventData,
@@ -24,9 +28,11 @@ export const useQueryEvent = ({ event }: EventInput) => {
     teamScoresHistory,
     eventCosmetic,
     rewards,
+    userRank,
     loading: loadingScores || loadingCosmetic || loadingData,
     loadingHistory,
     loadingRewards,
+    loadingUserRank,
   };
 };
 
@@ -66,4 +72,10 @@ export const useMutateEvent = () => {
     equipping: activateCosmeticMutation.isLoading,
     donating: donateMutation.isLoading,
   };
+};
+
+export const useQueryEventContributors = ({ event }: { event: string }) => {
+  const { data: contributors, isLoading } = trpc.event.getContributors.useQuery({ event });
+
+  return { contributors, loading: isLoading };
 };

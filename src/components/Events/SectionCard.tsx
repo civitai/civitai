@@ -2,7 +2,7 @@ import { CardProps, Card, Stack, Text, Title, createStyles } from '@mantine/core
 
 const useStyles = createStyles((theme) => ({
   card: {
-    padding: '40px 80px !important',
+    padding: '32px !important',
 
     [theme.fn.smallerThan('sm')]: {
       padding: '16px !important',

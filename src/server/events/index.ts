@@ -296,20 +296,22 @@ export const eventEngine = {
     if (!eventDef) throw new Error("That event doesn't exist");
 
     const cacheJson = await redis.get(`eventContributors:${event}`);
-    if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
+    // if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
 
     const teamAccounts = this.getTeamAccounts(event);
     const accountIds = Object.values(teamAccounts);
+    const accountTeams = Object.fromEntries(Object.entries(teamAccounts).map((x) => x.reverse()));
 
     // Determine top contributors across all teams all time
     const allTimeContributorsByAccount = await getTopContributors({ accountIds, limit });
-    const allTimeContributors = Object.values(allTimeContributorsByAccount)
-      .flat()
+    const allTimeContributors = Object.entries(allTimeContributorsByAccount)
+      .flatMap(([accountId, contributors]) =>
+        contributors.map((x) => ({ ...x, team: accountTeams[accountId] }))
+      )
       .sort((a, b) => b.amount - a.amount)
       .slice(0, limit);
 
     // Pivot back from accounts to team names
-    const accountTeams = Object.fromEntries(Object.entries(teamAccounts).map((x) => x.reverse()));
     const allTimeContributorsByTeamName: Record<string, typeof allTimeContributors> =
       Object.fromEntries(
         Object.entries(allTimeContributorsByAccount).map(([accountId, contributors]) => [
@@ -321,8 +323,10 @@ export const eventEngine = {
     // Determine top contributors across all teams today
     const start = dayjs().subtract(1, 'day').toDate();
     const dayContributorsByAccount = await getTopContributors({ accountIds, limit, start });
-    const dayContributors = Object.values(dayContributorsByAccount)
-      .flat()
+    const dayContributors = Object.entries(dayContributorsByAccount)
+      .flatMap(([accountId, contributors]) =>
+        contributors.map((x) => ({ ...x, team: accountTeams[accountId] }))
+      )
       .sort((a, b) => b.amount - a.amount)
       .slice(0, limit);
 
@@ -338,7 +342,7 @@ export const eventEngine = {
   },
 };
 
-type Contributor = { userId: number; amount: number };
+type Contributor = { userId: number; amount: number; team: string };
 type TopContributors = {
   allTime: Contributor[];
   day: Contributor[];
