@@ -30,12 +30,16 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
 
   const [containerWidth, setContainerWidth] = useState(0);
 
-  const debouncer = useDebouncer(300);
-  const containerRef = useResizeObserver((entries) =>
-    debouncer(() => {
+  // const debouncer = useDebouncer(300);
+  const containerRef = useResizeObserver(
+    (entries) => {
       const entry = entries[0];
       if (entry) setContainerWidth(entries[0].contentRect.width);
-    })
+    }
+    // debouncer(() => {
+    //   const entry = entries[0];
+    //   if (entry) setContainerWidth(entries[0].contentRect.width);
+    // })
   );
 
   const [columnCount, combinedWidth] = useColumnCount(
