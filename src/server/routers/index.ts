@@ -44,6 +44,7 @@ import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { clubRouter } from '~/server/routers/club.router';
 import { commonRouter } from '~/server/routers/common.router';
 import { clubPostRouter } from '~/server/routers/clubPost.router';
+import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -57,6 +58,7 @@ export const appRouter = router({
   buzz: buzzRouter,
   club: clubRouter,
   clubPost: clubPostRouter,
+  clubMembership: clubMembershipRouter,
   collection: collectionRouter,
   comment: commentRouter,
   commentv2: commentv2Router,

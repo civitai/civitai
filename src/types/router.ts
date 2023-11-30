@@ -99,3 +99,5 @@ export type ClubTier = RouterOutput['club']['getTiers'][number];
 
 export type UserClub = RouterOutput['club']['userContributingClubs'][number];
 export type ClubPostGetAll = RouterOutput['clubPost']['getInfiniteClubPosts']['items'];
+export type ClubMembershipGetAllRecord =
+  RouterOutput['clubMembership']['getInfinite']['items'][number];

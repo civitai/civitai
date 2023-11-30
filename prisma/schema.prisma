@@ -2338,7 +2338,6 @@ model Club {
   nsfw          Boolean @default(false)
   billing       Boolean @default(true)
   unlisted      Boolean @default(false)
-  buzzAccountId Int?
 
   tiers       ClubTier[]
   memberships ClubMembership[]
@@ -2348,21 +2347,22 @@ model Club {
 }
 
 model ClubTier {
-  id           Int              @id @default(autoincrement())
-  clubId       Int
-  club         Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
-  unitAmount   Int
-  currency     Currency         @default(BUZZ)
-  name         String
-  description  String
-  coverImageId Int?
-  coverImage   Image?           @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  id                   Int              @id @default(autoincrement())
+  clubId               Int
+  club                 Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  unitAmount           Int
+  currency             Currency         @default(BUZZ)
+  name                 String
+  description          String
+  coverImageId         Int?
+  coverImage           Image?           @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
   // Whether or not this will be displayed in the common options for
   // memberships.
-  unlisted     Boolean          @default(false)
+  unlisted             Boolean          @default(false)
   // Can only be joined to via a club Admin adding the user.
-  joinable     Boolean
-  memberships  ClubMembership[]
+  joinable             Boolean
+  memberships          ClubMembership[] @relation("activeClubTier")
+  downgradeMemberships ClubMembership[] @relation("downgradeClubTier")
 }
 
 enum ClubMembershipRole {
@@ -2372,19 +2372,22 @@ enum ClubMembershipRole {
 }
 
 model ClubMembership {
-  userId        Int
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  clubId        Int
-  club          Club               @relation(fields: [clubId], references: [id], onDelete: Cascade)
-  clubTierId    Int
-  clubTier      ClubTier           @relation(fields: [clubTierId], references: [id], onDelete: Cascade)
-  startedAt     DateTime
-  expiresAt     DateTime
-  cancelledAt   DateTime?
-  role          ClubMembershipRole @default(Member)
-  nextBillingAt DateTime
-  unitAmount    Int
-  currency      Currency           @default(BUZZ)
+  id                  Int                @id @default(autoincrement())
+  userId              Int
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clubId              Int
+  club                Club               @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  clubTierId          Int
+  clubTier            ClubTier           @relation(name: "activeClubTier", fields: [clubTierId], references: [id], onDelete: Cascade)
+  startedAt           DateTime
+  expiresAt           DateTime?
+  cancelledAt         DateTime?
+  role                ClubMembershipRole @default(Member)
+  nextBillingAt       DateTime
+  unitAmount          Int
+  currency            Currency           @default(BUZZ)
+  downgradeClubTierId Int?
+  downgradeClubTier   ClubTier?          @relation(name: "downgradeClubTier", fields: [downgradeClubTierId], references: [id], onDelete: Cascade)
 
   @@unique([userId, clubId])
   @@index([userId])

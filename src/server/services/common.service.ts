@@ -108,7 +108,12 @@ export const hasEntityAccess = async ({
 
   // Complex scenario - we have mixed entities with public/private access.
   return entities.map(({ entityId, entityType }) => {
-    const publicEntityAccess = data.find((entity) => entity.entityId === entityId);
+    const publicEntityAccess = data.find(
+      (entity) =>
+        entity.entityId === entityId &&
+        entity.entityType === entityType &&
+        entity.availability === Availability.Public
+    );
     // If the entity is public, we're ok to assume the user has access.
     if (publicEntityAccess) {
       return {
@@ -118,7 +123,9 @@ export const hasEntityAccess = async ({
       };
     }
 
-    const privateEntityAccess = entityAccess.find((entity) => entity.entityId === entityId);
+    const privateEntityAccess = entityAccess.find(
+      (entity) => entity.entityId === entityId && entity.entityType === entityType
+    );
     // If we could not find a privateEntityAccess record, means the user is guaranteed not to have
     // a link between the entity and himself.
     if (!privateEntityAccess) {
@@ -266,8 +273,6 @@ export const entityRequiresClub = async ({
         availability: Availability.Private,
       };
     }
-
-    console.log(privateEntityAccesses);
 
     const clubIds = [
       ...new Set(privateEntityAccesses.map((privateEntityAccess) => privateEntityAccess.clubId)),

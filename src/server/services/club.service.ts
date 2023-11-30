@@ -46,9 +46,11 @@ export const userContributingClubs = async ({
           userId,
         },
         select: {
+          role: true,
           userId: true,
           clubId: true,
-          role: true,
+          unitAmount: true,
+          clubTierId: true,
         },
       },
     },
@@ -72,7 +74,10 @@ export const userContributingClubs = async ({
     },
   });
 
-  return clubs;
+  return clubs.map((club) => ({
+    ...club,
+    membership: club.memberships[0],
+  }));
 };
 export const getClub = async ({
   id,

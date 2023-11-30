@@ -1,5 +1,5 @@
 import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import {
   GetInfiniteClubPostsSchema,
   SupportedClubEntities,
@@ -16,7 +16,19 @@ import {
   applyUserPreferencesBounties,
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
-import { BountyGetAll, ClubPostGetAll, UserClub } from '~/types/router';
+import {
+  BountyGetAll,
+  ClubMembershipGetAllRecord,
+  ClubPostGetAll,
+  ClubTier,
+  UserClub,
+} from '~/types/router';
+import {
+  CreateClubMembershipInput,
+  GetInfiniteClubMembershipsSchema,
+  UpdateClubMembershipInput,
+} from '~/server/schema/clubMembership.schema';
+import dayjs from 'dayjs';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -118,6 +130,52 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     },
   });
 
+  const createClubMembershipMutation = trpc.clubMembership.createClubMembership.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getInfinite.invalidate();
+      await queryUtils.club.userContributingClubs.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to join club',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to join club',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const updateClubMembershipMutation = trpc.clubMembership.updateClubMembership.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getInfinite.invalidate();
+      await queryUtils.club.userContributingClubs.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to update membership',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to update membership',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -132,6 +190,12 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
   const handleUpsertClubPost = (data: UpsertClubPostInput) => {
     return upsertClubPostMutation.mutateAsync(data);
   };
+  const handleCreateClubMembership = (data: CreateClubMembershipInput) => {
+    return createClubMembershipMutation.mutateAsync(data);
+  };
+  const handleUpdateClubMembership = (data: UpdateClubMembershipInput) => {
+    return updateClubMembershipMutation.mutateAsync(data);
+  };
 
   return {
     upsertClub: handleUpsertClub,
@@ -142,6 +206,10 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     upsertingResource: upsertClubResourceMutation.isLoading,
     upsertClubPost: handleUpsertClubPost,
     upsertingClubPost: upsertClubPostMutation.isLoading,
+    createClubMembership: handleCreateClubMembership,
+    creatingClubMembership: createClubMembershipMutation.isLoading,
+    updateClubMembership: handleUpdateClubMembership,
+    updatingClubMembership: updateClubMembershipMutation.isLoading,
   };
 };
 
@@ -224,21 +292,22 @@ export const useQueryClubPosts = (
 export const getUserClubRole = ({ userId, userClub }: { userId: number; userClub?: UserClub }) => {
   if (!userClub) return null;
 
-  const membership = userClub.memberships.find((x) => x.userId === userId);
+  const membership = userClub.membership;
   return membership?.role;
 };
 
 export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
-  const { data: userClubs = [] } = trpc.club.userContributingClubs.useQuery(undefined, {
+  const { data: userClubs = [], ...rest } = trpc.club.userContributingClubs.useQuery(undefined, {
     enabled: !!clubId,
   });
   const currentUser = useCurrentUser();
 
-  const { userClub, role } = useMemo(() => {
+  const { userClub, role, membership } = useMemo(() => {
     if (!userClubs || !currentUser)
       return {
         userClub: null,
         role: null,
+        membership: null,
       };
 
     const userClub = userClubs.find((x) => x.id === clubId);
@@ -246,12 +315,38 @@ export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
     return {
       userClub,
       role: getUserClubRole({ userId: currentUser.id, userClub }),
+      membership: userClub?.membership,
     };
   }, [userClubs, currentUser, clubId]);
 
   return {
-    userClub,
-    isOwner: currentUser && userClub?.userId === currentUser?.id,
     role,
+    userClub,
+    membership,
+    isOwner: currentUser && userClub?.userId === currentUser?.id,
+    ...rest,
   };
+};
+
+export const useQueryClubMembership = (
+  filters?: Partial<GetInfiniteClubMembershipsSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.clubMembership.getInfinite.useInfiniteQuery(
+    {
+      ...filters,
+    },
+    {
+      enabled: !!currentUser,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      ...options,
+    }
+  );
+
+  const memberships = useMemo(() => {
+    return data?.pages.flatMap((x) => x.items) ?? [];
+  }, [data?.pages]);
+
+  return { memberships, ...rest };
 };

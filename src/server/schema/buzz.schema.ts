@@ -13,6 +13,8 @@ export enum TransactionType {
   BountyEntry = 9,
   Training = 10,
   ChargeBack = 11,
+  Donation = 12,
+  ClubMembership = 13,
 }
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
@@ -75,6 +77,7 @@ export const getUserBuzzTransactionsResponse = z.object({
 
 export const buzzTransactionSchema = z.object({
   // To user id (0 is central bank)
+  toAccountType: z.enum(['User', 'Club', 'Other']).optional(),
   toAccountId: z.number().optional(),
   type: z.nativeEnum(TransactionType),
   amount: z.number().min(1),

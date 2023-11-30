@@ -166,3 +166,9 @@ export enum CollectionReviewSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
 }
+
+export enum ClubMembershipSort {
+  MostRecent = 'MostRecent',
+  NextBillingDate = 'NextBillingDate',
+  MostExpensive = 'MostExpensive',
+}

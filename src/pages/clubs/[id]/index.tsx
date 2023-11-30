@@ -44,6 +44,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPostUpsertForm';
 import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { ClubTierItem } from '~/components/Club/ClubTierItem';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -150,16 +151,16 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
 
   const isOwner = currentUser && club?.userId === currentUser?.id;
 
-  // const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
-  //   {
-  //     clubId: club?.id as number,
-  //     listedOnly: true,
-  //     joinableOnly: true,
-  //   },
-  //   {
-  //     enabled: !!club?.id,
-  //   }
-  // );
+  const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
+    {
+      clubId: club?.id as number,
+      listedOnly: true,
+      joinableOnly: true,
+    },
+    {
+      enabled: !!club?.id,
+    }
+  );
 
   if (loading) {
     return <PageLoader />;
@@ -288,7 +289,14 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                 {children}
               </Grid.Col>
               <Grid.Col xs={12} md={3}>
-                <ClubManagementNavigation id={id} />
+                {tiers.length && (
+                  <Stack>
+                    <Title order={3}>Membership Tiers</Title>
+                    {tiers.map((tier) => (
+                      <ClubTierItem clubTier={tier} />
+                    ))}
+                  </Stack>
+                )}
               </Grid.Col>
             </Grid>
           </Stack>

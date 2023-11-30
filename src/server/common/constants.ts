@@ -232,6 +232,7 @@ export const constants = {
   clubs: {
     tierImageAspectRatio: 1 / 1,
     tierImageDisplayWidth: 124,
+    tierImageSidebarDisplayWidth: 84,
     avatarDisplayWidth: 124,
     minMonthlyBuzz: 5000,
     headerImageAspectRatio: 1 / 6,

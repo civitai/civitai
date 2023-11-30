@@ -113,7 +113,10 @@ export async function createBuzzTransaction({
   amount,
   details,
   ...payload
-}: CreateBuzzTransactionInput & { fromAccountId: number }) {
+}: CreateBuzzTransactionInput & {
+  fromAccountId: number;
+  fromAccountType?: 'User' | 'Club' | 'Other';
+}) {
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
       [{ userId?: number }]
