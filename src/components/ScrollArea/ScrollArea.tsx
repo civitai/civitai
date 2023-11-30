@@ -30,7 +30,7 @@ export function ScrollArea({ children, className, scrollRestore, ...props }: Scr
   const ref = useScrollRestore<HTMLDivElement>(scrollRestore);
   return (
     <ScrollAreaContext.Provider value={{ ref }}>
-      <Box ref={ref} className={cx(classes.root, className)} {...props}>
+      <Box ref={ref} className={cx(classes.root, className)} py="md" {...props}>
         {children}
       </Box>
     </ScrollAreaContext.Provider>
