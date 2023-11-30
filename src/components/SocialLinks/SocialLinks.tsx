@@ -5,10 +5,12 @@ import {
   IconBrandInstagram,
   IconBrandReddit,
   IconBrandTiktok,
+  IconBrandTwitch,
   IconBrandX,
   IconBrandYoutube,
   TablerIconsProps,
 } from '@tabler/icons-react';
+import { useIsLive } from '~/hooks/useIsLive';
 
 const defaultProps: ActionIconProps = {
   size: 'lg',
@@ -22,7 +24,8 @@ type SocialOption =
   | 'youtube'
   | 'instagram'
   | 'tiktok'
-  | 'reddit';
+  | 'reddit'
+  | 'twitch';
 type Props = ActionIconProps & {
   iconSize?: number;
   include?: SocialOption[];
@@ -36,15 +39,32 @@ const SocialIcons: Record<SocialOption, (props: TablerIconsProps) => JSX.Element
   tiktok: IconBrandTiktok,
   reddit: IconBrandReddit,
   youtube: IconBrandYoutube,
+  twitch: IconBrandTwitch,
 };
 
 export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
-  include ??= ['discord', 'twitter', 'instagram', 'youtube', 'tiktok', 'reddit', 'github'];
+  include ??= [
+    'discord',
+    'twitter',
+    'instagram',
+    'youtube',
+    'tiktok',
+    'reddit',
+    'github',
+    'twitch',
+  ];
+  const isLive = useIsLive();
 
   return (
     <>
       {include.map((option) => {
         const Icon = SocialIcons[option];
+        const optionProps: ActionIconProps = {};
+        if (option === 'twitch' && isLive) {
+          optionProps.variant = 'filled';
+          optionProps.color = 'red';
+          optionProps.title = 'Live now!';
+        }
         return (
           <ActionIcon
             key={option}
@@ -54,6 +74,7 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
             rel="nofollow noreferrer"
             {...defaultProps}
             {...props}
+            {...optionProps}
           >
             <Icon size={iconSize} />
           </ActionIcon>
