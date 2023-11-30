@@ -1,22 +1,23 @@
-import { createStyles } from '@mantine/core';
-import { useMemo } from 'react';
+import { Box, createStyles } from '@mantine/core';
+import { useId } from '@mantine/hooks';
+import { useEffect, useMemo, useState } from 'react';
 import { InstagramEmbed, TwitterEmbed, YouTubeEmbed } from 'react-social-media-embed';
-import { SocialBlockSchema } from '~/server/schema/home-block.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export type SocialBlockProps = {
   url: string;
-  type: 'ig-reel' | 'ig-post' | 'yt-short' | 'yt-long' | 'tw-post';
+  type: 'ig-reel' | 'ig-post' | 'yt-short' | 'yt-long' | 'tw-post' | 'twitch';
 };
 
-const typeHeight: Partial<Record<SocialBlockSchema['type'], number>> = {
+const typeHeight: Partial<Record<SocialBlockProps['type'], number>> = {
   'ig-reel': 505,
   'ig-post': 505,
   'yt-short': 569,
   'yt-long': 369,
+  twitch: 369,
 };
 
-const useStyles = createStyles((theme, { type }: { type: SocialBlockSchema['type'] }) => ({
+const useStyles = createStyles((theme, { type }: { type: SocialBlockProps['type'] }) => ({
   card: {
     borderRadius: theme.radius.md,
     overflow: 'hidden',
@@ -26,14 +27,12 @@ const useStyles = createStyles((theme, { type }: { type: SocialBlockSchema['type
       border: 'none !important',
     },
     [containerQuery.largerThan('sm')]: {
-      gridColumn: type === 'yt-long' ? 'span 2' : undefined,
+      gridColumn: ['yt-long', 'twitch'].includes(type) ? 'span 2' : undefined,
     },
   },
 }));
 
-type Props = SocialBlockSchema;
-
-export function SocialBlock({ url, type }: Props) {
+export function SocialBlock({ url, type }: SocialBlockProps) {
   const { classes } = useStyles({ type });
   const content = useMemo(() => {
     if (type === 'ig-reel') return <InstagramReel url={url} />;
@@ -41,6 +40,7 @@ export function SocialBlock({ url, type }: Props) {
     if (type === 'yt-short') return <YoutubeShort url={url} />;
     if (type === 'yt-long') return <Youtube url={url} />;
     if (type === 'tw-post') return <Tweet url={url} />;
+    if (type === 'twitch') return <TwitchStream channel={url} />;
     return null;
   }, [type]);
 
@@ -53,6 +53,45 @@ function InstagramReel({ url }: { url: string }) {
 
 function InstagramPost({ url }: { url: string }) {
   return <InstagramEmbed url={url} width="100%" placeholderDisabled />;
+}
+
+let twitchStarted = false;
+function useTwitchEmbed() {
+  const [ready, setReady] = useState(twitchStarted);
+  useEffect(() => {
+    if (!twitchStarted) {
+      console.log('loading twitch embed');
+      const script = document.createElement('script');
+      script.src = 'https://embed.twitch.tv/embed/v1.js';
+      document.body.appendChild(script);
+      script.onload = () => {
+        setReady(true);
+      };
+      twitchStarted = true;
+    }
+  }, []);
+
+  return { ready };
+}
+function TwitchStream({ channel }: { channel: string }) {
+  const { ready } = useTwitchEmbed();
+  const [initialized, setInitialized] = useState(false);
+  const id = useId();
+
+  useEffect(() => {
+    if (!ready || initialized) return;
+    new window.Twitch.Embed(id, {
+      width: '100%',
+      height: '100%',
+      channel,
+      layout: 'video',
+      allowfullscreen: true,
+      parent: ['civitai.com'],
+    });
+    setInitialized(true);
+  }, [ready, id, channel]);
+
+  return <Box id={id} w="100%" h="100%" />;
 }
 
 function extractVideoID(url: string) {

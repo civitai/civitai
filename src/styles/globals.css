@@ -21,6 +21,13 @@ body {
   }
 }
 
+/* helpful hiding classes for mobile */
+@media only screen and (max-width: 600px) {
+  .hide-mobile {
+    display: none;
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;

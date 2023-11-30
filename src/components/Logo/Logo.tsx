@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
 import { useMemo } from 'react';
+import { LiveNowIndicator } from '~/components/Social/LiveNow';
 
 const gradients = {
   blue: {
@@ -116,6 +117,7 @@ export function Logo({ ...props }: LogoProps) {
           />
         </g>
       </svg>
+      <LiveNowIndicator className={classes.liveNow} />
     </Box>
   );
 }
@@ -170,6 +172,18 @@ const useStyles = createStyles((theme, _, getRef) => ({
     ref: getRef('badge'),
     [theme.fn.largerThan('sm')]: {
       display: 'none',
+    },
+  },
+
+  liveNow: {
+    position: 'absolute',
+    bottom: -13,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 3,
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
+    [theme.fn.smallerThan('sm')]: {
+      bottom: -7,
     },
   },
 
