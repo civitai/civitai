@@ -1,5 +1,5 @@
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createKeyDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
@@ -28,10 +28,11 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
   const mountTimeRef = useRef(new Date());
   // #endregion
 
-  const _key =
+  const defaultKey =
     typeof window !== 'undefined'
-      ? `${key ?? history.state.key}_${location.pathname.substring(1)}`
+      ? `${history.state.key}_${location.pathname.substring(1)}`
       : 'default';
+  const _key = key ?? defaultKey;
 
   // #region [scroll emitter]
   useEffect(() => {

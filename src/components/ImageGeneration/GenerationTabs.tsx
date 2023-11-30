@@ -1,4 +1,4 @@
-import { createStyles, Badge, Card, Stack, Group, Button, StackProps } from '@mantine/core';
+import { createStyles, Badge, Card, Stack, Group, Button, StackProps, Box } from '@mantine/core';
 import { IconBrush, IconListDetails, IconSlideshow, TablerIconsProps } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
@@ -38,12 +38,20 @@ export default function GenerationTabs({
   const tabs: Tabs = {
     generate: {
       Icon: IconBrush,
-      render: () => <Generate />,
+      render: () => (
+        <Box sx={{ flex: 1, overflow: 'hidden' }}>
+          <Generate />
+        </Box>
+      ),
       label: <>Generate</>,
     },
     queue: {
       Icon: IconListDetails,
-      render: () => <Queue {...result} />,
+      render: () => (
+        <ScrollArea scrollRestore={{ key: 'queue' }}>
+          <Queue {...result} />
+        </ScrollArea>
+      ),
       label: (
         <Group spacing={4}>
           Queue{' '}
@@ -57,7 +65,11 @@ export default function GenerationTabs({
     },
     feed: {
       Icon: IconSlideshow,
-      render: () => <Feed {...result} />,
+      render: () => (
+        <ScrollArea scrollRestore={{ key: 'feed' }}>
+          <Feed {...result} />
+        </ScrollArea>
+      ),
       label: <>Feed</>,
     },
   };
@@ -75,7 +87,7 @@ export default function GenerationTabs({
 
   return (
     <>
-      <ScrollArea scrollRestore={{ key: view }}>{render()}</ScrollArea>
+      {render()}
 
       {currentUser && tabEntries.length > 1 && (
         <Group spacing={0} grow className={classes.tabsList}>
