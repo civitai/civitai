@@ -2,6 +2,8 @@ import { createStyles } from '@mantine/core';
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { getRandom } from '~/utils/array-helpers';
+import { getRandomInt } from '~/utils/number-helpers';
 
 const useStyles = createStyles<string, { size: number }>((_, params) => ({
   root: {
@@ -32,7 +34,7 @@ const useStyles = createStyles<string, { size: number }>((_, params) => ({
   light: {
     width: params.size,
     height: params.size,
-    marginLeft: -24,
+    marginLeft: -(params.size * 0.75),
     transform: 'translateY(50%) rotate(6deg)',
     transformOrigin: 'top center',
     '&:first-of-type': {
@@ -49,9 +51,9 @@ const useStyles = createStyles<string, { size: number }>((_, params) => ({
     },
   },
   upgradedLight: {
-    width: 40,
-    height: 40,
-    marginLeft: -36,
+    width: Math.floor(params.size * 1.2),
+    height: params.size * 1.2,
+    marginLeft: -Math.floor(params.size * 1.2 * 0.85),
     transformOrigin: 'top center',
     transform: 'translateY(45%) rotate(6deg)',
     '&:first-of-type': {
@@ -73,14 +75,26 @@ const cosmeticTypeImage = {
   'holiday-lights': '/images/holiday/wreath.png',
 };
 
+type HolidayGarlandData = {
+  color: string;
+  type: string;
+  brightness: number;
+};
+
+const MAX_SIZE = 32;
+const MIN_SIZE = 24;
+
 export function HolidayFrame({ cosmetic, data, children }: Props) {
   const { lights = 0, upgradedLights = 0 } = data ?? {};
-  const { classes, cx } = useStyles({ size: Math.max(Math.ceil(((32 - lights) / 31) * 32), 18) });
+  const { classes, cx } = useStyles({
+    size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
+  });
   const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: false });
 
   if (!showDecorations || !cosmetic) return <>{children}</>;
 
-  const { color, type } = cosmetic.data as { color: string; type: string };
+  const { color, type, brightness } = cosmetic.data as HolidayGarlandData;
+
   const decoration = (
     <div className={classes.decoration}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -99,7 +113,7 @@ export function HolidayFrame({ cosmetic, data, children }: Props) {
                 upgradedLights && index < upgradedLights ? classes.upgradedLight : classes.light
               }
               color={color}
-              brightness={1}
+              brightness={brightness}
             />
           ))}
         </div>

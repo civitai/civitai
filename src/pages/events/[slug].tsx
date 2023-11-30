@@ -320,6 +320,8 @@ export default function EventPageDetails({
                         </Group>
                         {teamScores.map((teamScore) => {
                           const color = teamScore.team.toLowerCase();
+                          const brightness =
+                            (teamScores.length - teamScore.rank + 1) / teamScores.length;
 
                           return (
                             <Fragment key={teamScore.team}>
@@ -328,7 +330,12 @@ export default function EventPageDetails({
                                   <Text size="xl" weight={590} color={color}>
                                     {teamScore.rank}
                                   </Text>
-                                  <Lightbulb variant="star" color={color} size={32} />
+                                  <Lightbulb
+                                    variant="star"
+                                    color={'yellow'}
+                                    brightness={brightness}
+                                    size={32}
+                                  />
                                 </Group>
                                 <Group spacing={4} noWrap>
                                   <CurrencyIcon currency={Currency.BUZZ} />

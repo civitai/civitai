@@ -4,7 +4,7 @@ export function JdrfLogo(props: React.ComponentPropsWithoutRef<'svg'>) {
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 116 31.93"
       fill="currentColor"
-      stroke-width="0"
+      strokeWidth="0"
       {...props}
     >
       <title>JDRF</title>
