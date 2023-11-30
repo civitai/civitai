@@ -11,7 +11,6 @@ import {
   MantineSize,
   NavLink,
   Popover,
-  ScrollArea,
   Stack,
   Text,
   Title,
@@ -39,6 +38,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
@@ -264,7 +264,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
         }
         classNames={{ header: classes.drawerHeader }}
       >
-        <ScrollArea.Autosize maxHeight={'calc(100vh - 48px)'}>{navLinks('md')}</ScrollArea.Autosize>
+        <ScrollArea>{navLinks('md')}</ScrollArea>
       </Drawer>
       <ScrollToTopFab transition="slide-up" />
     </>
