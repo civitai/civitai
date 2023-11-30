@@ -1,8 +1,16 @@
-import { Affix, Button, ButtonProps, Transition, TransitionProps } from '@mantine/core';
+import {
+  Affix,
+  Button,
+  ButtonProps,
+  Portal,
+  Transition,
+  TransitionProps,
+  createStyles,
+} from '@mantine/core';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 type Props = Omit<ButtonProps, 'style' | 'onClick'> &
   Pick<TransitionProps, 'transition' | 'mounted' | 'duration'> & {
-    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+    onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   };
 
 export function FloatingActionButton({
@@ -32,3 +40,36 @@ export function FloatingActionButton({
     </Affix>
   );
 }
+
+export function FloatingActionButton2({ transition, mounted, children, duration }: Props) {
+  const { classes } = useStyles();
+
+  return (
+    <Transition mounted={mounted} duration={duration} transition="slide-up">
+      {(style) => (
+        <Portal target={'main'}>
+          <div className={classes.absolute} style={style}>
+            {children}
+          </div>
+        </Portal>
+      )}
+    </Transition>
+  );
+}
+
+const useStyles = createStyles((theme) => ({
+  absolute: {
+    position: 'absolute',
+    bottom: theme.spacing.xs,
+    right: theme.spacing.md,
+    display: 'inline-block',
+    zIndex: 20,
+  },
+  sticky: {
+    position: 'sticky',
+    bottom: 0,
+    right: 0,
+    display: 'inline-block',
+    zIndex: 20,
+  },
+}));

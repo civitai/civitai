@@ -11,6 +11,7 @@ import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvi
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
 
 type AppLayoutProps = {
   innerLayout?: (page: React.ReactNode) => React.ReactNode;
@@ -66,11 +67,14 @@ export function AppLayout({
         <ContainerProvider containerName="main">
           <main className={classes.main}>
             {content}
-            {flags.assistant && (
+            {/* {flags.assistant && (
               <div className={classes.assistant}>
                 <AssistantButton />
               </div>
-            )}
+            )} */}
+            <FloatingActionButton2 mounted={flags.assistant} transition="slide-up">
+              <AssistantButton />
+            </FloatingActionButton2>
           </main>
           <AppFooter fixed={false} />
         </ContainerProvider>
