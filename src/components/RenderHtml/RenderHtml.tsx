@@ -6,6 +6,7 @@ import {
 import { useMemo } from 'react';
 
 import { needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   htmlRenderer: {
@@ -39,11 +40,11 @@ const useStyles = createStyles((theme) => ({
         flexGrow: 1,
       },
 
-      [theme.fn.smallerThan('md')]: {
+      [containerQuery.smallerThan('md')]: {
         height: 649,
       },
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         height: 681,
 
         '& > iframe': {

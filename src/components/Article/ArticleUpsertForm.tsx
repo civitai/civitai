@@ -2,7 +2,6 @@ import {
   Anchor,
   Button,
   ButtonProps,
-  Grid,
   Group,
   Stack,
   StackProps,
@@ -43,6 +42,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -145,8 +145,8 @@ export function ArticleUpsertForm({ article }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Grid gutter="xl">
-        <Grid.Col xs={12} md={8}>
+      <ContainerGrid gutter="xl">
+        <ContainerGrid.Col xs={12} md={8}>
           <Stack spacing="xl">
             <Group spacing={4}>
               <BackButton url="/articles" />
@@ -175,8 +175,8 @@ export function ArticleUpsertForm({ article }: Props) {
               stickyToolbar
             />
           </Stack>
-        </Grid.Col>
-        <Grid.Col xs={12} md={4}>
+        </ContainerGrid.Col>
+        <ContainerGrid.Col xs={12} md={4}>
           <Stack className={classes.sidebar} spacing="xl">
             <ActionButtons
               article={article}
@@ -275,8 +275,8 @@ export function ArticleUpsertForm({ article }: Props) {
               sx={showMobile}
             />
           </Stack>
-        </Grid.Col>
-      </Grid>
+        </ContainerGrid.Col>
+      </ContainerGrid>
     </Form>
   );
 }

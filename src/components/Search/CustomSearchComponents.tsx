@@ -33,6 +33,7 @@ import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { uniqBy } from 'lodash-es';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -45,17 +46,17 @@ const useStyles = createStyles((theme) => ({
 
 const useSearchInputStyles = createStyles((theme) => ({
   root: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
     },
   },
   wrapper: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
     },
   },
   input: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
     },
   },

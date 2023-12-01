@@ -42,6 +42,7 @@ import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -76,7 +77,7 @@ const useStyles = createStyles((theme) => ({
     maxWidth: '50%',
     overflow: 'hidden',
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       maxWidth: '100%',
     },
   },

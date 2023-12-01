@@ -8,7 +8,6 @@ import {
   Center,
   Loader,
   Alert,
-  Grid,
   Tabs,
   List,
   ThemeIcon,
@@ -32,6 +31,8 @@ import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function Pricing() {
   const router = useRouter();
@@ -95,9 +96,9 @@ export default function Pricing() {
                   </Alert>
                 </Center>
               ) : (
-                <Grid justify="center">
+                <ContainerGrid justify="center">
                   {products.map((product) => (
-                    <Grid.Col key={product.id} md={4} sm={6} xs={12}>
+                    <ContainerGrid.Col key={product.id} md={4} sm={6} xs={12}>
                       <Card withBorder style={{ height: '100%' }}>
                         <Stack justify="space-between" style={{ height: '100%' }}>
                           <PlanDetails
@@ -114,9 +115,9 @@ export default function Pricing() {
                           )}
                         </Stack>
                       </Card>
-                    </Grid.Col>
+                    </ContainerGrid.Col>
                   ))}
-                </Grid>
+                </ContainerGrid>
               )}
               {!showSubscribeButton && (
                 <Center>
@@ -129,8 +130,8 @@ export default function Pricing() {
           </Tabs.Panel>
 
           <Tabs.Panel value="donate" pt="md">
-            <Grid justify="center">
-              <Grid.Col md={4} sm={6} xs={12}>
+            <ContainerGrid justify="center">
+              <ContainerGrid.Col md={4} sm={6} xs={12}>
                 <Card withBorder style={{ height: '100%' }}>
                   <Stack justify="space-between" style={{ height: '100%' }}>
                     <Stack spacing={0} mb="md">
@@ -157,8 +158,8 @@ export default function Pricing() {
                     </DonateButton>
                   </Stack>
                 </Card>
-              </Grid.Col>
-            </Grid>
+              </ContainerGrid.Col>
+            </ContainerGrid>
           </Tabs.Panel>
         </Tabs>
       </Container>
@@ -168,23 +169,23 @@ export default function Pricing() {
 
 const useStyles = createStyles((theme) => ({
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: 24,
     },
   },
   introText: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: 14,
     },
   },
   image: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 96,
       marginBottom: theme.spacing.xs,
     },
   },
   cardTitle: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: 20,
     },
   },

@@ -129,7 +129,7 @@ export function SelectMenuV2<T extends string | number>({
           position="bottom"
           opened={opened}
           onClose={() => setOpened(false)}
-          styles={{ body: { padding: 16 }, drawer: { height: 'auto' } }}
+          styles={{ body: { padding: 16, overflow: 'auto' }, drawer: { height: 'auto' } }}
           withCloseButton={false}
         >
           <Stack spacing={8}>

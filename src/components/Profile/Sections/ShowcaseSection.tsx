@@ -4,7 +4,7 @@ import {
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { IconHeart } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';

@@ -1,5 +1,6 @@
 import React from 'react';
 import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const statuses: SegmentedControlItem[] = [
   { label: 'Published', value: 'published' },
@@ -12,7 +13,7 @@ export function FeedContentToggle(props: Props) {
       {...props}
       data={statuses}
       sx={(theme) => ({
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           width: '100%',
         },
       })}

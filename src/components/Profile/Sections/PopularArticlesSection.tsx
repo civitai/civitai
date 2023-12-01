@@ -4,7 +4,7 @@ import {
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ArticleSort } from '~/server/common/enums';

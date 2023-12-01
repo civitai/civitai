@@ -19,6 +19,7 @@ import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostsQueryInput } from '~/server/schema/post.schema';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   label: {
@@ -43,7 +44,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   actionButton: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
     },
   },

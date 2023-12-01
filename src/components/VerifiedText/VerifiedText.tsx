@@ -11,6 +11,7 @@ import { ScanResultCode } from '@prisma/client';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type VerifiedFile = {
   virusScanResult: ScanResultCode;
@@ -107,7 +108,7 @@ export function VerifiedText({ file, iconOnly }: Props) {
 
 const useStyles = createStyles((theme) => ({
   hideSm: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },

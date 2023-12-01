@@ -22,10 +22,11 @@ import { getModelFileFormat } from '~/utils/file-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   epochRow: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       flexDirection: 'column',
       gap: theme.spacing.md,
     },

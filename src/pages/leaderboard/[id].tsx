@@ -6,19 +6,16 @@ import {
   Code,
   Container,
   Drawer,
-  Grid,
   Group,
   Loader,
   MantineSize,
   NavLink,
   Popover,
-  ScrollArea,
   Stack,
   Text,
   Title,
   createStyles,
   SegmentedControl,
-  HoverCard,
   SegmentedControlProps,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -39,6 +36,9 @@ import { numericString, stringDate } from '~/utils/zod-helpers';
 import { env } from '~/env/client.mjs';
 import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
@@ -172,14 +172,14 @@ export default function Leaderboard() {
         ]}
       />
       <Container size="lg">
-        <Grid gutter="xl">
-          <Grid.Col xs={12} sm={4} className={classes.sidebar}>
+        <ContainerGrid gutter="xl">
+          <ContainerGrid.Col xs={12} sm={4} className={classes.sidebar}>
             <Box maw={300} w="100%">
               {navLinks()}
             </Box>
-          </Grid.Col>
+          </ContainerGrid.Col>
 
-          <Grid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
+          <ContainerGrid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
             <Stack spacing={0} maw={600} w="100%">
               <Group spacing={8} noWrap>
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
@@ -252,8 +252,8 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                 <CreatorList data={leaderboardResults} />
               ) : null}
             </Stack>
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid.Col>
+        </ContainerGrid>
       </Container>
       <Drawer
         opened={drawerOpen}
@@ -266,7 +266,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
         }
         classNames={{ header: classes.drawerHeader }}
       >
-        <ScrollArea.Autosize maxHeight={'calc(100vh - 48px)'}>{navLinks('md')}</ScrollArea.Autosize>
+        <ScrollArea>{navLinks('md')}</ScrollArea>
       </Drawer>
       <ScrollToTopFab transition="slide-up" />
     </>
@@ -366,12 +366,12 @@ const UserPosition = ({
 
 const useStyles = createStyles((theme) => ({
   title: {
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       fontSize: 28,
     },
   },
   slogan: {
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       fontSize: theme.fontSizes.sm,
     },
   },
@@ -383,14 +383,14 @@ const useStyles = createStyles((theme) => ({
   },
   sidebar: {
     display: 'block',
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
 
   drawerButton: {
     display: 'none',
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       marginLeft: 'auto',
       display: 'block',
     },
@@ -403,7 +403,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   legendsToggleSm: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
@@ -412,7 +412,7 @@ const useStyles = createStyles((theme) => ({
     width: '100%',
     marginTop: theme.spacing.xs,
     marginBottom: theme.spacing.xs,
-    [theme.fn.largerThan('sm')]: {
+    [containerQuery.largerThan('sm')]: {
       display: 'none',
     },
   },

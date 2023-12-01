@@ -6,7 +6,7 @@ import {
   CivitaiLinkResourceManagerProps,
 } from '~/components/CivitaiLink/CivitaiLinkResourceManager';
 import { CivitaiTooltip, CivitaiTooltipProps } from '~/components/CivitaiWrapped/CivitaiTooltip';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const buttonStates: Record<string, ButtonStateFn> = {
   downloading: ({ hovered, progress, iconSize }) => ({
@@ -57,7 +57,7 @@ export const CivitiaLinkManageButton = ({
   tooltipProps?: Omit<CivitaiTooltipProps, 'children' | 'label'>;
 } & CivitaiLinkResourceManagerProps) => {
   const { hovered, ref } = useHover<HTMLButtonElement>();
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
 
   return (
     <CivitaiLinkResourceManager {...managerProps}>

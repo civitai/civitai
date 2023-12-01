@@ -1,5 +1,5 @@
 import { AspectRatio, createStyles } from '@mantine/core';
-import { InView } from 'react-intersection-observer';
+
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -8,6 +8,7 @@ import { PostsInfiniteModel } from '~/server/services/post.service';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { useInView } from '~/hooks/useInView';
 
 export function PostsCard({
   data: { image, id, stats, imageCount },
@@ -16,64 +17,61 @@ export function PostsCard({
   data: PostsInfiniteModel;
   height?: number;
 }) {
+  const { ref, inView } = useInView({ rootMargin: '600px' });
   const { classes } = useStyles();
 
   return (
-    <InView rootMargin="600px">
-      {({ inView, ref }) => (
-        <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
-          {inView && (
-            <>
-              <ImageGuard
-                images={[image]}
-                connect={{ entityId: id, entityType: 'post' }}
-                render={(image) => (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        {image.meta && 'civitaiResources' in (image.meta as object) && (
-                          <OnsiteIndicator />
-                        )}
-                        <ImageGuard.Report context="post" />
-                        <ImageGuard.ToggleConnect position="top-left" />
-                        <RoutedDialogLink name="postDetail" state={{ postId: id }}>
-                          {!safe ? (
-                            <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                              <MediaHash {...image} />
-                            </AspectRatio>
-                          ) : (
-                            <EdgeMedia
-                              src={image.url}
-                              name={image.name ?? image.id.toString()}
-                              alt={image.name ?? undefined}
-                              type={image.type}
-                              width={450}
-                              placeholder="empty"
-                              style={{ width: '100%', position: 'relative' }}
-                            />
-                          )}
-                        </RoutedDialogLink>
-                        <PostReactions
-                          className={classes.reactions}
-                          imageCount={imageCount}
-                          metrics={{
-                            likeCount: stats?.likeCount,
-                            dislikeCount: stats?.dislikeCount,
-                            heartCount: stats?.heartCount,
-                            laughCount: stats?.laughCount,
-                            cryCount: stats?.cryCount,
-                          }}
-                        />
-                      </>
+    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
+      {inView && (
+        <>
+          <ImageGuard
+            images={[image]}
+            connect={{ entityId: id, entityType: 'post' }}
+            render={(image) => (
+              <ImageGuard.Content>
+                {({ safe }) => (
+                  <>
+                    {image.meta && 'civitaiResources' in (image.meta as object) && (
+                      <OnsiteIndicator />
                     )}
-                  </ImageGuard.Content>
+                    <ImageGuard.Report context="post" />
+                    <ImageGuard.ToggleConnect position="top-left" />
+                    <RoutedDialogLink name="postDetail" state={{ postId: id }}>
+                      {!safe ? (
+                        <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                          <MediaHash {...image} />
+                        </AspectRatio>
+                      ) : (
+                        <EdgeMedia
+                          src={image.url}
+                          name={image.name ?? image.id.toString()}
+                          alt={image.name ?? undefined}
+                          type={image.type}
+                          width={450}
+                          placeholder="empty"
+                          style={{ width: '100%', position: 'relative' }}
+                        />
+                      )}
+                    </RoutedDialogLink>
+                    <PostReactions
+                      className={classes.reactions}
+                      imageCount={imageCount}
+                      metrics={{
+                        likeCount: stats?.likeCount,
+                        dislikeCount: stats?.dislikeCount,
+                        heartCount: stats?.heartCount,
+                        laughCount: stats?.laughCount,
+                        cryCount: stats?.cryCount,
+                      }}
+                    />
+                  </>
                 )}
-              />
-            </>
-          )}
-        </MasonryCard>
+              </ImageGuard.Content>
+            )}
+          />
+        </>
       )}
-    </InView>
+    </MasonryCard>
   );
 }
 

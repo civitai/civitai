@@ -2,6 +2,7 @@ import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@
 import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const homeOptions = {
   models: '/',
@@ -51,7 +52,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
       })}
       styles={(theme) => ({
         label: {
-          [theme.fn.largerThan('xs')]: {
+          [containerQuery.largerThan('xs')]: {
             paddingTop: 0,
             paddingBottom: 0,
           },

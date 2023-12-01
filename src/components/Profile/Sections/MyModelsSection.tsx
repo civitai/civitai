@@ -5,7 +5,7 @@ import {
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconCategory } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.utils';

@@ -2,12 +2,13 @@ import { Button, ButtonProps, Card } from '@mantine/core';
 import { IconMessageChatbot, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { env } from '~/env/client.mjs';
+import { isDev } from '~/env/other';
 
 const WIDTH = 320;
 const HEIGHT = 500;
 export function AssistantButton({ ...props }: ButtonProps) {
   const [opened, setOpened] = useState(false);
-  if (!env.NEXT_PUBLIC_GPTT_UUID) return null;
+  if (!env.NEXT_PUBLIC_GPTT_UUID && !isDev) return null;
 
   return (
     <>
@@ -28,12 +29,14 @@ export function AssistantButton({ ...props }: ButtonProps) {
         }}
         p={0}
       >
-        <iframe
-          src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`}
-          width={WIDTH + 1}
-          height={HEIGHT}
-          style={{ margin: -1, background: 'transparent' }}
-        />
+        {env.NEXT_PUBLIC_GPTT_UUID && (
+          <iframe
+            src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}`}
+            width={WIDTH + 1}
+            height={HEIGHT}
+            style={{ margin: -1, background: 'transparent' }}
+          />
+        )}
       </Card>
       <Button
         px="xs"

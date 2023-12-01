@@ -19,6 +19,7 @@ import { SearchIndex } from '~/components/Search/parsers/base';
 import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const SIDEBAR_SIZE = 377;
 
@@ -68,7 +69,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       zIndex: 200,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         top: 0,
         height: '100vh',
         left: '-100vw',
@@ -89,14 +90,14 @@ const useStyles = createStyles((theme, _, getRef) => {
     sidebarOpen: {
       [`& .${sidebarRef}`]: {
         transform: `translate(${SIDEBAR_SIZE}px, 0)`,
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           transform: `translate(100vw, 0)`,
           paddingBottom: theme.spacing.xl,
         },
       },
       [`& .${contentRef}`]: {
         paddingLeft: `${SIDEBAR_SIZE}px`,
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           paddingLeft: 0,
         },
       },
