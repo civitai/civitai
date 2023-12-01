@@ -415,7 +415,14 @@ export function AmbientModelCard({ data, height }: Props) {
             styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
             sx={{ opacity: isHidden && !hiddenQuery ? 0.1 : undefined }}
           >
-            <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
+            <MasonryCard
+              ref={ref}
+              withBorder
+              shadow="sm"
+              height={height}
+              p={0}
+              cardDecoration={cardDecoration}
+            >
               {inView && (
                 <NextLink
                   href={href}

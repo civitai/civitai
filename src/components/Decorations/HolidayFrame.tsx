@@ -128,7 +128,12 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
     <div className={classes.root}>
       {children}
       {/* Fixed className to reference it in other components easily */}
-      <a href="/events/holiday2023" target="_blank" className={cx('frame-decor', classes.wrapper)}>
+      <a
+        href="/events/holiday2023"
+        target="_blank"
+        onClick={(e) => e.stopPropagation()}
+        className={cx('frame-decor', classes.wrapper)}
+      >
         {decoration}
       </a>
     </div>
