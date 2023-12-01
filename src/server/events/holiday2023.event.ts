@@ -1,13 +1,18 @@
 import { createNotification } from '~/server/services/notification.service';
-import { createEvent } from './base.event';
+import { BuzzEventContext, createEvent, DonationCosmeticData } from './base.event';
 
 type CosmeticData = {
   lights: number;
   upgradedLights: number;
   earned: [number, number][];
-};
+  milestonesEarned: number[];
+} & DonationCosmeticData;
 
-const milestones = [5, 10, 15, 20, 25, 30, 31];
+const lightMilestones = [5, 15, 25];
+const donationRewards = {
+  Donor: 5000,
+  'Golden Donor': 25000,
+};
 export const holiday2023 = createEvent('holiday2023', {
   title: 'Get Lit & Give Back',
   startDate: new Date('2023-11-01T00:00:00.000Z'),
@@ -60,8 +65,11 @@ export const holiday2023 = createEvent('holiday2023', {
       data: { data },
     });
 
+    // Update cache
+    await holiday2023.clearUserCosmeticCache(userId);
+
     // Check for milestone
-    const milestone = milestones.find((m) => data.lights == m);
+    const milestone = lightMilestones.find((m) => data.lights == m);
     if (!milestone) return;
 
     // Send notification about available award
@@ -76,6 +84,12 @@ export const holiday2023 = createEvent('holiday2023', {
         url: `/claim/cosmetic/${milestoneCosmeticId}`,
       },
     });
+  },
+  async onPurchase(buzzEvent) {
+    await handleDonationMilestones(buzzEvent);
+  },
+  async onDonate(buzzEvent) {
+    await handleDonationMilestones(buzzEvent);
   },
   async onDailyReset({ scores, db }) {
     for (const { team, rank } of scores) {
@@ -92,3 +106,37 @@ export const holiday2023 = createEvent('holiday2023', {
     }
   },
 });
+
+async function handleDonationMilestones(buzzEvent: BuzzEventContext) {
+  const data = (buzzEvent.userCosmeticData ?? {}) as CosmeticData;
+  data.purchased ??= 0;
+  data.donated ??= 0;
+  data.milestonesEarned ??= [];
+
+  // Check for milestone
+  for (const [key, milestone] of Object.entries(donationRewards)) {
+    if (data.milestonesEarned.includes(milestone)) continue;
+    if (data.purchased < milestone || data.donated < milestone) continue;
+
+    // Send notification about available award
+    const milestoneCosmeticId = await holiday2023.getCosmetic(`Holiday 2023: ${key}`);
+    if (!milestoneCosmeticId) return;
+    await createNotification({
+      userId: buzzEvent.userId,
+      id: `holiday2023:${buzzEvent.userId}:${milestone}donated`,
+      type: 'system-announcement',
+      details: {
+        message: `You've earned the ${key} badge for the Holiday 2023 event!`,
+        url: `/claim/cosmetic/${milestoneCosmeticId}`,
+      },
+    });
+
+    // Update userCosmetic
+    data.milestonesEarned.push(milestone);
+    const cosmeticId = await holiday2023.getUserCosmeticId(buzzEvent.userId);
+    await buzzEvent.db.userCosmetic.updateMany({
+      where: { cosmeticId, userId: buzzEvent.userId },
+      data: { data },
+    });
+  }
+}

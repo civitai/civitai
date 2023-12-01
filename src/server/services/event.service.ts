@@ -97,20 +97,8 @@ export async function donate({
   amount,
 }: EventInput & { userId: number; amount: number }) {
   try {
-    const { team, accountId } = await eventEngine.getUserData({ event, userId });
-    if (!team || !accountId) throw new Error("You don't have a team for this event");
-
-    const { title } = await eventEngine.getEventData(event);
-
-    await createBuzzTransaction({
-      toAccountId: accountId,
-      fromAccountId: userId,
-      type: TransactionType.Donation,
-      amount,
-      description: `${title} Donation - ${team}`,
-    });
-
-    return { team, title, accountId };
+    const result = await eventEngine.donate(event, { userId, amount });
+    return result;
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

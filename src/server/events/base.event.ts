@@ -40,11 +40,19 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   function getUserCosmeticId(userId: number) {
     return getTeamCosmetic(getUserTeam(userId));
   }
+  function clearUserCosmeticCache(userId: number) {
+    return redis.hDel(`event:${name}:cosmetic`, userId.toString());
+  }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({
       where: { name: { startsWith: definition.badgePrefix }, source: 'Claim', type: 'Badge' },
       select: { id: true, name: true, data: true, type: true },
     });
+
+    return rewards.map(({ name, ...reward }) => ({
+      ...reward,
+      name: name.replace(definition.badgePrefix, '').replace(':', '').trim(),
+    }));
 
     return rewards;
   }
@@ -54,6 +62,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     getKey,
     setKey,
     clearKeys,
+    clearUserCosmeticCache,
     getTeamCosmetic,
     getUserTeam,
     getUserCosmeticId,
@@ -85,6 +94,18 @@ type DailyResetContext = {
   db: PrismaClient;
 };
 
+export type DonationCosmeticData = {
+  donated?: number;
+  purchased?: number;
+};
+
+export type BuzzEventContext = {
+  userId: number;
+  amount: number;
+  userCosmeticData: DonationCosmeticData;
+  db: PrismaClient;
+};
+
 type HolidayEventDefinition = {
   title: string;
   startDate: Date;
@@ -96,5 +117,7 @@ type HolidayEventDefinition = {
   coverImage?: string;
   coverImageCollection?: string;
   onEngagement?: (ctx: ProcessingContext) => Promise<void>;
+  onPurchase?: (ctx: BuzzEventContext) => Promise<void>;
+  onDonate?: (ctx: BuzzEventContext) => Promise<void>;
   onDailyReset?: (ctx: DailyResetContext) => Promise<void>;
 };

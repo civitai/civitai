@@ -76,5 +76,14 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
   // If the user has this notification type disabled, don't create a notification.
   if (!!userNotificationSettings?.disabledAt) return;
 
-  return dbWrite.notification.create({ data });
+  return dbWrite.$executeRaw`
+    INSERT INTO "Notification" ("id", "userId", "type", "details")
+    VALUES (
+      ${data.id},
+      ${data.userId},
+      ${data.type},
+      ${JSON.stringify(data.details)}::jsonb
+    )
+    ON CONFLICT ("id") DO NOTHING
+  `;
 };

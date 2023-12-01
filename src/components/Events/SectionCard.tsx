@@ -3,7 +3,7 @@ import { CardProps, Card, Stack, Text, Title, createStyles } from '@mantine/core
 const useStyles = createStyles((theme) => ({
   card: {
     padding: '32px !important',
-
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     [theme.fn.smallerThan('sm')]: {
       padding: '16px !important',
     },

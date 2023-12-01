@@ -175,7 +175,11 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
             my="lg"
           >
             {cosmetic.type === 'Badge' && (
-              <EdgeMedia src={(cosmetic.data as MixedObject).url} width={256} />
+              <EdgeMedia
+                src={(cosmetic.data as MixedObject).url}
+                width="original"
+                style={{ height: 256, width: 256 }}
+              />
             )}
             {cosmetic.type === 'ContentDecoration' && (
               <Card

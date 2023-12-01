@@ -22,6 +22,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 import { stripTime } from '~/utils/date-helpers';
+import { eventEngine } from '~/server/events';
 
 type AccountType = 'User';
 
@@ -340,6 +341,11 @@ export async function completeStripeBuzzTransaction({
     // A payment intent without a transaction ID can be tied to a DB failure delivering buzz.
     await stripe.paymentIntents.update(stripePaymentIntentId, {
       metadata: { transactionId: data.transactionId },
+    });
+
+    await eventEngine.processPurchase({
+      userId,
+      amount,
     });
 
     return data;

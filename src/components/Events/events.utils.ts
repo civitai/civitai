@@ -46,6 +46,8 @@ export const useMutateEvent = () => {
   });
   const donateMutation = trpc.event.donate.useMutation({
     onSuccess: async (result, payload) => {
+      if (!result) return;
+
       queryUtils.event.getTeamScores.setData({ event: payload.event }, (old) => {
         if (!old) return old;
 

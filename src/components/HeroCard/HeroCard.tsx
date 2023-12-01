@@ -4,6 +4,7 @@ import React from 'react';
 
 const useStyles = createStyles((theme) => ({
   card: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     [theme.fn.largerThan('sm')]: {
       maxHeight: 376,
       display: 'flex',

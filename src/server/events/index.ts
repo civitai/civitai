@@ -1,8 +1,9 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import { EngagementEvent, TeamScore } from '~/server/events/base.event';
+import { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
 import { holiday2023 } from '~/server/events/holiday2023.event';
 import { redis } from '~/server/redis/client';
 import {
+  createBuzzTransaction,
   getAccountSummary,
   getTopContributors,
   getUserBuzzAccount,
@@ -10,6 +11,7 @@ import {
 import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import dayjs from 'dayjs';
 import { purgeCache } from '~/server/cloudflare/client';
+import { TransactionType } from '~/server/schema/buzz.schema';
 
 // Only include events that aren't completed
 const events = [holiday2023];
@@ -291,12 +293,85 @@ export const eventEngine = {
 
     return eventDef.getRewards();
   },
+  async donate(event: string, { userId, amount }: { userId: number; amount: number }) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    const { team, accountId } = await this.getUserData({ event, userId });
+    if (!team || !accountId) throw new Error("You don't have a team for this event");
+
+    const { title } = await this.getEventData(event);
+
+    await createBuzzTransaction({
+      toAccountId: accountId,
+      fromAccountId: userId,
+      type: TransactionType.Donation,
+      amount,
+      description: `${title} Donation - ${team}`,
+    });
+
+    // Record donation to user cosmetic
+    const cosmeticId = await eventDef.getUserCosmeticId(userId);
+    if (!cosmeticId) return;
+
+    // Get current donation total
+    const userCosmetic = await dbWrite.userCosmetic.findFirst({
+      where: { cosmeticId, userId },
+      select: { data: true },
+    });
+    const userCosmeticData = (userCosmetic?.data ?? {}) as DonationCosmeticData;
+    userCosmeticData.donated = (userCosmeticData.donated ?? 0) + amount;
+
+    // Update user cosmetic
+    await dbWrite.$queryRaw`
+        UPDATE "UserCosmetic"
+        SET data = jsonb_set(
+          COALESCE(data, '{}'::jsonb),
+          '{donated}',
+          to_jsonb(${userCosmeticData.donated})
+        )
+        WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId}; -- Your conditions here
+      `;
+    await eventDef.onDonate?.({ userId, amount, db: dbWrite, userCosmeticData });
+
+    return { team, title, accountId };
+  },
+  async processPurchase({ userId, amount }: { userId: number; amount: number }) {
+    for (const eventDef of activeEvents) {
+      if (eventDef.startDate <= new Date() && eventDef.endDate >= new Date()) {
+        // Record to user cosmetic
+        const cosmeticId = await eventDef.getUserCosmeticId(userId);
+        if (!cosmeticId) continue;
+
+        // Get current purchased total
+        const userCosmetic = await dbWrite.userCosmetic.findFirst({
+          where: { cosmeticId, userId },
+          select: { data: true },
+        });
+        const userCosmeticData = (userCosmetic?.data ?? {}) as DonationCosmeticData;
+        userCosmeticData.purchased = (userCosmeticData.purchased ?? 0) + amount;
+
+        // Update user cosmetic
+        await dbWrite.$queryRaw`
+          UPDATE "UserCosmetic"
+          SET data = jsonb_set(
+            COALESCE(data, '{}'::jsonb),
+            '{purchased}',
+            to_jsonb(${userCosmeticData.purchased})
+          )
+          WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId}; -- Your conditions here
+        `;
+
+        await eventDef.onPurchase?.({ userId, amount, db: dbWrite, userCosmeticData });
+      }
+    }
+  },
   async getTopContributors(event: string, limit = 10) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
     const cacheJson = await redis.get(`eventContributors:${event}`);
-    // if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
+    if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
 
     const teamAccounts = this.getTeamAccounts(event);
     const accountIds = Object.values(teamAccounts);

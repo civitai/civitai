@@ -2,6 +2,7 @@ import {
   Button,
   Card,
   Center,
+  createStyles,
   Grid,
   Group,
   Loader,
@@ -20,6 +21,7 @@ import { UserAvatar } from '../UserAvatar/UserAvatar';
 
 export function EventContributors({ event }: { event: string }) {
   const { contributors, loading } = useQueryEventContributors({ event });
+  const { classes } = useStyles();
 
   const topDayContributors = contributors?.day.slice(0, 4) ?? [];
   const topAllTimeContributors = contributors?.allTime.slice(0, 4) ?? [];
@@ -30,7 +32,7 @@ export function EventContributors({ event }: { event: string }) {
   return (
     <Grid gutter={48}>
       <Grid.Col xs={12} sm="auto">
-        <Card p={32} radius="lg" h="100%">
+        <Card p={32} radius="lg" h="100%" className={classes.card}>
           <Stack spacing="xl">
             <Text size={32} weight="bold">
               Top contributors all time
@@ -81,7 +83,7 @@ export function EventContributors({ event }: { event: string }) {
         </Card>
       </Grid.Col>
       <Grid.Col xs={12} sm="auto">
-        <Card p={32} radius="lg" h="100%">
+        <Card p={32} radius="lg" h="100%" className={classes.card}>
           <Stack spacing="xl">
             <Text size={32} weight="bold">
               Top contributors today
@@ -130,7 +132,7 @@ export function EventContributors({ event }: { event: string }) {
         </Card>
       </Grid.Col>
       <Grid.Col span={12}>
-        <Card p={32} radius="lg">
+        <Card p={32} radius="lg" className={classes.card}>
           <Grid gutter="xl">
             <Grid.Col span={12}>
               <Text size={32} weight="bold">
@@ -185,3 +187,9 @@ export function EventContributors({ event }: { event: string }) {
     </Grid>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  card: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+  },
+}));

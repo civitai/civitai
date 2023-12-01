@@ -43,12 +43,12 @@ export const eventRouter = router({
     .mutation(({ input, ctx }) => donate({ userId: ctx.user.id, ...input })),
   getContributors: publicProcedure
     .input(eventSchema)
-    // .use(
-    //   edgeCacheIt({
-    //     ttl: false,
-    //     tags: (input) => ['event-contributors', `event-contributors-${input.event}`],
-    //   })
-    // )
+    .use(
+      edgeCacheIt({
+        ttl: false,
+        tags: (input) => ['event-contributors', `event-contributors-${input.event}`],
+      })
+    )
     .query(({ input }) => getEventContributors(input)),
   getUserRank: protectedProcedure
     .input(eventSchema)

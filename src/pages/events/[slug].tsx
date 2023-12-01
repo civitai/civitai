@@ -5,6 +5,7 @@ import {
   Card,
   Center,
   Container,
+  createStyles,
   Divider,
   Grid,
   Group,
@@ -60,6 +61,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import { NextLink } from '@mantine/next';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -105,7 +107,7 @@ const aboutText =
 export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const theme = useMantineTheme();
+  const { theme, classes } = useStyles();
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -216,11 +218,13 @@ export default function EventPageDetails({
                 {eventData?.coverImageUser && (
                   <Text color="white" size="xs">
                     Banner created by{' '}
-                    <Link href={`/user/${eventData.coverImageUser}`} passHref>
-                      <Anchor target="_blank" td="underline" span>
-                        {eventData.coverImageUser}
-                      </Anchor>
-                    </Link>
+                    <Text
+                      component={NextLink}
+                      href={`/user/${eventData.coverImageUser}`}
+                      td="underline"
+                    >
+                      {eventData.coverImageUser}
+                    </Text>
                   </Text>
                 )}
               </Group>
@@ -242,6 +246,7 @@ export default function EventPageDetails({
               <>
                 <Grid.Col xs={12} sm="auto">
                   <Card
+                    className={classes.card}
                     py="xl"
                     px="lg"
                     radius="lg"
@@ -361,6 +366,7 @@ export default function EventPageDetails({
                 </Grid.Col> */}
                 <Grid.Col xs={12} sm="auto">
                   <Card
+                    className={classes.card}
                     py="xl"
                     px="lg"
                     radius="lg"
@@ -468,8 +474,8 @@ export default function EventPageDetails({
                   >
                     {rewards.map((reward) => (
                       <Stack key={reward.id} spacing={8} align="center">
-                        <div style={{ width: 96 }}>
-                          <EdgeMedia src={(reward.data as { url: string })?.url} width={256} />
+                        <div style={{ width: 96, height: 96 }}>
+                          <EdgeMedia src={(reward.data as { url: string })?.url} width="original" />
                         </div>
                         <Text align="center" size="lg" weight={590} w="100%">
                           {reward.name}
@@ -518,6 +524,12 @@ export default function EventPageDetails({
     </>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  card: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+  },
+}));
 
 const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, ref) => {
   const [amount, setAmount] = useState<number>();
@@ -584,14 +596,14 @@ DonateInput.displayName = 'DonateInput';
 const partners = [
   {
     title: 'RunDiffusion',
-    subtitle: 'Matching 500k Buzz to charity',
-    // TODO.justin: get the right image for runDiffusion
-    image:
-      'https://assets-global.website-files.com/634b388c3e23ccc5dec6843f/63bf61d57842c5d0a39255fb_Final-10-Small-2.png',
+    subtitle: 'Matching ⚡500k',
+    image: '/images/holiday/partners/rundiffusion.png',
+    url: 'https://rundiffusion.com/',
   },
 ];
 
 const CharitySection = ({ visible }: { visible: boolean }) => {
+  const { classes } = useCharityStyles();
   if (!visible) return null;
 
   return (
@@ -618,37 +630,60 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
         >
           Become a partner
         </Button>
-        <SimpleGrid
-          breakpoints={[
-            { minWidth: 'xs', cols: 1 },
-            { minWidth: 'sm', cols: 2 },
-          ]}
-        >
+        <div className={classes.partnerGrid}>
           {partners.map((partner, index) => (
-            <Group key={index} spacing="sm">
+            <a
+              key={index}
+              className={classes.partner}
+              href={partner.url}
+              target="_blank"
+              rel="noreferrer"
+            >
               <Image
                 src={partner.image}
                 alt={partner.title}
                 width={120}
                 height={120}
-                radius={60}
-                sx={(theme) => ({ backgroundColor: theme.colors.dark[7], borderRadius: 60 })}
+                sx={(theme) => ({ backgroundColor: theme.colors.dark[7], borderRadius: 30 })}
                 imageProps={{
                   style: { objectFit: 'cover', objectPosition: 'left', width: 120, height: 120 },
                 }}
               />
-              <Stack spacing={4}>
+              <Stack spacing={0} align="center">
                 <Text size={20} weight={600}>
                   {partner.title}
                 </Text>
-                <Text size={16} color="dimmed">
+                <Text size="xs" color="dimmed">
                   {partner.subtitle}
                 </Text>
               </Stack>
-            </Group>
+            </a>
           ))}
-        </SimpleGrid>
+        </div>
       </SectionCard>
     </>
   );
 };
+
+const useCharityStyles = createStyles((theme) => ({
+  partnerGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, 1fr)',
+    width: '100%',
+    [theme.fn.largerThan('xs')]: {
+      gridTemplateColumns: 'repeat(3, 1fr)',
+    },
+    [theme.fn.largerThan('sm')]: {
+      gridTemplateColumns: 'repeat(4, 1fr)',
+    },
+  },
+  partner: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textDecoration: 'none !important',
+    color: 'inherit !important',
+    gap: theme.spacing.xs,
+  },
+}));
