@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
+/* THIS IS A WORK IN PROGRESS */
+
 type EventType = 'progress' | 'complete' | 'abort' | 'error';
 
 export type CustomProgressEvent = {

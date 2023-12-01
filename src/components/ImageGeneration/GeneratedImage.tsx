@@ -29,8 +29,7 @@ import { constants } from '~/server/common/constants';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInView } from '~/hooks/useInView';
-
-// type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
+import { useRef } from 'react';
 
 export function GeneratedImage({
   image,
@@ -89,6 +88,8 @@ export function GeneratedImage({
     });
   };
 
+  const imageRef = useRef<HTMLImageElement>(null);
+
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -114,7 +115,7 @@ export function GeneratedImage({
             <Box
               onClick={handleImageClick}
               sx={(theme) => ({
-                [`&::after`]: {
+                [`& > *::after`]: {
                   content: '""',
                   display: 'block',
                   position: 'absolute',
@@ -161,7 +162,13 @@ export function GeneratedImage({
                 </Center>
               ) : (
                 // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-                <img alt="" src={image.url} style={{ zIndex: 2, width: '100%' }} />
+                <img
+                  ref={imageRef}
+                  alt=""
+                  src={image.url}
+                  style={{ zIndex: 2, width: '100%' }}
+                  onDragStart={(e) => e.dataTransfer.setData('text/uri-list', image.url)}
+                />
               )}
             </Box>
             <label className={classes.checkboxLabel}>

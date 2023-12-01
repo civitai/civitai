@@ -22,10 +22,6 @@ export const useResizeStore = create<Record<string, number>>()(
   persist(() => ({}), { name: 'resizable' })
 );
 
-// export const useResizeValue = (name: string, defaultValue?: number) => {
-//   return usePersistentStore(useResizableSidebarStore, (state) => state[name], defaultValue);
-// };
-
 export const useResize = (options: Props) => {
   const {
     orientation = 'horizontal',
@@ -39,9 +35,6 @@ export const useResize = (options: Props) => {
   const [resizerRef, setResizerRef] = useState<HTMLElement | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const frame = useRef(0);
-  // const sidebarWidth = useResizeStore(
-  //   useCallback((state) => state[name] ?? defaultWidth, [name, defaultWidth])
-  // );
 
   useEffect(() => {
     if (!ref) return;
@@ -88,29 +81,14 @@ export const useResize = (options: Props) => {
     [isResizing] // eslint-disable-line
   );
 
-  // useEffect(() => {
-  //   if (ref) ref.style.width = `${sidebarWidth}px`;
-  //   // if (contentRef) contentRef.style.overflowX = 'auto';
-  // }, [sidebarWidth, ref, contentRef]);
-
-  // useEffect(() => {
-  //   if (resizerRef) {
-  //     resizerRef.addEventListener('click', startResizing);
-  //   }
-  //   return () => resizerRef?.removeEventListener('click', startResizing);
-  // }, [resizerRef, startResizing]);
-
   useEffect(() => {
-    // const handleContainerClick = (e: MouseEvent) => e.preventDefault();
     window.addEventListener('mousemove', resize);
     window.addEventListener('mouseup', stopResizing);
     resizerRef?.addEventListener('mousedown', startResizing);
-    // ref?.addEventListener('mousedown', handleContainerClick);
     return () => {
       window.removeEventListener('mousemove', resize);
       window.removeEventListener('mouseup', stopResizing);
       resizerRef?.removeEventListener('mousedown', startResizing);
-      // ref?.removeEventListener('mousedown', handleContainerClick);
     };
   }, [resize, stopResizing, resizerRef, ref, startResizing]);
 

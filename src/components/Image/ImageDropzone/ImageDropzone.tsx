@@ -1,9 +1,10 @@
 import { createStyles, Group, Input, Stack, Text } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { DragEvent, useEffect, useRef, useState } from 'react';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES } from '~/server/common/mime-types';
+import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 
 export function ImageDropzone({
@@ -41,6 +42,14 @@ export function ImageDropzone({
     onDrop?.(files.slice(0, max - count));
   };
 
+  const handleDropCapture = async (e: DragEvent) => {
+    const url = e.dataTransfer.getData('text/uri-list');
+    if (!url.startsWith('https://orchestration.civitai.com')) return;
+    const blob = await fetchBlob(url);
+    const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });
+    handleDrop([file]);
+  };
+
   const verticalOrientation = orientation === 'vertical';
 
   return (
@@ -54,6 +63,7 @@ export function ImageDropzone({
         }}
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
+        onDropCapture={handleDropCapture}
       >
         <Group
           position="center"
