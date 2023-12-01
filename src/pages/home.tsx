@@ -34,6 +34,7 @@ import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -127,6 +128,8 @@ export default function Home() {
                 );
               case HomeBlockType.Social:
                 return <SocialHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+              case HomeBlockType.Event:
+                return <EventHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
             }
           })}
 

@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  Dispatch,
+  SetStateAction,
+} from 'react';
 import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
@@ -35,7 +43,7 @@ type ImageViewerState = {
   nextImageId: number | null;
   prevImageId: number | null;
   onClose: () => void;
-  setOnDeleteImage: (callback: (imageId: number) => void) => void;
+  setOnDeleteImage: Dispatch<SetStateAction<((imageId: number) => void) | undefined>>;
   onSetImage: (imageId: number) => void;
   setEntityId: (entityId: number | null) => void;
   setEntityType: (entityType: ImageGuardConnect['entityType']) => void;

@@ -34,7 +34,7 @@ export function NotificationList({
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
 
-          const toModal = details.url.includes('?modal=');
+          const toModal = details.url.includes('?dialog=');
           if (toModal) {
             const [pathname] = router.asPath.split('?');
             const [notificationPathname, query] = details.url.split('?');

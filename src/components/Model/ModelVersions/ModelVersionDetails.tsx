@@ -835,7 +835,7 @@ export function ModelVersionDetails({
                     <Text
                       component="a"
                       href={license.url}
-                      rel="nofollow"
+                      rel="nofollow noreferrer"
                       td="underline"
                       target="_blank"
                       size="xs"

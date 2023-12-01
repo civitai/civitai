@@ -878,7 +878,7 @@ export const getAllImages = async ({
         username,
         image: userImage,
         deletedAt,
-        cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+        cosmetics: userCosmetics?.[creatorId] ?? [],
       },
       stats: {
         cryCountAllTime: cryCount,
@@ -989,18 +989,7 @@ export const getImage = async ({
     },
   ] = rawImages;
 
-  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-    where: { userId: creatorId, equippedAt: { not: null } },
-    select: {
-      userId: true,
-      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
-    },
-  });
-  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
-    acc[userId] = acc[userId] ?? [];
-    acc[userId].push(cosmetic);
-    return acc;
-  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+  const userCosmetics = await getCosmeticsForUsers([creatorId]);
 
   const image = {
     ...firstRawImage,
@@ -1009,7 +998,7 @@ export const getImage = async ({
       username,
       image: userImage,
       deletedAt,
-      cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+      cosmetics: userCosmetics?.[creatorId] ?? [],
     },
     stats: {
       cryCountAllTime: cryCount,

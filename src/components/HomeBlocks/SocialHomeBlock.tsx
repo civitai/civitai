@@ -1,14 +1,15 @@
 import { ActionIcon, Box, createStyles, Group, Popover, Stack, Text, Title } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { SocialBlock } from '~/components/HomeBlocks/components/SocialBlock';
+import { SocialBlock, SocialBlockProps } from '~/components/HomeBlocks/components/SocialBlock';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsLive } from '~/hooks/useIsLive';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 
 const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
@@ -108,6 +109,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
 
   const socialData = metadata.socials ?? [];
   const itemCount = socialData.length;
+  const isLive = useIsLive();
   const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
   const { classes, cx } = useStyles({ columnWidth, columnGap });
 
@@ -201,6 +203,18 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
     </Stack>
   );
 
+  const blocks = useMemo(() => {
+    const blocks: SocialBlockProps[] = [...socialData];
+    if (typeof window === 'undefined') return blocks;
+    if (isLive) {
+      blocks.unshift({
+        type: 'twitch',
+        url: 'civitai',
+      });
+    }
+    return blocks;
+  }, [socialData, isLive]);
+
   return (
     <>
       <Box mb="md" className={classes.meta}>
@@ -209,7 +223,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
       <div className={classes.container}>
         <div className={classes.scrollArea} ref={viewportRef} onScroll={onScroll}>
           <div className={classes.grid}>
-            {socialData.map((block) => {
+            {blocks.map((block) => {
               return <SocialBlock key={block.url} {...block} />;
             })}
           </div>

@@ -14,6 +14,7 @@ import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { eventEngine } from '~/server/events';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -356,6 +357,15 @@ export const publishModelHandler = async ({
         nsfw: model.nsfw,
       })
       .catch(handleLogError);
+
+    if (!input.publishedAt || input.publishedAt <= new Date()) {
+      await eventEngine.processEngagement({
+        userId: updatedModel.userId,
+        type: 'published',
+        entityType: 'model',
+        entityId: updatedModel.id,
+      });
+    }
 
     return updatedModel;
   } catch (error) {

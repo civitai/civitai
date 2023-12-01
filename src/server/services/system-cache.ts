@@ -182,3 +182,11 @@ export async function getHomeExcludedTags() {
   log('got home excluded tags');
   return tags;
 }
+
+export async function setLiveNow(isLive: boolean) {
+  await redis.set(`live-now`, isLive ? 'true' : 'false');
+}
+export async function getLiveNow() {
+  const cachedLiveNow = await redis.get(`live-now`);
+  return cachedLiveNow === 'true';
+}

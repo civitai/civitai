@@ -1,6 +1,8 @@
 /* eslint-disable @next/next/no-img-element */
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
+import { LiveNowIndicator } from '~/components/Social/LiveNow';
 
 const gradients = {
   blue: {
@@ -23,7 +25,10 @@ const gradients = {
 
 export function Logo({ ...props }: LogoProps) {
   const { classes, cx } = useStyles();
+  const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
   const holiday = useMemo(() => {
+    if (!showHoliday) return null;
+
     const month = new Date().getMonth();
     const day = new Date().getDate();
 
@@ -37,7 +42,7 @@ export function Logo({ ...props }: LogoProps) {
     if (month === 11 && day >= 26) return 'newyear';
 
     return null;
-  }, []);
+  }, [showHoliday]);
 
   const holidayClass = holiday ? classes[holiday] : null;
   const innerGradient = holiday ? gradients[holiday].inner : gradients.blue.inner;
@@ -116,6 +121,7 @@ export function Logo({ ...props }: LogoProps) {
           />
         </g>
       </svg>
+      <LiveNowIndicator className={classes.liveNow} />
     </Box>
   );
 }
@@ -170,6 +176,18 @@ const useStyles = createStyles((theme, _, getRef) => ({
     ref: getRef('badge'),
     [theme.fn.largerThan('sm')]: {
       display: 'none',
+    },
+  },
+
+  liveNow: {
+    position: 'absolute',
+    bottom: -13,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 3,
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
+    [theme.fn.smallerThan('sm')]: {
+      bottom: -7,
     },
   },
 

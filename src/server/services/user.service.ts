@@ -50,7 +50,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
-import dayjs from 'dayjs';
+import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -100,6 +100,7 @@ export const getUserCreator = async ({
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
+          data: true,
           cosmetic: {
             select: {
               id: true,
@@ -598,14 +599,15 @@ export const getCosmeticsForUsers = async (userIds: number[]) => {
     where: { userId: { in: users }, equippedAt: { not: null } },
     select: {
       userId: true,
+      data: true,
       cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
     },
   });
-  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic, data }) => {
     acc[userId] = acc[userId] ?? [];
-    acc[userId].push(cosmetic);
+    acc[userId].push({ cosmetic, data: data as MixedObject | null });
     return acc;
-  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+  }, {} as Record<number, Array<{ cosmetic: (typeof userCosmeticsRaw)[0]['cosmetic']; data: MixedObject | null }>>);
 
   return userCosmetics;
 };
@@ -886,7 +888,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
     select: { id: true, availableStart: true, availableEnd: true },
   });
   if (!cosmetic) return null;
-  if (!dayjs().isBetween(cosmetic.availableStart, cosmetic.availableEnd)) return null;
+  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
 
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: cosmetic.id },
@@ -903,23 +905,33 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
 };
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
+  let available = true;
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
-    select: { obtainedAt: true, equippedAt: true },
+    select: { obtainedAt: true, equippedAt: true, data: true },
   });
-  return userCosmetic ?? { obtainedAt: null, equippedAt: null };
+
+  // If the user doesn't have the cosmetic, check if it's available
+  if (!userCosmetic) available = await isCosmeticAvailable(id, userId);
+
+  return {
+    available,
+    obtained: !!userCosmetic,
+    equipped: !!userCosmetic?.equippedAt,
+    data: (userCosmetic?.data ?? {}) as Record<string, unknown>,
+  };
 }
 
 export async function equipCosmetic({ id, userId }: { id: number; userId: number }) {
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
-    select: { obtainedAt: true },
+    select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
   if (!userCosmetic) throw new Error("You don't have that cosmetic");
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
-      where: { userId, equippedAt: { not: null } },
+      where: { userId, equippedAt: { not: null }, cosmetic: { type: userCosmetic.cosmetic.type } },
       data: { equippedAt: null },
     }),
     dbWrite.userCosmetic.updateMany({

@@ -1,0 +1,36 @@
+name: Docker Branch Deploy
+
+on:
+  pull_request:
+    branches:
+      - "main"
+    types: [labeled, opened, reopened, synchronize]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'deploy-dev') && (
+        github.event.review.state == 'APPROVED' || (
+          startsWith(github.event.pull_request.head.ref, 'feature/') ||
+          startsWith(github.event.pull_request.head.ref, 'fix/')
+        )
+      )
+    steps:
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        id: extract_branch
+      - name: Trigger dev deploy
+        uses: convictional/trigger-workflow-and-wait@v1.6.1
+        with:
+          owner: civitai
+          repo: civitai-deployment
+          workflow_file_name: deploy.yml
+          github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
+          ref: main
+          client_payload: |
+            { "environment": "dev", "branch": "${{ steps.extract_branch.outputs.branch }}" }
+          wait_workflow: false

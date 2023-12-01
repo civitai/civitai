@@ -193,7 +193,7 @@ export default function BountyDetailsPage({
   useEffect(() => {
     if (bounty?.id) {
       setImages(bounty.images);
-      setOnDeleteImage((imageId) => {
+      setOnDeleteImage(() => () => {
         handleImageDelete();
       });
     }
