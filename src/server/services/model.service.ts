@@ -5,6 +5,7 @@ import {
   ModelHashType,
   ModelModifier,
   ModelStatus,
+  ModelType,
   ModelUploadType,
   Prisma,
   SearchIndexUpdateQueueAction,
@@ -16,7 +17,7 @@ import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { ModelFileType } from '~/server/common/constants';
+import { BaseModel, BaseModelType, ModelFileType } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -91,7 +92,7 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
 type ModelRaw = {
   id: number;
   name: string;
-  type: string;
+  type: ModelType;
   nsfw: boolean;
   status: string;
   createdAt: Date;
@@ -118,8 +119,8 @@ type ModelRaw = {
   modelVersion: {
     id: number;
     earlyAccessTimeFrame: number;
-    baseModel: string;
-    baseModelType: string;
+    baseModel: BaseModel;
+    baseModelType: BaseModelType;
     createdAt: Date;
     trainingStatus: string;
     generationCoverage: {
@@ -344,7 +345,7 @@ export const getModelsRaw = async ({
       return { items: [], isPrivate: true };
     }
 
-    const { rawAND: collectionItemModelsAND }: Prisma.sql[] =
+    const { rawAND: collectionItemModelsAND }: { rawAND: Prisma.Sql[] } =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
     AND.push(
@@ -686,7 +687,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       return { items: [], isPrivate: true };
     }
 
-    const { AND: collectionItemModelsAND }: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+    const {
+      AND: collectionItemModelsAND,
+    }: { AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> } =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
     AND.push({

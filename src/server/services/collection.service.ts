@@ -1064,14 +1064,12 @@ export const getAvailableCollectionItemsFilterForUser = ({
   statuses,
   permissions,
   userId,
-  raw,
 }: {
   statuses?: CollectionItemStatus[];
   permissions: CollectionContributorPermissionFlags;
   userId?: number;
-  raw?: boolean;
 }) => {
-  const rawAND: Prisma.sql[] = [];
+  const rawAND: Prisma.Sql[] = [];
   const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = [];
 
   // A user with relevant permissions can filter & manage these permissions
@@ -1090,14 +1088,12 @@ export const getAvailableCollectionItemsFilterForUser = ({
   }
 
   if (userId) {
-    AND.push([
-      {
-        OR: [
-          { status: CollectionItemStatus.ACCEPTED },
-          { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: userId }] },
-        ],
-      },
-    ]);
+    AND.push({
+      OR: [
+        { status: CollectionItemStatus.ACCEPTED },
+        { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: userId }] },
+      ],
+    });
 
     rawAND.push(
       Prisma.sql`(ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus" OR (ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus" AND ci."addedById" = ${userId}))`
