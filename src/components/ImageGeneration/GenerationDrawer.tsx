@@ -34,15 +34,8 @@ export function GenerationDrawer() {
           }`,
         })}
       >
-        <Group position="right" p="xs" spacing="xs" style={{ position: 'relative' }}>
-          <GeneratedImageActions
-            style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-            }}
-          />
+        <Group position="right" p="xs" spacing="xs">
+          <GeneratedImageActions />
           <CloseButton
             size="lg"
             onClick={!isGeneratePage ? dialog.onClose : () => history.go(-1)}

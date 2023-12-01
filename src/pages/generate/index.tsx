@@ -94,7 +94,9 @@ export default function GeneratePage() {
             <Tabs.Tab value="queue">Queue</Tabs.Tab>
             <Tabs.Tab value="feed">Feed</Tabs.Tab>
           </Group>
-          <GeneratedImageActions />
+          <Group spacing="xs">
+            <GeneratedImageActions />
+          </Group>
         </Group>
       </Tabs.List>
       <ScrollArea scrollRestore={{ key: tab }}>

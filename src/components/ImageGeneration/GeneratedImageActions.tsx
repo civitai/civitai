@@ -8,6 +8,8 @@ import {
   Card,
   BoxProps,
   Box,
+  MantineNumberSize,
+  GroupProps,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCloudUpload, IconSquareOff, IconTrash, IconWindowMaximize } from '@tabler/icons-react';
@@ -24,55 +26,50 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
 
-export function GeneratedImageActions(props: BoxProps) {
+export function GeneratedImageActions({
+  actionIconSize = 'lg',
+  iconSize = 20,
+  ...props
+}: GroupProps & { actionIconSize?: MantineNumberSize; iconSize?: number }) {
   const { selected, deselect, isMutating, deleteSelectedImages, postSelectedImages } =
     useGeneratedImageActions();
 
   if (!selected.length) return null;
   return (
-    <Box {...props}>
-      <Box sx={{ position: 'relative' }}>
-        <LoadingOverlay visible={isMutating} loaderProps={{ variant: 'bars', size: 'sm' }} />
-        <Group spacing={6} position="right">
-          <Text color="dimmed" size="sm" weight={500} inline>
-            {selected.length} selected
-          </Text>
-          <Group spacing={4}>
-            <Tooltip label="Deselect all" {...tooltipProps}>
-              <ActionIcon size="xl" onClick={deselect} variant="light">
-                <IconSquareOff size={24} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Delete selected" {...tooltipProps}>
-              <ActionIcon size="xl" onClick={deleteSelectedImages} color="red">
-                <IconTrash size={24} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Post images" {...tooltipProps}>
-              <ActionIcon size="xl" variant="light" onClick={postSelectedImages}>
-                <IconCloudUpload size={24} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Upscale images" {...tooltipProps}>
-              <span>
-                <ActionIcon size="xl" variant="light" disabled>
-                  <IconWindowMaximize size={24} />
-                </ActionIcon>
-              </span>
-            </Tooltip>
-          </Group>
-        </Group>
-      </Box>
-    </Box>
+    <>
+      <Text color="dimmed" size="sm" weight={500} inline>
+        {selected.length} selected
+      </Text>
+      <Tooltip label="Deselect all">
+        <ActionIcon size={actionIconSize} onClick={deselect} variant="light">
+          <IconSquareOff size={iconSize} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Delete selected">
+        <ActionIcon
+          size={actionIconSize}
+          onClick={deleteSelectedImages}
+          color="red"
+          variant="light"
+        >
+          <IconTrash size={iconSize} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Post images">
+        <ActionIcon size={actionIconSize} variant="light" onClick={postSelectedImages}>
+          <IconCloudUpload size={iconSize} />
+        </ActionIcon>
+      </Tooltip>
+      {/* <Tooltip label="Upscale images">
+        <span>
+          <ActionIcon size={actionIconSize} variant="light" disabled>
+            <IconWindowMaximize size={iconSize} />
+          </ActionIcon>
+        </span>
+      </Tooltip> */}
+    </>
   );
 }
-
-const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
-  withinPortal: true,
-  withArrow: true,
-  color: 'dark',
-  // zIndex: constants.imageGeneration.drawerZIndex + 1,
-};
 
 export const useGeneratedImageActions = () => {
   const router = useRouter();

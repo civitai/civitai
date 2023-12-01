@@ -191,6 +191,9 @@ function MyApp(props: CustomAppProps) {
                     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
                 },
               },
+              Tooltip: {
+                defaultProps: { withArrow: true },
+              },
               Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
               Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
               Switch: {
