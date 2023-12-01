@@ -100,6 +100,15 @@ type ModelRaw = {
   locked: boolean;
   earlyAccessDeadline: Date;
   mode: string;
+  rank: {
+    downloadCount: number;
+    favoriteCount: number;
+    commentCount: number;
+    ratingCount: number;
+    rating: number;
+    collectedCount: number;
+    tippedAmountCount: number;
+  };
   tagsOnModels: {
     tagId: number;
   }[];
@@ -144,7 +153,8 @@ export const getModelsRaw = async ({
     user,
     take,
     cursor,
-    query,
+    query, // TODO: Support
+    followed,
     tag,
     tagname,
     username,
@@ -165,7 +175,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     supportsGeneration,
-    collectionId,
+    collectionId, // TODO: Support
     fileFormats,
     clubId,
   } = input;
@@ -187,7 +197,9 @@ export const getModelsRaw = async ({
   }
 
   if (types?.length) {
-    AND.push(Prisma.sql`m.type IN (${Prisma.join(types, ',')})`);
+    AND.push(
+      Prisma.sql`m.type IN (${Prisma.raw(types.map((t) => `'${t}'::"ModelType"`).join(','))})`
+    );
   }
 
   if (rating) {
@@ -212,6 +224,29 @@ export const getModelsRaw = async ({
     );
   }
 
+  if (followed && sessionUser?.id) {
+    const followedUsers = await dbRead.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        engagingUsers: {
+          select: { targetUser: { select: { id: true } } },
+          where: { type: 'Follow' },
+        },
+      },
+    });
+    const followedUsersIds =
+      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
+
+    if (!followedUsersIds.length) {
+      // Return no results.
+      AND.push(Prisma.sql`1 = 0`);
+    } else {
+      AND.push(Prisma.sql`u."id" IN (${Prisma.join(followedUsersIds, ',')})`);
+    }
+
+    isPrivate = true;
+  }
+
   if (baseModels?.length) {
     AND.push(
       Prisma.sql`EXISTS (
@@ -224,7 +259,7 @@ export const getModelsRaw = async ({
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
     AND.push(
-      Prisma.sql`m."lastVersionAt" >= ${decreaseDate(
+      Prisma.sql`(m."lastVersionAt" >= ${decreaseDate(
         new Date(),
         1,
         period.toLowerCase() as ManipulateType
@@ -236,7 +271,11 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."status" = ${ModelStatus.Published}::"ModelStatus"`);
   } else if (sessionUser?.isModerator) {
     if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
-    AND.push(Prisma.sql`m."status" IN (${Prisma.join(status, ',')})`);
+    AND.push(
+      Prisma.sql`m."status" IN (${Prisma.raw(
+        status.map((s) => `'${s}'::"ModelStatus"`).join(',')
+      )})`
+    );
     isPrivate = true;
   }
 
@@ -269,10 +308,16 @@ export const getModelsRaw = async ({
   if (!!ids?.length) AND.push(Prisma.sql`m."id" IN (${Prisma.join(ids, ',')})`);
 
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
-    const TypeOr: Prisma.Sql[] = [Prisma.sql`m."checkpointType" = ${checkpointType}`];
+    const TypeOr: Prisma.Sql[] = [
+      Prisma.sql`m."checkpointType" = ${checkpointType}::"CheckpointType"`,
+    ];
     if (types?.length) {
       const otherTypes = types.filter((t) => t !== 'Checkpoint');
-      TypeOr.push(Prisma.sql`m."type" IN (${Prisma.join(otherTypes, ',')})`);
+      TypeOr.push(
+        Prisma.sql`m."type" IN (${Prisma.raw(
+          otherTypes.map((t) => `'${t}'::"ModelType"`).join(',')
+        )})`
+      );
     } else TypeOr.push(Prisma.sql`m."type" != 'Checkpoint'`);
 
     AND.push(Prisma.sql`(${Prisma.join(TypeOr, ' OR ')})`);
@@ -316,7 +361,7 @@ export const getModelsRaw = async ({
 
   let orderBy: string = `m."lastVersionAt" DESC NULLS LAST`;
 
-  if (sort === ModelSort.HighestRated) orderBy = `mr."rating${period}" ASC`;
+  if (sort === ModelSort.HighestRated) orderBy = `mr."rating${period}Rank" ASC`;
   else if (sort === ModelSort.MostLiked) orderBy = `mr."favoriteCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostDownloaded) orderBy = `mr."downloadCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostDiscussed) orderBy = `mr."commentCount${period}Rank" ASC`;
@@ -338,7 +383,7 @@ export const getModelsRaw = async ({
       WHERE mf."modelVersionId" = mv."id"
         AND mf."type" = 'Model'
         AND (${Prisma.join(
-          fileFormats.map((format) => Prisma.sql`mf."metadata" @> '{"format": ${format}}'`),
+          fileFormats.map((format) => Prisma.raw(`mf."metadata" @> '{"format": "${format}"}'`)),
           ' OR '
         )})
     )`);
@@ -356,8 +401,6 @@ export const getModelsRaw = async ({
     );
   }
 
-  console.log(AND);
-
   const queryFrom = Prisma.sql`
     FROM "Model" m
     LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id" 
@@ -365,19 +408,7 @@ export const getModelsRaw = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  const models = await dbRead.$queryRaw<
-    (ModelRaw & {
-      rank: {
-        [`downloadCount${input.period}`]: number;
-        [`favoriteCount${input.period}`]: number;
-        [`commentCount${input.period}`]: number;
-        [`ratingCount${input.period}`]: number;
-        [`rating${input.period}`]: number;
-        [`collectedCount${input.period}`]: number;
-        [`tippedAmountCount${input.period}`]: number;
-      };
-    })[]
-  >`
+  const models = await dbRead.$queryRaw<ModelRaw[]>`
     SELECT
       m."id",
       m."name",
@@ -392,13 +423,13 @@ export const getModelsRaw = async ({
       m."mode",
       ${Prisma.raw(`
         jsonb_build_object(
-          "downloadCount${input.period}", mr."downloadCount${input.period}",
-          "favoriteCount${input.period}", mr."favoriteCount${input.period}",
-          "commentCount${input.period}", mr."commentCount${input.period}",
-          "ratingCount${input.period}", mr."ratingCount${input.period}",
-          "rating${input.period}", mr."rating${input.period}",
-          "collectedCount${input.period}", mr."collectedCount${input.period}",
-          "tippedAmountCount${input.period}", mr."tippedAmountCount${input.period}"
+          'downloadCount', mr."downloadCount${input.period}",
+          'favoriteCount', mr."favoriteCount${input.period}",
+          'commentCount', mr."commentCount${input.period}",
+          'ratingCount', mr."ratingCount${input.period}",
+          'rating', mr."rating${input.period}",
+          'collectedCount', mr."collectedCount${input.period}",
+          'tippedAmountCount', mr."tippedAmountCount${input.period}"
         ) as "rank",
       `)}
       (
@@ -454,6 +485,15 @@ export const getModelsRaw = async ({
   return {
     items: models.map((model) => ({
       ...model,
+      rank: {
+        [`downloadCount${input.period}`]: model.rank.downloadCount,
+        [`favoriteCount${input.period}`]: model.rank.favoriteCount,
+        [`commentCount${input.period}`]: model.rank.commentCount,
+        [`ratingCount${input.period}`]: model.rank.ratingCount,
+        [`rating${input.period}`]: model.rank.rating,
+        [`collectedCount${input.period}`]: model.rank.collectedCount,
+        [`tippedAmountCount${input.period}`]: model.rank.tippedAmountCount,
+      },
       modelVersions: [model.modelVersion].filter(isDefined),
       modelVersion: undefined,
     })),
@@ -802,7 +842,6 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
-  console.log(modelVersionIds);
   const clubRequirement = await entityRequiresClub({
     entities: modelVersionIds.map((id) => ({
       entityId: id,
@@ -826,7 +865,6 @@ export const getModelsWithImagesAndModelVersions = async ({
   //   nextCursor = nextItem?.id;
   // }
 
-  console.log('End of line?');
   const result = {
     nextCursor,
     isPrivate,
@@ -842,7 +880,6 @@ export const getModelsWithImagesAndModelVersions = async ({
         const canGenerate = !!version.generationCoverage?.covered;
         const requiresClub =
           clubRequirement.find((r) => r.entityId === version.id)?.requiresClub ?? false;
-        console.log(hashes, tagsOnModels);
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
