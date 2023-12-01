@@ -1,11 +1,13 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
 import {
+  clubMembershipOnClubInput,
   createClubMembershipInput,
   getInfiniteClubMembershipsSchema,
   updateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import {
   createClubMembershipHandler,
+  getClubMembershipOnClubHandler,
   getInfiniteClubMembershipsHandler,
   updateClubMembershipHandler,
 } from '~/server/controllers/clubMembership.controller';
@@ -23,4 +25,8 @@ export const clubMembershipRouter = router({
     .input(updateClubMembershipInput)
     .use(isFlagProtected('clubs'))
     .mutation(updateClubMembershipHandler),
+  getClubMembershipOnClub: protectedProcedure
+    .input(clubMembershipOnClubInput)
+    .use(isFlagProtected('clubs'))
+    .query(getClubMembershipOnClubHandler),
 });

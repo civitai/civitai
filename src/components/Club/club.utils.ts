@@ -325,6 +325,7 @@ export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
 };
 
 export const useQueryClubMembership = (
+  clubId: number,
   filters?: Partial<GetInfiniteClubMembershipsSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
@@ -332,6 +333,7 @@ export const useQueryClubMembership = (
   const { data, ...rest } = trpc.clubMembership.getInfinite.useInfiniteQuery(
     {
       ...filters,
+      clubId,
     },
     {
       enabled: !!currentUser,

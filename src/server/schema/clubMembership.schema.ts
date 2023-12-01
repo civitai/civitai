@@ -15,7 +15,7 @@ import { constants } from '~/server/common/constants';
 export const getInfiniteClubMembershipsSchema = infiniteQuerySchema.merge(
   z.object({
     userId: z.number().optional(),
-    clubId: z.number().optional(),
+    clubId: z.number(),
     limit: z.coerce.number().min(1).max(200).default(60),
     roles: z.array(z.nativeEnum(ClubMembershipRole)).optional(),
     clubTierId: z.number().optional(),
@@ -39,3 +39,9 @@ export const updateClubMembershipInput = z.object({
 });
 
 export type UpdateClubMembershipInput = z.infer<typeof updateClubMembershipInput>;
+
+export const clubMembershipOnClubInput = z.object({
+  clubId: z.number(),
+});
+
+export type ClubMembershipOnClubInput = z.infer<typeof clubMembershipOnClubInput>;

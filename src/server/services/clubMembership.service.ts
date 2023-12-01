@@ -2,6 +2,7 @@ import dayjs from 'dayjs';
 import { ClubMembershipRole, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   UpdateClubMembershipInput,
@@ -12,13 +13,11 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
-export const getUserClubMemberships = async <TSelect extends Prisma.ClubPostSelect>({
+export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { cursor, limit: take, clubId, clubTierId, roles, userId, sort },
   select,
 }: {
-  input: GetInfiniteClubMembershipsSchema & {
-    userId: number;
-  };
+  input: GetInfiniteClubMembershipsSchema;
   select: TSelect;
 }) => {
   const orderBy: Prisma.ClubMembershipFindManyArgs['orderBy'] = [];
@@ -37,6 +36,24 @@ export const getUserClubMemberships = async <TSelect extends Prisma.ClubPostSele
       role: (roles?.length ?? 0) > 0 ? { in: roles } : undefined,
     },
     orderBy,
+  });
+};
+
+export const clubMembershipOnClub = async <TSelect extends Prisma.ClubMembershipSelect>({
+  input: { clubId, userId },
+  select,
+}: {
+  input: ClubMembershipOnClubInput & { userId: number };
+  select: TSelect;
+}) => {
+  return dbRead.clubMembership.findUnique({
+    select,
+    where: {
+      userId_clubId: {
+        userId,
+        clubId,
+      },
+    },
   });
 };
 

@@ -22,13 +22,17 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import dayjs from 'dayjs';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 
 export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const { classes } = useClubFeedStyles();
   const { isOwner, isLoading: isLoadingOwnership } = useClubContributorStatus({
     clubId: clubTier.clubId,
   });
-  const { memberships, isLoading } = useQueryClubMembership({ clubId: clubTier.clubId });
+  const { data: membership, isLoading } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
+    clubId: clubTier.clubId,
+  });
   const {
     creatingClubMembership,
     createClubMembership,
@@ -39,9 +43,6 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   });
 
   const updating = updatingClubMembership || creatingClubMembership;
-
-  const [membership] = memberships;
-
   const isTierMember = membership?.clubTier?.id === clubTier.id;
 
   const TierCoverImage = () =>
@@ -204,7 +205,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
               </Text>
               <Text align="center">
                 You will not be charged at this time. Your membership will be updated at your next
-                billing date on {formatDate(membership.nextBillingAt)}.
+                billing date on {formatDate(membership?.nextBillingAt)}.
               </Text>
             </Stack>
           </Center>

@@ -3,13 +3,15 @@ import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandl
 import { Context } from '~/server/createContext';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
+  ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import {
+  clubMembershipOnClub,
   createClubMembership,
-  getUserClubMemberships,
+  getClubMemberships,
   updateClubMembership,
 } from '~/server/services/clubMembership.service';
 import { userContributingClubs } from '~/server/services/club.service';
@@ -26,9 +28,23 @@ export const getInfiniteClubMembershipsHandler = async ({
   const { user } = ctx;
   const limit = input.limit + 1 ?? 10;
 
+  const userClubs = await userContributingClubs({ userId: user.id });
+  const isClubOwner = userClubs.find((c) => c.id === input.clubId);
+  const isClubAdmin = userClubs.find(
+    (c) => c.id === input.clubId && c.membership?.role === ClubMembershipRole.Admin
+  );
+
+  if (!(user.isModerator || isClubOwner || isClubAdmin)) {
+    throw throwAuthorizationError("You are not authorized to view this club's memberships");
+  }
+
+  if (input.userId && input.userId !== user.id && !user.isModerator) {
+    throw throwAuthorizationError('You are not authorized to view this user memberships');
+  }
+
   try {
-    const items = await getUserClubMemberships({
-      input: { ...input, limit, userId: user.id },
+    const items = await getClubMemberships({
+      input: { ...input, limit },
       select: {
         id: true,
         role: true,
@@ -79,6 +95,69 @@ export const getInfiniteClubMembershipsHandler = async ({
       nextCursor,
       items,
     };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getClubMembershipOnClubHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ClubMembershipOnClubInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { clubId } = input;
+  const { user } = ctx;
+  if (!user) {
+    return null;
+  }
+
+  try {
+    return clubMembershipOnClub({
+      input: {
+        clubId,
+        userId: user.id,
+      },
+      select: {
+        id: true,
+        role: true,
+        startedAt: true,
+        nextBillingAt: true,
+        unitAmount: true,
+        expiresAt: true,
+        cancelledAt: true,
+        downgradeClubTierId: true,
+        club: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        clubTier: {
+          select: {
+            id: true,
+            name: true,
+            unitAmount: true,
+            currency: true,
+            coverImage: {
+              select: imageSelect,
+            },
+          },
+        },
+        downgradeClubTier: {
+          select: {
+            id: true,
+            name: true,
+            unitAmount: true,
+            currency: true,
+            coverImage: {
+              select: imageSelect,
+            },
+          },
+        },
+      },
+    });
   } catch (error) {
     throw throwDbError(error);
   }

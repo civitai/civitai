@@ -605,6 +605,14 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
 
   if (userId && engagement) {
     if (engagement === 'owned') AND.push({ userId });
+    if (engagement === 'memberships')
+      AND.push({
+        memberships: {
+          some: {
+            userId,
+          },
+        },
+      });
   }
 
   if (!userId) {

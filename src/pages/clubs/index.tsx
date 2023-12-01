@@ -9,7 +9,6 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { constants } from '~/server/common/constants';
-import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -99,9 +98,6 @@ export default function ClubsPage() {
             />
             <Group position="apart" spacing={8}>
               {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
-                <BountyFiltersDropdown />
-              </Group>
             </Group>
             {query.engagement && (
               <Stack spacing="xl" align="flex-start">

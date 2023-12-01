@@ -239,7 +239,7 @@ export const constants = {
     minMonthlyBuzz: 5000,
     headerImageAspectRatio: 1 / 6,
     postCoverImageAspectRatio: 1 / 4,
-    engagementTypes: ['owned'], //  TODO.clubs: 'supporting', 'contributing', 'administrating'
+    engagementTypes: ['owned', 'memberships'],
   },
 } as const;
 

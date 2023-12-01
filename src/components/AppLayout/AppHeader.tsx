@@ -28,6 +28,7 @@ import {
   IconBarbell,
   IconBookmark,
   IconCircleDashed,
+  IconClubs,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -376,6 +377,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             My bounties
+          </Group>
+        ),
+      },
+      {
+        href: '/clubs?engagement=owned',
+        as: '/clubs',
+        visible: !!currentUser && features.clubs,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My clubs
           </Group>
         ),
       },
