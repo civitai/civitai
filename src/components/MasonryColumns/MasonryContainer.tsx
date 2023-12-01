@@ -64,7 +64,7 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
 
   return (
     <Container {...containerProps}>
-      <div ref={containerRef} className={classes.container} id="test">
+      <div ref={containerRef} className={classes.container}>
         <div
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}
