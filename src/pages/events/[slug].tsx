@@ -360,12 +360,17 @@ export default function EventPageDetails({
                           );
                         })}
                       </Stack>
-                      <Text size="xs" color="dimmed">
-                        As of {formatDate(startTime, 'MMMM D, YYYY h:mma')}. Refreshes in:{' '}
-                        <Countdown endTime={resetTime} />
-                      </Text>
                     </Stack>
                   </Card>
+                </Grid.Col>
+                <Grid.Col span={12} mt={-40}>
+                  <Text size="md" color="dimmed" ta="center">
+                    You have{' '}
+                    <Text component="span" weight={500} td="underline">
+                      <Countdown endTime={resetTime} />
+                    </Text>{' '}
+                    to earn your light and to claim the top position for your team for the day.
+                  </Text>
                 </Grid.Col>
                 {/* <Grid.Col xs={12} sm="auto">
                   <Card

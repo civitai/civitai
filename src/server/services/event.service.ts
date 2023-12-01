@@ -24,9 +24,9 @@ export function getTeamScores({ event }: EventInput) {
   }
 }
 
-export function getTeamScoreHistory({ event, window }: TeamScoreHistoryInput) {
+export function getTeamScoreHistory(input: TeamScoreHistoryInput) {
   try {
-    return eventEngine.getTeamScoreHistory({ event, window });
+    return eventEngine.getTeamScoreHistory(input);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

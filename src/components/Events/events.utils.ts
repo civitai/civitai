@@ -1,5 +1,6 @@
 import { trpc } from '~/utils/trpc';
 import { EventInput } from '~/server/schema/event.schema';
+import dayjs from 'dayjs';
 
 export const useQueryEvent = ({ event }: EventInput) => {
   const { data: eventData, isLoading: loadingData } = trpc.event.getData.useQuery({ event });
@@ -9,7 +10,8 @@ export const useQueryEvent = ({ event }: EventInput) => {
   const { data: teamScoresHistory = [], isLoading: loadingHistory } =
     trpc.event.getTeamScoreHistory.useQuery({
       event,
-      window: 'day',
+      window: 'hour',
+      start: dayjs().subtract(3, 'days').startOf('hour').toDate(),
     });
   const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery({
     event,

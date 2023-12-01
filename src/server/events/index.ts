@@ -269,7 +269,7 @@ export const eventEngine = {
     teamScores.forEach((x, i) => (x.rank = i + 1));
     return teamScores;
   },
-  async getTeamScoreHistory({ event, window }: TeamScoreHistoryInput) {
+  async getTeamScoreHistory({ event, window, start }: TeamScoreHistoryInput) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
@@ -278,7 +278,7 @@ export const eventEngine = {
 
     const summaries = await getAccountSummary({
       accountIds: Object.values(accounts),
-      start: eventDef.startDate,
+      start: start ?? eventDef.startDate,
       window,
     });
 

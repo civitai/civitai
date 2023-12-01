@@ -172,29 +172,32 @@ export function EventContributors({ event }: { event: string }) {
             ) : (
               topTeamContributors.map(([team, contributors]) => (
                 <Grid.Col key={team} xs={12} sm="auto">
-                  <Stack spacing="xl" h="100%" justify="space-between">
+                  <Stack spacing="xl" h="100%">
                     <Text size={24} weight="bold">
                       {team} Team
                     </Text>
+
                     {contributors.length > 0 ? (
-                      contributors.map((contributor) => (
-                        <UserAvatar
-                          key={contributor.userId}
-                          user={contributor.user}
-                          avatarSize="md"
-                          withUsername
-                          linkToProfile
-                        />
-                      ))
+                      <Stack spacing="sm">
+                        {contributors.map((contributor) => (
+                          <UserAvatar
+                            key={contributor.userId}
+                            user={contributor.user}
+                            avatarSize="md"
+                            withUsername
+                            linkToProfile
+                          />
+                        ))}
+                      </Stack>
                     ) : (
-                      <Paper p="xl">
+                      <Paper py="md">
                         <Center>
                           <Text color="dimmed">No donors yet</Text>
                         </Center>
                       </Paper>
                     )}
 
-                    <Group position="right">
+                    <Group position="right" mt="auto">
                       <Link href={`/leaderboard/${event}:${team.toLowerCase()}`}>
                         <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                           View All

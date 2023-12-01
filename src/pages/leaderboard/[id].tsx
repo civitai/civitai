@@ -99,6 +99,7 @@ export default function Leaderboard() {
   const [selectedLeaderboard, setSelectedLeaderboard] = useState(
     leaderboards.find((x) => x.id === id)
   );
+  const hasLegends = !selectedLeaderboard?.title.includes('Donors');
   const [selectedPosition, setSelectedPosition] = useState<number | null>(null);
   const leaderboardResults = board === 'season' ? leaderboardSeason : leaderboardLegend;
   const loadingLeaderboardResults =
@@ -106,7 +107,8 @@ export default function Leaderboard() {
 
   if (
     (selectedLeaderboard && selectedLeaderboard.id !== id) ||
-    (selectedPosition && selectedPosition !== position)
+    (selectedPosition && selectedPosition !== position) ||
+    (!hasLegends && board === 'legend')
   ) {
     const shallow = selectedLeaderboard?.id === id && selectedPosition !== position;
 
@@ -115,7 +117,7 @@ export default function Leaderboard() {
         pathname: `/leaderboard/${selectedLeaderboard?.id}`,
         query: removeEmpty({
           position: selectedPosition ? String(selectedPosition) : undefined,
-          board: board === 'season' ? undefined : board,
+          board: board === 'season' || (!hasLegends && board === 'legend') ? undefined : board,
         }),
       },
       undefined,
@@ -181,7 +183,7 @@ export default function Leaderboard() {
             <Stack spacing={0} maw={600} w="100%">
               <Group spacing={8} noWrap>
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
-                <LegendsToggle className={classes.legendsToggleSm} />
+                {hasLegends && <LegendsToggle className={classes.legendsToggleSm} />}
                 <ActionIcon
                   className={classes.drawerButton}
                   size="md"
@@ -191,7 +193,7 @@ export default function Leaderboard() {
                   <IconLayoutSidebarLeftExpand />
                 </ActionIcon>
               </Group>
-              <LegendsToggle className={classes.legendsToggle} />
+              {hasLegends && <LegendsToggle className={classes.legendsToggle} />}
               <Group spacing={5}>
                 <Text className={classes.slogan} color="dimmed" size="lg">
                   {selectedLeaderboard?.description}
