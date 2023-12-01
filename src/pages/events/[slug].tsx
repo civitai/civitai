@@ -632,7 +632,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
     <>
       <HeroCard
         title={<JdrfLogo width={145} height={40} />}
-        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, the Juvenile Diabetes Research Foundation."
+        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, the Juvenile Diabetes Research Foundation. Want to contribute to the cause without competing? [Donate here!](https://www2.jdrf.org/site/TR?fr_id=9410&pg=personal&px=13945459)"
         imageUrl="https://www.jdrf.org/wp-content/uploads/2023/02/d-b-1-800x474-1.png"
         externalLink="https://www.jdrf.org/"
       />
