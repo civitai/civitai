@@ -176,13 +176,32 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     supportsGeneration,
-    collectionId, // TODO: Support
+    needsReview,
+    collectionId,
     fileFormats,
     clubId,
   } = input;
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
+  const WITH: Prisma.Sql[] = [];
+
+  if (needsReview && sessionUser?.isModerator) {
+    AND.push(Prisma.sql`
+      ( 
+        m."meta"->>'needsReview' = 'true' 
+        OR
+        EXISTS (
+          SELECT 1 FROM "ModelVersion" mv
+          WHERE mv."modelId" = m."id"
+            AND mv."meta"->>'needsReview' = 'true'
+        )
+      )
+    `);
+
+    isPrivate = true;
+  }
+
   if (tagname ?? tag) {
     AND.push(
       Prisma.sql`EXISTS (
@@ -359,7 +378,7 @@ export const getModelsRaw = async ({
     isPrivate = !permissions.publicCollection;
   }
 
-  let orderBy: string = `m."lastVersionAt" DESC NULLS LAST`;
+  let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
 
   if (sort === ModelSort.HighestRated) orderBy = `mr."rating${period}Rank" ASC`;
   else if (sort === ModelSort.MostLiked) orderBy = `mr."favoriteCount${period}Rank" ASC`;
@@ -406,14 +425,41 @@ export const getModelsRaw = async ({
     );
   }
 
+  if (clubId) {
+    WITH.push(Prisma.sql`
+      "clubModels" AS (
+        SELECT DISTINCT ON (mv."modelId") "modelId"
+        FROM "EntityAccess" ea
+        JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
+        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
+        WHERE ea."accessorType" IN ('Club', 'ClubTier') 
+          AND (ea."accessorId" = ${clubId} OR ct."clubId" = ${clubId})
+          AND ea."accessToType" = 'ModelVersion'
+      )
+    `);
+  }
+
+  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const queryFrom = Prisma.sql`
     FROM "Model" m
     LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id" 
     LEFT JOIN "User" u ON m."userId" = u.id
+    ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
+  let modelVersionWhere: Prisma.Sql | undefined;
+
+  if (!sessionUser?.isModerator || !status?.length) {
+    modelVersionWhere = Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`;
+  }
+
+  if (baseModels) {
+    modelVersionWhere = Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`;
+  }
+
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
+    ${queryWith}
     SELECT
       m."id",
       m."name",
@@ -463,9 +509,10 @@ export const getModelsRaw = async ({
              'covered', COALESCE(gc."covered", false)
             )
          ) as "modelVersion"
-         FROM "ModelVersion" mv 
+       FROM "ModelVersion" mv 
 	     LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
 	     WHERE mv."modelId" = m."id"
+         ${modelVersionWhere ? Prisma.sql`AND ${modelVersionWhere}` : Prisma.sql``}
 		   ORDER BY mv."index" ASC LIMIT 1
       ) as "modelVersion",
 	    jsonb_build_object(
