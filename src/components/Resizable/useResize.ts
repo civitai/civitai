@@ -37,14 +37,14 @@ export const useResize = (options: Props) => {
   } = options ?? {};
   const [ref, setRef] = useState<HTMLElement | null>(null);
   const [resizerRef, setResizerRef] = useState<HTMLElement | null>(null);
-  const [contentRef, setContentRef] = useState<HTMLElement | null>(null);
   const [isResizing, setIsResizing] = useState(false);
-  const sidebarWidth = useResizeStore(
-    useCallback((state) => state[name] ?? defaultWidth, [name, defaultWidth])
-  );
+  const frame = useRef(0);
+  // const sidebarWidth = useResizeStore(
+  //   useCallback((state) => state[name] ?? defaultWidth, [name, defaultWidth])
+  // );
 
   useEffect(() => {
-    useResizeStore.setState(() => ({ [name]: sidebarWidth }));
+    useResizeStore.setState(() => ({ [name]: useResizeStore.getState()[name] ?? defaultWidth }));
   }, [name]) // eslint-disable-line
 
   const mouseMoveClient = orientation === 'horizontal' ? 'clientX' : 'clientY';
@@ -56,6 +56,7 @@ export const useResize = (options: Props) => {
 
   const stopResizing = useCallback(() => {
     setIsResizing(false);
+    if (frame.current) cancelAnimationFrame(frame.current);
   }, []);
 
   const resize = useCallback(
@@ -72,16 +73,20 @@ export const useResize = (options: Props) => {
 
           return width;
         };
-        useResizeStore.setState(() => ({ [name]: getWidth() }));
+        const width = getWidth();
+        useResizeStore.setState(() => ({ [name]: width }));
+        frame.current = requestAnimationFrame(() => {
+          ref.style.width = `${width}px`;
+        });
       }
     },
     [isResizing] // eslint-disable-line
   );
 
-  useEffect(() => {
-    if (ref) ref.style.width = `${sidebarWidth}px`;
-    if (contentRef) contentRef.style.overflowX = 'auto';
-  }, [sidebarWidth, ref, contentRef]);
+  // useEffect(() => {
+  //   if (ref) ref.style.width = `${sidebarWidth}px`;
+  //   // if (contentRef) contentRef.style.overflowX = 'auto';
+  // }, [sidebarWidth, ref, contentRef]);
 
   // useEffect(() => {
   //   if (resizerRef) {
@@ -107,6 +112,5 @@ export const useResize = (options: Props) => {
   return {
     containerRef: setRef,
     resizerRef: setResizerRef,
-    contentRef: setContentRef,
   };
 };

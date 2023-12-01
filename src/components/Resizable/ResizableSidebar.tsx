@@ -24,7 +24,7 @@ export function ResizableSidebarInner({
   ...props
 }: ResizableSidebarProps) {
   const { classes, cx } = useStyles({ resizeFrom: resizePosition });
-  const { containerRef, resizerRef, contentRef } = useResize({
+  const { containerRef, resizerRef } = useResize({
     resizePosition,
     minWidth,
     maxWidth,
@@ -42,9 +42,7 @@ export function ResizableSidebarInner({
       ref={containerRef}
     >
       {resizePosition === 'left' && resizer}
-      <div className={classes.content} ref={contentRef}>
-        {children}
-      </div>
+      <div className={classes.content}>{children}</div>
       {resizePosition === 'right' && resizer}
     </div>
   );
