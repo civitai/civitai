@@ -358,7 +358,7 @@ export const publishModelHandler = async ({
       })
       .catch(handleLogError);
 
-    if (input.publishedAt && input.publishedAt <= new Date()) {
+    if (!input.publishedAt || input.publishedAt <= new Date()) {
       await eventEngine.processEngagement({
         userId: updatedModel.userId,
         type: 'published',
