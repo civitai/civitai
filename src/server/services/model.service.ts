@@ -1,6 +1,8 @@
 import {
   Availability,
   CommercialUse,
+  CosmeticSource,
+  CosmeticType,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -133,6 +135,16 @@ type ModelRaw = {
     deletedAt: Date;
     image: string;
   };
+  userCosmetics: {
+    data: Prisma.JsonValue;
+    cosmetic: {
+      data: Prisma.JsonValue;
+      type: CosmeticType;
+      id: number;
+      name: string;
+      source: CosmeticSource;
+    };
+  }[];
 };
 
 export const getModelsRaw = async ({
@@ -432,8 +444,14 @@ export const getModelsRaw = async ({
         FROM "EntityAccess" ea
         JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
         LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE ea."accessorType" IN ('Club', 'ClubTier') 
-          AND (ea."accessorId" = ${clubId} OR ct."clubId" = ${clubId})
+        WHERE (
+            (
+             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
+            )
+            OR (
+              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
+            )
+          )
           AND ea."accessToType" = 'ModelVersion'
       )
     `);
@@ -521,6 +539,28 @@ export const getModelsRaw = async ({
         'deletedAt', u."deletedAt",
         'image', u."image"
       ) as "user",
+      (
+        SELECT
+          jsonb_agg(
+            jsonb_build_object( 
+              'data', uc.data,
+              'cosmetic', jsonb_build_object(
+                'id', c.id,
+                'data', c.data,
+                'type', c.type,
+                'source', c.source,
+                'name', c.name,
+                'leaderboardId', c."leaderboardId",
+                'leaderboardPosition', c."leaderboardPosition"
+              )
+            )
+          ) 
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+            AND "equippedAt" IS NOT NULL
+        WHERE uc."userId" = m."userId"
+        GROUP BY uc."userId"
+      ) as "userCosmetics",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
     
@@ -535,19 +575,22 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models.map((model) => ({
+    items: models.map(({ userCosmetics, rank, modelVersion, ...model }) => ({
       ...model,
       rank: {
-        [`downloadCount${input.period}`]: model.rank.downloadCount,
-        [`favoriteCount${input.period}`]: model.rank.favoriteCount,
-        [`commentCount${input.period}`]: model.rank.commentCount,
-        [`ratingCount${input.period}`]: model.rank.ratingCount,
-        [`rating${input.period}`]: model.rank.rating,
-        [`collectedCount${input.period}`]: model.rank.collectedCount,
-        [`tippedAmountCount${input.period}`]: model.rank.tippedAmountCount,
+        [`downloadCount${input.period}`]: rank.downloadCount,
+        [`favoriteCount${input.period}`]: rank.favoriteCount,
+        [`commentCount${input.period}`]: rank.commentCount,
+        [`ratingCount${input.period}`]: rank.ratingCount,
+        [`rating${input.period}`]: rank.rating,
+        [`collectedCount${input.period}`]: rank.collectedCount,
+        [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
       },
-      modelVersions: [model.modelVersion].filter(isDefined),
-      modelVersion: undefined,
+      modelVersions: [modelVersion].filter(isDefined),
+      user: {
+        ...model.user,
+        cosmetics: userCosmetics,
+      },
     })),
     nextCursor,
     isPrivate,

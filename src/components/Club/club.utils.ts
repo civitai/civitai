@@ -14,24 +14,15 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useMemo } from 'react';
 import {
-  applyUserPreferencesBounties,
   applyUserPreferencesClub,
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
-import {
-  BountyGetAll,
-  ClubGetAll,
-  ClubMembershipGetAllRecord,
-  ClubPostGetAll,
-  ClubTier,
-  UserClub,
-} from '~/types/router';
+import { ClubGetAll, ClubPostGetAll, UserClub } from '~/types/router';
 import {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
-import dayjs from 'dayjs';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -357,7 +348,7 @@ export const useQueryClubMembership = (
 };
 
 export const useClubFilters = () => {
-  const storeFilters = useFiltersContext((state) => state.club);
+  const storeFilters = useFiltersContext((state) => state.clubs);
   return removeEmpty(storeFilters);
 };
 

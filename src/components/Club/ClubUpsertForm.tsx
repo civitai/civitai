@@ -77,7 +77,7 @@ export function ClubUpsertForm({
     shouldUnregister: false,
   });
 
-  const [avatar] = form.watch(['avatar']);
+  const [avatar, coverImage] = form.watch(['avatar', 'coverImage']);
 
   const { upsertClub, upserting } = useMutateClub({ clubId: club?.id as number | undefined });
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
@@ -146,6 +146,45 @@ export function ClubUpsertForm({
                   <InputSimpleImageUpload
                     name="avatar"
                     label="Profile Image"
+                    aspectRatio={1}
+                    // Im aware ideally this should ideally be 450, but images will look better on a higher res here
+                    previewWidth={96}
+                    previewDisabled
+                    style={{ maxWidth: '100%' }}
+                  />
+                </Group>
+                <Group grow>
+                  {coverImage && (
+                    <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
+                      <Avatar
+                        src={getEdgeUrl(coverImage?.url, { transcode: false })}
+                        size={124}
+                        radius="sm"
+                      />
+                      <Tooltip label="Remove image">
+                        <ActionIcon
+                          size="sm"
+                          variant="filled"
+                          color="red"
+                          onClick={() =>
+                            form.setValue('coverImage', club?.coverImage?.id ? null : undefined)
+                          }
+                          sx={(theme) => ({
+                            position: 'absolute',
+                            top: theme.spacing.xs * 0.4,
+                            right: theme.spacing.xs * 0.4,
+                            zIndex: 1,
+                          })}
+                        >
+                          <IconTrash />
+                        </ActionIcon>
+                      </Tooltip>
+                    </div>
+                  )}
+                  <InputSimpleImageUpload
+                    name="coverImage"
+                    label="Cover Image"
+                    description="This will appear in the main feed as your club's cover image."
                     aspectRatio={1}
                     // Im aware ideally this should ideally be 450, but images will look better on a higher res here
                     previewWidth={96}

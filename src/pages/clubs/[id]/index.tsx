@@ -289,14 +289,20 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                 {children}
               </Grid.Col>
               <Grid.Col xs={12} md={3}>
-                {tiers.length && (
-                  <Stack>
-                    <Title order={3}>Membership Tiers</Title>
-                    {tiers.map((tier) => (
-                      <ClubTierItem clubTier={tier} />
-                    ))}
-                  </Stack>
-                )}
+                <Stack>
+                  <Title order={3}>Membership Tiers</Title>
+                  {tiers.length > 0 ? (
+                    <>
+                      {tiers.map((tier) => (
+                        <ClubTierItem clubTier={tier} />
+                      ))}
+                    </>
+                  ) : (
+                    <Text color="dimmed">
+                      The owner of this club has not added any club tiers yet.
+                    </Text>
+                  )}
+                </Stack>
               </Grid.Col>
             </Grid>
           </Stack>

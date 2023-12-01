@@ -48,7 +48,7 @@ export function ClubCard({ data }: Props) {
                         className={classes.image}
                       />
                     ) : (
-                      <MediaHash {...cover} />
+                      <MediaHash {...coverImage} />
                     )
                   ) : (
                     <Text color="dimmed">This club has no cover image</Text>
@@ -83,7 +83,7 @@ export function ClubCard({ data }: Props) {
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
-            {!cover.scannedAt && (
+            {coverImage && !coverImage?.scannedAt && (
               <HoverCard width={300} position="top-end" withinPortal withArrow>
                 <HoverCard.Target>
                   <ThemeIcon radius="xl" size="md" color="yellow">

@@ -17,6 +17,7 @@ import {
   BountySort,
   BountyStatus,
   BrowsingMode,
+  ClubSort,
   CollectionSort,
   ImageSort,
   ModelSort,
@@ -126,7 +127,7 @@ const bountyFilterSchema = z
 type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
 const clubFilterSchema = z
   .object({
-    sort: z.nativeEnum(BountySort).default(BountySort.EndingSoon),
+    sort: z.nativeEnum(ClubSort).default(ClubSort.Newest),
   })
   .merge(
     getInfiniteClubSchema.omit({
