@@ -48,7 +48,7 @@ export function GenerationSidebar() {
     <ResizableSidebar
       name="generation-sidebar"
       resizePosition="right"
-      minWidth={300}
+      minWidth={350}
       maxWidth={800}
       defaultWidth={400}
     >
