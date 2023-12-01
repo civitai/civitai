@@ -42,107 +42,106 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
   };
 
   return (
-    <HolidayFrame {...cardDecoration}>
-      <FeedCard
-        href={`/articles/${id}/${slugit(title)}`}
-        aspectRatio={aspectRatio}
-        useCSSAspectRatio={useCSSAspectRatio}
-        className={classes.link}
-      >
-        <div className={classes.root}>
-          <Group
-            spacing={4}
-            position="apart"
-            className={cx(classes.contentOverlay, classes.top)}
-            noWrap
-          >
-            {category && (
-              <Badge
-                color="dark"
-                size="sm"
-                variant="light"
-                radius="xl"
-                sx={(theme) => ({
-                  position: 'absolute',
-                  top: theme.spacing.xs,
-                  left: theme.spacing.xs,
-                  zIndex: 1,
-                })}
-              >
-                <Text color="white">{category.name}</Text>
-              </Badge>
-            )}
-            <ArticleContextMenu article={data} ml="auto" />
-          </Group>
-          {cover && (
-            <EdgeMedia
-              src={cover}
-              // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
-              width={IMAGE_CARD_WIDTH * 2.5}
-              placeholder="empty"
-              className={classes.image}
-              loading="lazy"
-            />
+    <FeedCard
+      href={`/articles/${id}/${slugit(title)}`}
+      aspectRatio={aspectRatio}
+      useCSSAspectRatio={useCSSAspectRatio}
+      className={classes.link}
+      cardDecoration={cardDecoration}
+    >
+      <div className={classes.root}>
+        <Group
+          spacing={4}
+          position="apart"
+          className={cx(classes.contentOverlay, classes.top)}
+          noWrap
+        >
+          {category && (
+            <Badge
+              color="dark"
+              size="sm"
+              variant="light"
+              radius="xl"
+              sx={(theme) => ({
+                position: 'absolute',
+                top: theme.spacing.xs,
+                left: theme.spacing.xs,
+                zIndex: 1,
+              })}
+            >
+              <Text color="white">{category.name}</Text>
+            </Badge>
           )}
-          <Stack
-            className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-            spacing="sm"
-          >
-            {user?.id !== -1 && (
-              <UnstyledButton
-                sx={{ color: 'white' }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
+          <ArticleContextMenu article={data} ml="auto" />
+        </Group>
+        {cover && (
+          <EdgeMedia
+            src={cover}
+            // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
+            width={IMAGE_CARD_WIDTH * 2.5}
+            placeholder="empty"
+            className={classes.image}
+            loading="lazy"
+          />
+        )}
+        <Stack
+          className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
+          spacing="sm"
+        >
+          {user?.id !== -1 && (
+            <UnstyledButton
+              sx={{ color: 'white' }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
 
-                  router.push(`/user/${user.username}`);
-                }}
-              >
-                <UserAvatar user={user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
-              </UnstyledButton>
+                router.push(`/user/${user.username}`);
+              }}
+            >
+              <UserAvatar user={user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
+            </UnstyledButton>
+          )}
+          <Stack spacing={0}>
+            {publishedAt && (
+              <Text size="xs" weight={500} color="white" inline>
+                {formatDate(publishedAt)}
+              </Text>
             )}
-            <Stack spacing={0}>
-              {publishedAt && (
-                <Text size="xs" weight={500} color="white" inline>
-                  {formatDate(publishedAt)}
-                </Text>
-              )}
-              {title && (
-                <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
-                  {title}
-                </Text>
-              )}
-            </Stack>
-            <Group position="apart">
-              <Group spacing={4}>
-                <IconBadge icon={<IconBookmark size={14} />} color="dark">
-                  <Text size="xs" color="white">
-                    {abbreviateNumber(favoriteCount)}
-                  </Text>
-                </IconBadge>
-                <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
-                  <Text size="xs" color="white">
-                    {abbreviateNumber(commentCount)}
-                  </Text>
-                </IconBadge>
-                <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
-                  <IconBadge icon={<IconBolt size={14} />} color="dark">
-                    <Text size="xs" color="white">
-                      {abbreviateNumber(tippedAmountCount + tippedAmount)}
-                    </Text>
-                  </IconBadge>
-                </InteractiveTipBuzzButton>
-              </Group>
-              <IconBadge icon={<IconEye size={14} />} color="dark">
+            {title && (
+              <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+                {title}
+              </Text>
+            )}
+          </Stack>
+          <Group position="apart">
+            <Group spacing={4}>
+              <IconBadge icon={<IconBookmark size={14} />} color="dark">
                 <Text size="xs" color="white">
-                  {abbreviateNumber(viewCount)}
+                  {abbreviateNumber(favoriteCount)}
                 </Text>
               </IconBadge>
+              <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
+                <Text size="xs" color="white">
+                  {abbreviateNumber(commentCount)}
+                </Text>
+              </IconBadge>
+              <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
+                <IconBadge icon={<IconBolt size={14} />} color="dark">
+                  <Text size="xs" color="white">
+                    {abbreviateNumber(tippedAmountCount + tippedAmount)}
+                  </Text>
+                </IconBadge>
+              </InteractiveTipBuzzButton>
             </Group>
-          </Stack>
-        </div>
-      </FeedCard>
-    </HolidayFrame>
+            <IconBadge icon={<IconEye size={14} />} color="dark">
+              <Text size="xs" color="white">
+                {abbreviateNumber(viewCount)}
+              </Text>
+            </IconBadge>
+          </Group>
+        </Stack>
+      </div>
+    </FeedCard>
   );
 }
 

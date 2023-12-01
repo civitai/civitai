@@ -47,6 +47,7 @@ import { CollectionType, CosmeticType } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
+import { InView } from 'react-intersection-observer';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 import { StarRating } from '../StartRating/StarRating';
@@ -58,7 +59,6 @@ import {
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 
 const IMAGE_CARD_WIDTH = 450;
@@ -69,7 +69,6 @@ const querySchema = z.object({
 });
 
 export function ModelCard({ data }: Props) {
-  const { ref, inView } = useInView({ rootMargin: '600px' });
   const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
@@ -189,6 +188,14 @@ export function ModelCard({ data }: Props) {
   let href = `/models/${data.id}/${slugit(data.name)}`;
   if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
 
+  useEffect(() => {
+    if (!modelId || modelId !== data.id) return;
+    const elem = document.getElementById(`${modelId}`);
+    if (elem) {
+      elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+    }
+  }, [modelId, data.id]);
+
   const cardDecoration = data.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
   ) as (typeof data.user.cosmetics)[number] & {
@@ -196,265 +203,271 @@ export function ModelCard({ data }: Props) {
   };
 
   return (
-    <HolidayFrame {...cardDecoration}>
-      <FeedCard className={!data.image ? classes.noImage : undefined} href={href}>
-        <div className={classes.root} ref={ref}>
-          {inView && (
-            <>
-              {data.image && (
-                <ImageGuard
-                  images={[data.image]}
-                  connect={{ entityId: data.id, entityType: 'model' }}
-                  render={(image) => (
-                    <ImageGuard.Content>
-                      {({ safe }) => {
-                        // Small hack to prevent blurry landscape images
-                        const originalAspectRatio =
-                          image.width && image.height ? image.width / image.height : 1;
+    <FeedCard
+      className={cx(classes.link, !data.image && classes.noImage)}
+      href={href}
+      cardDecoration={cardDecoration}
+    >
+      <InView rootMargin="600px">
+        {({ ref, inView }) => (
+          <div className={classes.root} ref={ref}>
+            {inView && (
+              <>
+                {data.image && (
+                  <ImageGuard
+                    images={[data.image]}
+                    connect={{ entityId: data.id, entityType: 'model' }}
+                    render={(image) => (
+                      <ImageGuard.Content>
+                        {({ safe }) => {
+                          // Small hack to prevent blurry landscape images
+                          const originalAspectRatio =
+                            image.width && image.height ? image.width / image.height : 1;
 
-                        return (
-                          <>
-                            <Group
-                              spacing={4}
-                              position="apart"
-                              align="start"
-                              className={cx(classes.contentOverlay, classes.top)}
-                              noWrap
-                            >
-                              <Group spacing={4}>
-                                <ImageGuard.ToggleConnect
-                                  className={classes.chip}
-                                  position="static"
-                                />
-                                <Badge
-                                  className={cx(classes.infoChip, classes.chip)}
-                                  variant="light"
-                                  radius="xl"
-                                >
-                                  <Text color="white" size="xs" transform="capitalize">
-                                    {getDisplayName(data.type)}
-                                  </Text>
-                                  {isSDXL && (
-                                    <>
-                                      <Divider orientation="vertical" />
-                                      <Text color="white" size="xs">
-                                        XL
-                                      </Text>
-                                    </>
-                                  )}
-                                </Badge>
-
-                                {(isNew || isUpdated) && (
-                                  <Badge
+                          return (
+                            <>
+                              <Group
+                                spacing={4}
+                                position="apart"
+                                align="start"
+                                className={cx(classes.contentOverlay, classes.top)}
+                                noWrap
+                              >
+                                <Group spacing={4}>
+                                  <ImageGuard.ToggleConnect
                                     className={classes.chip}
-                                    variant="filled"
+                                    position="static"
+                                  />
+                                  <Badge
+                                    className={cx(classes.infoChip, classes.chip)}
+                                    variant="light"
                                     radius="xl"
-                                    sx={(theme) => ({
-                                      backgroundColor: isUpdated
-                                        ? '#1EBD8E'
-                                        : theme.colors.blue[theme.fn.primaryShade()],
-                                    })}
                                   >
                                     <Text color="white" size="xs" transform="capitalize">
-                                      {isUpdated ? 'Updated' : 'New'}
+                                      {getDisplayName(data.type)}
                                     </Text>
+                                    {isSDXL && (
+                                      <>
+                                        <Divider orientation="vertical" />
+                                        <Text color="white" size="xs">
+                                          XL
+                                        </Text>
+                                      </>
+                                    )}
                                   </Badge>
-                                )}
-                              </Group>
-                              <Stack spacing="xs">
-                                {contextMenuItems.length > 0 && (
-                                  <Menu position="left-start" withArrow offset={-5}>
-                                    <Menu.Target>
-                                      <ActionIcon
-                                        variant="transparent"
-                                        p={0}
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                        }}
-                                      >
-                                        <IconDotsVertical
-                                          size={24}
-                                          color="#fff"
-                                          style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                        />
-                                      </ActionIcon>
-                                    </Menu.Target>
-                                    <Menu.Dropdown>
-                                      {contextMenuItems.map((el) => el)}
-                                    </Menu.Dropdown>
-                                  </Menu>
-                                )}
-                                {features.imageGeneration && data.canGenerate && (
-                                  <HoverActionButton
-                                    label="Create"
-                                    size={30}
-                                    color="white"
-                                    variant="filled"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      generationPanel.open({
-                                        type: 'modelVersion',
-                                        id: data.version.id,
-                                      });
-                                    }}
-                                  >
-                                    <IconBrush stroke={2.5} size={16} />
-                                  </HoverActionButton>
-                                )}
-                                <CivitiaLinkManageButton
-                                  modelId={data.id}
-                                  modelName={data.name}
-                                  modelType={data.type}
-                                  hashes={data.hashes}
-                                  noTooltip
-                                  iconSize={16}
-                                >
-                                  {({ color, onClick, icon, label }) => (
-                                    <HoverActionButton
-                                      onClick={onClick}
-                                      label={label}
-                                      size={30}
-                                      color={color}
+
+                                  {(isNew || isUpdated) && (
+                                    <Badge
+                                      className={classes.chip}
                                       variant="filled"
-                                      keepIconOnHover
+                                      radius="xl"
+                                      sx={(theme) => ({
+                                        backgroundColor: isUpdated
+                                          ? '#1EBD8E'
+                                          : theme.colors.blue[theme.fn.primaryShade()],
+                                      })}
                                     >
-                                      {icon}
+                                      <Text color="white" size="xs" transform="capitalize">
+                                        {isUpdated ? 'Updated' : 'New'}
+                                      </Text>
+                                    </Badge>
+                                  )}
+                                </Group>
+                                <Stack spacing="xs">
+                                  {contextMenuItems.length > 0 && (
+                                    <Menu position="left-start" withArrow offset={-5}>
+                                      <Menu.Target>
+                                        <ActionIcon
+                                          variant="transparent"
+                                          p={0}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                          }}
+                                        >
+                                          <IconDotsVertical
+                                            size={24}
+                                            color="#fff"
+                                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                          />
+                                        </ActionIcon>
+                                      </Menu.Target>
+                                      <Menu.Dropdown>
+                                        {contextMenuItems.map((el) => el)}
+                                      </Menu.Dropdown>
+                                    </Menu>
+                                  )}
+                                  {features.imageGeneration && data.canGenerate && (
+                                    <HoverActionButton
+                                      label="Create"
+                                      size={30}
+                                      color="white"
+                                      variant="filled"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        generationPanel.open({
+                                          type: 'modelVersion',
+                                          id: data.version.id,
+                                        });
+                                      }}
+                                    >
+                                      <IconBrush stroke={2.5} size={16} />
                                     </HoverActionButton>
                                   )}
-                                </CivitiaLinkManageButton>
-                              </Stack>
-                            </Group>
-                            {image ? (
-                              <>
-                                {safe ? (
-                                  <EdgeMedia
-                                    src={image.url}
-                                    name={image.name ?? image.id.toString()}
-                                    alt={image.name ?? undefined}
-                                    type={image.type}
-                                    width={
-                                      originalAspectRatio > 1
-                                        ? IMAGE_CARD_WIDTH * originalAspectRatio
-                                        : IMAGE_CARD_WIDTH
-                                    }
-                                    placeholder="empty"
-                                    className={classes.image}
-                                    // loading="lazy"
-                                    wrapperProps={{ style: { height: '100%' } }}
-                                    contain
-                                  />
-                                ) : (
-                                  <MediaHash {...data.image} />
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <Text color="dimmed">This model has no images</Text>
-                              </>
-                            )}
-                          </>
-                        );
-                      }}
-                    </ImageGuard.Content>
-                  )}
-                />
-              )}
-              <Stack
-                className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
-                spacing="xs"
-              >
-                {data.user.id !== -1 && (
-                  <UnstyledButton
-                    sx={{ color: 'white', alignSelf: 'flex-start' }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-
-                      router.push(`/user/${data.user.username}`);
-                    }}
-                  >
-                    <UserAvatar
-                      user={data.user}
-                      avatarProps={{ radius: 'md', size: 32 }}
-                      withUsername
-                    />
-                  </UnstyledButton>
+                                  <CivitiaLinkManageButton
+                                    modelId={data.id}
+                                    modelName={data.name}
+                                    modelType={data.type}
+                                    hashes={data.hashes}
+                                    noTooltip
+                                    iconSize={16}
+                                  >
+                                    {({ color, onClick, icon, label }) => (
+                                      <HoverActionButton
+                                        onClick={onClick}
+                                        label={label}
+                                        size={30}
+                                        color={color}
+                                        variant="filled"
+                                        keepIconOnHover
+                                      >
+                                        {icon}
+                                      </HoverActionButton>
+                                    )}
+                                  </CivitiaLinkManageButton>
+                                </Stack>
+                              </Group>
+                              {image ? (
+                                <>
+                                  {safe ? (
+                                    <EdgeMedia
+                                      src={image.url}
+                                      name={image.name ?? image.id.toString()}
+                                      alt={image.name ?? undefined}
+                                      type={image.type}
+                                      width={
+                                        originalAspectRatio > 1
+                                          ? IMAGE_CARD_WIDTH * originalAspectRatio
+                                          : IMAGE_CARD_WIDTH
+                                      }
+                                      placeholder="empty"
+                                      className={classes.image}
+                                      loading="lazy"
+                                      wrapperProps={{ style: { height: '100%' } }}
+                                      contain
+                                    />
+                                  ) : (
+                                    <MediaHash {...data.image} />
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <Text color="dimmed">This model has no images</Text>
+                                </>
+                              )}
+                            </>
+                          );
+                        }}
+                      </ImageGuard.Content>
+                    )}
+                  />
                 )}
-                <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
-                  {data.name}
-                </Text>
-                <Group spacing={4} position="apart">
-                  {!data.locked && (
-                    <IconBadge
-                      className={classes.iconBadge}
-                      sx={{ userSelect: 'none' }}
-                      icon={<StarRating size={14} value={data.rank.rating} />}
+                <Stack
+                  className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
+                  spacing="xs"
+                >
+                  {data.user.id !== -1 && (
+                    <UnstyledButton
+                      sx={{ color: 'white', alignSelf: 'flex-start' }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        router.push(`/user/${data.user.username}`);
+                      }}
                     >
-                      <Text
-                        size="xs"
-                        color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}
-                        inline
-                      >
-                        {abbreviateNumber(data.rank.ratingCount)}
-                      </Text>
-                    </IconBadge>
+                      <UserAvatar
+                        user={data.user}
+                        avatarProps={{ radius: 'md', size: 32 }}
+                        withUsername
+                      />
+                    </UnstyledButton>
                   )}
-                  <Group spacing={4}>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      icon={
-                        <IconHeart
-                          size={14}
-                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                          color={isFavorite ? theme.colors.red[6] : undefined}
-                        />
-                      }
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
-                    </IconBadge>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      icon={<IconMessageCircle2 size={14} />}
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-                    </IconBadge>
-                    <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
-                      <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                    </IconBadge>
-                    <AddToCollectionDropdown
-                      dropdownTrigger={
-                        <IconBadge
-                          className={classes.iconBadge}
-                          icon={<IconPlaylistAdd size={14} />}
+                  <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
+                    {data.name}
+                  </Text>
+                  <Group spacing={4} position="apart">
+                    {!data.locked && (
+                      <IconBadge
+                        className={classes.iconBadge}
+                        sx={{ userSelect: 'none' }}
+                        icon={<StarRating size={14} value={data.rank.rating} />}
+                      >
+                        <Text
+                          size="xs"
+                          color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}
+                          inline
                         >
-                          <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
-                        </IconBadge>
-                      }
-                      modelId={data.id}
-                      type={CollectionType.Model}
-                    />
-                    <InteractiveTipBuzzButton
-                      toUserId={data.user.id}
-                      entityType={'Model'}
-                      entityId={data.id}
-                    >
-                      <IconBadge className={classes.iconBadge} icon={<IconBolt size={14} />}>
-                        <Text size="xs">
-                          {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                          {abbreviateNumber(data.rank.ratingCount)}
                         </Text>
                       </IconBadge>
-                    </InteractiveTipBuzzButton>
+                    )}
+                    <Group spacing={4}>
+                      <IconBadge
+                        className={classes.iconBadge}
+                        icon={
+                          <IconHeart
+                            size={14}
+                            style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                            color={isFavorite ? theme.colors.red[6] : undefined}
+                          />
+                        }
+                      >
+                        <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
+                      </IconBadge>
+                      <IconBadge
+                        className={classes.iconBadge}
+                        icon={<IconMessageCircle2 size={14} />}
+                      >
+                        <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                      </IconBadge>
+                      <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
+                        <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                      </IconBadge>
+                      <AddToCollectionDropdown
+                        dropdownTrigger={
+                          <IconBadge
+                            className={classes.iconBadge}
+                            icon={<IconPlaylistAdd size={14} />}
+                          >
+                            <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                          </IconBadge>
+                        }
+                        modelId={data.id}
+                        type={CollectionType.Model}
+                      />
+                      <InteractiveTipBuzzButton
+                        toUserId={data.user.id}
+                        entityType={'Model'}
+                        entityId={data.id}
+                      >
+                        <IconBadge className={classes.iconBadge} icon={<IconBolt size={14} />}>
+                          <Text size="xs">
+                            {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                          </Text>
+                        </IconBadge>
+                      </InteractiveTipBuzzButton>
+                    </Group>
                   </Group>
-                </Group>
-              </Stack>
-              {onSite && <OnsiteIndicator />}
-            </>
-          )}
-        </div>
-      </FeedCard>
-    </HolidayFrame>
+                </Stack>
+                {onSite && <OnsiteIndicator />}
+              </>
+            )}
+          </div>
+        )}
+      </InView>
+    </FeedCard>
   );
 }
 
