@@ -44,8 +44,13 @@ export const useResize = (options: Props) => {
   // );
 
   useEffect(() => {
-    useResizeStore.setState(() => ({ [name]: useResizeStore.getState()[name] ?? defaultWidth }));
-  }, [name]) // eslint-disable-line
+    if (!ref) return;
+    const width = useResizeStore.getState()[name];
+    if (!width) useResizeStore.setState(() => ({ [name]: defaultWidth }));
+    frame.current = requestAnimationFrame(() => {
+      ref.style.width = `${width ?? defaultWidth}px`;
+    });
+  }, [name, ref]) // eslint-disable-line
 
   const mouseMoveClient = orientation === 'horizontal' ? 'clientX' : 'clientY';
 

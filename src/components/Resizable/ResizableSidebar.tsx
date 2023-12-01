@@ -37,7 +37,7 @@ export function ResizableSidebarInner({
   return (
     <div
       {...props}
-      style={{ width: defaultWidth, ...props.style }}
+      style={{ ...props.style }}
       className={cx(classes.sidebar, props.className)}
       ref={containerRef}
     >
