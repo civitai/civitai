@@ -369,7 +369,13 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
   else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
 
-  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  let [cursorProp, cursorDirection] = orderBy?.split(' ');
+
+  if (cursorProp === 'm."lastVersionAt"') {
+    // treats a date as a number of seconds since epoch
+    cursorProp = `extract(epoch from ${cursorProp})`;
+  }
+
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
     AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
@@ -407,7 +413,7 @@ export const getModelsRaw = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: bigint | null })[]>`
+  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
     SELECT
       m."id",
       m."name",
@@ -475,7 +481,7 @@ export const getModelsRaw = async ({
     LIMIT ${take}
   `;
 
-  let nextCursor: bigint | undefined;
+  let nextCursor: string | bigint | undefined;
   if (take && models.length >= take) {
     const nextItem = models.pop();
     nextCursor = nextItem?.cursorId || undefined;
