@@ -11,7 +11,10 @@ const useStyles = createStyles<string, { size: number }>((_, params) => ({
     position: 'absolute',
     bottom: '-10px',
     width: '100%',
+    maxWidth: 400,
     zIndex: 100,
+    left: '50%',
+    transform: 'translate(-50%)',
   },
   decoration: {
     position: 'relative',
