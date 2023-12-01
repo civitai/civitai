@@ -1,24 +1,15 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetClubTiersInput,
-  GetInfiniteClubPostsSchema,
+  GetInfiniteClubSchema,
   SupportedClubEntities,
   UpsertClubInput,
-  UpsertClubPostInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
-import {
-  Availability,
-  BountyEntryMode,
-  ClubMembershipRole,
-  Currency,
-  MetricTimeframe,
-  Prisma,
-  TagTarget,
-} from '@prisma/client';
+import { Availability, ClubMembershipRole, Prisma } from '@prisma/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { createEntityImages, getEntityCoverImage } from '~/server/services/image.service';
+import { createEntityImages } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -601,4 +592,36 @@ export const getClubDetailsForResource = async ({
 }) => {
   const clubRequirements = await entityRequiresClub({ entities });
   return clubRequirements;
+};
+
+export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
+  input: { cursor, limit: take, sort, engagement, userId, nsfw },
+  select,
+}: {
+  input: GetInfiniteClubSchema;
+  select: TSelect;
+}) => {
+  const AND: Prisma.Enumerable<Prisma.ClubWhereInput> = [];
+
+  if (userId && engagement) {
+    if (engagement === 'owned') AND.push({ userId });
+  }
+
+  if (!userId) {
+    AND.push({ unlisted: false });
+  }
+
+  const orderBy: Prisma.ClubFindManyArgs['orderBy'] = [];
+  orderBy.push({ id: 'desc' });
+
+  return dbRead.club.findMany({
+    take,
+    cursor: cursor ? { id: cursor } : undefined,
+    select,
+    where: {
+      nsfw,
+      AND,
+    },
+    orderBy,
+  });
 };

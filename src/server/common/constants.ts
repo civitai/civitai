@@ -105,6 +105,7 @@ export const constants = {
     image: 320,
     articles: 450,
     bounty: 332,
+    club: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
@@ -237,6 +238,7 @@ export const constants = {
     minMonthlyBuzz: 5000,
     headerImageAspectRatio: 1 / 6,
     postCoverImageAspectRatio: 1 / 4,
+    engagementTypes: ['owned'], //  TODO.clubs: 'supporting', 'contributing', 'administrating'
   },
 } as const;
 

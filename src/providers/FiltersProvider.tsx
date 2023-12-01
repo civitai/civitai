@@ -28,6 +28,7 @@ import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { setCookie } from '~/utils/cookies-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getInfiniteClubSchema } from '~/server/schema/club.schema';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -122,6 +123,22 @@ const bountyFilterSchema = z
     })
   );
 
+type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
+const clubFilterSchema = z
+  .object({
+    sort: z.nativeEnum(BountySort).default(BountySort.EndingSoon),
+  })
+  .merge(
+    getInfiniteClubSchema.omit({
+      query: true,
+      period: true,
+      sort: true,
+      limit: true,
+      cursor: true,
+      nsfw: true,
+    })
+  );
+
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -135,6 +152,7 @@ type StorageState = {
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
+  clubs: ClubFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
@@ -156,6 +174,7 @@ type StoreState = FilterState & {
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
+  setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -173,6 +192,7 @@ const localStorageSchemas: LocalStorageSchema = {
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
+  clubs: { key: 'clubs-filters', schema: clubFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -254,6 +274,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
+      setClubFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
     }))
   );
 
@@ -311,6 +333,7 @@ export function useSetFilters(type: FilterSubTypes) {
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
+          clubs: state.setClubFilters,
         }[type]),
       [type]
     )

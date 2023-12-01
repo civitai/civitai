@@ -6,6 +6,7 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   GetClubTiersInput,
+  GetInfiniteClubSchema,
   supportedClubEntities,
   SupportedClubEntities,
   UpsertClubInput,
@@ -13,6 +14,7 @@ import {
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import {
+  getAllClubs,
   getClub,
   getClubDetailsForResource,
   getClubTiers,
@@ -23,6 +25,12 @@ import {
 } from '~/server/services/club.service';
 import { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
+import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import { getAllBounties, getImagesForBounties } from '~/server/services/bounty.service';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { isDefined } from '~/utils/type-guards';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {
   try {
@@ -167,3 +175,59 @@ export async function getClubResourceDetailsHandler({ input }: { input: GetByEnt
     else throwDbError(error);
   }
 }
+
+export const getInfiniteClubsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetInfiniteClubSchema;
+  ctx: Context;
+}) => {
+  const { user } = ctx;
+  const limit = input.limit + 1 ?? 10;
+  const userId = input.userId ?? user?.id;
+
+  try {
+    const items = await getAllClubs({
+      input: { ...input, limit, userId },
+      select: {
+        id: true,
+        name: true,
+        user: {
+          select: userWithCosmeticsSelect,
+        },
+        coverImage: {
+          select: imageSelect,
+        },
+        nsfw: true,
+      },
+    });
+
+    let nextCursor: number | undefined;
+    if (items.length > input.limit) {
+      const nextItem = items.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return {
+      nextCursor,
+      items: items
+        .map(({ coverImage, ...item }) => {
+          return {
+            ...item,
+            coverImage: coverImage
+              ? {
+                  ...coverImage,
+                  meta: coverImage.meta as ImageMetaProps,
+                  metadata: coverImage.metadata as MixedObject,
+                  tags: coverImage.tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+                }
+              : coverImage,
+          };
+        })
+        .filter(isDefined),
+    };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};

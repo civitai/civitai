@@ -11,6 +11,7 @@ import {
 import { useLocalStorage } from '@mantine/hooks';
 import {
   IconCategory,
+  IconClubs,
   IconFileText,
   IconHome,
   IconLayoutList,
@@ -45,6 +46,10 @@ const homeOptions = {
   bounties: {
     url: '/bounties',
     icon: <IconMoneybag />,
+  },
+  clubs: {
+    url: '/clubs',
+    icon: <IconClubs />,
   },
 } as const;
 type HomeOptions = keyof typeof homeOptions;
@@ -111,7 +116,9 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
       </Link>
     ),
     value: key,
-    disabled: key === 'bounties' && !features.bounties,
+    disabled: [key === 'bounties' && !features.bounties, key === 'clubs' && !features.clubs].some(
+      (b) => b
+    ),
   }));
 
   return (

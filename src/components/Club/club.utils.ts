@@ -2,6 +2,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import {
   GetInfiniteClubPostsSchema,
+  GetInfiniteClubSchema,
   SupportedClubEntities,
   UpsertClubInput,
   UpsertClubPostInput,
@@ -14,10 +15,12 @@ import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvid
 import { useMemo } from 'react';
 import {
   applyUserPreferencesBounties,
+  applyUserPreferencesClub,
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
 import {
   BountyGetAll,
+  ClubGetAll,
   ClubMembershipGetAllRecord,
   ClubPostGetAll,
   ClubTier,
@@ -29,6 +32,8 @@ import {
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import dayjs from 'dayjs';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -349,4 +354,40 @@ export const useQueryClubMembership = (
   }, [data?.pages]);
 
   return { memberships, ...rest };
+};
+
+export const useClubFilters = () => {
+  const storeFilters = useFiltersContext((state) => state.club);
+  return removeEmpty(storeFilters);
+};
+
+export const useQueryClubs = (
+  filters: Partial<GetInfiniteClubSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data, ...rest } = trpc.club.getInfinite.useInfiniteQuery(filters, {
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    ...options,
+  });
+  const currentUser = useCurrentUser();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+
+  const clubs = useMemo(() => {
+    if (isLoadingHidden) return [];
+    const items = data?.pages.flatMap((x) => x.items) ?? [];
+    return applyUserPreferencesClub<ClubGetAll[number]>({
+      items,
+      currentUserId: currentUser?.id,
+      hiddenImages,
+      hiddenTags,
+      hiddenUsers,
+    });
+  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
+
+  return { data, clubs, ...rest };
 };

@@ -172,3 +172,7 @@ export enum ClubMembershipSort {
   NextBillingDate = 'NextBillingDate',
   MostExpensive = 'MostExpensive',
 }
+
+export enum ClubSort {
+  Newest = 'Newest',
+}
