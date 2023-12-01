@@ -80,11 +80,9 @@ export const eventEngine = {
 
       // Create leaderboards if missing
       const leaderboards = {
-        'all-time': 'Top Contributors',
-        day: 'Top Contributors Today',
-        ...Object.fromEntries(
-          eventDef.teams.map((x) => [x.toLowerCase(), `${x} Team Top Contributors`])
-        ),
+        'all-time': 'Top Donors',
+        day: 'Top Donors Today',
+        ...Object.fromEntries(eventDef.teams.map((x) => [x.toLowerCase(), `${x} Team Top Donors`])),
       };
       await dbWrite.$executeRawUnsafe(`
         INSERT INTO "Leaderboard" ("id", "index", "title", "description", "scoringDescription", "query", "active", "public") VALUES

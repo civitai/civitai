@@ -148,7 +148,7 @@ export function BrowsingModeMenu() {
       )}
       <Group spacing="xs">
         <Text size="xs" weight={500}>
-          Content Decoration
+          Event Cosmetics
         </Text>
         <Switch
           ml="auto"

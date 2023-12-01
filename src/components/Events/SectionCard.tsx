@@ -30,8 +30,7 @@ export function SectionCard({
             )}
             {subtitle && (
               <Text color="dimmed" size="xl" align={headerAlign}>
-                For each milestone you reach, you will get a reward. Stay active while the event is
-                ongoing to get all the rewards.
+                {subtitle}
               </Text>
             )}
           </Stack>

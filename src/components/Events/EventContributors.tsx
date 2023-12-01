@@ -35,7 +35,7 @@ export function EventContributors({ event }: { event: string }) {
         <Card p={32} radius="lg" h="100%" className={classes.card}>
           <Stack spacing="xl">
             <Text size={32} weight="bold">
-              Top contributors all time
+              Top Donors All Time
             </Text>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
@@ -68,7 +68,7 @@ export function EventContributors({ event }: { event: string }) {
             ) : (
               <Paper p="xl">
                 <Center>
-                  <Text color="dimmed">No contributors yet</Text>
+                  <Text color="dimmed">No donors yet</Text>
                 </Center>
               </Paper>
             )}
@@ -86,7 +86,7 @@ export function EventContributors({ event }: { event: string }) {
         <Card p={32} radius="lg" h="100%" className={classes.card}>
           <Stack spacing="xl">
             <Text size={32} weight="bold">
-              Top contributors today
+              Top Donors Today
             </Text>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
@@ -117,7 +117,7 @@ export function EventContributors({ event }: { event: string }) {
             ) : (
               <Paper p="xl">
                 <Center>
-                  <Text color="dimmed">No contributors yet</Text>
+                  <Text color="dimmed">No donors yet</Text>
                 </Center>
               </Paper>
             )}
@@ -136,7 +136,7 @@ export function EventContributors({ event }: { event: string }) {
           <Grid gutter="xl">
             <Grid.Col span={12}>
               <Text size={32} weight="bold">
-                Top Contributors by Team
+                Top Donors by Team
               </Text>
             </Grid.Col>
             {loading ? (
@@ -150,7 +150,7 @@ export function EventContributors({ event }: { event: string }) {
                 <Grid.Col key={team} xs={12} sm="auto">
                   <Stack spacing="xl" h="100%" justify="space-between">
                     <Text size={24} weight="bold">
-                      Team {team}
+                      {team} Team
                     </Text>
                     {contributors.length > 0 ? (
                       contributors.map((contributor) => (
@@ -165,7 +165,7 @@ export function EventContributors({ event }: { event: string }) {
                     ) : (
                       <Paper p="xl">
                         <Center>
-                          <Text color="dimmed">No contributors yet</Text>
+                          <Text color="dimmed">No donors yet</Text>
                         </Center>
                       </Paper>
                     )}

@@ -34,6 +34,7 @@ export const homeBlockMetaSchema = z
       ids: z.array(z.number()).optional(),
       limit: z.number().optional(),
     }),
+    event: z.string(),
     socials: z.array(socialBlockSchema),
     link: z.string(),
     linkText: z.string(),

@@ -54,7 +54,6 @@ import { JdrfLogo } from '~/components/Logo/JdrfLogo';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client.mjs';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { constants } from '~/server/common/constants';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -102,12 +101,12 @@ const resetTime = dayjs().utc().endOf('day').toDate();
 const startTime = dayjs().utc().startOf('day').toDate();
 
 const aboutText =
-  "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your wreath in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more buzz used to boost your team spirit bank, the brighter your lights shine. The brighter your lines shine, the bigger your bragging rights. The team with the brightest lights and highest spirit bank score wins a shiny new animated badge!";
+  "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
 
 export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { theme, classes } = useStyles();
+  const { theme, classes, cx } = useStyles();
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -192,6 +191,7 @@ export default function EventPageDetails({
               flexDirection: 'column',
               justifyContent: 'flex-end',
               aspectRatio: '3',
+              overflow: 'hidden',
 
               [theme.fn.smallerThan('sm')]: {
                 aspectRatio: '1',
@@ -200,18 +200,19 @@ export default function EventPageDetails({
           >
             <Stack
               spacing={0}
-              py="sm"
+              pt={60}
+              pb="sm"
               px="md"
-              sx={(theme) => ({
+              sx={{
                 width: '100%',
-                background: theme.fn.linearGradient(0, 'rgba(37,38,43,0.8)', 'rgba(37,38,43,0)'),
-              })}
+                background: 'linear-gradient(transparent, rgba(0, 0, 0, 0.6))',
+              }}
             >
-              <Title color="white" sx={hideMobile}>
+              <Title color="white" className="hide-mobile">
                 {eventData?.title}
               </Title>
               <Group spacing="xs" position="apart">
-                <Text color="white" size="sm" sx={hideMobile}>
+                <Text color="white" size="sm" className="hide-mobile">
                   {formatDate(eventData?.startDate, 'MMMM D, YYYY')} -{' '}
                   {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
                 </Text>
@@ -230,11 +231,9 @@ export default function EventPageDetails({
               </Group>
             </Stack>
           </Paper>
-          <Stack sx={showMobile} spacing={0} mt="-xl">
-            <Title color="white" sx={{ fontSize: '28px' }}>
-              {eventData?.title}
-            </Title>
-            <Text color="white" size="sm">
+          <Stack className="show-mobile" spacing={0} mt={-40}>
+            <Title sx={{ fontSize: '28px' }}>{eventData?.title}</Title>
+            <Text size="sm">
               {formatDate(eventData?.startDate, 'MMMM D, YYYY')} -{' '}
               {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
             </Text>
@@ -245,56 +244,59 @@ export default function EventPageDetails({
             {eventCosmetic?.cosmetic && equipped && (
               <>
                 <Grid.Col xs={12} sm="auto">
-                  <Card
-                    className={classes.card}
-                    py="xl"
-                    px="lg"
-                    radius="lg"
-                    h="100%"
-                    style={{ display: 'flex', alignItems: 'center' }}
-                  >
-                    <Stack align="center" w="100%">
-                      <HolidayFrame cosmetic={eventCosmetic.cosmetic} data={cosmeticData} />
+                  <Card className={classes.card} py="xl" px="lg" radius="lg" h="100%">
+                    <HolidayFrame cosmetic={eventCosmetic.cosmetic} data={cosmeticData} />
+                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg * 2}>
                       <Text size="xl" weight={590}>
-                        {eventCosmetic.cosmetic.name}
+                        Your Garland
                       </Text>
-                      <Group spacing={4} align="center">
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-end',
+                        }}
+                      >
                         <Lightbulb color={userTeam} size={48} transform="rotate(180)" />
-                        <Text size={80} weight={590} color={userTeam} inline>
+                        <Text size={80} weight={590} color={userTeam} lh="70px">
                           {cosmeticData.lights ?? 0}
                         </Text>{' '}
-                        <Text size={32} weight={590} color="dimmed" inline>
+                        <Text size={32} weight={590} color="dimmed">
                           / 31
                         </Text>
-                      </Group>
-                      {eventCosmetic.available && (
-                        <>
-                          <Link href="/posts/create">
-                            <Button color="gray" variant="filled" radius="xl" fullWidth>
-                              <Group spacing={4} noWrap>
-                                <IconBulb size={18} />
-                                Earn more lights
-                              </Group>
-                            </Button>
-                          </Link>
-                          <Button
-                            color="gray"
-                            variant="filled"
-                            radius="xl"
-                            onClick={handleFocusDonateInput}
-                            fullWidth
-                          >
-                            <Group spacing={4} noWrap>
-                              <IconBolt size={18} />
-                              Make it brighter
-                            </Group>
-                          </Button>
-                        </>
-                      )}
+                      </div>
                     </Stack>
+                    {eventCosmetic.available && (
+                      <Stack spacing="sm">
+                        <Button
+                          component={NextLink}
+                          href="/posts/create"
+                          color="gray"
+                          variant="filled"
+                          radius="xl"
+                          fullWidth
+                        >
+                          <Group spacing={4} noWrap>
+                            <IconBulb size={18} />
+                            Earn more lights
+                          </Group>
+                        </Button>
+                        <Button
+                          color="gray"
+                          variant="filled"
+                          radius="xl"
+                          onClick={handleFocusDonateInput}
+                          fullWidth
+                        >
+                          <Group spacing={4} noWrap>
+                            <IconBolt size={18} />
+                            Make them brighter
+                          </Group>
+                        </Button>
+                      </Stack>
+                    )}
                   </Card>
                 </Grid.Col>
-                {/* <Grid.Col xs={12} sm="auto">
+                <Grid.Col xs={12} sm="auto">
                   <Card
                     py="xl"
                     px="lg"
@@ -305,7 +307,7 @@ export default function EventPageDetails({
                     <Stack w="100%">
                       <Stack spacing={0} align="center">
                         <Text size="sm" weight={590}>
-                          Total team donations
+                          Total Team Donations
                         </Text>
                         <Group spacing={4} noWrap>
                           <CurrencyIcon currency={Currency.BUZZ} />
@@ -320,7 +322,7 @@ export default function EventPageDetails({
                             Team Rank
                           </Text>
                           <Text size="sm" weight={590}>
-                            Team Donations
+                            Spirit Bank
                           </Text>
                         </Group>
                         {teamScores.map((teamScore) => {
@@ -332,12 +334,12 @@ export default function EventPageDetails({
                             <Fragment key={teamScore.team}>
                               <Group spacing={8} position="apart">
                                 <Group spacing={4} noWrap>
-                                  <Text size="xl" weight={590} color={color}>
+                                  <Text size="xl" weight={590}>
                                     {teamScore.rank}
                                   </Text>
                                   <Lightbulb
                                     variant="star"
-                                    color={'yellow'}
+                                    color={color}
                                     brightness={brightness}
                                     size={32}
                                   />
@@ -363,8 +365,8 @@ export default function EventPageDetails({
                       </Text>
                     </Stack>
                   </Card>
-                </Grid.Col> */}
-                <Grid.Col xs={12} sm="auto">
+                </Grid.Col>
+                {/* <Grid.Col xs={12} sm="auto">
                   <Card
                     className={classes.card}
                     py="xl"
@@ -387,23 +389,39 @@ export default function EventPageDetails({
                           </Text>
                         )}
                       </Stack>
-                      <Link href={`/leaderboard/${event}:${userTeam}`}>
-                        <Button color="gray" radius="xl" fullWidth>
-                          <Group spacing={4} noWrap>
-                            <IconClipboard size={18} />
-                            Team leaderboard
-                          </Group>
-                        </Button>
-                      </Link>
+                      <Button
+                        component={NextLink}
+                        href={`/leaderboard/${event}:${userTeam}`}
+                        color="gray"
+                        radius="xl"
+                        fullWidth
+                      >
+                        <Group spacing={4} noWrap>
+                          <IconClipboard size={18} />
+                          Team leaderboard
+                        </Group>
+                      </Button>
+                      <Button
+                        color="gray"
+                        variant="filled"
+                        radius="xl"
+                        onClick={handleFocusDonateInput}
+                        fullWidth
+                      >
+                        <Group spacing={4} noWrap>
+                          <IconBolt size={18} />
+                          Boost your rank
+                        </Group>
+                      </Button>
                     </Stack>
                   </Card>
-                </Grid.Col>
+                </Grid.Col> */}
               </>
             )}
             <Grid.Col span={12}>
               <SectionCard
-                title="Team spirit donation history"
-                subtitle="See how your team is doing. The team with the most donations at the end of the event will get a special prize"
+                title="Spirit Bank History"
+                subtitle="See how your team is doing. Have the most Buzz banked at the end to get a shiny new badge!"
               >
                 {equipped && <DonateInput event={event} ref={inputRef} />}
                 {loadingHistory ? (
@@ -452,8 +470,8 @@ export default function EventPageDetails({
             </Grid.Col>
             <Grid.Col span={12}>
               <SectionCard
-                title="Event rewards"
-                subtitle="For each milestone you reach, you will get a reward. Stay active while the event is ongoing to get all the rewards."
+                title="Event Rewards"
+                subtitle="Earn special badges for completing a variety of challenges during the event."
               >
                 {loadingRewards ? (
                   <Center py="xl">
@@ -466,21 +484,24 @@ export default function EventPageDetails({
                 ) : (
                   <SimpleGrid
                     spacing={40}
+                    cols={2}
                     breakpoints={[
-                      { minWidth: 'xs', cols: 1 },
                       { minWidth: 'sm', cols: 3 },
                       { minWidth: 'md', cols: 5 },
                     ]}
                   >
                     {rewards.map((reward) => (
-                      <Stack key={reward.id} spacing={8} align="center">
-                        <div style={{ width: 96, height: 96 }}>
+                      <div key={reward.id}>
+                        <div className={classes.badge}>
                           <EdgeMedia src={(reward.data as { url: string })?.url} width="original" />
                         </div>
-                        <Text align="center" size="lg" weight={590} w="100%">
+                        <Text align="center" size="lg" weight={590} w="100%" tt="capitalize">
                           {reward.name}
                         </Text>
-                      </Stack>
+                        <Text size="xs" color="dimmed" align="center">
+                          {reward.description}
+                        </Text>
+                      </div>
                     ))}
                   </SimpleGrid>
                 )}
@@ -502,7 +523,7 @@ export default function EventPageDetails({
                     },
                   })}
                 >
-                  About the challenge
+                  About The Challenge
                 </Title>
                 <Text
                   color="dimmed"
@@ -529,6 +550,11 @@ const useStyles = createStyles((theme) => ({
   card: {
     background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
   },
+  badge: {
+    width: 96,
+    height: 96,
+    margin: `0 auto ${theme.spacing.md}px`,
+  },
 }));
 
 const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, ref) => {
@@ -536,7 +562,7 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance: number) =>
-      `You don't have enough funds to perform this action. Required buzz: ${numberWithCommas(
+      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
       )}. Buy or earn more buzz to perform this action.`,
     purchaseSuccessMessage: (purchasedBalance) => (
@@ -581,12 +607,11 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
         onChange={setAmount}
         min={1}
         max={constants.buzz.maxTipAmount}
-        rightSection={<Text size="xs">Buzz</Text>}
         rightSectionWidth="25%"
         hideControls
       />
       <Button color="yellow.7" loading={donating} onClick={handleSubmit}>
-        Boost team
+        Donate Buzz
       </Button>
     </Group>
   );
@@ -610,26 +635,14 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
     <>
       <HeroCard
         title={<JdrfLogo width={145} height={40} />}
-        description="Civitai is matching all purchased buzz spent across team spirit banks to donate to the global charity, the Juvenile Diabetes Research Foundation."
-        // TODO.justin: get the right image for jdrf
+        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, the Juvenile Diabetes Research Foundation."
         imageUrl="https://www.jdrf.org/wp-content/uploads/2023/02/d-b-1-800x474-1.png"
         externalLink="https://www.jdrf.org/"
       />
       <SectionCard
         title="Matching Partners"
-        subtitle="Each of our partners will match the buzz amount we donate at the end of the month, to the JDRF."
-        headerAlign="left"
+        subtitle="Each partner will match the Buzz amount donated by the end of the month."
       >
-        {/* TODO.justin: handle on click */}
-        <Button
-          size="md"
-          color="gray"
-          radius="xl"
-          sx={{ alignSelf: 'flex-start' }}
-          rightIcon={<IconChevronRight />}
-        >
-          Become a partner
-        </Button>
         <div className={classes.partnerGrid}>
           {partners.map((partner, index) => (
             <a
@@ -660,6 +673,20 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
             </a>
           ))}
         </div>
+        <Group position="center">
+          <Button
+            component="a"
+            size="md"
+            variant="light"
+            radius="xl"
+            sx={{ alignSelf: 'flex-start' }}
+            rightIcon={<IconChevronRight />}
+            href="/forms/matching-partner"
+            target="_blank"
+          >
+            Become a partner
+          </Button>
+        </Group>
       </SectionCard>
     </>
   );

@@ -169,6 +169,11 @@ export default defineNextConfig(withAxiom({
         source: '/forms/press-inquiry',
         destination: 'https://forms.clickup.com/8459928/f/825mr-9351/RZXWRNLV9Q1D32ACNP',
         permanent: true,
+      },
+      {
+        source: '/forms/matching-partner',
+        destination: 'https://forms.clickup.com/8459928/f/825mr-9431/IQOAS1RXWHI1E2I1S3',
+        permanent: true,
       }
     ];
   },

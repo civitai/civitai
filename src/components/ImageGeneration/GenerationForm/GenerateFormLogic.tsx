@@ -46,7 +46,7 @@ export function GenerateFormLogic() {
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
-      `You don't have enough funds to perform this action. Required buzz: ${numberWithCommas(
+      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
       )}. Buy or earn more buzz to perform this action.`,
     performTransactionOnPurchase: true,

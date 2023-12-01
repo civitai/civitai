@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
 import { LiveNowIndicator } from '~/components/Social/LiveNow';
 
@@ -24,7 +25,10 @@ const gradients = {
 
 export function Logo({ ...props }: LogoProps) {
   const { classes, cx } = useStyles();
+  const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
   const holiday = useMemo(() => {
+    if (!showHoliday) return null;
+
     const month = new Date().getMonth();
     const day = new Date().getDate();
 
@@ -38,7 +42,7 @@ export function Logo({ ...props }: LogoProps) {
     if (month === 11 && day >= 26) return 'newyear';
 
     return null;
-  }, []);
+  }, [showHoliday]);
 
   const holidayClass = holiday ? classes[holiday] : null;
   const innerGradient = holiday ? gradients[holiday].inner : gradients.blue.inner;

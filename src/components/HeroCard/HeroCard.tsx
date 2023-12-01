@@ -53,22 +53,25 @@ export function HeroCard({
         />
       </Card.Section>
       <Stack spacing={32} justify="center">
-        <Text className={classes.title} color="white" weight={600} inline>
+        <Text className={classes.title} weight={600} inline>
           {title}
         </Text>
         <Text size={20}>{description}</Text>
-        <Anchor
-          size="xl"
-          weight="bold"
-          target="_blank"
-          rel="nofollow noreferrer"
-          sx={{ color: 'white' }}
-        >
-          <Group spacing={8}>
-            Learn more
-            <IconExternalLink size={24} color="currentColor" />
-          </Group>
-        </Anchor>
+        {externalLink && (
+          <Text
+            component="a"
+            href={externalLink}
+            size="xl"
+            weight="bold"
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            <Group spacing={4}>
+              Learn more
+              <IconExternalLink size={18} color="currentColor" />
+            </Group>
+          </Text>
+        )}
       </Stack>
     </Card>
   );

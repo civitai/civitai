@@ -46,7 +46,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({
       where: { name: { startsWith: definition.badgePrefix }, source: 'Claim', type: 'Badge' },
-      select: { id: true, name: true, data: true, type: true },
+      select: { id: true, name: true, data: true, description: true },
     });
 
     return rewards.map(({ name, ...reward }) => ({

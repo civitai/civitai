@@ -14,6 +14,7 @@ import { LoginRedirect } from '../LoginRedirect/LoginRedirect';
 const useStyles = createStyles((theme) => ({
   card: {
     padding: '64px 80px !important',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     [theme.fn.smallerThan('sm')]: {
       padding: '32px 16px !important',
     },
@@ -66,13 +67,13 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconBolt size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                Make those lights shine by boosting your team&apos;s spirit bank with buzz.
+                Make those lights shine by boosting your team&apos;s Spirit Bank with Buzz.
               </Text>
             </Group>
             <Group spacing="lg" noWrap>
               <IconHeartHandshake size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                All purchased buzz put into the spirit banks will be donated to the Juvenile
+                All Buzz purchased and put into the Spirit Bank will be donated to the Juvenile
                 Diabetes Research Foundation.
               </Text>
             </Group>
