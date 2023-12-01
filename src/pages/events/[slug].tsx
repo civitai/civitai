@@ -48,7 +48,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EventContributors } from '~/components/Events/EventContributors';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
-import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
+import { EventPartners, useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { JdrfLogo } from '~/components/Logo/JdrfLogo';
 import { Meta } from '~/components/Meta/Meta';
@@ -117,6 +117,7 @@ export default function EventPageDetails({
     eventCosmetic,
     rewards,
     userRank,
+    partners,
     loading,
     loadingHistory,
     loadingRewards,
@@ -239,13 +240,13 @@ export default function EventPageDetails({
             </Text>
           </Stack>
           {!equipped && <WelcomeCard event={event} about={aboutText} />}
-          <CharitySection visible={!equipped} />
+          <CharitySection visible={!equipped} partners={partners} />
           <Grid gutter={48}>
             {eventCosmetic?.cosmetic && equipped && (
               <>
                 <Grid.Col xs={12} sm="auto">
                   <Card className={classes.card} py="xl" px="lg" radius="lg" h="100%">
-                    <HolidayFrame cosmetic={eventCosmetic.cosmetic} data={cosmeticData} />
+                    <HolidayFrame cosmetic={eventCosmetic.cosmetic} data={cosmeticData} force />
                     <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg * 2}>
                       <Text size="xl" weight={590}>
                         Your Garland
@@ -258,8 +259,8 @@ export default function EventPageDetails({
                       >
                         <Lightbulb color={userTeam} size={48} transform="rotate(180)" />
                         <Text size={80} weight={590} color={userTeam} lh="70px">
-                          {cosmeticData.lights ?? 0}
-                        </Text>{' '}
+                          {cosmeticData?.lights ?? 0}
+                        </Text>
                         <Text size={32} weight={590} color="dimmed">
                           / 31
                         </Text>
@@ -537,7 +538,7 @@ export default function EventPageDetails({
                   {aboutText}
                 </Text>
               </Stack>
-              <CharitySection visible />
+              <CharitySection visible partners={partners} />
             </>
           )}
         </Stack>
@@ -618,16 +619,7 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
 });
 DonateInput.displayName = 'DonateInput';
 
-const partners = [
-  {
-    title: 'RunDiffusion',
-    subtitle: 'Matching ⚡500k',
-    image: '/images/holiday/partners/rundiffusion.png',
-    url: 'https://rundiffusion.com/',
-  },
-];
-
-const CharitySection = ({ visible }: { visible: boolean }) => {
+const CharitySection = ({ visible, partners }: { visible: boolean; partners: EventPartners }) => {
   const { classes } = useCharityStyles();
   if (!visible) return null;
 
@@ -644,7 +636,7 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
         subtitle="Each partner will match the Buzz amount donated by the end of the month."
       >
         <div className={classes.partnerGrid}>
-          {partners.map((partner, index) => (
+          {partners?.map((partner, index) => (
             <a
               key={index}
               className={classes.partner}
@@ -652,22 +644,15 @@ const CharitySection = ({ visible }: { visible: boolean }) => {
               target="_blank"
               rel="noreferrer"
             >
-              <Image
-                src={partner.image}
-                alt={partner.title}
-                width={120}
-                height={120}
-                sx={(theme) => ({ backgroundColor: theme.colors.dark[7], borderRadius: 30 })}
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'left', width: 120, height: 120 },
-                }}
-              />
+              <div className={classes.partnerLogo}>
+                <EdgeMedia src={partner.image} width={120} />
+              </div>
               <Stack spacing={0} align="center">
                 <Text size={20} weight={600}>
                   {partner.title}
                 </Text>
                 <Text size="xs" color="dimmed">
-                  {partner.subtitle}
+                  Matching ⚡{abbreviateNumber(partner.amount)}
                 </Text>
               </Stack>
             </a>
@@ -703,6 +688,13 @@ const useCharityStyles = createStyles((theme) => ({
     [theme.fn.largerThan('sm')]: {
       gridTemplateColumns: 'repeat(4, 1fr)',
     },
+  },
+  partnerLogo: {
+    backgroundColor: theme.colors.dark[7],
+    borderRadius: 30,
+    width: 120,
+    height: 120,
+    img: { objectFit: 'cover', objectPosition: 'left', width: '100%' },
   },
   partner: {
     display: 'flex',

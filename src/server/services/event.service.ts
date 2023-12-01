@@ -58,6 +58,14 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
   }
 }
 
+export async function getEventPartners({ event }: EventInput) {
+  try {
+    return eventEngine.getPartners(event);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
 export async function activateEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
     // Get cosmetic

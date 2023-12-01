@@ -12,6 +12,7 @@ import {
   getTeamScores,
   getEventContributors,
   getUserRank,
+  getEventPartners,
 } from '~/server/services/event.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -31,6 +32,10 @@ export const eventRouter = router({
   getCosmetic: protectedProcedure
     .input(eventSchema)
     .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),
+  getPartners: publicProcedure
+    .input(eventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.day }))
+    .query(({ input }) => getEventPartners(input)),
   getRewards: publicProcedure
     .input(eventSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.lg }))

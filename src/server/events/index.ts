@@ -413,6 +413,15 @@ export const eventEngine = {
 
     return result;
   },
+  async getPartners(event: string) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    const partnersCache = await redis.lRange(`event:${event}:partners`, 0, -1);
+    const partners = partnersCache.map((x) => JSON.parse(x)) as EventPartner[];
+
+    return partners;
+  },
 };
 
 type Contributor = { userId: number; amount: number; team: string };
@@ -420,4 +429,11 @@ type TopContributors = {
   allTime: Contributor[];
   day: Contributor[];
   teams: Record<string, Contributor[]>;
+};
+
+type EventPartner = {
+  title: string;
+  amount: number;
+  image: string;
+  url: string;
 };

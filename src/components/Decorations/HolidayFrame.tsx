@@ -84,14 +84,14 @@ type HolidayGarlandData = {
 const MAX_SIZE = 32;
 const MIN_SIZE = 24;
 
-export function HolidayFrame({ cosmetic, data, children }: Props) {
+export function HolidayFrame({ cosmetic, data, force, children }: Props) {
   const { lights = 0, upgradedLights = 0 } = data ?? {};
   const { classes, cx } = useStyles({
     size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
   });
   const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: false });
 
-  if (!showDecorations || !cosmetic) return <>{children}</>;
+  if ((!force && !showDecorations) || !cosmetic) return <>{children}</>;
 
   const { color, type, brightness } = cosmetic.data as HolidayGarlandData;
 
@@ -138,4 +138,5 @@ type Props = {
   cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
   data?: { lights?: number; upgradedLights?: number } | null;
   children?: React.ReactNode;
+  force?: boolean;
 };

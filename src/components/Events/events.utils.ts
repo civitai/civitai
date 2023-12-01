@@ -21,6 +21,9 @@ export const useQueryEvent = ({ event }: EventInput) => {
     { event },
     { enabled: eventCosmetic?.available && eventCosmetic?.obtained && eventCosmetic?.equipped }
   );
+  const { data: partners, isLoading: loadingPartners } = trpc.event.getPartners.useQuery({
+    event,
+  });
 
   return {
     eventData,
@@ -29,12 +32,15 @@ export const useQueryEvent = ({ event }: EventInput) => {
     eventCosmetic,
     rewards,
     userRank,
+    partners,
     loading: loadingScores || loadingCosmetic || loadingData,
     loadingHistory,
     loadingRewards,
     loadingUserRank,
+    loadingPartners,
   };
 };
+export type EventPartners = ReturnType<typeof useQueryEvent>['partners'];
 
 export const useMutateEvent = () => {
   const queryUtils = trpc.useContext();
