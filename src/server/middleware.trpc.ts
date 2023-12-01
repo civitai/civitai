@@ -1,3 +1,4 @@
+import superjson from 'superjson';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
@@ -7,7 +8,6 @@ import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getHiddenTagsForUser, userCache } from '~/server/services/user-cache.service';
 import { middleware } from '~/server/trpc';
-import { fromJson, toJson } from '~/utils/json-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
@@ -90,13 +90,13 @@ export function cacheIt<TInput extends object>({
     const cacheKey = `trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
     const cached = await redis.get(cacheKey);
     if (cached) {
-      const data = fromJson(cached);
+      const data = superjson.parse(cached);
       return { ok: true, data, marker: 'fromCache' as any, ctx };
     }
 
     const result = await next({ ctx });
     if (result.ok && result.data && ctx.cache?.canCache) {
-      await redis.set(cacheKey, toJson(result.data), {
+      await redis.set(cacheKey, superjson.stringify(result.data), {
         EX: ttl,
       });
     }

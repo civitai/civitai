@@ -3,6 +3,8 @@ import {
   AvatarProps,
   BadgeProps,
   Group,
+  Indicator,
+  IndicatorProps,
   MantineNumberSize,
   MantineSize,
   Stack,
@@ -15,6 +17,7 @@ import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -40,12 +43,21 @@ export function UserAvatar({
   includeAvatar = true,
   radius = 'xl',
   avatarSize,
+  userId,
+  indicatorProps,
 }: Props) {
   const currentUser = useCurrentUser();
 
+  const { data: fallbackUser } = trpc.user.getById.useQuery(
+    { id: userId as number },
+    { enabled: !user && !!userId && userId > -1, cacheTime: Infinity, staleTime: Infinity }
+  );
+
+  const avatarUser = user ?? fallbackUser;
+
   // If no user or user is civitai, return null
-  if (!user || user.id === -1) return null;
-  const userDeleted = !!user.deletedAt;
+  if (!avatarUser || avatarUser.id === -1) return null;
+  const userDeleted = !!avatarUser.deletedAt;
 
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
@@ -53,33 +65,48 @@ export function UserAvatar({
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       {includeAvatar && (
-        <UserProfileLink user={user} linkToProfile={linkToProfile}>
-          <Avatar
-            src={
-              user.image && !userDeleted
-                ? getEdgeUrl(user.image, {
-                    width: typeof avatarSize === 'number' ? avatarSize : 96,
-                    anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
-                  })
-                : undefined
-            }
-            alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
-            radius={radius || 'xl'}
-            size={avatarSize ?? size}
-            imageProps={{ loading: 'lazy' }}
-            sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
-            {...avatarProps}
+        <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
+          <Indicator
+            {...indicatorProps}
+            position="bottom-end"
+            offset={7}
+            size={16}
+            disabled={!indicatorProps}
+            withBorder
           >
-            {user.username && !userDeleted ? getInitials(user.username) : null}
-          </Avatar>
+            <Avatar
+              src={
+                avatarUser.image && !userDeleted
+                  ? getEdgeUrl(avatarUser.image, {
+                      width: typeof avatarSize === 'number' ? avatarSize : 96,
+                      anim: currentUser
+                        ? !currentUser.autoplayGifs
+                          ? false
+                          : undefined
+                        : undefined,
+                    })
+                  : undefined
+              }
+              alt={
+                avatarUser.username && !userDeleted ? `${avatarUser.username}'s Avatar` : undefined
+              }
+              radius={radius || 'xl'}
+              size={avatarSize ?? size}
+              imageProps={{ loading: 'lazy' }}
+              sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
+              {...avatarProps}
+            >
+              {avatarUser.username && !userDeleted ? getInitials(avatarUser.username) : null}
+            </Avatar>
+          </Indicator>
         </UserProfileLink>
       )}
       {withUsername || subText ? (
         <Stack spacing={0}>
           {withUsername && (
-            <UserProfileLink user={user} linkToProfile={linkToProfile}>
+            <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
               <Group spacing={4} align="center">
-                <Username {...user} size={textSize} />
+                <Username {...avatarUser} size={textSize} />
                 {badge}
               </Group>
             </UserProfileLink>
@@ -145,4 +172,6 @@ type Props = {
   includeAvatar?: boolean;
   radius?: MantineSize;
   avatarSize?: MantineSize | number;
+  userId?: number;
+  indicatorProps?: Omit<IndicatorProps, 'children'>;
 };

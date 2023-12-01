@@ -402,7 +402,6 @@ export function ModelVersionDetails({
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
-  console.log({ license, baseModel: version.baseModel });
 
   return (
     <ContainerGrid gutter="xl">

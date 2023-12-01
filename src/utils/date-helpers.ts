@@ -62,3 +62,15 @@ export function startOfDay(value: dayjs.ConfigType) {
 export function endOfDay(value: dayjs.ConfigType) {
   return dayjs(value).endOf('day').toDate();
 }
+
+export function getDatesAsList(startDate: Date, endDate: Date) {
+  const dates = [];
+  let currentDate = startDate;
+
+  while (currentDate <= endDate) {
+    dates.push(currentDate);
+    currentDate = increaseDate(currentDate, 1, 'day');
+  }
+
+  return dates;
+}

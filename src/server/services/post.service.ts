@@ -277,7 +277,7 @@ export const getPostsInfinite = async ({
             username,
             image: userImage,
             deletedAt,
-            cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+            cosmetics: userCosmetics?.[creatorId] ?? [],
           },
           stats,
           image,

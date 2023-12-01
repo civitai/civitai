@@ -17,7 +17,7 @@ const simpleUser = Prisma.validator<Prisma.CosmeticArgs>()({
 export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleUser>;
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
-  data: { url?: string };
+  data: { url?: string; animated?: boolean };
   obtainedAt: Date;
 };
 export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {

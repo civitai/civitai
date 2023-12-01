@@ -21,6 +21,10 @@ import {
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
+import { stripTime } from '~/utils/date-helpers';
+import { eventEngine } from '~/server/events';
+
+type AccountType = 'User';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   return withRetries(
@@ -119,7 +123,7 @@ export async function createBuzzTransaction({
       [{ userId?: number }]
     >(`
         SELECT i."userId"
-        FROM "${entityType}" i 
+        FROM "${entityType}" i
         WHERE i.id = ${entityId}
       `);
 
@@ -339,6 +343,11 @@ export async function completeStripeBuzzTransaction({
       metadata: { transactionId: data.transactionId },
     });
 
+    await eventEngine.processPurchase({
+      userId,
+      amount,
+    });
+
     return data;
   } catch (error) {
     if (retry < MAX_RETRIES) {
@@ -389,4 +398,91 @@ export async function refundTransaction(
   const resp: { transactionId: string } = await response.json();
 
   return resp;
+}
+
+type AccountSummaryRecord = {
+  accountId: number;
+  date: Date;
+  balance: number;
+  lifetimeBalance: number;
+};
+export async function getAccountSummary({
+  accountIds,
+  accountType = 'User',
+  start,
+  end,
+  window,
+}: {
+  accountIds: number | number[];
+  accountType?: AccountType;
+  start?: Date;
+  end?: Date;
+  window?: 'hour' | 'day' | 'week' | 'month' | 'year';
+}) {
+  if (!Array.isArray(accountIds)) accountIds = [accountIds];
+  const queryParams: [string, string][] = [['descending', 'false']];
+  if (start) queryParams.push(['start', stripTime(start)]);
+  if (end) queryParams.push(['end', stripTime(end)]);
+  if (window) queryParams.push(['window', window]);
+  for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
+
+  const response = await fetch(
+    `${env.BUZZ_ENDPOINT}/account/${accountType}/summary?${new URLSearchParams(
+      queryParams
+    ).toString()}`
+  );
+
+  if (!response.ok) throw new Error('Failed to fetch account summary');
+
+  const dataRaw = (await response.json()) as Record<
+    string,
+    { data: AccountSummaryRecord[]; cursor: null }
+  >;
+
+  return Object.fromEntries(
+    Object.entries(dataRaw).map(([accountId, { data }]) => [
+      parseInt(accountId),
+      data.map((d) => ({ ...d, date: new Date(d.date) })),
+    ])
+  );
+}
+
+export async function getTopContributors({
+  accountIds,
+  accountType = 'User',
+  start,
+  end,
+  limit = 100,
+}: {
+  accountIds: number | number[];
+  accountType?: AccountType;
+  start?: Date;
+  end?: Date;
+  limit?: number;
+}) {
+  if (!Array.isArray(accountIds)) accountIds = [accountIds];
+  const queryParams: [string, string][] = [['limit', limit.toString()]];
+  if (start) queryParams.push(['start', stripTime(start)]);
+  if (end) queryParams.push(['end', stripTime(end)]);
+  for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
+
+  const response = await fetch(
+    `${env.BUZZ_ENDPOINT}/account/${accountType}/contributors?${new URLSearchParams(
+      queryParams
+    ).toString()}`
+  );
+
+  if (!response.ok) throw new Error('Failed to fetch top contributors');
+
+  const dataRaw = (await response.json()) as Record<
+    string,
+    { accountType: AccountType; accountId: number; contributedBalance: number }[]
+  >;
+
+  return Object.fromEntries(
+    Object.entries(dataRaw).map(([accountId, contributors]) => [
+      parseInt(accountId),
+      contributors.map((d) => ({ userId: d.accountId, amount: d.contributedBalance })),
+    ])
+  );
 }

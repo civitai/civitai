@@ -152,7 +152,7 @@ const { openModal, Modal } = createContextModal<{
 
     const { conditionalPerformTransaction } = useBuzzTransaction({
       message: (requiredBalance: number) =>
-        `You don't have enough funds to perform this action. Required buzz: ${numberWithCommas(
+        `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
           requiredBalance
         )}. Buy or earn more buzz to perform this action.`,
       purchaseSuccessMessage: (purchasedBalance) => (

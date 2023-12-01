@@ -31,10 +31,10 @@ export function EdgeMedia({
   contain,
   ...imgProps
 }: EdgeMediaProps) {
-  const { classes, cx } = useStyles({ maxWidth: width });
+  const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
   const currentUser = useCurrentUser();
 
-  if (width) width = Math.min(width, 4096);
+  if (width && typeof width === 'number') width = Math.min(width, 4096);
   let transcode = false;
   const _name = name ?? imgProps.alt;
   const _inferredType =

@@ -442,7 +442,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         where: modelVersionWhere,
       },
       tagsOnModels: { select: { tagId: true } },
-      user: { select: simpleUserSelect },
+      user: { select: userWithCosmeticsSelect },
       hashes: {
         select: modelHashSelect,
         where: {

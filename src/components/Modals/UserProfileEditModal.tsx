@@ -482,9 +482,10 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
     deletedAt: null,
   };
 
-  if (badge) userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' } });
+  if (badge)
+    userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
   if (nameplate)
-    userWithCosmetics.cosmetics.push({ cosmetic: { ...nameplate, type: 'NamePlate' } });
+    userWithCosmetics.cosmetics.push({ cosmetic: { ...nameplate, type: 'NamePlate' }, data: null });
 
   return (
     <Stack spacing={4}>

@@ -51,6 +51,7 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
         gridAutoRows: 0,
         overflow: 'hidden',
         marginTop: -theme.spacing.md,
+        paddingBottom: theme.spacing.md,
 
         '& > *': {
           marginTop: theme.spacing.md,
