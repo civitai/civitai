@@ -174,6 +174,11 @@ export default defineNextConfig(withAxiom({
         source: '/forms/matching-partner',
         destination: 'https://forms.clickup.com/8459928/f/825mr-9431/IQOAS1RXWHI1E2I1S3',
         permanent: true,
+      },
+      {
+        source: '/holiday2023',
+        destination: '/events/holiday2023',
+        permanent: true,
       }
     ];
   },
