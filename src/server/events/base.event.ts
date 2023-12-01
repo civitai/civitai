@@ -3,6 +3,17 @@ import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 
+const manualAssignments: Record<string, Record<string, string>> = {};
+async function getManualAssignments(event: string) {
+  if (manualAssignments[event]) return manualAssignments[event];
+  const assignments = await redis.hGetAll(`event:${event}:manual-assignments`);
+  manualAssignments[event] = assignments;
+  return assignments;
+}
+export function resetManualAssignments(event: string) {
+  delete manualAssignments[event];
+}
+
 export function createEvent<T>(name: string, definition: HolidayEventDefinition) {
   async function getCosmetic(name: string) {
     const cachedCosmeticId = await redis.hGet('cosmeticIds', name);
@@ -27,7 +38,9 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     await redis.del(name);
     await redis.del(`event:${name}:cosmetic`);
   }
-  function getUserTeam(userId: number) {
+  async function getUserTeam(userId: number) {
+    const manualAssignment = await getManualAssignments(name);
+    if (manualAssignment[userId.toString()]) return manualAssignment[userId.toString()];
     const random = new Rand(name + userId.toString(), PRNG.sfc32);
     const number = random.next();
     const index = Math.floor(number * definition.teams.length);
@@ -37,8 +50,8 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     const name = `${definition.cosmeticName} - ${team}`;
     return getCosmetic(name);
   }
-  function getUserCosmeticId(userId: number) {
-    return getTeamCosmetic(getUserTeam(userId));
+  async function getUserCosmeticId(userId: number) {
+    return getTeamCosmetic(await getUserTeam(userId));
   }
   function clearUserCosmeticCache(userId: number) {
     return redis.hDel(`event:${name}:cosmetic`, userId.toString());

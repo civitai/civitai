@@ -297,7 +297,7 @@ export const eventEngine = {
     if (!eventDef) throw new Error("That event doesn't exist");
 
     const cosmeticId = await eventDef.getUserCosmeticId(userId);
-    const team = eventDef.getUserTeam(userId);
+    const team = await eventDef.getUserTeam(userId);
     const accountId = this.getTeamAccounts(event)?.[team] ?? null;
 
     return { cosmeticId, team, accountId };
