@@ -334,30 +334,29 @@ export const getModelsRaw = async ({
   }
 
   // TODO: Support collections
-  // if (collectionId) {
-  //   const permissions = await getUserCollectionPermissionsById({
-  //     userId: sessionUser?.id,
-  //     id: collectionId,
-  //   });
-  //
-  //   if (!permissions.read) {
-  //     return { items: [], isPrivate: true };
-  //   }
-  //
-  //   const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-  //     getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
-  //
-  //   AND.push({
-  //     collectionItems: {
-  //       some: {
-  //         collectionId,
-  //         AND: collectionItemModelsAND,
-  //       },
-  //     },
-  //   });
-  //
-  //   isPrivate = !permissions.publicCollection;
-  // }
+  if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({
+      userId: sessionUser?.id,
+      id: collectionId,
+    });
+
+    if (!permissions.read) {
+      return { items: [], isPrivate: true };
+    }
+
+    const { rawAND: collectionItemModelsAND }: Prisma.sql[] =
+      getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
+
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."modelId" = m."id"
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemModelsAND, ' AND ')})`
+    );
+
+    isPrivate = !permissions.publicCollection;
+  }
 
   let orderBy: string = `m."lastVersionAt" DESC NULLS LAST`;
 
@@ -687,7 +686,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       return { items: [], isPrivate: true };
     }
 
-    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+    const { AND: collectionItemModelsAND }: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
     AND.push({

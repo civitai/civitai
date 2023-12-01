@@ -83,7 +83,7 @@ export const getArticles = async ({
         return { items: [] };
       }
 
-      const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+      const { AND: collectionItemModelsAND }: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
         getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
       AND.push({
