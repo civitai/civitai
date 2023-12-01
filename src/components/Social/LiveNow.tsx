@@ -22,6 +22,9 @@ export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
       variant="dot"
       color="red"
       size="sm"
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
     >
       {`Live`}
       <span className="hide-mobile"> On Twitch</span>
