@@ -3,15 +3,23 @@ import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 
-const manualAssignments: Record<string, Record<string, string>> = {};
+// Disable pod memory keeping for now... We might not need it.
+// const manualAssignments: Record<string, Record<string, string>> = {};
 async function getManualAssignments(event: string) {
-  if (manualAssignments[event]) return manualAssignments[event];
+  // if (manualAssignments[event]) return manualAssignments[event];
   const assignments = await redis.hGetAll(`event:${event}:manual-assignments`);
-  manualAssignments[event] = assignments;
+  // manualAssignments[event] = assignments;
   return assignments;
 }
-export function resetManualAssignments(event: string) {
-  delete manualAssignments[event];
+export async function addManualAssignments(event: string, team: string, users: string[]) {
+  const userIds = await dbWrite.user.findMany({
+    where: { username: { in: users } },
+    select: { id: true },
+  });
+
+  for (const { id } of userIds) {
+    await redis.hSet(`event:${event}:manual-assignments`, id.toString(), team);
+  }
 }
 
 export function createEvent<T>(name: string, definition: HolidayEventDefinition) {
