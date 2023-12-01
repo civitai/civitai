@@ -45,9 +45,15 @@ export function Username({
       </Text>
       {badge?.data.url && (
         <Tooltip color="dark" label={badge.name} withArrow withinPortal>
-          <div style={{ display: 'flex' }}>
-            <EdgeMedia src={badge.data.url} width={badgeSize} />
-          </div>
+          {badge.data.animated ? (
+            <div style={{ display: 'flex', width: badgeSize }}>
+              <EdgeMedia src={badge.data.url} width="original" />
+            </div>
+          ) : (
+            <div style={{ display: 'flex' }}>
+              <EdgeMedia src={badge.data.url} width={badgeSize} />
+            </div>
+          )}
         </Tooltip>
       )}
     </Group>
