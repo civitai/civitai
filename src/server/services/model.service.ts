@@ -100,8 +100,12 @@ type ModelRaw = {
   locked: boolean;
   earlyAccessDeadline: Date;
   mode: string;
-  tags: number[];
-  hashes: string[];
+  tagsOnModels: {
+    tagId: number;
+  }[];
+  hashes: {
+    hash: string;
+  }[];
   modelVersion: {
     id: number;
     earlyAccessTimeFrame: number;
@@ -218,7 +222,7 @@ export const getModelsRaw = async ({
     );
   }
 
-  if (period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
+  if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
     AND.push(
       Prisma.sql`m."lastVersionAt" >= ${decreaseDate(
         new Date(),
@@ -398,12 +402,14 @@ export const getModelsRaw = async ({
         ) as "rank",
       `)}
       (
-        SELECT jsonb_agg("tagId") FROM "TagsOnModels" WHERE "modelId" = m."id"
-      ) as "tags",
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('tagId', "tagId")), '[]'::jsonb) FROM "TagsOnModels"
+            WHERE "modelId" = m."id"
+            AND "tagId" IS NOT NULL
+      ) as "tagsOnModels",
       (
-        SELECT jsonb_agg("hash") FROM "ModelHash" 
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash" 
             WHERE "modelId" = m."id" 
-		  	AND "modelId" IS NOT NULL
+		  	    AND "modelId" IS NOT NULL
             AND "hashType" = 'SHA256' 
             AND "fileType" IN ('Model', 'Pruned Model')
 		  	AND "hash" IS NOT NULL
@@ -796,6 +802,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
+  console.log(modelVersionIds);
   const clubRequirement = await entityRequiresClub({
     entities: modelVersionIds.map((id) => ({
       entityId: id,
@@ -819,6 +826,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   //   nextCursor = nextItem?.id;
   // }
 
+  console.log('End of line?');
   const result = {
     nextCursor,
     isPrivate,
@@ -834,7 +842,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         const canGenerate = !!version.generationCoverage?.covered;
         const requiresClub =
           clubRequirement.find((r) => r.entityId === version.id)?.requiresClub ?? false;
-
+        console.log(hashes, tagsOnModels);
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
