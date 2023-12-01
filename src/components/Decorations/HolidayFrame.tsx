@@ -2,8 +2,6 @@ import { createStyles } from '@mantine/core';
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
-import { getRandom } from '~/utils/array-helpers';
-import { getRandomInt } from '~/utils/number-helpers';
 
 const useStyles = createStyles<string, { size: number }>((_, params) => ({
   root: {
@@ -89,7 +87,7 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
   const { classes, cx } = useStyles({
     size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
   });
-  const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: false });
+  const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
 
   if ((!force && !showDecorations) || !cosmetic) return <>{children}</>;
 
