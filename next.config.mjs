@@ -106,6 +106,11 @@ export default defineNextConfig(withAxiom({
         permanent: true,
       },
       {
+        source: '/twitch',
+        destination: 'https://www.twitch.tv/civitai',
+        permanent: true,
+      },
+      {
         source: '/ideas',
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,
