@@ -193,7 +193,7 @@ export const eventEngine = {
       ]);
 
       // Purge cache
-      await redis.del(`eventContributors:${eventDef.name}`);
+      await redis.del(`event:${eventDef.name}:contributors`);
       await purgeCache({
         tags: [
           `event-contributors-${eventDef.name}`,
@@ -385,7 +385,7 @@ export const eventEngine = {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
-    const cacheJson = await redis.get(`eventContributors:${event}`);
+    const cacheJson = await redis.get(`event:${eventDef.name}:contributors`);
     if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
 
     const teamAccounts = this.getTeamAccounts(event);
@@ -426,7 +426,9 @@ export const eventEngine = {
       day: dayContributors,
       teams: allTimeContributorsByTeamName,
     } as TopContributors;
-    await redis.set(`eventContributors:${event}`, JSON.stringify(result), { EX: 60 * 60 * 24 });
+    await redis.set(`event:${eventDef.name}:contributors`, JSON.stringify(result), {
+      EX: 60 * 60 * 24,
+    });
 
     return result;
   },
