@@ -15,6 +15,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function CollectionsLanding() {
   const theme = useMantineTheme();
@@ -34,7 +35,7 @@ export function CollectionsLanding() {
           <Stack
             sx={(theme) => ({
               zIndex: 11,
-              [theme.fn.largerThan('sm')]: {
+              [containerQuery.largerThan('sm')]: {
                 transform: 'translateX(-50%)',
                 left: '50%',
               },

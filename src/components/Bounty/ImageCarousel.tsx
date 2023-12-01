@@ -26,6 +26,7 @@ import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvid
 import { useEffect, useMemo } from 'react';
 import { applyUserPreferencesImages } from '../Search/search.utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -33,7 +34,7 @@ const useStyles = createStyles((theme) => ({
       width: 24,
       height: 24,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         minWidth: 16,
         minHeight: 16,
       },
@@ -41,13 +42,13 @@ const useStyles = createStyles((theme) => ({
   },
   carousel: {
     display: 'block',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
   mobileBlock: {
     display: 'block',
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'none',
     },
   },

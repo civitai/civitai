@@ -64,6 +64,8 @@ import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useContext();
@@ -429,7 +431,7 @@ const useStyles = createStyles((theme) => ({
     paddingBottom: theme.spacing.md,
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
 
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       paddingTop: theme.spacing.md,
       paddingLeft: theme.spacing.md,
       paddingRight: theme.spacing.md,
@@ -441,20 +443,20 @@ const useStyles = createStyles((theme) => ({
     overflow: 'hidden',
   },
   wrapper: {
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       alignItems: 'center',
     },
   },
   outsideImage: {
     display: 'none',
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       borderRadius: theme.radius.md,
       display: 'block',
     },
   },
   insideImage: {
     borderRadius: theme.radius.md,
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       display: 'none',
     },
   },
@@ -462,22 +464,22 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
     width: '100%',
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       padding: 8,
     },
   },
   userActions: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       flexGrow: 1,
     },
   },
   username: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: theme.fontSizes.md,
     },
   },
   joinedDate: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: theme.fontSizes.xs,
     },
   },
@@ -497,11 +499,11 @@ function LayoutSelector({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <NestedLayout>{children}</NestedLayout>;
+  return (
+    <ScrollArea>
+      <NestedLayout>{children}</NestedLayout>
+    </ScrollArea>
+  );
 }
 
-export const UserProfileLayout = (page: React.ReactElement) => (
-  <AppLayout>
-    <LayoutSelector>{page}</LayoutSelector>
-  </AppLayout>
-);
+export const UserProfileLayout = (page: React.ReactNode) => <LayoutSelector>{page}</LayoutSelector>;

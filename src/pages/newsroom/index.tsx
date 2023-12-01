@@ -8,6 +8,7 @@ import { PressMentions } from '~/components/Newsroom/PressMentions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -59,7 +60,7 @@ export default function CivitaiNewsroom() {
             tabsList: {
               gap: theme.spacing.sm,
               width: '100%',
-              [theme.fn.largerThan('md')]: {
+              [containerQuery.largerThan('md')]: {
                 gap: theme.spacing.md,
                 width: 'auto',
               },
@@ -84,7 +85,7 @@ export default function CivitaiNewsroom() {
                 color: theme.white,
                 fontWeight: 500,
               },
-              [theme.fn.largerThan('md')]: {
+              [containerQuery.largerThan('md')]: {
                 width: 200,
                 padding: `${theme.spacing.md}px 0`,
               },
@@ -131,26 +132,26 @@ const useStyles = createStyles((theme) => ({
     marginBottom: theme.spacing.xl * 2,
     padding: `${theme.spacing.xl}px 0 ${theme.spacing.xl * 2}px`,
     containerType: 'inline-size',
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       padding: `${theme.spacing.xl}px 0 ${theme.spacing.xl * 3}px`,
     },
   },
   heroTitle: {
     fontSize: '2rem',
     fontWeight: 500,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       fontSize: '4rem',
     },
   },
   heroText: {
     fontSize: theme.fontSizes.md,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       fontSize: theme.fontSizes.lg,
     },
   },
   heroArticle: {
     marginTop: theme.spacing.lg,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       marginTop: theme.spacing.xl * 2,
     },
   },

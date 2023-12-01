@@ -11,13 +11,14 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useEffect } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 type Props<Item> = {
   data: Array<TypeCategory & { items: Item[] }>;
@@ -55,7 +56,7 @@ export function CategoryList<Item>({
   const { columnCount, maxSingleColumnWidth, columnWidth } = useMasonryContainerContext();
   const { classes } = useStyles();
 
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
 
   useEffect(() => {
     if (inView) fetchNextPage?.();
@@ -168,7 +169,7 @@ function CategoryTitle({
         size="lg"
         lh={1}
         sx={(theme) => ({
-          [theme.fn.smallerThan('sm')]: {
+          [containerQuery.smallerThan('sm')]: {
             marginRight: 'auto',
           },
         })}

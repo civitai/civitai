@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Center,
   Container,
-  Grid,
   Group,
   Loader,
   Stack,
@@ -19,6 +18,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 export default function Notifications() {
   const currentUser = useCurrentUser();
@@ -50,8 +50,8 @@ export default function Notifications() {
     <>
       <Meta title="Notifications | Civitai" />
       <Container size="sm">
-        <Grid gutter="xl" align="center">
-          <Grid.Col span={12}>
+        <ContainerGrid gutter="xl" align="center">
+          <ContainerGrid.Col span={12}>
             <Group position="apart">
               <Title order={1}>Notifications</Title>
               <Group spacing={8}>
@@ -71,8 +71,8 @@ export default function Notifications() {
                 </Tooltip>
               </Group>
             </Group>
-          </Grid.Col>
-          <Grid.Col span={12} px={0}>
+          </ContainerGrid.Col>
+          <ContainerGrid.Col span={12} px={0}>
             {isLoading ? (
               <Center>
                 <Loader />
@@ -103,8 +103,8 @@ export default function Notifications() {
                 <Text>All caught up! Nothing to see here</Text>
               </Center>
             )}
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid.Col>
+        </ContainerGrid>
       </Container>
     </>
   );

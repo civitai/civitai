@@ -7,14 +7,8 @@ import { useEffect } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { AmbientModelCard } from '~/components/Model/Infinite/AmbientModelCard';
-import {
-  ModelQueryParams,
-  UseQueryModelReturn,
-  useModelFilters,
-  useQueryModels,
-} from '~/components/Model/model.utils';
+import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

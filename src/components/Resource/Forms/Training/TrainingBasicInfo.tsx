@@ -9,6 +9,7 @@ import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type tmTypes = (typeof constants.trainingModelTypes)[number];
 
@@ -17,7 +18,7 @@ const useStyles = createStyles((theme) => ({
     '& .mantine-Group-root': {
       justifyContent: 'space-between',
       alignItems: 'stretch',
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         justifyContent: 'center',
       },
     },

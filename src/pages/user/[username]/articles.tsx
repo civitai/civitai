@@ -19,6 +19,7 @@ import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentTog
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -72,7 +73,7 @@ export default function UserArticlesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer fluid p={0}>
           <Stack spacing="xs">
             <Group spacing={8} position="apart">
               {selfView && (
@@ -119,4 +120,4 @@ export default function UserArticlesPage() {
   );
 }
 
-UserArticlesPage.getLayout = UserProfileLayout;
+setPageOptions(UserArticlesPage, { innerLayout: UserProfileLayout });

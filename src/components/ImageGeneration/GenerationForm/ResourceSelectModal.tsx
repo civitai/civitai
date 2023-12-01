@@ -41,7 +41,7 @@ import { ModelSearchIndexRecord } from '~/server/search-index/models.search-inde
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesModels } from '~/components/Search/search.utils';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import trieMemoize from 'trie-memoize';

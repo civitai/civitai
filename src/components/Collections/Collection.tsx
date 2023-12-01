@@ -64,6 +64,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -457,7 +458,7 @@ export function Collection({
                       overflow: 'hidden',
                       borderRadius: '8px',
                       boxShadow: theme.shadows.md,
-                      [theme.fn.smallerThan('sm')]: {
+                      [containerQuery.smallerThan('sm')]: {
                         width: '100%',
                         marginBottom: theme.spacing.xs,
                       },
@@ -483,7 +484,7 @@ export function Collection({
                         order={1}
                         lineClamp={1}
                         sx={(theme) => ({
-                          [theme.fn.smallerThan('sm')]: {
+                          [containerQuery.smallerThan('sm')]: {
                             fontSize: '28px',
                           },
                         })}

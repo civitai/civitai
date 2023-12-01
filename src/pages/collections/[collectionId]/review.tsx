@@ -27,7 +27,7 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 

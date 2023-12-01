@@ -1,4 +1,4 @@
-import { Alert, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   CheckpointType,
   CommercialUse,
@@ -34,6 +34,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const schema = modelUpsertSchema
   .extend({
@@ -135,8 +136,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Grid gutter="xl">
-        <Grid.Col span={12}>
+      <ContainerGrid gutter="xl">
+        <ContainerGrid.Col span={12}>
           <Stack>
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
             <Stack spacing={5}>
@@ -219,12 +220,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               editorSize="xl"
             />
           </Stack>
-        </Grid.Col>
-        <Grid.Col span={12}>
+        </ContainerGrid.Col>
+        <ContainerGrid.Col span={12}>
           <Stack>
             <Paper radius="md" p="xl" withBorder>
-              <Grid gutter="xs">
-                <Grid.Col xs={12} sm={6}>
+              <ContainerGrid gutter="xs">
+                <ContainerGrid.Col xs={12} sm={6}>
                   <Stack spacing="xs">
                     <Text size="md" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
@@ -238,8 +239,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       />
                     )}
                   </Stack>
-                </Grid.Col>
-                <Grid.Col xs={12} sm={6}>
+                </ContainerGrid.Col>
+                <ContainerGrid.Col xs={12} sm={6}>
                   <Stack spacing="xs">
                     <Stack spacing={4}>
                       <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
@@ -309,8 +310,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       ]}
                     />
                   </Stack>
-                </Grid.Col>
-              </Grid>
+                </ContainerGrid.Col>
+              </ContainerGrid>
             </Paper>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
@@ -344,8 +345,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               </>
             )}
           </Stack>
-        </Grid.Col>
-      </Grid>
+        </ContainerGrid.Col>
+      </ContainerGrid>
       {typeof children === 'function'
         ? children({ loading: upsertModelMutation.isLoading })
         : children}

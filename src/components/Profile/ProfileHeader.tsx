@@ -34,7 +34,6 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { CosmeticType } from '@prisma/client';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -48,10 +47,12 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { isDefined } from '~/utils/type-guards';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const useStyles = createStyles((theme) => ({
   message: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       borderRadius: 0,
       width: 'auto',
       marginLeft: '-16px',
@@ -72,7 +73,7 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 'auto',
       marginLeft: '-16px',
       marginRight: '-16px',
@@ -88,7 +89,7 @@ const useStyles = createStyles((theme) => ({
     height: 0,
     paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 'auto',
       borderRadius: 0,
       paddingBottom: `${(constants.profile.mobileCoverImageAspectRatio * 100).toFixed(3)}%`,
@@ -129,7 +130,7 @@ export function ProfileHeader({ username }: { username: string }) {
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
   const { classes, cx } = useStyles();
   const {
     images: hiddenImages,

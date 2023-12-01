@@ -13,6 +13,7 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type ProfileNavigationProps = {
   username: string;
@@ -63,18 +64,18 @@ const useStyles = createStyles((theme, _, getRef) => {
     },
     navigatorBtn: {
       padding: theme.spacing.md,
-      [theme.fn.smallerThan('md')]: {
+      [containerQuery.smallerThan('md')]: {
         padding: theme.spacing.sm,
       },
     },
     navigatorBtnGroup: {
-      [theme.fn.smallerThan('md')]: {
+      [containerQuery.smallerThan('md')]: {
         gap: '5px',
       },
     },
     navigatorBtnIcon: {},
     navigatorBtnText: {
-      [theme.fn.smallerThan('md')]: {
+      [containerQuery.smallerThan('md')]: {
         display: 'none',
 
         [`.${selectedRef} &`]: {
