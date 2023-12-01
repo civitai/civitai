@@ -88,6 +88,266 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   });
 };
 
+type ModelRaw = {
+  id: number;
+  name: string;
+  type: string;
+  nsfw: boolean;
+  status: string;
+  createdAt: Date;
+  lastVersionAt: Date;
+  publishedAt: Date;
+  locked: boolean;
+  earlyAccessDeadline: Date;
+  mode: string;
+  tags: number[];
+  hashes: string[];
+  modelVersion: {
+    id: number;
+    earlyAccessTimeFrame: number;
+    baseModel: string;
+    baseModelType: string;
+    createdAt: Date;
+    trainingStatus: string;
+    generationCoverage: {
+      covered: boolean;
+    };
+  };
+  user: {
+    id: number;
+    username: string;
+    deletedAt: Date;
+    image: string;
+  };
+};
+
+export const getModelsRaw = async ({
+  input,
+  user,
+  count,
+  ignoreListedStatus,
+}: {
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+    take?: number;
+    skip?: number;
+  };
+  // TODO: Likely we wanna remove session user all in all.
+  user?: SessionUser;
+  count?: boolean;
+  ignoreListedStatus?: boolean;
+}) => {
+  const {
+    take,
+    skip,
+    cursor,
+    query,
+    tag,
+    tagname,
+    user,
+    username,
+    baseModels,
+    types,
+    sort,
+    period,
+    periodMode,
+    rating,
+    favorites,
+    hidden,
+    excludedTagIds,
+    excludedUserIds,
+    excludedIds,
+    checkpointType,
+    status,
+    allowNoCredit,
+    allowDifferentLicense,
+    allowDerivatives,
+    allowCommercialUse,
+    browsingMode,
+    ids,
+    needsReview,
+    earlyAccess,
+    supportsGeneration,
+    followed,
+    collectionId,
+    fileFormats,
+    clubId,
+  } = input;
+
+  const AND: Prisma.Sql[] = [];
+
+  // If the user is not a moderator, only show published models
+  if (!sessionUser?.isModerator || !status?.length) {
+    AND.push(Prisma.sql`m."status" = ${ModelStatus.Published}::"ModelStatus"`);
+  } else if (sessionUser?.isModerator) {
+    if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
+    AND.push(Prisma.sql`m."status" IN (${Prisma.join(status, ',')})`);
+    isPrivate = true;
+  }
+
+  // Filter by model permissions
+  if (allowCommercialUse !== undefined) {
+    const commercialUseOr: CommercialUse[] = [];
+    switch (allowCommercialUse) {
+      case CommercialUse.None:
+        commercialUseOr.push(CommercialUse.None);
+        break;
+      case CommercialUse.Image:
+        commercialUseOr.push(CommercialUse.Image);
+      case CommercialUse.RentCivit:
+        commercialUseOr.push(CommercialUse.RentCivit);
+      case CommercialUse.Rent:
+        commercialUseOr.push(CommercialUse.Rent);
+      case CommercialUse.Sell:
+        commercialUseOr.push(CommercialUse.Sell);
+    }
+
+    AND.push(Prisma.sql`m."allowCommercialUse" IN (${Prisma.join(commercialUseOr, ',')})`);
+  }
+
+  if (allowDerivatives !== undefined)
+    AND.push(Prisma.sql`m."allowDerivatives" = ${allowDerivatives}`);
+  if (allowDifferentLicense !== undefined)
+    AND.push(Prisma.sql`m."allowDifferentLicense" = ${allowDifferentLicense}`);
+  if (allowNoCredit !== undefined) AND.push(Prisma.sql`m."allowNoCredit" = ${allowNoCredit}`);
+
+  if (!!ids?.length) AND.push(Prisma.sql`m."id" IN (${Prisma.join(ids, ',')})`);
+
+  if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
+    const TypeOr: Prisma.Sql[] = [Prisma.sql`m."checkpointType" = ${checkpointType}`];
+    if (types?.length) {
+      const otherTypes = types.filter((t) => t !== 'Checkpoint');
+      TypeOr.push(Prisma.sql`m."type" IN (${Prisma.join(otherTypes, ',')})`);
+    } else TypeOr.push(Prisma.sql`m."type" != 'Checkpoint'`);
+
+    AND.push(Prisma.sql`(${Prisma.join(TypeOr, ' OR ')})`);
+  }
+  // TODO: Check raw SQL for path.
+  // if (needsReview && sessionUser?.isModerator) {
+  //   AND.push({
+  //     OR: [
+  //       { meta: { path: ['needsReview'], equals: true } },
+  //       { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
+  //     ],
+  //   });
+  //
+  //   isPrivate = true;
+  // }
+
+  if (earlyAccess) {
+    AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
+  }
+
+  if (supportsGeneration) {
+    AND.push(
+      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
+    );
+  }
+
+  // TODO: Support collections
+  // if (collectionId) {
+  //   const permissions = await getUserCollectionPermissionsById({
+  //     userId: sessionUser?.id,
+  //     id: collectionId,
+  //   });
+  //
+  //   if (!permissions.read) {
+  //     return { items: [], isPrivate: true };
+  //   }
+  //
+  //   const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+  //     getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
+  //
+  //   AND.push({
+  //     collectionItems: {
+  //       some: {
+  //         collectionId,
+  //         AND: collectionItemModelsAND,
+  //       },
+  //     },
+  //   });
+  //
+  //   isPrivate = !permissions.publicCollection;
+  // }
+
+  const queryFrom = Prisma.sql`
+    FROM "Model" m
+    LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id"
+    LEFT JOIN "ModelHash" hashes on hashes."modelId" = m."id" 
+  `;
+
+  const models = await dbRead.$queryRaw<
+    (ModelRaw & {
+      rank: {
+        [`downloadCount${input.period}`]: number;
+        [`favoriteCount${input.period}`]: number;
+        [`commentCount${input.period}`]: number;
+        [`ratingCount${input.period}`]: number;
+        [`rating${input.period}`]: number;
+        [`collectedCount${input.period}`]: number;
+        [`tippedAmountCount${input.period}`]: number;
+      };
+    })[]
+  >`
+    SELECT
+      m."id",
+      m."name",
+      m."type",
+      m."nsfw",
+      m."status",
+      m."createdAt",
+      m."lastVersionAt",
+      m."publishedAt",
+      m."locked",
+      m."earlyAccessDeadline",
+      m."mode",
+      jsonb_build_object(
+        "downloadCount${input.period}", mr."downloadCount${input.period}",
+        "favoriteCount${input.period}", mr."favoriteCount${input.period}",
+        "commentCount${input.period}", mr."commentCount${input.period}",
+        "ratingCount${input.period}", mr."ratingCount${input.period}",
+        "rating${input.period}", mr."rating${input.period}",
+        "collectedCount${input.period}", mr."collectedCount${input.period}",
+        "tippedAmountCount${input.period}", mr."tippedAmountCount${input.period}"
+       ) as "rank",
+      (
+        SELECT jsonb_agg("tagId") FROM "TagsOnModels" WHERE "modelId" = m."id"
+      ) as "tags",
+      (
+        SELECT jsonb_agg("hash") FROM "ModelHash" 
+            WHERE "modelId" = m."id" 
+		  	AND "modelId" IS NOT NULL
+            AND "hashType" = 'SHA256' 
+            AND "fileType" IN ('Model', 'Pruned Model')
+		  	AND "hash" IS NOT NULL
+      ) as "hashes",
+      (
+        SELECT 
+         jsonb_build_object(
+           'id', mv."id",
+           'earlyAccessTimeFrame', mv."earlyAccessTimeFrame",
+           'baseModel', mv."baseModel",
+           'baseModelType', mv."baseModelType",
+           'createdAt', mv."createdAt",
+           'trainingStatus', mv."trainingStatus",
+           'generationCoverage', jsonb_build_object(
+             'covered', COALESCE(gc."covered", false)
+            )
+         ) as "modelVersion"
+         FROM "ModelVersion" mv 
+	     LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
+	     WHERE mv."modelId" = m."id"
+		   ORDER BY mv."index" ASC LIMIT 1
+      ) as "modelVersion",
+	    jsonb_build_object(
+        'id', u."id",
+        'username', u."username",
+        'deletedAt', u."deletedAt",
+        'image', u."image"
+      ) as "user"
+    ${queryFrom}
+  `;
+};
+
 export const getModels = async <TSelect extends Prisma.ModelSelect>({
   input,
   select,
@@ -138,6 +398,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     followed,
     collectionId,
     fileFormats,
+    clubId,
   } = input;
 
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
