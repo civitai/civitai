@@ -94,6 +94,11 @@ type DailyResetContext = {
   db: PrismaClient;
 };
 
+type CleanupContext = DailyResetContext & {
+  winner: string;
+  winnerCosmeticId?: number;
+};
+
 export type DonationCosmeticData = {
   donated?: number;
   purchased?: number;
@@ -116,6 +121,7 @@ type HolidayEventDefinition = {
   badgePrefix: string;
   coverImage?: string;
   coverImageCollection?: string;
+  onCleanup?: (ctx: CleanupContext) => Promise<void>;
   onEngagement?: (ctx: ProcessingContext) => Promise<void>;
   onPurchase?: (ctx: BuzzEventContext) => Promise<void>;
   onDonate?: (ctx: BuzzEventContext) => Promise<void>;

@@ -31,12 +31,29 @@ export const eventEngine = {
       // Ignore events that aren't active yet
       if (eventDef.startDate > new Date()) continue;
 
+      const scores = await this.getTeamScores(eventDef.name);
+
       // If the event is over, unequip the event cosmetics from all users
       if (eventDef.endDate < new Date()) {
         // Check to see if we've already cleaned up this event
         const alreadyCleanedUp = await redis.get(`eventCleanup:${eventDef.name}`);
         if (alreadyCleanedUp) continue;
 
+        // Get 1st place team
+        const winner = scores.find(({ rank }) => rank === 1)?.team;
+        if (!winner) return;
+
+        // Update first place cosmetic and set to winner
+        const winnerCosmeticId = await eventDef.getTeamCosmetic(winner);
+        if (winnerCosmeticId) {
+          await dbWrite.$executeRaw`
+            UPDATE "Cosmetic"
+            SET data = jsonb_set(data, '{winner}', true)
+            WHERE id = ${winnerCosmeticId}
+          `;
+        }
+
+        // Unequip all event cosmetics
         const cosmeticIds = [];
         const cosmeticNames = eventDef.teams.map((x) => `${eventDef.cosmeticName} - ${x}`);
         for (const name in cosmeticNames) {
@@ -44,11 +61,12 @@ export const eventEngine = {
           if (!cosmeticId) continue;
           cosmeticIds.push(cosmeticId);
         }
-
         await dbWrite.userCosmetic.updateMany({
           where: { cosmeticId: { in: cosmeticIds } },
           data: { equippedAt: null },
         });
+
+        await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
 
         // Mark cleanup as complete
         // Only need 7 days, because next deploy should make this event be ignored
@@ -56,7 +74,6 @@ export const eventEngine = {
       } else {
         // If the event isn't over, run the daily reset
         if (eventDef.onDailyReset) {
-          const scores = await this.getTeamScores(eventDef.name);
           if (!scores) continue;
 
           await eventDef.onDailyReset({ scores, db: dbWrite });

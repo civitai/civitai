@@ -15,8 +15,8 @@ const donationRewards = {
 };
 export const holiday2023 = createEvent('holiday2023', {
   title: 'Get Lit & Give Back',
-  startDate: new Date('2023-11-01T00:00:00.000Z'),
-  endDate: new Date('2024-01-01T07:00:00.000Z'),
+  startDate: new Date('2023-12-01T08:00:00.000Z'),
+  endDate: new Date('2024-01-01T08:00:00.000Z'),
   teams: ['Yellow', 'Red', 'Green', 'Blue'],
   bankIndex: -100,
   cosmeticName: 'Holiday Garland 2023',
@@ -104,6 +104,28 @@ export const holiday2023 = createEvent('holiday2023', {
         WHERE id = ${cosmeticId}
       `;
     }
+  },
+  async onCleanup({ winner, winnerCosmeticId, db }) {
+    // Get winners badge
+    const badgeId = await holiday2023.getCosmetic(`Holiday 2023: ${winner} Victory`);
+    if (!badgeId) return;
+
+    // Send notification to winner
+    const details = {
+      message: `Your team won the Holiday 2023 event! Claim your animated victory badge now!`,
+      url: `/claim/cosmetic/${badgeId}`,
+    };
+
+    await db.$executeRaw`
+      INSERT INTO "Notification" ("id", "userId", "type", "details")
+      SELECT
+        CONCAT('holiday2023:', "userId", ':winner'),
+        "userId",
+        'system-announcement',
+        ${JSON.stringify(details)}::jsonb
+      FROM "UserCosmetic"
+      WHERE "cosmeticId" = ${winnerCosmeticId}
+    `;
   },
 });
 
