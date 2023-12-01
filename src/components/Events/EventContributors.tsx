@@ -18,6 +18,12 @@ import { useQueryEventContributors } from './events.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { Currency } from '@prisma/client';
 import { UserAvatar } from '../UserAvatar/UserAvatar';
+import dayjs from 'dayjs';
+import { formatDate } from '~/utils/date-helpers';
+import { Countdown } from '~/components/Countdown/Countdown';
+
+const resetTime = dayjs().endOf('hour').toDate();
+const startTime = dayjs().startOf('hour').toDate();
 
 export function EventContributors({ event }: { event: string }) {
   const { contributors, loading } = useQueryEventContributors({ event });
@@ -34,9 +40,15 @@ export function EventContributors({ event }: { event: string }) {
       <Grid.Col xs={12} sm="auto">
         <Card p={32} radius="lg" h="100%" className={classes.card}>
           <Stack spacing="xl">
-            <Text size={32} weight="bold">
-              Top Donors All Time
-            </Text>
+            <Stack spacing={0}>
+              <Text size={32} weight="bold">
+                Top Donors All Time
+              </Text>
+              <Text size="xs" color="dimmed">
+                As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                <Countdown endTime={resetTime} format="short" />
+              </Text>
+            </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
                 <Group key={index} spacing={8} noWrap>
@@ -85,9 +97,15 @@ export function EventContributors({ event }: { event: string }) {
       <Grid.Col xs={12} sm="auto">
         <Card p={32} radius="lg" h="100%" className={classes.card}>
           <Stack spacing="xl">
-            <Text size={32} weight="bold">
-              Top Donors Today
-            </Text>
+            <Stack spacing={0}>
+              <Text size={32} weight="bold">
+                Top Donors Today
+              </Text>
+              <Text size="xs" color="dimmed">
+                As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                <Countdown endTime={resetTime} format="short" />
+              </Text>
+            </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
                 <Group key={index} spacing={8} noWrap>
@@ -135,9 +153,15 @@ export function EventContributors({ event }: { event: string }) {
         <Card p={32} radius="lg" className={classes.card}>
           <Grid gutter="xl">
             <Grid.Col span={12}>
-              <Text size={32} weight="bold">
-                Top Donors by Team
-              </Text>
+              <Stack spacing={0}>
+                <Text size={32} weight="bold">
+                  Top Donors by Team
+                </Text>
+                <Text size="xs" color="dimmed">
+                  As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                  <Countdown endTime={resetTime} format="short" />
+                </Text>
+              </Stack>
             </Grid.Col>
             {loading ? (
               <Grid.Col span={12}>
