@@ -50,9 +50,10 @@ export function formatSeconds(seconds: number) {
   return output.trim();
 }
 
-export function abbreviateNumber(value: number): string {
+export function abbreviateNumber(value: number, opts?: { decimals: number }): string {
   if (!value) return '0';
 
+  const { decimals } = opts ?? { decimals: 1 };
   const suffixes = ['', 'k', 'm', 'b', 't'];
   let index = 0;
 
@@ -61,7 +62,7 @@ export function abbreviateNumber(value: number): string {
     index++;
   }
 
-  const formattedValue = value.toFixed(value < 10 && index > 0 ? 1 : 0);
+  const formattedValue = value.toFixed(value < 10 && index > 0 ? decimals : 0);
 
   return `${formattedValue}${suffixes[index]}`;
 }
@@ -73,7 +74,7 @@ export function getRandomInt(min: number, max: number) {
 }
 
 export function numberWithCommas(value: number | string | undefined) {
-  return value && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
+  return value != null && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
     ? `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
     : '';
 }

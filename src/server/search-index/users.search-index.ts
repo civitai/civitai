@@ -126,11 +126,14 @@ type UserForSearchIndex = {
     leaderboardCosmetic: string | null;
   } | null;
   cosmetics: {
-    id: number;
     data: Prisma.JsonValue;
-    type: CosmeticType;
-    name: string;
-    source: CosmeticSource;
+    cosmetic: {
+      id: number;
+      data: Prisma.JsonValue;
+      type: CosmeticType;
+      name: string;
+      source: CosmeticSource;
+    };
   }[];
 };
 
@@ -173,7 +176,7 @@ const onFetchItemsToIndex = async ({
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
   ), cosmetics AS MATERIALIZED (
     SELECT
-      uc."userId",
+      uc.data,
       jsonb_agg(jsonb_build_object(
         'id', c.id,
         'data', c.data,
@@ -182,7 +185,7 @@ const onFetchItemsToIndex = async ({
         'name', c.name,
         'leaderboardId', c."leaderboardId",
         'leaderboardPosition', c."leaderboardPosition"
-      )) cosmetics
+      )) cosmetic
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     AND "equippedAt" IS NOT NULL
@@ -231,7 +234,7 @@ const onFetchItemsToIndex = async ({
   )
   SELECT
     t.*,
-    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
+    (SELECT * FROM cosmetics c WHERE c."userId" = t.id),
     (SELECT rank FROM ranks r WHERE r."userId" = t.id),
     (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
     (SELECT stats FROM stats s WHERE s."userId" = t.id)
@@ -269,7 +272,7 @@ const onFetchItemsToIndex = async ({
           }
         : null,
       metrics: userRecord.metrics ?? {},
-      cosmetics: cosmetics.map((cosmetic) => ({ cosmetic })),
+      cosmetics,
     };
   });
 

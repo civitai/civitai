@@ -6,7 +6,7 @@ import { env } from '~/env/client.mjs';
 export type EdgeUrlProps = {
   src: string;
   name?: string | null;
-  width?: number | undefined;
+  width?: number | undefined | 'original';
   height?: number | undefined;
   fit?: 'scale-down' | 'contain' | 'cover' | 'crop' | 'pad';
   anim?: boolean;
@@ -29,12 +29,14 @@ const typeExtensions: Record<MediaType, string> = {
 
 export function getEdgeUrl(
   src: string,
-  { name, type, anim, transcode, ...variantParams }: Omit<EdgeUrlProps, 'src'>
+  { name, type, anim, transcode, width, ...variantParams }: Omit<EdgeUrlProps, 'src'>
 ) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
   const modifiedParams = {
     anim: anim ? undefined : anim,
     transcode: transcode ? true : undefined,
+    width: width === 'original' ? undefined : width,
+    original: width === 'original' ? true : undefined,
     ...variantParams,
   };
   const params = Object.entries(modifiedParams)

@@ -72,6 +72,7 @@ export function ImagePreview({
   // };
 
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
+  if (edgeImageProps.width === 'original') edgeImageProps.width = width ?? undefined;
 
   if (!edgeImageProps.width && !edgeImageProps.height) {
     if (!edgeImageProps.height && width) edgeImageProps.width = width;

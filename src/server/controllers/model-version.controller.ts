@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 
 import { BaseModel, BaseModelType } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
+import { eventEngine } from '~/server/events';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionSchema,
@@ -249,6 +250,15 @@ export const publishModelVersionHandler = async ({
         nsfw: updatedVersion.model.nsfw,
       })
       .catch(handleLogError);
+
+    if (input.publishedAt && input.publishedAt <= new Date()) {
+      await eventEngine.processEngagement({
+        userId: updatedVersion.model.userId,
+        type: 'published',
+        entityType: 'modelVersion',
+        entityId: updatedVersion.id,
+      });
+    }
 
     return updatedVersion;
   } catch (error) {

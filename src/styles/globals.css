@@ -21,6 +21,16 @@ body {
   .hide-mobile {
     display: none;
   }
+
+  .show-mobile {
+    display: block;
+  }
+}
+
+@media only screen and (min-width: 600px) {
+  .show-mobile {
+    display: none;
+  }
 }
 
 a {
@@ -97,4 +107,88 @@ a {
 
 iframe {
   border: none;
+}
+
+.demo-25 {
+  animation: flicker-25 5s ease-in-out infinite;
+}
+
+.demo-50 {
+  animation: flicker-50 4s ease-in-out infinite;
+}
+
+.demo-75 {
+  animation: flicker-75 3s ease-in-out infinite;
+}
+
+.demo-100 {
+  animation: flicker-100 2s ease-in-out infinite;
+}
+
+@keyframes flicker-100 {
+  0% {
+    opacity: 0.95;
+    stroke-width: 5px;
+  }
+
+  50% {
+    opacity: 1;
+    stroke-width: 20px;
+  }
+
+  100% {
+    opacity: 0.95;
+    stroke-width: 5px;
+  }
+}
+
+@keyframes flicker-75 {
+  0% {
+    opacity: 0.85;
+    stroke-width: 0;
+  }
+
+  50% {
+    opacity: .9;
+    stroke-width: 15px;
+  }
+
+  100% {
+    opacity: 0.85;
+    stroke-width: 0px;
+  }
+}
+
+@keyframes flicker-50 {
+  0% {
+    opacity: 0.75;
+    stroke-width: 0;
+  }
+
+  50% {
+    opacity: .8;
+    stroke-width: 10px;
+  }
+
+  100% {
+    opacity: 0.75;
+    stroke-width: 0px;
+  }
+}
+
+@keyframes flicker-25 {
+  0% {
+    opacity: 0.65;
+    stroke-width: 0;
+  }
+
+  50% {
+    opacity: .7;
+    stroke-width: 5px;
+  }
+
+  100% {
+    opacity: 0.65;
+    stroke-width: 0px;
+  }
 }

@@ -18,6 +18,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
       active: true,
+      query: { not: '' },
     },
     select: {
       id: true,
