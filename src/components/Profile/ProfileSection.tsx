@@ -141,6 +141,7 @@ export const useProfileSectionStyles = createStyles<
         gridAutoRows: 0,
         overflow: 'hidden',
         marginTop: -theme.spacing.md,
+        paddingBottom: theme.spacing.md,
 
         '&::-webkit-scrollbar': {
           background: 'transparent',

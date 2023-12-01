@@ -1,6 +1,5 @@
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 import * as searchIndex from '~/server/search-index';
-import { bountiesSearchIndex } from '~/server/search-index';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
@@ -11,11 +10,22 @@ const searchIndexSets = {
   bounties: searchIndex.bountiesSearchIndex,
 };
 
+type SearchIndexSetKey = keyof typeof searchIndexSets;
+
+const cronTimeMap: Record<SearchIndexSetKey, string> = {
+  models: '*/5 * * * *',
+  users: '*/10 * * * *',
+  articles: '*/5 * * * *',
+  images: '*/20 * * * *',
+  collections: '*/10 * * * *',
+  bounties: '*/5 * * * *',
+};
+
 export const searchIndexJobs = Object.entries(searchIndexSets)
   .map(([name, searchIndexProcessor]) => [
     createJob(
       `search-index-sync-${name}`,
-      `*/5 * * * *`,
+      cronTimeMap[name as SearchIndexSetKey],
       async () => {
         const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
 

@@ -66,6 +66,7 @@ export const constants = {
     'SDXL 1.0',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
+    'SDXL Turbo',
     'Other',
   ],
   modelFileTypes: [
@@ -277,6 +278,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL1.0',
     name: 'CreativeML Open RAIL++-M',
   },
+  'sdxl turbo': {
+    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
+    name: 'Stability AI Non-Commercial Research Community License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -292,6 +297,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
   'SDXL Distilled': baseLicenses['openrail++'],
+  'SDXL Turbo': baseLicenses['sdxl turbo'],
   Other: undefined,
 };
 

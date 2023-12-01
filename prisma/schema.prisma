@@ -1780,6 +1780,7 @@ model Announcement {
 enum CosmeticType {
   Badge
   NamePlate
+  ContentDecoration
 }
 
 enum CosmeticSource {
@@ -1802,6 +1803,7 @@ model Cosmetic {
   updatedAt           DateTime?      @updatedAt
   availableStart      DateTime?
   availableEnd        DateTime?
+  availableQuery      String?
   productId           String?
   leaderboardId       String?
   leaderboardPosition Int?
@@ -1815,6 +1817,7 @@ model UserCosmetic {
   cosmetic   Cosmetic  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   obtainedAt DateTime  @default(now()) // createdAt
   equippedAt DateTime?
+  data       Json?
 
   @@id([userId, cosmeticId])
 }
@@ -2097,6 +2100,7 @@ enum HomeBlockType {
   Announcement
   Leaderboard
   Social
+  Event
 }
 
 model HomeBlock {

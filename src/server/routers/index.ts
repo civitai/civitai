@@ -45,6 +45,7 @@ import { clubRouter } from '~/server/routers/club.router';
 import { commonRouter } from '~/server/routers/common.router';
 import { clubPostRouter } from '~/server/routers/clubPost.router';
 import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
+import { eventRouter } from '~/server/routers/event.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -92,6 +93,7 @@ export const appRouter = router({
   userReferralCode: userReferralCodeRouter,
   userProfile: userProfileRouter,
   cosmetic: cosmeticRouter,
+  event: eventRouter,
 });
 
 // export type definition of API

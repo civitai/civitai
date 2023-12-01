@@ -9,6 +9,7 @@ import {
   ActionIcon,
   Indicator,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import {
   IconEye,
   IconEyeOff,
@@ -90,6 +91,11 @@ export function BrowsingModeMenu() {
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const setBrowsingMode = useFiltersContext((state) => state.setBrowsingMode);
 
+  const [showDecorations, setShowDecorations] = useLocalStorage({
+    key: 'showDecorations',
+    defaultValue: true,
+  });
+
   const handleChange = (mode: BrowsingMode) => {
     setBrowsingMode(mode);
     invalidateModeratedContentDebounced(queryUtils);
@@ -140,6 +146,16 @@ export function BrowsingModeMenu() {
           )}
         </BlurToggle>
       )}
+      <Group spacing="xs">
+        <Text size="xs" weight={500}>
+          Event Cosmetics
+        </Text>
+        <Switch
+          ml="auto"
+          checked={showDecorations}
+          onChange={() => setShowDecorations((show) => !show)}
+        />
+      </Group>
     </Stack>
   );
 }

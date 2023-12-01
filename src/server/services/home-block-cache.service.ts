@@ -9,6 +9,7 @@ const CACHE_EXPIRY = {
   [HomeBlockType.Leaderboard]: 60 * 60, // 1 hr
   [HomeBlockType.Announcement]: 60 * 60, // 1 hr
   [HomeBlockType.Social]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
+  [HomeBlockType.Event]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
 };
 
 type HomeBlockForCache = {

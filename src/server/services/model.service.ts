@@ -843,6 +843,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
+  // TODO: getModelsRaw
+  //       user: { select: userWithCosmeticsSelect },
+  //       modelVersions.trainingStatus
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,

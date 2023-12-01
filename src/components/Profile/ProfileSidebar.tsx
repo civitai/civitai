@@ -260,7 +260,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           </Text>
           <Group spacing="xs">
             {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
-              const data = (award.data ?? {}) as { url?: string };
+              const data = (award.data ?? {}) as { url?: string; animated?: boolean };
               const url = (data.url ?? '') as string;
 
               if (!url) {
@@ -270,9 +270,15 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               return (
                 <Popover key={award.id} withArrow width={200} position="top">
                   <Popover.Target>
-                    <Box style={{ cursor: 'pointer' }}>
-                      <EdgeMedia src={url} width={sizeOpts.badges} />
-                    </Box>
+                    {data.animated ? (
+                      <Box style={{ cursor: 'pointer', width: sizeOpts.badges }}>
+                        <EdgeMedia src={url} width="original" />
+                      </Box>
+                    ) : (
+                      <Box style={{ cursor: 'pointer' }}>
+                        <EdgeMedia src={url} width={sizeOpts.badges} />
+                      </Box>
+                    )}
                   </Popover.Target>
                   <Popover.Dropdown>
                     <Stack spacing={0}>
