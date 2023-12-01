@@ -87,6 +87,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
+          data: true,
           cosmetic: {
             select: {
               id: true,

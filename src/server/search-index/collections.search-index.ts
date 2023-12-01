@@ -136,10 +136,13 @@ type CollectionForSearchIndex = {
   };
   cosmetics: {
     data: Prisma.JsonValue;
-    type: CosmeticType;
-    id: number;
-    name: string;
-    source: CosmeticSource;
+    cosmetic: {
+      data: Prisma.JsonValue;
+      type: CosmeticType;
+      id: number;
+      name: string;
+      source: CosmeticSource;
+    };
   }[];
   image: ImageProps;
 };
@@ -235,7 +238,7 @@ const onFetchItemsToIndex = async ({
     GROUP BY u.id
   ), cosmetics AS MATERIALIZED (
     SELECT
-      uc."userId",
+      uc.data,
       jsonb_agg(jsonb_build_object(
         'id', c.id,
         'data', c.data,
@@ -244,7 +247,7 @@ const onFetchItemsToIndex = async ({
         'name', c.name,
         'leaderboardId', c."leaderboardId",
         'leaderboardPosition', c."leaderboardPosition"
-      )) cosmetics
+      )) cosmetic
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     AND "equippedAt" IS NOT NULL
@@ -276,7 +279,7 @@ const onFetchItemsToIndex = async ({
     (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
     (SELECT "image" FROM images i WHERE i.id = t."imageId"),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
-    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
+    (SELECT * FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t
   `;
 
@@ -413,7 +416,7 @@ const onFetchItemsToIndex = async ({
       metrics: collection.metrics || {},
       user: {
         ...user,
-        cosmetics: (cosmetics ?? []).map((cosmetic) => ({ cosmetic })),
+        cosmetics: cosmetics ?? [],
       },
       images: uniqBy(images, 'id') ?? [],
       srcs: [...new Set(collectionImages.map((i) => i.src).filter(isDefined) ?? [])],

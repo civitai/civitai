@@ -31,6 +31,7 @@ export default defineNextConfig(withAxiom({
       'model-share.s3.us-west-1.wasabisys.com',
       'civitai-prod.s3.us-west-1.wasabisys.com',
       'civitai-dev.s3.us-west-1.wasabisys.com',
+      'image.civitai.com',
     ],
   },
   experimental: {
@@ -105,6 +106,11 @@ export default defineNextConfig(withAxiom({
         permanent: true,
       },
       {
+        source: '/twitch',
+        destination: 'https://www.twitch.tv/civitai',
+        permanent: true,
+      },
+      {
         source: '/ideas',
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,
@@ -162,6 +168,11 @@ export default defineNextConfig(withAxiom({
       {
         source: '/forms/press-inquiry',
         destination: 'https://forms.clickup.com/8459928/f/825mr-9351/RZXWRNLV9Q1D32ACNP',
+        permanent: true,
+      },
+      {
+        source: '/forms/matching-partner',
+        destination: 'https://forms.clickup.com/8459928/f/825mr-9431/IQOAS1RXWHI1E2I1S3',
         permanent: true,
       }
     ];

@@ -19,7 +19,12 @@ jobs:
         )
       )
     steps:
-      - uses: convictional/trigger-workflow-and-wait@v1.6.1
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        id: extract_branch
+      - name: Trigger dev deploy
+        uses: convictional/trigger-workflow-and-wait@v1.6.1
         with:
           owner: civitai
           repo: civitai-deployment
@@ -27,5 +32,5 @@ jobs:
           github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
           ref: main
           client_payload: |
-            { "environment": "dev", "branch": "${{ github.ref_name }}" }
+            { "environment": "dev", "branch": "${{ steps.extract_branch.outputs.branch }}" }
           wait_workflow: false

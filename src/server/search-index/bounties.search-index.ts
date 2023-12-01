@@ -147,10 +147,13 @@ type BountyForSearchIndex = {
   };
   cosmetics: {
     data: Prisma.JsonValue;
-    type: CosmeticType;
-    id: number;
-    name: string;
-    source: CosmeticSource;
+    cosmetic: {
+      data: Prisma.JsonValue;
+      type: CosmeticType;
+      id: number;
+      name: string;
+      source: CosmeticSource;
+    };
   }[];
   images: ImageProps[] | null;
   tags: { id: number; name: string }[] | null;
@@ -217,7 +220,7 @@ const onFetchItemsToIndex = async ({
     GROUP BY u.id
   ), cosmetics AS MATERIALIZED (
     SELECT
-      uc."userId",
+      uc.data,
       jsonb_agg(jsonb_build_object(
         'id', c.id,
         'data', c.data,
@@ -226,7 +229,7 @@ const onFetchItemsToIndex = async ({
         'name', c.name,
         'leaderboardId', c."leaderboardId",
         'leaderboardPosition', c."leaderboardPosition"
-      )) cosmetics
+      )) cosmetic
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     AND "equippedAt" IS NOT NULL
@@ -294,7 +297,7 @@ const onFetchItemsToIndex = async ({
     (SELECT images FROM images i WHERE i."entityId" = t.id),
     (SELECT stats FROM stats m WHERE m."bountyId" = t.id),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
-    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
+    (SELECT * FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t
   `;
 
@@ -358,7 +361,7 @@ const onFetchItemsToIndex = async ({
         stats: bounty.stats || null,
         user: {
           ...user,
-          cosmetics: (cosmetics ?? []).map((cosmetic) => ({ cosmetic })),
+          cosmetics: cosmetics ?? [],
         },
       };
     })

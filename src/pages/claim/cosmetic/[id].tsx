@@ -1,6 +1,7 @@
 import {
   Alert,
   Button,
+  Card,
   Center,
   Container,
   Group,
@@ -11,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { CosmeticSource } from '@prisma/client';
-import { IconCircleCheck } from '@tabler/icons-react';
+import { IconCircleCheck, IconClock2, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -49,7 +50,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-type ClaimStatus = 'pending' | 'claimed' | 'equipped';
+const availableCosmeticTypes: string[] = ['Badge', 'ContentDecoration'];
+type ClaimStatus = 'unavailable' | 'pending' | 'claimed' | 'equipped';
 export default function ClaimCosmeticPage({ id }: { id: number }) {
   const queryUtils = trpc.useContext();
   const [status, setStatus] = useState<ClaimStatus | null>();
@@ -60,7 +62,13 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
     if (!cosmeticStatus) return;
 
     setStatus(
-      cosmeticStatus.equippedAt ? 'equipped' : cosmeticStatus.obtainedAt ? 'claimed' : 'pending'
+      !cosmeticStatus.available
+        ? 'unavailable'
+        : cosmeticStatus.equipped
+        ? 'equipped'
+        : cosmeticStatus.obtained
+        ? 'claimed'
+        : 'pending'
     );
   }, [cosmeticStatus]);
 
@@ -92,7 +100,8 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
   };
 
   if (cosmeticLoading || !cosmetic) return <Loader />;
-  const canClaim = cosmetic.type === 'Badge' && cosmetic.source === CosmeticSource.Claim;
+  const canClaim =
+    availableCosmeticTypes.includes(cosmetic.type) && cosmetic.source === CosmeticSource.Claim;
   if (!canClaim) {
     return <NotFound />;
   }
@@ -103,6 +112,16 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
   const cosmeticImage = (cosmetic.data as MixedObject).url;
 
   const actionStates: Record<ClaimStatus, React.ReactNode> = {
+    unavailable: (
+      <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
+        <Group spacing="xs" noWrap position="center">
+          <ThemeIcon color="red" size="lg">
+            <IconX strokeWidth={3} />
+          </ThemeIcon>
+          <Title order={2}>{`You haven't earned this cosmetic`}</Title>
+        </Group>
+      </Alert>
+    ),
     pending: (
       <Center>
         <Button onClick={handleClaim} size="lg" w={300}>
@@ -121,7 +140,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
           <ThemeIcon color="green" size="lg">
             <IconCircleCheck />
           </ThemeIcon>
-          <Title order={2}>{`This badge is equipped`}</Title>
+          <Title order={2}>{`This cosmetic is equipped`}</Title>
         </Group>
       </Alert>
     ),
@@ -136,13 +155,15 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
       />
       <Container size="xs" mb="lg">
         <Stack spacing={0}>
-          <Center>
-            <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
-              <Group spacing="xs" noWrap position="center">
-                <Text size="md" weight={500}>{`🎉 You've received a badge! 🎉`}</Text>
-              </Group>
-            </Alert>
-          </Center>
+          {cosmeticAvailable && status !== 'unavailable' && (
+            <Center>
+              <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
+                <Group spacing="xs" noWrap position="center">
+                  <Text size="md" weight={500}>{`🎉 You've received a cosmetic! 🎉`}</Text>
+                </Group>
+              </Alert>
+            </Center>
+          )}
           <Center
             sx={{
               animationName: `${enterFall}, ${jelloVertical}`,
@@ -153,7 +174,26 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
             h={256}
             my="lg"
           >
-            <EdgeMedia src={(cosmetic.data as MixedObject).url} width={256} />
+            {cosmetic.type === 'Badge' && (
+              <EdgeMedia
+                src={(cosmetic.data as MixedObject).url}
+                width="original"
+                style={{ height: 256, width: 256 }}
+              />
+            )}
+            {cosmetic.type === 'ContentDecoration' && (
+              <Card
+                withBorder
+                shadow="sm"
+                h={256}
+                w={(256 * 2) / 3}
+                sx={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+              >
+                <Text size="xs" color="dimmed">
+                  Example Cosmetic here
+                </Text>
+              </Card>
+            )}
           </Center>
           <Title order={1} align="center" mb={5}>
             {cosmetic.name}
