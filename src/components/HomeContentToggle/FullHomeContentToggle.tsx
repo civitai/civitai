@@ -16,6 +16,7 @@ import {
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
+  IconVideo,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -33,6 +34,10 @@ const homeOptions = {
   images: {
     url: '/images',
     icon: <IconPhoto />,
+  },
+  videos: {
+    url: '/videos',
+    icon: <IconVideo />,
   },
   posts: {
     url: '/posts',

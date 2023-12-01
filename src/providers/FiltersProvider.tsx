@@ -67,7 +67,7 @@ const imageFilterSchema = z.object({
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   view: viewModeSchema.default('feed'),
   excludeCrossPosts: z.boolean().optional(),
-  types: z.array(z.nativeEnum(MediaType)).optional(),
+  types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
