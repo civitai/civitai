@@ -17,10 +17,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   filtersWrapper: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
 
       '> *': { flexGrow: 1 },
@@ -56,7 +57,7 @@ export default function PostsPage() {
             <Announcements
               sx={(theme) => ({
                 marginBottom: -35,
-                [theme.fn.smallerThan('md')]: {
+                [containerQuery.smallerThan('md')]: {
                   marginBottom: -5,
                 },
               })}

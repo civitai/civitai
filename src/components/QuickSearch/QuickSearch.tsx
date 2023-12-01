@@ -35,6 +35,7 @@ import { env } from '~/env/client.mjs';
 import { ActionsWrapper } from './ActionsWrapper';
 import { CustomSpotlightAction } from './CustomSpotlightAction';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -221,7 +222,7 @@ function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.
             overflow: 'auto',
             height: '55vh',
 
-            [theme.fn.smallerThan('sm')]: {
+            [containerQuery.smallerThan('sm')]: {
               height: `calc(100vh - var(--mantine-header-height,50px) - 150px)`,
             },
           },

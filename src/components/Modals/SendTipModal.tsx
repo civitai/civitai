@@ -27,6 +27,7 @@ import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
 import { constants } from '~/server/common/constants';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -76,13 +77,13 @@ const useStyles = createStyles((theme) => ({
   chipGroup: {
     gap: 8,
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       gap: theme.spacing.md,
     },
   },
 
   actions: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       flexDirection: 'column',
       position: 'absolute',
       bottom: 0,
@@ -93,14 +94,14 @@ const useStyles = createStyles((theme) => ({
   },
 
   cancelButton: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
       order: 2,
     },
   },
 
   submitButton: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
       order: 1,
     },

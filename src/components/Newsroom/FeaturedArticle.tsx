@@ -11,6 +11,7 @@ import {
 import { NextLink } from '@mantine/next';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const FeaturedArticle = ({
   article,
@@ -86,13 +87,13 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }, getRe
   },
   title: {
     fontSize: theme.fontSizes.lg,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       fontSize: theme.fontSizes.xl,
     },
   },
   text: {
     fontSize: theme.fontSizes.md,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       fontSize: theme.fontSizes.lg,
     },
   },

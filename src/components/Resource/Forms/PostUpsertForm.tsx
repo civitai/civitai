@@ -1,4 +1,4 @@
-import { Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
 import { IconAlertTriangle, IconArrowsSort, IconClock } from '@tabler/icons-react';
@@ -22,6 +22,7 @@ import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const queryUtils = trpc.useContext();
@@ -59,8 +60,8 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const imagesCount = images.length;
 
   return postId ? (
-    <Grid gutter="xl">
-      <Grid.Col md={4} sm={6} orderSm={2}>
+    <ContainerGrid gutter="xl">
+      <ContainerGrid.Col md={4} sm={6} orderSm={2}>
         <Stack spacing={50}>
           <Stack>
             <PublishButton modelId={modelId} modelVersionId={modelVersionId} />
@@ -82,11 +83,11 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
           </ReorderImagesButton>
           <EditPostReviews />
         </Stack>
-      </Grid.Col>
-      <Grid.Col md={8} sm={6} orderSm={1}>
+      </ContainerGrid.Col>
+      <ContainerGrid.Col md={8} sm={6} orderSm={1}>
         {!reorder ? <EditPostImages /> : <ReorderImages />}
-      </Grid.Col>
-    </Grid>
+      </ContainerGrid.Col>
+    </ContainerGrid>
   ) : (
     <ImageDropzone
       onDrop={handleDrop}

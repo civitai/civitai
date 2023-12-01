@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StarRating } from '~/components/StartRating/StarRating';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type ContextState = {
   count: number;
@@ -177,7 +178,7 @@ const useStyles = createStyles((theme) => ({
 
   badgeText: {
     fontSize: theme.fontSizes.md,
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.sm,
     },
   },

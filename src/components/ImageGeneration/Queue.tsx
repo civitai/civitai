@@ -4,7 +4,6 @@ import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -18,8 +17,6 @@ export function Queue({
   isFetchingNextPage,
   isError,
 }: ReturnType<typeof useGetGenerationRequests>) {
-  const mobile = useIsMobile({ breakpoint: 'md' });
-
   if (isError)
     return (
       <Alert color="red">
@@ -49,7 +46,7 @@ export function Queue({
       </Stack>
     </>
   ) : (
-    <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
+    <Center h="100%">
       <Stack spacing="xs" align="center" py="16">
         <IconInbox size={64} stroke={1} />
         <Stack spacing={0}>

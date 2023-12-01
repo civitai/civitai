@@ -61,7 +61,6 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useRouter } from 'next/router';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
@@ -80,6 +79,8 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import Link from 'next/link';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -105,8 +106,8 @@ export const getServerSideProps = createServerSideProps({
 });
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = `@media (max-width: ${theme.breakpoints.md - 1}px)`;
-  const isDesktop = `@media (min-width: ${theme.breakpoints.md}px)`;
+  const isMobile = containerQuery.smallerThan('md');
+  const isDesktop = containerQuery.largerThan('md');
   return {
     root: {
       width: '100vw',
@@ -200,7 +201,7 @@ export default function BountyEntryDetailsPage({
       },
     });
   const user = bountyEntry?.user;
-  const mobile = useIsMobile({ breakpoint: 'md' });
+  const mobile = useContainerSmallerThan('md');
   const currentUser = useCurrentUser();
   const benefactor = (bounty?.benefactors ?? []).find((b) => b.user.id === currentUser?.id);
   const isOwner = currentUser && user?.id === currentUser?.id;

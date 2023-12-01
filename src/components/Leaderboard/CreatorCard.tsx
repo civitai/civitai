@@ -1,9 +1,9 @@
-import { createStyles, Grid, Paper, Stack, Text } from '@mantine/core';
+import { createStyles, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { InView } from 'react-intersection-observer';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';
@@ -60,8 +60,8 @@ export function CreatorCard({
           shadow="xs"
           withBorder
         >
-          <Grid align="center">
-            <Grid.Col span={2}>
+          <ContainerGrid align="center">
+            <ContainerGrid.Col span={2}>
               <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
                 {isTop3 && (
                   <IconCrown
@@ -90,14 +90,14 @@ export function CreatorCard({
                   </Text>
                 )}
               </Stack>
-            </Grid.Col>
-            <Grid.Col span={10}>
+            </ContainerGrid.Col>
+            <ContainerGrid.Col span={10}>
               <Stack spacing={8}>
                 <UserAvatar user={user} textSize="lg" size="md" withUsername />
                 <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
               </Stack>
-            </Grid.Col>
-          </Grid>
+            </ContainerGrid.Col>
+          </ContainerGrid>
         </Paper>
       </NextLink>
     </div>

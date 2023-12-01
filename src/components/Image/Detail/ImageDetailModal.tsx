@@ -1,6 +1,6 @@
-import { Modal } from '@mantine/core';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
@@ -22,13 +22,7 @@ export default function ImageDetailModal({
   if (!query.imageId) return null;
 
   return (
-    <Modal
-      {...dialog}
-      withCloseButton={false}
-      fullScreen
-      padding={0}
-      style={{ maxHeight: '100dvh', maxWidth: '100vw' }}
-    >
+    <PageModal {...dialog} withCloseButton={false} fullScreen padding={0}>
       <ImageDetailProvider
         imageId={imageId}
         filters={queryFilters}
@@ -37,6 +31,6 @@ export default function ImageDetailModal({
       >
         <ImageDetail />
       </ImageDetailProvider>
-    </Modal>
+    </PageModal>
   );
 }

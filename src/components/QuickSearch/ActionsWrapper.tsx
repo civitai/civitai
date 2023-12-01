@@ -23,6 +23,7 @@ import {
   FilterIcon,
 } from '~/components/QuickSearch/util';
 import { titleCase } from '~/utils/string-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const filterOptions: FilterIdentifier[] = ['all', 'models', 'users', 'tags', 'articles'];
 
@@ -69,7 +70,7 @@ const useAccordionStyles = createStyles((theme) => {
       paddingBottom: theme.spacing.xs,
     },
     panel: {
-      [theme.fn.smallerThan('md')]: {
+      [containerQuery.smallerThan('md')]: {
         position: 'absolute',
         left: 0,
         background: theme.colors.gray[theme.fn.primaryShade()],

@@ -14,6 +14,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -44,7 +45,7 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: 'transparent',
     gap: 8,
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       overflow: 'auto hidden',
       maxWidth: '100%',
     },
@@ -52,7 +53,7 @@ const useStyles = createStyles((theme) => ({
   control: { border: 'none !important' },
 
   filtersWrapper: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
 
       '> *': { flexGrow: 1 },
@@ -90,7 +91,7 @@ export default function BountiesPage() {
             <Announcements
               sx={(theme) => ({
                 marginBottom: -35,
-                [theme.fn.smallerThan('md')]: {
+                [containerQuery.smallerThan('md')]: {
                   marginBottom: -5,
                 },
               })}

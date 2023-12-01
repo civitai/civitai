@@ -15,6 +15,7 @@ import { ImageGenerationProcess, MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { Modal } from '@mantine/core';
 
 export interface ImageProps {
   id: number;
@@ -61,7 +62,7 @@ const imageViewerQueryParams = z
     imageId: z.coerce.number(),
   })
   .partial();
-export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
+export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
 
   const [onDeleteImage, setOnDeleteImage] = useState<((imageId: number) => void) | undefined>(
@@ -165,11 +166,12 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
       }}
     >
       {activeImageId && (
-        <div
-          style={{
-            position: 'fixed',
-            zIndex: 999,
-          }}
+        <Modal
+          opened={!!activeImageId}
+          onClose={() => setActiveImageId(null)}
+          withCloseButton={false}
+          fullScreen
+          padding={0}
         >
           <ImageDetailByProps
             imageId={activeImageId}
@@ -183,7 +185,7 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
             entityType={entityType || 'post'}
             onDeleteImage={onDeleteImage}
           />
-        </div>
+        </Modal>
       )}
       {children}
     </ImageViewerCtx.Provider>

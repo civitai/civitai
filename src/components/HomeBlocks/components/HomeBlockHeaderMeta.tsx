@@ -4,8 +4,8 @@ import { Button, Group, Text, Title } from '@mantine/core';
 import Link from 'next/link';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const HomeBlockHeaderMeta = ({ metadata }: Props) => {
   const { classes: homeBlockClasses } = useHomeBlockStyles();
@@ -18,7 +18,7 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
           align="center"
           pb="md"
           sx={(theme) => ({
-            [theme.fn.smallerThan('sm')]: {
+            [containerQuery.smallerThan('sm')]: {
               paddingRight: theme.spacing.md,
             },
           })}

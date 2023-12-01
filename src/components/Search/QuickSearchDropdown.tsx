@@ -48,6 +48,7 @@ import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/im
 import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
 import { IndexToLabel, SearchPathToIndexMap } from '~/components/Search/useSearchState';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -60,25 +61,25 @@ const useStyles = createStyles((theme) => ({
   root: {
     flexGrow: 1,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
       flexGrow: 1,
     },
   },
   wrapper: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
     },
   },
   input: {
     borderRadius: 0,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
     },
   },
   dropdown: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       marginTop: '-7px',
     },
   },
@@ -86,7 +87,7 @@ const useStyles = createStyles((theme) => ({
   targetSelectorRoot: {
     width: '110px',
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '25%',
     },
   },
@@ -101,7 +102,7 @@ const useStyles = createStyles((theme) => ({
       borderRightStyle: 'none',
     },
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       height: '100%',
     },
   },
@@ -120,7 +121,7 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
     },
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
