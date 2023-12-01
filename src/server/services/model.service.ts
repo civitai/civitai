@@ -372,8 +372,7 @@ export const getModelsRaw = async ({
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    if (cursorProp)
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
   if (!!fileFormats?.length) {
@@ -408,7 +407,7 @@ export const getModelsRaw = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  const models = await dbRead.$queryRaw<ModelRaw[]>`
+  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: bigint | null })[]>`
     SELECT
       m."id",
       m."name",
@@ -469,7 +468,7 @@ export const getModelsRaw = async ({
         'deletedAt', u."deletedAt",
         'image', u."image"
       ) as "user",
-      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
     
     ORDER BY ${Prisma.raw(orderBy)}
@@ -477,9 +476,9 @@ export const getModelsRaw = async ({
   `;
 
   let nextCursor: bigint | undefined;
-  if (models.length >= take) {
+  if (take && models.length >= take) {
     const nextItem = models.pop();
-    nextCursor = nextItem?.cursorId;
+    nextCursor = nextItem?.cursorId || undefined;
   }
 
   return {
