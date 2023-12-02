@@ -107,6 +107,7 @@ export function UnroutedImageCard({ data }: Props) {
           />
           <Stack
             className={cx(
+              'footer',
               sharedClasses.contentOverlay,
               sharedClasses.bottom,
               sharedClasses.gradientOverlay

@@ -401,7 +401,7 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
 
   return (
     <FeedCard ref={ref}>
-      {inView && (
+      {inView ? (
         <div className={classes.root} onClick={handleSelect}>
           <ImageGuard
             images={[data.image]}
@@ -565,6 +565,8 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
             </Stack>
           </Card>
         </div>
+      ) : (
+        <></>
       )}
     </FeedCard>
   );

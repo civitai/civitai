@@ -48,9 +48,23 @@ const useStyles = createStyles<string, { aspectRatio?: number }>((theme, { aspec
 });
 
 export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
-  ({ href, children, aspectRatio = 'portrait', className, useCSSAspectRatio, ...props }, ref) => {
+  (
+    {
+      href,
+      children,
+      aspectRatio = 'portrait',
+      className,
+      useCSSAspectRatio,
+      cardDecoration,
+      inViewOptions,
+      ...props
+    },
+    ref
+  ) => {
     const { ratio, cssRatio } = aspectRatioValues[aspectRatio];
     const { classes, cx } = useStyles({ aspectRatio: useCSSAspectRatio ? cssRatio : undefined });
+
+    // const {ref, inView} = useInView(inViewOptions)
 
     const card = (
       <Card<'a'>
@@ -83,4 +97,6 @@ type Props = CardProps & {
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
   useCSSAspectRatio?: boolean;
+  cardDecoration?: any;
+  inViewOptions?: any;
 };
