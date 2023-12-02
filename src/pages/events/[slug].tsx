@@ -29,8 +29,10 @@ import {
   Tooltip as ChartTooltip,
   LineElement,
   LinearScale,
+  TimeScale,
   PointElement,
 } from 'chart.js';
+import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
@@ -81,14 +83,14 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
+ChartJS.register(CategoryScale, TimeScale, LinearScale, PointElement, LineElement, ChartTooltip);
 const options: ChartOptions<'line'> = {
   responsive: true,
   elements: {
     point: { pointStyle: 'cross' },
   },
   scales: {
-    x: { grid: { display: false } },
+    x: { type: 'time', grid: { display: false } },
     y: { grid: { display: false } },
   },
   plugins: {
@@ -128,42 +130,33 @@ export default function EventPageDetails({
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
   const cosmeticData = eventCosmetic?.data as { lights: number; upgradedLights: number };
 
-  const labels = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          teamScoresHistory
-            .flatMap((teamScore) => teamScore.scores.map((score) => score.date))
-            .sort((a, b) => a.getTime() - b.getTime())
-            .map((date) => formatDate(stripTime(date), 'MMM-DD'))
-        )
-      ),
-    [teamScoresHistory]
-  );
+  const datasets = useMemo(() => {
+    const allDates = teamScoresHistory
+      .flatMap((teamScore) => teamScore.scores.map((score) => score.date.getTime()))
+      .sort((a, b) => a - b);
+    const dates = [...new Set(allDates)];
 
-  const updatedTeamScoresHistory = useMemo(
-    () =>
-      teamScoresHistory.map((teamScore) => {
-        let lastMatchedIndex = -1;
+    const datasets = teamScoresHistory.map(({ team, scores }) => {
+      let lastMatchedIndex = 0;
+      const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
 
-        return {
-          ...teamScore,
-          scores: labels.map((label, index) => {
-            const matchedScore = teamScore.scores.find(
-              (score) => formatDate(stripTime(score.date), 'MMM-DD') === label
-            );
+      return {
+        label: 'Buzz donated',
+        data: dates.map((date) => {
+          let matchedIndex = scores.findIndex((x) => x.date.getTime() == date);
+          if (matchedIndex !== -1) lastMatchedIndex = matchedIndex;
+          else matchedIndex = lastMatchedIndex;
 
-            if (matchedScore) {
-              lastMatchedIndex = index;
-              return { date: label, score: matchedScore?.score };
-            } else {
-              return { date: label, score: teamScore.scores[lastMatchedIndex]?.score ?? 0 };
-            }
-          }),
-        };
-      }),
-    [labels, teamScoresHistory]
-  );
+          const score = scores[matchedIndex]?.score;
+          return { x: new Date(date), y: score };
+        }),
+        borderColor: color,
+        backgroundColor: color,
+      };
+    });
+
+    return datasets;
+  }, [teamScoresHistory]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
@@ -436,21 +429,7 @@ export default function EventPageDetails({
                   </Center>
                 ) : (
                   <Stack spacing={40} w="100%" align="center">
-                    <Line
-                      options={options}
-                      data={{
-                        labels,
-                        datasets: updatedTeamScoresHistory.map(({ team, scores }) => {
-                          const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
-                          return {
-                            label: 'Buzz donated',
-                            data: scores.map(({ score }) => score),
-                            borderColor: color,
-                            backgroundColor: color,
-                          };
-                        }),
-                      }}
-                    />
+                    <Line options={options} data={{ datasets }} />
                     <Group spacing="md">
                       {teamScores.length > 0 &&
                         teamScores.map((teamScore) => (

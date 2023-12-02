@@ -283,11 +283,14 @@ export const eventEngine = {
       window,
     });
 
+    const now = new Date();
     const teamScoreHistory = Object.entries(accounts).map(([team, accountId]) => {
       const summary = summaries[accountId];
       return {
         team,
-        scores: summary.map((x) => ({ date: x.date, score: x.balance })),
+        scores: summary
+          .filter((x) => x.date < now)
+          .map((x) => ({ date: x.date, score: x.balance })),
       };
     });
 
