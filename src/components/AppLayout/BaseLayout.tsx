@@ -6,13 +6,13 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   return (
-    <Box
+    <ContainerProvider
       className={cx(`theme-${theme.colorScheme}`, classes.root)}
-      // containerName="root"
+      containerName="root"
       id="root"
     >
       {children}
-    </Box>
+    </ContainerProvider>
   );
 }
 
