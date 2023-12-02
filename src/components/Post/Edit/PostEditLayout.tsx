@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { Center, Loader } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 // It turns out, you can't use hooks in a layout component
 // https://github.com/vercel/next.js/discussions/36341#discussioncomment-2628008

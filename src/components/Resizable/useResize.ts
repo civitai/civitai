@@ -89,6 +89,7 @@ export const useResize = (options: Props) => {
       window.removeEventListener('mousemove', resize);
       window.removeEventListener('mouseup', stopResizing);
       resizerRef?.removeEventListener('mousedown', startResizing);
+      if (frame.current) cancelAnimationFrame(frame.current);
     };
   }, [resize, stopResizing, resizerRef, ref, startResizing]);
 
