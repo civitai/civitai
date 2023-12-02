@@ -203,6 +203,6 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs {
+.frame-decor .footer-abs > * {
   bottom: 36px !important;
 }
