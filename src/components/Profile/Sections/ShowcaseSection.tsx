@@ -13,6 +13,8 @@ import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -62,6 +64,18 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     widthGrid: '280px',
   });
 
+  // const ref = useResizeObserver(
+  //   (entries) => {
+  //     for (const entry of entries) {
+  //       const target = entry.target as HTMLElement;
+  //       const { height } = target.getBoundingClientRect();
+  //       if (height === 0) target.style.visibility = 'hidden';
+  //       else target.style.removeProperty('visibility');
+  //     }
+  //   },
+  //   { observeChildren: true }
+  // );
+
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
   if (isNullState && inView) {
@@ -74,9 +88,10 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
         <ProfileSectionPreview rowCount={2} />
       ) : (
         <ProfileSection title="Showcase" icon={<IconHeart />}>
-          <div
+          <ShowcaseGrid
+            itemCount={showcaseItems.length}
+            rows={2}
             className={cx({
-              [classes.grid]: coverImages.length > 0,
               [classes.nullState]: !coverImages.length,
               [classes.loading]: isRefetching,
             })}
@@ -89,7 +104,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
                 key={`${image.entityType}-${image.entityId}`}
               />
             ))}
-          </div>
+          </ShowcaseGrid>
         </ProfileSection>
       )}
     </div>

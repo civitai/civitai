@@ -90,10 +90,9 @@ const useStyles = createStyles((theme, _, getRef) => {
     card: {
       // height: '300px',
       // background: theme.fn.gradient({ from: base[9], to: background, deg: 180 }),
-
-      [`&:has(~ .frame-decor) .${infoRef}`]: {
-        paddingBottom: '28px !important',
-      },
+      // [`&:has(~ .frame-decor) .${infoRef}`]: {
+      //   paddingBottom: '28px !important',
+      // },
     },
     link: {
       display: 'block',
@@ -410,7 +409,7 @@ export function AmbientModelCard({ data, height }: Props) {
         radius="sm"
         label={isUpdated ? 'Updated' : 'New'}
         color="red"
-          className={classes.card}
+        className={classes.card}
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
         sx={{ opacity: isHidden && !hiddenQuery ? 0.1 : undefined }}
       >
@@ -580,7 +579,7 @@ export function AmbientModelCard({ data, height }: Props) {
                       )}
                     </Group>
 
-                    <Stack className={classes.content} spacing={6} p="xs">
+                    <Stack className={cx('footer', classes.content)} spacing={6} p="xs">
                       <Group position="left" spacing={4}>
                         {modelText}
                       </Group>

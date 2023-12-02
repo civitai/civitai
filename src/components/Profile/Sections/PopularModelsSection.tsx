@@ -12,6 +12,7 @@ import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import Link from 'next/link';
 import { Button, Text } from '@mantine/core';
+import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 
 const POPULAR_MODELS_DISPLAY = 32;
 
@@ -62,11 +63,11 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
             </Link>
           }
         >
-          <div className={classes.grid}>
+          <ShowcaseGrid itemCount={models.length} rows={2}>
             {models.map((model) => (
               <ModelCard data={model} key={model.id} />
             ))}
-          </div>
+          </ShowcaseGrid>
         </ProfileSection>
       )}
     </div>
