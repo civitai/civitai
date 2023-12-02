@@ -1,5 +1,6 @@
 import { Card, CardProps, Group, Image, Stack, Text, createStyles } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
+import Link from 'next/link';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 
@@ -57,7 +58,21 @@ export function HeroCard({
         <Text className={classes.title} weight={600} inline>
           {title}
         </Text>
-        <ReactMarkdown allowedElements={['a', 'p']} className="markdown-content">
+        <ReactMarkdown
+          allowedElements={['a', 'p']}
+          className="markdown-content"
+          components={{
+            a: ({ node, ...props }) => {
+              return (
+                <Link href={props.href as string}>
+                  <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                    {props.children[0]}
+                  </a>
+                </Link>
+              );
+            },
+          }}
+        >
           {description}
         </ReactMarkdown>
         {externalLink && (

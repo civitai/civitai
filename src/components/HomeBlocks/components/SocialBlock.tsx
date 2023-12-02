@@ -86,6 +86,7 @@ function TwitchStream({ channel }: { channel: string }) {
       channel,
       layout: 'video',
       allowfullscreen: true,
+      muted: true,
       parent: ['civitai.com'],
     });
     setInitialized(true);

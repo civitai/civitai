@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
+import { discord } from '~/server/integrations/discord';
 import { redis } from '~/server/redis/client';
 
 // Disable pod memory keeping for now... We might not need it.
@@ -77,6 +78,22 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
 
     return rewards;
   }
+  async function getDiscordRoles() {
+    const cacheKey = `event:${name}:discord-roles`;
+    const roleCache = await redis.hGetAll(cacheKey);
+    if (Object.keys(roleCache).length > 0) return roleCache;
+
+    // Cache is empty, so we need to populate it
+    const discordRoles = await discord.getAllRoles();
+    for (const team of definition.teams) {
+      const role = discordRoles.find((r) => r.name.includes(`(${team})`));
+      if (!role) continue;
+      roleCache[team] = role.id;
+    }
+    await redis.hSet(cacheKey, roleCache);
+
+    return roleCache;
+  }
 
   return {
     getCosmetic,
@@ -88,6 +105,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     getUserTeam,
     getUserCosmeticId,
     getRewards,
+    getDiscordRoles,
     name,
     ...definition,
   };
