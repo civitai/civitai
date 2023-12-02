@@ -8,10 +8,11 @@ const useStyles = createStyles<string, { size: number }>((_, params) => ({
     position: 'relative',
   },
   wrapper: {
-    // position: 'absolute',
-    // bottom: '-10px',
-    // width: '100%',
-    // zIndex: 100,
+    position: 'absolute',
+    bottom: '-10px',
+    width: '100%',
+    zIndex: 100,
+    maxWidth: 360,
   },
   decoration: {
     position: 'relative',
@@ -122,10 +123,10 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
   if (!children) return decoration;
 
   return (
-    <div className={classes.root}>
+    <div className={cx('frame-decor', classes.root)}>
       {children}
       {/* Fixed className to reference it in other components easily */}
-      <a href="/events/holiday2023" target="_blank" className={cx('frame-decor', classes.wrapper)}>
+      <a href="/events/holiday2023" target="_blank" className={cx(classes.wrapper)}>
         {decoration}
       </a>
     </div>

@@ -13,6 +13,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { Button, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import Link from 'next/link';
+import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 
 const MAX_ARTICLES_DISPLAY = 32;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
@@ -63,11 +64,11 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
             </Link>
           }
         >
-          <div className={classes.grid}>
+          <ShowcaseGrid itemCount={articles.length} rows={1}>
             {articles.map((article) => (
-              <ArticleCard data={article} aspectRatio="flat" key={article.id} useCSSAspectRatio />
+              <ArticleCard data={article} aspectRatio="square" key={article.id} />
             ))}
-          </div>
+          </ShowcaseGrid>
         </ProfileSection>
       )}
     </div>
