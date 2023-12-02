@@ -169,7 +169,13 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   }
 
   return (
-    <a href={asPath} onClick={handleClick} className={className} style={style}>
+    <a
+      href={asPath}
+      onClick={handleClick}
+      onTouchStart={handleClick}
+      className={className}
+      style={style}
+    >
       {children}
     </a>
   );
