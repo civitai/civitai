@@ -48,6 +48,7 @@ import {
   IconUser,
   IconUserCircle,
   IconUsers,
+  IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
@@ -87,6 +88,7 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { constants } from '~/server/common/constants';
+import { EventButton } from '~/components/EventButton/EventButton';
 
 const HEADER_HEIGHT = 70;
 
@@ -292,6 +294,18 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Post images
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/posts/create',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconVideoPlus stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Post videos
           </Group>
         ),
         rel: 'nofollow',
@@ -692,6 +706,7 @@ export function AppHeader({
               </Menu>
             )}
             <SupportButton />
+            <EventButton />
           </Group>
         </Grid.Col>
         <Grid.Col
