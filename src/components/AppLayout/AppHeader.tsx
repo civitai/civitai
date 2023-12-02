@@ -824,7 +824,7 @@ export function AppHeader({
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Portal>
+                <Portal target={ref.current}>
                   <Paper
                     className={classes.dropdown}
                     withBorder
