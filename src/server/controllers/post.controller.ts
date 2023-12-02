@@ -35,6 +35,7 @@ import { Context } from '~/server/createContext';
 import { dbRead } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
+import dayjs from 'dayjs';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -147,7 +148,8 @@ export const updatePostHandler = async ({
         ctx.ip
       );
 
-      if (updatedPost.publishedAt <= new Date()) {
+      const isScheduled = dayjs(updatedPost.publishedAt).add(10, 'minutes').isAfter(new Date());
+      if (!isScheduled) {
         await eventEngine.processEngagement({
           userId: updatedPost.userId,
           type: 'published',
