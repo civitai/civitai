@@ -107,7 +107,8 @@ export const updatePostHandler = async ({
     });
     const updatedPost = await updatePost(input);
 
-    if (!post?.publishedAt && updatedPost.publishedAt) {
+    const wasPublished = post?.publishedAt && post.publishedAt;
+    if (wasPublished) {
       const postTags = await dbRead.postTag.findMany({
         where: {
           postId: updatedPost.id,
@@ -116,11 +117,14 @@ export const updatePostHandler = async ({
           tagName: true,
         },
       });
+      const isScheduled = dayjs(updatedPost.publishedAt).add(10, 'minutes').isAfter(new Date());
+      const tags = postTags.map((x) => x.tagName);
+      if (isScheduled) tags.push('scheduled');
       await ctx.track.post({
         type: 'Publish',
         nsfw: updatedPost.nsfw,
         postId: updatedPost.id,
-        tags: postTags.map((x) => x.tagName),
+        tags,
       });
 
       // Give reward to owner of modelVersion
@@ -148,7 +152,6 @@ export const updatePostHandler = async ({
         ctx.ip
       );
 
-      const isScheduled = dayjs(updatedPost.publishedAt).add(10, 'minutes').isAfter(new Date());
       if (!isScheduled) {
         await eventEngine.processEngagement({
           userId: updatedPost.userId,
