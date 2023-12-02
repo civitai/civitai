@@ -16,16 +16,19 @@ export const useContainerContext = () => {
   return context;
 };
 
-type ContainerProviderProps = BoxProps & { containerName: string };
+type ContainerProviderProps = BoxProps & {
+  containerName: string;
+  supportsContainerQuery?: boolean;
+};
 
 const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
-  ({ children, containerName, ...props }, ref) => {
+  ({ children, containerName, supportsContainerQuery = true, ...props }, ref) => {
     const innerRef = useResizeObserver((entries) => {
       const entry = entries[0];
       useContainerProviderStore.setState(() => ({ [containerName]: entry.contentBoxSize[0] }));
     });
     const mergedRef = useMergedRef(innerRef, ref);
-    const { classes, cx } = useStyles();
+    const { classes, cx } = useStyles({ supportsContainerQuery });
 
     return (
       <ContainerContext.Provider value={{ nodeRef: innerRef, containerName }}>
@@ -33,7 +36,10 @@ const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
           ref={mergedRef}
           {...props}
           className={cx(classes.root, props.className)}
-          style={{ containerName, ...props.style }}
+          style={{
+            containerName: supportsContainerQuery ? containerName : undefined,
+            ...props.style,
+          }}
         >
           {children}
         </Box>
@@ -48,16 +54,18 @@ export const ContainerProvider = createPolymorphicComponent<'div', ContainerProv
   _ContainerProvider
 );
 
-const useStyles = createStyles(() => ({
-  root: {
-    containerType: 'inline-size',
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    flex: 1,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-}));
+const useStyles = createStyles<string, { supportsContainerQuery: boolean }>(
+  (theme, { supportsContainerQuery }) => ({
+    root: {
+      containerType: supportsContainerQuery ? 'inline-size' : undefined,
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      flex: 1,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+  })
+);
 
 export const useContainerProviderStore = create<Record<string, ResizeObserverSize>>(() => ({}));

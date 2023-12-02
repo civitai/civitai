@@ -8,8 +8,9 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   return (
     <ContainerProvider
       className={cx(`theme-${theme.colorScheme}`, classes.root)}
-      containerName="root"
       id="root"
+      containerName="root"
+      supportsContainerQuery={false}
     >
       {children}
     </ContainerProvider>
