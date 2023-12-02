@@ -299,7 +299,7 @@ export function AppHeader({
         rel: 'nofollow',
       },
       {
-        href: '/posts/create',
+        href: '/posts/create?video',
         visible: !isMuted,
         redirectReason: 'post-images',
         label: (
@@ -497,7 +497,7 @@ export function AppHeader({
         .filter(({ visible }) => visible !== false)
         .map((link, index) => {
           const item = link.href ? (
-            <Link key={link.href} href={link.href} as={link.as} passHref>
+            <Link key={index} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
@@ -636,7 +636,7 @@ export function AppHeader({
   };
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed={fixed} zIndex={100} className={classes.root}>
+    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={100} className={classes.root}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -819,18 +819,19 @@ export function AppHeader({
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}
-              onClick={burgerOpened ? closeBurger : openBurger}
+              onMouseDown={!burgerOpened ? openBurger : undefined}
               size="sm"
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Portal target={ref.current}>
+                <Portal>
                   <Paper
                     className={classes.dropdown}
                     withBorder
                     shadow="md"
                     style={{ ...styles, borderLeft: 0, borderRight: 0 }}
                     radius={0}
+                    ref={ref}
                   >
                     {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
                     <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
