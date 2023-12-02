@@ -61,18 +61,23 @@ export const createPostHandler = async ({
 }) => {
   try {
     const post = await createPost({ userId: ctx.user.id, ...input });
+    const isScheduled = dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
+    const tags = post.tags.map((x) => x.name);
+    if (isScheduled) tags.push('scheduled');
+
     await ctx.track.post({
       type: 'Create',
       nsfw: post.nsfw,
       postId: post.id,
-      tags: post.tags.map((x) => x.name),
+      tags,
     });
-    if (post.publishedAt && post.publishedAt <= new Date()) {
+
+    if (!isScheduled) {
       await ctx.track.post({
         type: 'Publish',
         nsfw: post.nsfw,
         postId: post.id,
-        tags: post.tags.map((x) => x.name),
+        tags,
       });
       await eventEngine.processEngagement({
         userId: post.userId,
