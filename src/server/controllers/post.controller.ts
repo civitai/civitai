@@ -117,7 +117,7 @@ export const updatePostHandler = async ({
           tagName: true,
         },
       });
-      const isScheduled = dayjs(updatedPost.publishedAt).add(10, 'minutes').isAfter(new Date());
+      const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
       const tags = postTags.map((x) => x.tagName);
       if (isScheduled) tags.push('scheduled');
       await ctx.track.post({
