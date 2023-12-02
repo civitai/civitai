@@ -9,19 +9,7 @@ export function PostEditActions() {
   const id = useEditPostContext((state) => state.id);
   return (
     <Stack spacing="xs">
-      <ReorderImagesButton>
-        {({ onClick, isLoading, isReordering, canReorder }) => (
-          <Button
-            onClick={onClick}
-            disabled={!canReorder}
-            loading={isLoading}
-            variant={!isReordering ? 'outline' : undefined}
-            leftIcon={isReordering ? <IconCheck /> : <IconArrowsSort />}
-          >
-            {isReordering ? 'Done Rearranging' : 'Rearrange'}
-          </Button>
-        )}
-      </ReorderImagesButton>
+      <ReorderImagesButton />
       <DeletePostButton postId={id}>
         {({ onClick, isLoading }) => (
           <Button

@@ -176,6 +176,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
         params: { ...params, baseModel },
       }).catch(() => null); // catching here since error is handled at the mutation event level
       onSuccess?.();
+      // TODO - don't do this if the only view is 'generation'
       generationPanel.setView('queue');
     };
 

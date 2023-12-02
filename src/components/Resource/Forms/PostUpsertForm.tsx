@@ -68,19 +68,7 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
             <ManagePostMaturity />
             <EditPostTags />
           </Stack>
-          <ReorderImagesButton>
-            {({ onClick, isLoading, isReordering, canReorder }) => (
-              <Button
-                onClick={onClick}
-                disabled={!canReorder || imagesCount <= 1}
-                loading={isLoading}
-                variant="outline"
-                leftIcon={<IconArrowsSort />}
-              >
-                {isReordering ? 'Done Rearranging' : 'Rearrange'}
-              </Button>
-            )}
-          </ReorderImagesButton>
+          <ReorderImagesButton />
           <EditPostReviews />
         </Stack>
       </ContainerGrid.Col>

@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Group, Badge } from '@mantine/core';
+import { Container, Stack, Title, Group, Badge, Grid } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 
@@ -63,3 +63,4 @@ export default function PostEdit() {
 }
 
 setPageOptions(PostEdit, { innerLayout: PostEditLayout });
+// PostEdit.getLayout = PostEditLayout;
