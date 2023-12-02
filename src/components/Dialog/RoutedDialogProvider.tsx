@@ -154,7 +154,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   const handleClick = (e: any) => {
     if (!e.ctrlKey) {
       e.preventDefault();
-      e.stopPropagation();
+      // e.stopPropagation();
       triggerRoutedDialog({ name, state });
     }
   };
