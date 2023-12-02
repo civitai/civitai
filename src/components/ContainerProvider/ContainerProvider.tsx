@@ -62,7 +62,6 @@ const useStyles = createStyles<string, { supportsContainerQuery: boolean }>(
       flexDirection: 'column',
       height: '100%',
       flex: 1,
-      overflow: 'hidden',
       position: 'relative',
     },
   })
