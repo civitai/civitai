@@ -7,6 +7,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 const homeOptions = {
   models: '/',
   images: '/images',
+  videos: '/videos',
   posts: '/posts',
   articles: '/articles',
   bounties: '/bounties',
@@ -39,6 +40,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
   const data: SegmentedControlItem[] = [
     { label: 'Models', value: 'models' },
     { label: 'Images', value: 'images' },
+    { label: 'Videos', value: 'videos' },
     { label: 'Posts', value: 'posts' },
   ];
   if (features.articles) data.push({ label: 'Articles', value: 'articles' });
