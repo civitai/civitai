@@ -89,6 +89,8 @@ import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { constants } from '~/server/common/constants';
 import { EventButton } from '~/components/EventButton/EventButton';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { ContainerGridProvider } from '~/components/ContainerGrid/ContainerGrid.context';
 
 const HEADER_HEIGHT = 70;
 
@@ -636,7 +638,13 @@ export function AppHeader({
   };
 
   return (
-    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={100} className={classes.root}>
+    <ContainerProvider
+      component={Header}
+      height={HEADER_HEIGHT}
+      fixed={fixed}
+      zIndex={100}
+      containerName="header"
+    >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -894,7 +902,7 @@ export function AppHeader({
           </Group>
         </Grid.Col>
       </Grid>
-    </Header>
+    </ContainerProvider>
   );
 }
 
