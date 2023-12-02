@@ -198,3 +198,11 @@ iframe {
     stroke-width: 0px;
   }
 }
+
+.frame-decor .footer {
+  padding-bottom: 36px !important;
+}
+
+.frame-decor .footer-abs > * {
+  bottom: 36px !important;
+}

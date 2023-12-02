@@ -45,7 +45,7 @@ export const imagesQueryParamSchema = z
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
-export const useImageFilters = (type: FilterKeys<'images' | 'modelImages'>) => {
+export const useImageFilters = (type: FilterKeys<'images' | 'modelImages' | 'videos'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
   return removeEmpty({ ...storeFilters, ...query });

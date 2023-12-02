@@ -1,15 +1,6 @@
-import {
-  AspectRatio,
-  createStyles,
-  Grid,
-  Group,
-  Skeleton,
-  Stack,
-  Text,
-  ThemeIcon,
-  useMantineTheme,
-} from '@mantine/core';
+import { AspectRatio, createStyles, Group, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
+import React from 'react';
 import { UserWithProfile } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
@@ -103,35 +94,6 @@ export const useProfileSectionStyles = createStyles<
           backdropFilter: 'blur(8px)',
         },
       },
-      scrollGrid: {
-        ref: scrollGridRef,
-        display: 'grid',
-        columnGap: theme.spacing.md,
-        gridAutoRows: 0,
-        overflowY: 'hidden',
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count}, ${widthCarousel})`,
-        gridTemplateRows: 'auto',
-        scrollSnapType: 'x mandatory',
-        overflowX: 'auto',
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-        paddingLeft: theme.spacing.md,
-        paddingBottom: theme.spacing.md,
-
-        '&::-webkit-scrollbar': {
-          background: 'transparent',
-          opacity: 0,
-          height: 8,
-        },
-        '&::-webkit-scrollbar-thumb': {
-          borderRadius: 4,
-        },
-
-        '& > *': {
-          scrollSnapAlign: 'center',
-        },
-      },
       grid: {
         ref: gridRef,
         display: 'grid',
@@ -188,7 +150,6 @@ export const ProfileSectionPreview = ({
     rowCount,
     widthGrid: '280px',
   });
-
   return (
     <Stack spacing="md" w="100%" style={{ overflow: 'hidden' }}>
       <Skeleton width="33%" height={22} />

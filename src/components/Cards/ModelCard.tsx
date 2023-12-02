@@ -362,7 +362,12 @@ export function ModelCard({ data }: Props) {
                 />
               )}
               <Stack
-                className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
+                className={cx(
+                  'footer',
+                  classes.contentOverlay,
+                  classes.bottom,
+                  classes.gradientOverlay
+                )}
                 spacing="xs"
               >
                 {data.user.id !== -1 && (
