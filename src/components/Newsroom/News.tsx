@@ -46,11 +46,6 @@ const useStyles = createStyles((theme, _, getRef) => ({
   card: {
     display: 'block',
     overflow: 'hidden',
-    [`@container (min-width: 800px)`]: {
-      display: 'flex',
-      minHeight: '100%',
-      alignItems: 'stretch',
-    },
     [`&:hover`]: {
       // backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
       borderColor: theme.colors.blue[7],
