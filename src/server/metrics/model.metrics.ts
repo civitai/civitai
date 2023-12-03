@@ -37,6 +37,7 @@ export const modelMetrics = createMetricProcessor({
 // #region [metrics]
 const modelMetricProcessors = [
   updateVersionDownloadMetrics,
+  updateVersionGenerationMetrics,
   updateVersionRatingMetrics,
   updateVersionFavoriteMetrics,
   updateVersionCommentMetrics,
@@ -156,6 +157,107 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
     }
   }
   console.log('downloads', rows);
+
+  if (versionIds.length > 0) {
+    // Get affected models from version IDs:
+    return getModelIdFromVersions({ versionIds, db });
+  }
+
+  return [];
+}
+
+async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+  const clickhouseSince = dayjs(lastUpdate).toISOString();
+  const affectedVersionIdsResponse = await ch.query({
+    query: `
+      SELECT DISTINCT modelVersionId
+      FROM  (
+        SELECT
+          arrayJoin(resourcesUsed) as modelVersionId
+        FROM orchestration.textToImageJobs
+        WHERE createdAt >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+      )
+    `,
+    format: 'JSONEachRow',
+  });
+  const versionIds = (
+    (await affectedVersionIdsResponse?.json()) as [
+      {
+        modelVersionId: number;
+      }
+    ]
+  ).map((x) => x.modelVersionId);
+
+  const batches = chunk(versionIds, 5000);
+  let rows = 0;
+  for (const batch of batches) {
+    try {
+      const affectedModelVersionsResponse = await ch.query({
+        query: `
+          SELECT
+              modelVersionId,
+              sumIf(count, createdDate = current_date()) day,
+              sumIf(count, createdDate >= subtractDays(current_date(), 7)) week,
+              sumIf(count, createdDate >= subtractMonths(current_date(), 1)) month,
+              sumIf(count, createdDate >= subtractYears(current_date(), 1)) year,
+              sum(count) all_time
+          FROM daily_resource_generation_counts
+          WHERE modelVersionId IN (${batch.join(',')})
+          GROUP BY modelVersionId
+        `,
+        format: 'JSONEachRow',
+      });
+
+      const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
+        {
+          modelVersionId: number;
+          day: string;
+          week: string;
+          month: string;
+          year: string;
+          all_time: string;
+        }
+      ];
+
+      // We batch the affected model versions up when sending it to the db
+      const batches = chunk(affectedModelVersions, 1000);
+      for (const batch of batches) {
+        const batchJson = JSON.stringify(batch);
+
+        rows += await db.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
+          SELECT
+              mvm.modelVersionId, mvm.timeframe, mvm.generations
+          FROM
+          (
+              SELECT
+                  CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
+                  tf.timeframe,
+                  CAST(
+                    CASE
+                      WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                      WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                      WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                      WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                      WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
+                    END
+                  AS int) as generations
+              FROM json_array_elements(${batchJson}::json) mvs
+              CROSS JOIN (
+                  SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+              ) tf
+          ) mvm
+          WHERE mvm.generations IS NOT NULL
+          AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+            SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = now();
+        `;
+      }
+    } catch (e) {
+      throw e;
+    }
+  }
+  console.log('generations', rows);
 
   if (versionIds.length > 0) {
     // Get affected models from version IDs:
@@ -545,7 +647,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
 
 async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
   const rows = await db.$executeRaw`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -563,7 +665,8 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       SUM(mvm."imageCount") "imageCount",
       MAX(mvm."collectedCount") "collectedCount",
       MAX(mvm."tippedCount") "tippedCount",
-      MAX(mvm."tippedAmountCount") "tippedAmountCount"
+      MAX(mvm."tippedAmountCount") "tippedAmountCount",
+      SUM(mvm."generationCount") "generationCount"
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
     WHERE mv."modelId" IN (SELECT "modelId" FROM affected)
@@ -577,7 +680,8 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       "imageCount" = EXCLUDED."imageCount",
       "collectedCount" = EXCLUDED."collectedCount",
       "tippedCount" = EXCLUDED."tippedCount",
-      "tippedAmountCount" = EXCLUDED."tippedAmountCount"
+      "tippedAmountCount" = EXCLUDED."tippedAmountCount",
+      "generationCount" = EXCLUDED."generationCount"
   `;
   console.log('models', rows);
 
