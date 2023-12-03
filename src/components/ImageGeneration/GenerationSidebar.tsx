@@ -2,7 +2,7 @@ import { Group, ActionIcon, CloseButton, Button, Tooltip } from '@mantine/core';
 import { useWindowEvent } from '@mantine/hooks';
 import { IconArrowsDiagonal, IconArrowsMaximize } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
@@ -19,18 +19,22 @@ export function GenerationSidebar() {
   const isGeneratePage = router.pathname.startsWith('/generate');
   const opened = _opened || isGeneratePage;
 
+  const updateShowDrawer = useCallback(() => {
+    const width = useResizeStore.getState()['generation-sidebar'];
+    setShowDrawer(width + 320 > window.innerWidth);
+  }, []);
+
   useEffect(() => {
-    if (opened)
+    if (opened) {
+      updateShowDrawer();
       useResizeStore.subscribe((state) => {
         const width = state['generation-sidebar'] ?? 400;
         setShowDrawer(width + 320 > window.innerWidth);
       });
-  }, [opened]);
+    }
+  }, [opened, updateShowDrawer]);
 
-  useWindowEvent('resize', () => {
-    const width = useResizeStore.getState()['generation-sidebar'];
-    setShowDrawer(width + 320 > window.innerWidth);
-  });
+  useWindowEvent('resize', updateShowDrawer);
 
   useEffect(() => {
     opened && showDrawer
