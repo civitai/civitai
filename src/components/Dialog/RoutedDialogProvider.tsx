@@ -20,6 +20,7 @@ export function RoutedDialogProvider() {
   const prevState = useRef<{ url: string; as: string }>();
   const currentUser = useCurrentUser();
 
+  // handle next router popstate
   useEffect(() => {
     router.beforePopState((state) => {
       const previous = prevState.current;
