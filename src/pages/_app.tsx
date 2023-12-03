@@ -170,10 +170,10 @@ function MyApp(props: CustomAppProps) {
                 styles: {
                   modal: { maxWidth: '100%', containerName: 'modal', containerType: 'inline-size' },
                 },
-                defaultProps: {
-                  target:
-                    typeof window !== 'undefined' ? document.getElementById('root') : undefined,
-                },
+                // defaultProps: {
+                //   target:
+                //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
+                // },
               },
               Drawer: {
                 styles: {
@@ -186,10 +186,10 @@ function MyApp(props: CustomAppProps) {
                   body: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
                   header: { margin: 0 },
                 },
-                defaultProps: {
-                  target:
-                    typeof window !== 'undefined' ? document.getElementById('root') : undefined,
-                },
+                // defaultProps: {
+                //   target:
+                //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
+                // },
               },
               Tooltip: {
                 defaultProps: { withArrow: true },

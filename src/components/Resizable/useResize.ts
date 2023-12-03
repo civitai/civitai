@@ -38,10 +38,9 @@ export const useResize = (options: Props) => {
 
   useEffect(() => {
     if (!ref) return;
-    const width = useResizeStore.getState()[name];
-    if (!width) useResizeStore.setState(() => ({ [name]: defaultWidth }));
+    const width = useResizeStore.getState()[name] ?? defaultWidth;
     frame.current = requestAnimationFrame(() => {
-      ref.style.width = `${width ?? defaultWidth}px`;
+      ref.style.width = `${width}px`;
     });
   }, [name, ref]) // eslint-disable-line
 
