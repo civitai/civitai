@@ -124,6 +124,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const modelCategories = await getCategoryTags('model');
     return {
       ...model,
+      canGenerate: filteredVersions.some((version) => !!version.generationCoverage?.covered),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
       tagsOnModels: model.tagsOnModels

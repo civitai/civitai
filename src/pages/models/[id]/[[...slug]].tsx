@@ -47,6 +47,7 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
+  IconBrush,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -110,6 +111,7 @@ import {
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -195,6 +197,7 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+  const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
@@ -535,6 +538,15 @@ export default function ModelDetailsV2({
                       {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
                     </Text>
                   </IconBadge>
+                  {model.canGenerate && latestGenerationVersion && (
+                    <GenerateButton modelVersionId={latestGenerationVersion.id}>
+                      <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
+                        <Text className={classes.modelBadgeText}>
+                          {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
+                        </Text>
+                      </IconBadge>
+                    </GenerateButton>
+                  )}
                   {features.collections && (
                     <LoginRedirect reason="add-to-collection">
                       <IconBadge

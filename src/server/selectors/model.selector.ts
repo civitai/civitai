@@ -128,6 +128,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       rank: {
         select: {
           downloadCountAllTime: true,
+          generationCountAllTime: true,
           ratingCountAllTime: true,
           ratingAllTime: true,
         },
@@ -162,6 +163,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       imageCountAllTime: true,
       collectedCountAllTime: true,
       tippedAmountCountAllTime: true,
+      generationCountAllTime: true,
     },
   },
   tagsOnModels: {
@@ -169,47 +171,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       tag: {
         select: { id: true, name: true, unlisted: true },
       },
-    },
-  },
-});
-
-export const modelForHomePageSelector = Prisma.validator<Prisma.ModelSelect>()({
-  id: true,
-  name: true,
-  type: true,
-  nsfw: true,
-  status: true,
-  createdAt: true,
-  lastVersionAt: true,
-  publishedAt: true,
-  locked: true,
-  earlyAccessDeadline: true,
-  mode: true,
-  rank: {
-    select: {
-      downloadCountAllTime: true,
-      favoriteCountAllTime: true,
-      commentCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
-    },
-  },
-  modelVersions: {
-    orderBy: { index: 'asc' },
-    take: 1,
-    select: {
-      id: true,
-      earlyAccessTimeFrame: true,
-      createdAt: true,
-      generationCoverage: { select: { covered: true } },
-    },
-  },
-  user: { select: simpleUserSelect },
-  hashes: {
-    select: modelHashSelect,
-    where: {
-      hashType: ModelHashType.SHA256,
-      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
     },
   },
 });

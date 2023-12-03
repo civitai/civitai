@@ -21,6 +21,8 @@ import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconClock,
+  IconDownload,
+  IconBrush,
   IconExclamationMark,
   IconHeart,
   IconLicense,
@@ -82,6 +84,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export function ModelVersionDetails({
   model,
@@ -202,8 +205,21 @@ export function ModelVersionDetails({
       ),
     },
     {
-      label: 'Downloads',
-      value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString(),
+      label: 'Stats',
+      value: (
+        <Group spacing={4}>
+          <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+            <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
+          </IconBadge>
+          {version.canGenerate && (
+            <GenerateButton modelVersionId={version.id}>
+              <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+                <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+              </IconBadge>
+            </GenerateButton>
+          )}
+        </Group>
+      ),
     },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
