@@ -2,11 +2,16 @@ import { Box, BoxProps, createStyles } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconChristmasTree } from '@tabler/icons-react';
 import { wiggle } from '~/libs/animations';
-export const EventButton = ({ ...props }: Props) => {
-  const { classes } = useStyles();
+export const EventButton = ({ className, ...props }: Props) => {
+  const { classes, cx } = useStyles();
 
   return (
-    <Box component={NextLink} href="/events/holiday2023" className={classes.root} {...props}>
+    <Box
+      component={NextLink}
+      href="/events/holiday2023"
+      className={cx(classes.root, className)}
+      {...props}
+    >
       <IconChristmasTree size={30} strokeWidth={1.5} className={classes.svg} />
     </Box>
   );
@@ -21,6 +26,8 @@ const useStyles = createStyles((theme) => ({
     height: 36,
     marginLeft: -8,
     cursor: 'pointer',
+    position: 'relative',
+    zIndex: 3,
   },
   svg: {
     height: 36,

@@ -1,11 +1,11 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { wiggle } from '~/libs/animations';
-export const SupportButton = ({ ...props }: Props) => {
-  const { classes } = useStyles();
+export const SupportButton = ({ className, ...props }: Props) => {
+  const { classes, cx } = useStyles();
 
   return (
-    <Box component={NextLink} href="/pricing" className={classes.root} {...props}>
+    <Box component={NextLink} href="/pricing" className={cx(classes.root, className)} {...props}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
@@ -35,6 +35,8 @@ const useStyles = createStyles((theme) => ({
   root: {
     height: 30,
     cursor: 'pointer',
+    position: 'relative',
+    zIndex: 3,
   },
   svg: {
     height: 30,
