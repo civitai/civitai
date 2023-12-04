@@ -638,11 +638,25 @@ export const getUserArticleEngagements = async ({ userId }: { userId: number }) 
   );
 };
 
-export const updateLeaderboardRank = async (userId?: number) => {
+export const updateLeaderboardRank = async ({
+  userIds,
+  leaderboardIds,
+}: {
+  userIds?: number | number[];
+  leaderboardIds?: string | string[];
+} = {}) => {
+  if (userIds && !Array.isArray(userIds)) userIds = [userIds];
+  if (leaderboardIds && !Array.isArray(leaderboardIds)) leaderboardIds = [leaderboardIds];
+
+  const WHERE = [Prisma.sql`1=1`];
+  if (userIds) WHERE.push(Prisma.sql`"userId" IN (${Prisma.join(userIds as number[])})`);
+  if (leaderboardIds)
+    WHERE.push(Prisma.sql`"leaderboardId" IN (${Prisma.join(leaderboardIds as string[])})`);
+
   await dbWrite.$transaction([
     dbWrite.$executeRaw`
       UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null, "leaderboardCosmetic" = null
-      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      WHERE ${Prisma.join(WHERE, ' AND ')};
     `,
     dbWrite.$executeRaw`
       WITH user_positions AS (
@@ -685,7 +699,7 @@ export const updateLeaderboardRank = async (userId?: number) => {
       "leaderboardTitle",
       "leaderboardCosmetic"
       FROM lowest_position
-      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      WHERE ${Prisma.join(WHERE, ' AND ')}
       ON CONFLICT ("userId") DO UPDATE SET
         "leaderboardId" = excluded."leaderboardId",
         "leaderboardRank" = excluded."leaderboardRank",

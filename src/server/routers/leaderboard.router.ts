@@ -21,7 +21,11 @@ export const leaderboardRouter = router({
     .use(
       edgeCacheIt({
         ttl: false,
-        tags: (input) => ['leaderboard', `leaderboard-positions-${input.userId}`],
+        tags: (input) => [
+          'leaderboard',
+          'leaderboard-positions',
+          `leaderboard-positions-${input.userId}`,
+        ],
       })
     )
     .query(({ input, ctx }) =>
