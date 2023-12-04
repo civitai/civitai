@@ -462,8 +462,8 @@ export async function getTopContributors({
 }) {
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
   const queryParams: [string, string][] = [['limit', limit.toString()]];
-  if (start) queryParams.push(['start', stripTime(start)]);
-  if (end) queryParams.push(['end', stripTime(end)]);
+  if (start) queryParams.push(['start', start.toISOString()]);
+  if (end) queryParams.push(['end', end.toISOString()]);
   for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
 
   const response = await fetch(

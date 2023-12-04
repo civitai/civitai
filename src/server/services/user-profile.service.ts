@@ -168,7 +168,7 @@ export const updateUserProfile = async ({
         if (shouldUpdateCosmetics) await equipCosmetic({ userId, cosmeticId: payloadCosmeticIds });
 
         if (leaderboardShowcase !== undefined) {
-          await updateLeaderboardRank(userId);
+          await updateLeaderboardRank({ userIds: userId });
         }
       }
 
