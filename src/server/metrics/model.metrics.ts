@@ -68,7 +68,12 @@ async function getModelIdFromVersions({
   return [...affectedModelIds];
 }
 
-async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionDownloadMetrics({
+  ch,
+  db,
+  dbWrite,
+  lastUpdate,
+}: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedVersionIdsResponse = await ch.query({
     query: `
@@ -123,8 +128,7 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
       for (const batch of batches) {
         const batchJson = JSON.stringify(batch);
 
-        rows += await db.$executeRaw`
-          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
+        const metrics = await db.$queryRaw<Array<unknown>>`
           SELECT
               mvm.modelVersionId, mvm.timeframe, mvm.downloads
           FROM
@@ -148,9 +152,17 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
           ) mvm
           WHERE mvm.downloads IS NOT NULL
           AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
-          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-            SET "downloadCount" = EXCLUDED."downloadCount", "updatedAt" = now();
         `;
+
+        const insertBatches = chunk(metrics, 1000);
+        for (const insertBatch of insertBatches) {
+          rows += await dbWrite.$executeRaw`
+            INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
+            ${insertBatch /* TODO: serialize this */}
+            ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+              SET "downloadCount" = EXCLUDED."downloadCount", "updatedAt" = now();
+          `;
+        }
       }
     } catch (e) {
       throw e;
@@ -166,7 +178,12 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
   return [];
 }
 
-async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionGenerationMetrics({
+  ch,
+  db,
+  dbWrite,
+  lastUpdate,
+}: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedVersionIdsResponse = await ch.query({
     query: `
@@ -189,7 +206,7 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
   ).map((x) => x.modelVersionId);
 
   const batches = chunk(versionIds, 5000);
-  let rows = 0;
+  const rows = 0;
   for (const batch of batches) {
     try {
       const affectedModelVersionsResponse = await ch.query({
@@ -224,8 +241,7 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
       for (const batch of batches) {
         const batchJson = JSON.stringify(batch);
 
-        rows += await db.$executeRaw`
-          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
+        const metrics = await db.$queryRaw<Array<unknown>>`
           SELECT
               mvm.modelVersionId, mvm.timeframe, mvm.generations
           FROM
@@ -249,9 +265,17 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
           ) mvm
           WHERE mvm.generations IS NOT NULL
           AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
-          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-            SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = now();
         `;
+
+        const insertBatches = chunk(metrics, 1000);
+        for (const insertBatch of insertBatches) {
+          await dbWrite.$executeRaw`
+            INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
+            ${insertBatch /* TODO: this is almost certainly not right */}
+            ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+              SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = now();
+          `;
+        }
       }
     } catch (e) {
       throw e;
