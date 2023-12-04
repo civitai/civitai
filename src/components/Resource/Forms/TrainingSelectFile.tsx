@@ -23,6 +23,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { IconSend } from '@tabler/icons-react';
 
 const useStyles = createStyles((theme) => ({
   epochRow: {
@@ -46,10 +47,14 @@ const EpochRow = ({
   epoch,
   selectedFile,
   setSelectedFile,
+  onPublishClick,
+  loading,
 }: {
   epoch: EpochSchema;
   selectedFile: string | undefined;
   setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
+  onPublishClick: (modelUrl: string) => void;
+  loading?: boolean;
 }) => {
   const { classes, cx } = useStyles();
 
@@ -70,18 +75,26 @@ const EpochRow = ({
           <Text fz="md" fw={700}>
             Epoch #{epoch.epoch_number}
           </Text>
-          <DownloadButton
-            onClick={(e) => e.stopPropagation()}
-            component="a"
-            canDownload
-            href={epoch.model_url}
-            variant="light"
-          >
-            <Text align="center">
-              {/*{`Download (${formatKBytes(modalData.file?.sizeKB)})`}*/}
-              Download
-            </Text>
-          </DownloadButton>
+          <Group spacing={8} noWrap>
+            <DownloadButton
+              onClick={(e) => e.stopPropagation()}
+              component="a"
+              canDownload
+              href={epoch.model_url}
+              variant="light"
+            >
+              <Text align="center">
+                {/*{`Download (${formatKBytes(modalData.file?.sizeKB)})`}*/}
+                Download
+              </Text>
+            </DownloadButton>
+            <Button loading={loading} onClick={() => onPublishClick(epoch.model_url)}>
+              <Group spacing={4} noWrap>
+                <IconSend size={20} />
+                Publish
+              </Group>
+            </Button>
+          </Group>
         </Group>
         <Group className={classes.epochRow} style={{ justifyContent: 'space-evenly' }}>
           {epoch.sample_images && epoch.sample_images.length > 0 ? (
@@ -183,7 +196,7 @@ export default function TrainingSelectFile({
 
   const moveAssetMutation = trpc.training.moveAsset.useMutation();
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (overrideFile?: string) => {
     if (!model || !modelVersion) {
       showErrorNotification({
         error: new Error('Missing model data. Please try again.'),
@@ -191,7 +204,9 @@ export default function TrainingSelectFile({
       });
       return;
     }
-    if (!selectedFile || !selectedFile.length) {
+
+    const fileUrl = overrideFile || selectedFile;
+    if (!fileUrl || !fileUrl.length) {
       showErrorNotification({
         error: new Error('Please select a file to be used.'),
         autoClose: false,
@@ -199,7 +214,7 @@ export default function TrainingSelectFile({
       return;
     }
 
-    if (selectedFile === existingModelFile?.metadata?.selectedEpochUrl) {
+    if (fileUrl === existingModelFile?.metadata?.selectedEpochUrl) {
       onNextClick();
       return;
     }
@@ -208,7 +223,7 @@ export default function TrainingSelectFile({
 
     moveAssetMutation.mutate(
       {
-        url: selectedFile,
+        url: fileUrl,
         modelId: model.id,
       },
       {
@@ -222,7 +237,7 @@ export default function TrainingSelectFile({
             type: 'Model',
             metadata: {
               format: getModelFileFormat(data.newUrl),
-              selectedEpochUrl: selectedFile,
+              selectedEpochUrl: fileUrl,
             },
           });
         },
@@ -297,6 +312,8 @@ export default function TrainingSelectFile({
             epoch={epochs[0]}
             selectedFile={selectedFile}
             setSelectedFile={setSelectedFile}
+            onPublishClick={handleSubmit}
+            loading={awaitInvalidate}
           />
           {epochs.length > 1 && (
             <>
@@ -311,6 +328,8 @@ export default function TrainingSelectFile({
                   epoch={e}
                   selectedFile={selectedFile}
                   setSelectedFile={setSelectedFile}
+                  onPublishClick={handleSubmit}
+                  loading={awaitInvalidate}
                 />
               ))}
             </>
@@ -322,7 +341,7 @@ export default function TrainingSelectFile({
         {/*<Button variant="default" onClick={onBackClick}>*/}
         {/*  Back*/}
         {/*</Button>*/}
-        <Button onClick={handleSubmit} disabled={resultsLoading} loading={awaitInvalidate}>
+        <Button onClick={() => handleSubmit()} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>
       </Group>
