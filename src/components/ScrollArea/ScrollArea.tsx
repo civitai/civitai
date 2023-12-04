@@ -48,7 +48,7 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
 
     const dragHeight = 220;
     const loaderRef = useRef<HTMLDivElement>(null);
-    const startPointRef = useRef(0);
+    const startPointRef = useRef<number | null>(null);
     const pullChangeRef = useRef(0);
     const theme = useMantineTheme();
 
@@ -65,7 +65,9 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
 
       const pullStart = (e: TouchEvent) => {
         const { screenY } = e.targetTouches[0];
-        startPointRef.current = screenY;
+        if (node.scrollTop === 0) {
+          startPointRef.current = screenY;
+        }
       };
 
       const reset = () => {
@@ -73,15 +75,13 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
         loader.style.top = `${-loader.clientHeight}px`;
         loader.style.opacity = '0';
         pullChangeRef.current = 0;
-        startPointRef.current = 0;
+        startPointRef.current = null;
       };
 
       const pull = (e: TouchEvent) => {
-        if (node.scrollTop !== 0) {
-          reset();
-          return;
-        }
+        if (!startPointRef.current) return;
         const startPoint = startPointRef.current;
+        if (!startPoint) return;
         /**
          * get the current user touch event data
          */
@@ -99,7 +99,6 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
          */
         const pullLength = startPoint < screenY ? Math.abs(screenY - startPoint) : 0;
         pullChangeRef.current = pullLength;
-        // console.log({ screenY, startPoint, pullLength });
 
         const pullPosition = pullLength > 220 ? 220 : pullLength;
         const decimalPercentage = pullPosition / dragHeight;
