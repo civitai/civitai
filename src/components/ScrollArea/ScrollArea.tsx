@@ -76,7 +76,7 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
         startPointRef.current = 0;
       };
 
-      const pull = () => {
+      const pull = (e: TouchEvent) => {
         if (node.scrollTop !== 0) {
           reset();
           return;
