@@ -179,7 +179,7 @@ export function ProfileHeader({ username }: { username: string }) {
                       ) : (
                         <ImagePreview
                           image={image}
-                          edgeImageProps={{ width: 1200 }}
+                          edgeImageProps={{ width: 1920 }}
                           radius="md"
                           style={{ width: '100%' }}
                         />
