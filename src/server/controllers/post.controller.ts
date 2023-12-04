@@ -73,6 +73,14 @@ export const createPostHandler = async ({
     });
 
     if (!isScheduled) {
+      await firstDailyPostReward.apply(
+        {
+          postId: post.id,
+          posterId: post.userId,
+        },
+        ctx.ip
+      );
+
       await ctx.track.post({
         type: 'Publish',
         nsfw: post.nsfw,
@@ -112,7 +120,7 @@ export const updatePostHandler = async ({
     });
     const updatedPost = await updatePost(input);
 
-    const wasPublished = post?.publishedAt && post.publishedAt;
+    const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
       const postTags = await dbRead.postTag.findMany({
         where: {
