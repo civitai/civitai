@@ -32,6 +32,7 @@ import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
+import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -70,6 +71,7 @@ export const jobs: Job[] = [
   rewardsDailyReset,
   ...bountyJobs,
   ...Object.values(eventEngineJobs),
+  processClubMembershipRecurringPayments,
 ];
 
 const log = createLogger('jobs', 'green');

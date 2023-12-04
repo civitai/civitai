@@ -12,6 +12,7 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { getServerStripe } from '~/server/utils/get-server-stripe';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { cursor, limit: take, clubId, clubTierId, roles, userId, sort },
@@ -40,10 +41,10 @@ export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSe
 };
 
 export const clubMembershipOnClub = async <TSelect extends Prisma.ClubMembershipSelect>({
-  input: { clubId, userId },
+  input: { clubId, userId, expired },
   select,
 }: {
-  input: ClubMembershipOnClubInput & { userId: number };
+  input: ClubMembershipOnClubInput & { userId: number; expired?: boolean };
   select: TSelect;
 }) => {
   return dbRead.clubMembership.findUnique({
@@ -53,6 +54,21 @@ export const clubMembershipOnClub = async <TSelect extends Prisma.ClubMembership
         userId,
         clubId,
       },
+      AND: expired
+        ? undefined
+        : {
+            // Only return active membership.
+            OR: [
+              {
+                expiresAt: null,
+              },
+              {
+                expiresAt: {
+                  gt: dayjs().toDate(),
+                },
+              },
+            ],
+          },
     },
   });
 };
@@ -78,30 +94,60 @@ export const createClubMembership = async ({
 
   if (!clubTier) throw new Error('Club tier does not exist');
 
-  const clubMembership = await dbRead.clubMembership.findFirst({
-    where: { clubId: clubTier.clubId, userId },
+  const clubMembership = await clubMembershipOnClub({
+    input: {
+      clubId: clubTier.clubId,
+      userId,
+      expired: true,
+    },
+    select: {
+      id: true,
+      expiresAt: true,
+    },
   });
 
-  if (clubMembership) throw new Error('User is already a member of this club');
+  if (clubMembership && clubMembership?.expiresAt && clubMembership?.expiresAt >= new Date())
+    throw new Error('User already has an active membership.');
 
   const membership = await dbWrite.$transaction(async (tx) => {
     const createDate = dayjs();
-    const nextBillingDate = createDate.add(1, 'month');
+    const nextBillingDate = createDate.add(1, 'month').endOf('day');
 
-    const membership = await tx.clubMembership.create({
-      data: {
-        startedAt: createDate.toDate(),
-        nextBillingAt: nextBillingDate.toDate(),
-        clubId: clubTier.clubId,
-        clubTierId,
-        userId,
-        // Memberships are always created as members.
-        // They can be updated by moderators, club admins and owners later on.
-        role: ClubMembershipRole.Member,
-        unitAmount: clubTier.unitAmount,
-        currency: clubTier.currency,
-      },
-    });
+    // Use upsert in the case of an expired membership.
+    const membership = !clubMembership?.id
+      ? await tx.clubMembership.create({
+          data: {
+            startedAt: createDate.toDate(),
+            nextBillingAt: nextBillingDate.toDate(),
+            clubId: clubTier.clubId,
+            clubTierId,
+            userId,
+            role: ClubMembershipRole.Member,
+            // Memberships are always created as members.
+            // They can be updated by moderators, club admins and owners later on.
+            unitAmount: clubTier.unitAmount,
+            currency: clubTier.currency,
+          },
+        })
+      : await tx.clubMembership.update({
+          where: {
+            id: clubMembership.id,
+          },
+          data: {
+            startedAt: createDate.toDate(),
+            nextBillingAt: nextBillingDate.toDate(),
+            clubId: clubTier.clubId,
+            clubTierId,
+            userId,
+            role: ClubMembershipRole.Member,
+            // Memberships are always created as members.
+            // They can be updated by moderators, club admins and owners later on.
+            unitAmount: clubTier.unitAmount,
+            currency: clubTier.currency,
+            cancelledAt: null,
+            expiresAt: null,
+          },
+        });
 
     await createBuzzTransaction({
       toAccountType: 'Club',
@@ -229,4 +275,73 @@ export const updateClubMembership = async ({
   });
 
   return membership;
+};
+
+export const completeClubMembershipCharge = async ({
+  stripePaymentIntentId,
+}: {
+  stripePaymentIntentId: string;
+}) => {
+  const stripe = await getServerStripe();
+  const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
+    expand: ['payment_method'],
+  });
+
+  if (!paymentIntent || paymentIntent.status !== 'succeeded') {
+    throw throwBadRequestError('Payment intent not found');
+  }
+
+  await dbWrite.$transaction(async (tx) => {
+    // First, get the relevant club charge record:
+    const clubMembershipCharge = await tx.clubMembershipCharge.findFirst({
+      where: { invoiceId: stripePaymentIntentId },
+    });
+
+    if (!clubMembershipCharge) throw throwBadRequestError('Club charge not found');
+
+    const clubMembership = await tx.clubMembership.findUnique({
+      where: {
+        userId_clubId: { userId: clubMembershipCharge.userId, clubId: clubMembershipCharge.clubId },
+      },
+    });
+
+    if (!clubMembership) throw throwBadRequestError('Club membership not found');
+
+    // Update and renew the membership:
+    await tx.clubMembership.update({
+      where: {
+        userId_clubId: {
+          userId: clubMembershipCharge.userId,
+          clubId: clubMembershipCharge.clubId,
+        },
+      },
+      data: {
+        nextBillingAt: dayjs(clubMembership.nextBillingAt).add(1, 'month').toDate(),
+      },
+    });
+
+    await tx.clubMembershipCharge.update({
+      where: { id: clubMembershipCharge.id },
+      data: {
+        status: 'succeeded',
+      },
+    });
+
+    // Now move money from the user's account to the club's account:
+    await createBuzzTransaction({
+      fromAccountId: clubMembershipCharge.userId,
+      toAccountId: clubMembershipCharge.clubId,
+      toAccountType: 'Club',
+      amount: clubMembershipCharge.unitAmount,
+      type: TransactionType.ClubMembership,
+      details: {
+        userId: clubMembershipCharge.userId,
+        clubTierId: clubMembershipCharge.clubTierId,
+        clubId: clubMembershipCharge.clubId,
+        clubMembershipChargeId: clubMembershipCharge.id,
+        stripePaymentIntentId: clubMembershipCharge.invoiceId,
+      },
+      externalTransactionId: `club-membership-charge-${clubMembershipCharge.id}`,
+    });
+  });
 };

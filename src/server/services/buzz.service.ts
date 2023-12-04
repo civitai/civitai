@@ -295,7 +295,9 @@ export async function completeStripeBuzzTransaction({
 }> {
   try {
     const stripe = await getServerStripe();
-    const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+    const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
+      expand: ['payment_method'],
+    });
 
     if (!paymentIntent || paymentIntent.status !== 'succeeded') {
       throw throwBadRequestError('Payment intent not found');
@@ -303,6 +305,7 @@ export async function completeStripeBuzzTransaction({
 
     const metadata: PaymentIntentMetadataSchema =
       paymentIntent.metadata as PaymentIntentMetadataSchema;
+
     if (metadata.transactionId) {
       // Avoid double down on buzz
       return { transactionId: metadata.transactionId };

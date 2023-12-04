@@ -534,6 +534,11 @@ export const getPaymentIntent = async ({
     customer: customerId,
     metadata: metadata as MetadataParam,
     payment_method_types: paymentMethodTypes || undefined,
+    payment_method_options: {
+      card: {
+        setup_future_usage: 'off_session',
+      },
+    },
   });
 
   return {
@@ -552,6 +557,7 @@ export const getPaymentIntentsForBuzz = async ({
       where: { id: userId },
       select: { customerId: true },
     });
+
     if (!user) throw new Error(`No user with id ${userId}`);
 
     customer = user.customerId ?? undefined; // undefined is required for the stripe api
