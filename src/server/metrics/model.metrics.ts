@@ -206,7 +206,7 @@ async function updateVersionGenerationMetrics({
   ).map((x) => x.modelVersionId);
 
   const batches = chunk(versionIds, 5000);
-  const rows = 0;
+  let rows = 0;
   for (const batch of batches) {
     try {
       const affectedModelVersionsResponse = await ch.query({
@@ -269,7 +269,7 @@ async function updateVersionGenerationMetrics({
 
         const insertBatches = chunk(metrics, 1000);
         for (const insertBatch of insertBatches) {
-          await dbWrite.$executeRaw`
+          rows += await dbWrite.$executeRaw`
             INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
             ${insertBatch /* TODO: this is almost certainly not right */}
             ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
