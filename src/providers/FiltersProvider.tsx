@@ -67,7 +67,7 @@ const imageFilterSchema = z.object({
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   view: viewModeSchema.default('feed'),
   excludeCrossPosts: z.boolean().optional(),
-  types: z.array(z.nativeEnum(MediaType)).optional(),
+  types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -122,6 +122,13 @@ const bountyFilterSchema = z
     })
   );
 
+type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
+const videoFilterSchema = imageFilterSchema.omit({
+  types: true,
+  view: true,
+  excludeCrossPosts: true,
+});
+
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -135,6 +142,7 @@ type StorageState = {
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
+  videos: VideoFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
@@ -156,6 +164,7 @@ type StoreState = FilterState & {
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
+  setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -173,6 +182,7 @@ const localStorageSchemas: LocalStorageSchema = {
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
+  videos: { key: 'videos-filters', schema: videoFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -254,6 +264,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
+      setVideoFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
     }))
   );
 
@@ -311,6 +323,7 @@ export function useSetFilters(type: FilterSubTypes) {
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
+          videos: state.setVideoFilters,
         }[type]),
       [type]
     )

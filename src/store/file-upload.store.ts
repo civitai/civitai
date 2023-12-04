@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { FileUpload } from '~/utils/file-upload/file-upload';
 
+/* THIS IS A WORK IN PROGRESS */
+
 type ModelFileUpload = {
   type: 'model';
   modelId: number;

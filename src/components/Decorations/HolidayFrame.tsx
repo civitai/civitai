@@ -2,8 +2,6 @@ import { createStyles } from '@mantine/core';
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
-import { getRandom } from '~/utils/array-helpers';
-import { getRandomInt } from '~/utils/number-helpers';
 
 const useStyles = createStyles<string, { size: number }>((_, params) => ({
   root: {
@@ -14,6 +12,7 @@ const useStyles = createStyles<string, { size: number }>((_, params) => ({
     bottom: '-10px',
     width: '100%',
     zIndex: 100,
+    maxWidth: 360,
   },
   decoration: {
     position: 'relative',
@@ -89,7 +88,7 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
   const { classes, cx } = useStyles({
     size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
   });
-  const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: false });
+  const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
 
   if ((!force && !showDecorations) || !cosmetic) return <>{children}</>;
 
@@ -124,13 +123,57 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
   if (!children) return decoration;
 
   return (
-    <div className={classes.root}>
+    <div className={cx('frame-decor', classes.root)}>
       {children}
       {/* Fixed className to reference it in other components easily */}
-      <a href="/events/holiday2023" target="_blank" className={cx('frame-decor', classes.wrapper)}>
+      <a href="/events/holiday2023" target="_blank" className={cx(classes.wrapper)}>
         {decoration}
       </a>
     </div>
+  );
+}
+
+export function CardDecoration({ cosmetic, data, className }: Props2) {
+  const { lights = 0, upgradedLights = 0 } = data ?? {};
+  const { classes, cx } = useStyles({
+    size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
+  });
+  const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
+
+  if (!showDecorations || !cosmetic) return null;
+
+  const { color, type, brightness } = cosmetic.data as HolidayGarlandData;
+
+  return (
+    <a
+      href="/events/holiday2023"
+      target="_blank"
+      className={cx('frame-decor', classes.wrapper, className)}
+    >
+      <div className={classes.decoration}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={cosmeticTypeImage[type as keyof typeof cosmeticTypeImage]}
+          style={{ width: '100%', height: 'auto', objectFit: 'contain' }}
+          alt={cosmetic.name}
+        />
+        {lights > 0 && (
+          <div className={classes.lights}>
+            {Array.from({ length: lights }).map((_, index) => (
+              <Lightbulb
+                key={index}
+                variant={upgradedLights && index < upgradedLights ? 'star' : 'default'}
+                className={
+                  upgradedLights && index < upgradedLights ? classes.upgradedLight : classes.light
+                }
+                color={color}
+                brightness={brightness}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </a>
   );
 }
 
@@ -139,4 +182,10 @@ type Props = {
   data?: { lights?: number; upgradedLights?: number } | null;
   children?: React.ReactNode;
   force?: boolean;
+};
+
+type Props2 = {
+  cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
+  data?: { lights?: number; upgradedLights?: number } | null;
+  className?: string;
 };

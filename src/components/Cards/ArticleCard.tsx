@@ -46,7 +46,7 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
       <FeedCard
         href={`/articles/${id}/${slugit(title)}`}
         aspectRatio={aspectRatio}
-        useCSSAspectRatio={useCSSAspectRatio}
+        // useCSSAspectRatio={useCSSAspectRatio}
         className={classes.link}
       >
         <div className={classes.root}>
@@ -85,7 +85,7 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
             />
           )}
           <Stack
-            className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
+            className={cx('footer', classes.contentOverlay, classes.bottom, classes.fullOverlay)}
             spacing="sm"
           >
             {user?.id !== -1 && (

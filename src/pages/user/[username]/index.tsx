@@ -42,7 +42,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { AppLayout, setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
@@ -192,6 +192,5 @@ export function UserProfileEntry() {
   return <UserImagesPage />;
 }
 
-UserProfileEntry.getLayout = UserProfileLayout;
-
+setPageOptions(UserProfileEntry, { innerLayout: UserProfileLayout });
 export default UserProfileEntry;

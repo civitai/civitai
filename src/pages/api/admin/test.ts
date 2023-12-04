@@ -1,9 +1,14 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { resetManualAssignments } from '~/server/events/base.event';
+import { eventEngine } from '~/server/events';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  await resetManualAssignments(req.query.event as string);
+  await eventEngine.processEngagement({
+    entityType: 'model',
+    type: 'published',
+    entityId: 218322,
+    userId: 969069,
+  });
 
   return res.status(200).json({
     ok: true,

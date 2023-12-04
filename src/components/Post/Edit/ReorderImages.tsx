@@ -1,5 +1,5 @@
 import { useEditPostContext } from './EditPostProvider';
-import { useState, CSSProperties, useEffect } from 'react';
+import { useState, CSSProperties, useEffect, forwardRef } from 'react';
 import {
   useSensors,
   useSensor,
@@ -21,6 +21,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { IconArrowsMaximize, IconCheck } from '@tabler/icons-react';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { isEqual } from 'lodash-es';
+import { restrictToFirstScrollableAncestor, restrictToParentElement } from '@dnd-kit/modifiers';
+import { IconArrowsSort } from '@tabler/icons-react';
 
 export function ReorderImages() {
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
@@ -45,6 +47,7 @@ export function ReorderImages() {
         onDragEnd={handleDragEnd}
         onDragStart={handleDragStart}
         onDragCancel={handleDragCancel}
+        modifiers={[restrictToFirstScrollableAncestor]}
       >
         <SortableContext items={items.map((x) => x.id)}>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
@@ -58,17 +61,11 @@ export function ReorderImages() {
             ))}
           </div>
         </SortableContext>
-        <DragOverlay adjustScale>
+        <DragOverlay>
           {activeItem && <SortableImage sortableId="selected" image={activeItem} />}
         </DragOverlay>
       </DndContext>
-      <ReorderImagesButton>
-        {({ onClick, isLoading }) => (
-          <Button onClick={onClick} loading={isLoading} leftIcon={<IconCheck />}>
-            Done Rearranging
-          </Button>
-        )}
-      </ReorderImagesButton>
+      <ReorderImagesButton />
     </>
   );
 
@@ -95,17 +92,17 @@ export function ReorderImages() {
   }
 }
 
-function SortableImage({
-  image,
-  sortableId,
-  activeId,
-}: {
+type ItemProps = {
   image: PostEditImage;
   sortableId: UniqueIdentifier;
   activeId?: UniqueIdentifier;
-}) {
-  const sortable = useSortable({ id: sortableId });
-  const { attributes, listeners, isDragging, setNodeRef, transform, transition } = sortable;
+};
+
+function SortableImage({ image, sortableId, activeId }: ItemProps) {
+  const { attributes, listeners, isDragging, setNodeRef, transform, transition } = useSortable({
+    id: sortableId,
+  });
+
   const { classes, cx } = useStyles();
 
   const style: CSSProperties = {
@@ -194,26 +191,13 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ReorderImagesButton({
-  children,
-}: {
-  children: ({
-    onClick,
-    isLoading,
-    isReordering,
-    canReorder,
-  }: {
-    onClick: () => void;
-    isLoading: boolean;
-    isReordering: boolean;
-    canReorder: boolean;
-  }) => React.ReactElement;
-}) {
+export function ReorderImagesButton() {
   const queryUtils = trpc.useContext();
   const id = useEditPostContext((state) => state.id);
   const images = useEditPostContext((state) => state.images);
   const isReordering = useEditPostContext((state) => state.reorder);
   const toggleReorder = useEditPostContext((state) => state.toggleReorder);
+
   const { mutate, isLoading } = trpc.post.reorderImages.useMutation({
     async onSuccess() {
       await queryUtils.model.getAll.invalidate();
@@ -221,6 +205,7 @@ export function ReorderImagesButton({
     },
   });
   const previous = usePrevious(images);
+  const canReorder = !images.filter((x) => x.discriminator === 'upload').length;
 
   const onClick = () => {
     toggleReorder();
@@ -236,10 +221,17 @@ export function ReorderImagesButton({
     }
   };
 
-  return children({
-    onClick,
-    isLoading,
-    isReordering,
-    canReorder: !images.filter((x) => x.discriminator === 'upload').length,
-  });
+  if (images.length <= 1) return null;
+
+  return (
+    <Button
+      onClick={onClick}
+      disabled={!canReorder}
+      loading={isLoading}
+      variant={!isReordering ? 'outline' : undefined}
+      leftIcon={!isReordering ? <IconArrowsSort /> : <IconCheck />}
+    >
+      {!isReordering ? 'Rearrange' : 'Done Rearranging'}
+    </Button>
+  );
 }

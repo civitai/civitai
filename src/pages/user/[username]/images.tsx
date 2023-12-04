@@ -24,6 +24,8 @@ import { SortFilter } from '~/components/Filters';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 const segments = [
   { label: 'My Images', value: 'images' },
@@ -50,7 +52,7 @@ const useChipStyles = createStyles((theme) => ({
       },
     },
 
-    [theme.fn.smallerThan('xs')]: {
+    [containerQuery.smallerThan('xs')]: {
       padding: `4px ${theme.spacing.sm}px !important`,
       fontSize: 18,
       height: 'auto',
@@ -66,7 +68,7 @@ const useChipStyles = createStyles((theme) => ({
   },
 
   chipGroup: {
-    [theme.fn.smallerThan('xs')]: {
+    [containerQuery.smallerThan('xs')]: {
       width: '100%',
     },
   },
@@ -117,7 +119,7 @@ export function UserImagesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer fluid p={0}>
           <Stack spacing="xs">
             <Group spacing={8} position="apart">
               <Group spacing={8}>
@@ -199,7 +201,7 @@ function ContentToggle({
       onChange={onChange}
       data={segments as unknown as SegmentedControlItem[]}
       sx={(theme) => ({
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           width: '100%',
         },
       })}
@@ -209,6 +211,6 @@ function ContentToggle({
 
 // We re-use the component above in the index for old profile. Hence, we need to wrap it and export it here too.
 const UserImagesPageWrap = () => <UserImagesPage />;
-UserImagesPageWrap.getLayout = UserProfileLayout;
+setPageOptions(UserImagesPageWrap, { innerLayout: UserProfileLayout });
 
 export default UserImagesPageWrap;

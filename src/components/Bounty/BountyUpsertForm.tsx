@@ -16,7 +16,6 @@ import {
   Input,
   Radio,
   createStyles,
-  Grid,
   Anchor,
   List,
 } from '@mantine/core';
@@ -32,6 +31,7 @@ import {
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
@@ -72,6 +72,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -111,7 +112,7 @@ const useStyles = createStyles((theme) => ({
   radioItemWrapper: {
     '& .mantine-Group-root': {
       alignItems: 'stretch',
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         flexDirection: 'column',
       },
     },
@@ -148,17 +149,17 @@ const useStyles = createStyles((theme) => ({
   },
 
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: '24px',
     },
   },
   sectionTitle: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: '18px',
     },
   },
   fluid: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       maxWidth: '100% !important',
     },
   },
@@ -166,7 +167,7 @@ const useStyles = createStyles((theme) => ({
     position: 'sticky',
     top: `calc(var(--mantine-header-height) + ${theme.spacing.md}px)`,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       position: 'relative',
       top: 0,
     },
@@ -334,8 +335,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             started or somebody submitted an entry to it.
           </AlertWithIcon>
         )}
-        <Grid gutter="xl">
-          <Grid.Col xs={12} md={8}>
+        <ContainerGrid gutter="xl">
+          <ContainerGrid.Col xs={12} md={8}>
             <Stack spacing={32}>
               <Stack spacing="xl">
                 {!alreadyStarted && (
@@ -704,8 +705,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 )}
               </Stack>
             </Stack>
-          </Grid.Col>
-          <Grid.Col xs={12} md={4}>
+          </ContainerGrid.Col>
+          <ContainerGrid.Col xs={12} md={4}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
@@ -804,8 +805,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </List.Item>
               </List>
             </Stack>
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid.Col>
+        </ContainerGrid>
         <Group position="right">
           <NavigateBack url="/bounties">
             {({ onClick }) => (

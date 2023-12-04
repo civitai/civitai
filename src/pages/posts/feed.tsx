@@ -10,6 +10,7 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { constants } from '~/server/common/constants';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function PostFeed() {
   const { query } = usePostQueryParams();
@@ -26,7 +27,7 @@ export default function PostFeed() {
           <Announcements
             sx={(theme) => ({
               marginBottom: -35,
-              [theme.fn.smallerThan('md')]: {
+              [containerQuery.smallerThan('md')]: {
                 marginBottom: -5,
               },
             })}

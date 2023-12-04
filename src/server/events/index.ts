@@ -12,6 +12,7 @@ import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import dayjs from 'dayjs';
 import { purgeCache } from '~/server/cloudflare/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { discord } from '~/server/integrations/discord';
 
 // Only include events that aren't completed
 const events = [holiday2023];
@@ -269,7 +270,7 @@ export const eventEngine = {
     teamScores.forEach((x, i) => (x.rank = i + 1));
     return teamScores;
   },
-  async getTeamScoreHistory({ event, window }: TeamScoreHistoryInput) {
+  async getTeamScoreHistory({ event, window, start }: TeamScoreHistoryInput) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
@@ -278,15 +279,18 @@ export const eventEngine = {
 
     const summaries = await getAccountSummary({
       accountIds: Object.values(accounts),
-      start: eventDef.startDate,
+      start: start ?? eventDef.startDate,
       window,
     });
 
+    const now = new Date();
     const teamScoreHistory = Object.entries(accounts).map(([team, accountId]) => {
       const summary = summaries[accountId];
       return {
         team,
-        scores: summary.map((x) => ({ date: x.date, score: x.balance })),
+        scores: summary
+          .filter((x) => x.date < now)
+          .map((x) => ({ date: x.date, score: x.balance })),
       };
     });
 
@@ -440,6 +444,56 @@ export const eventEngine = {
     const partners = partnersCache.map((x) => JSON.parse(x)) as EventPartner[];
 
     return partners;
+  },
+  async queueAddRole({ event, team, userId }: { event: string; team: string; userId: number }) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    await redis.lPush(`event:${event}:add-role`, JSON.stringify({ team, userId }));
+  },
+  async addRole({ event, team, userId }: { event: string; team: string; userId: number }) {
+    const eventDef = events.find((x) => x.name === event);
+    if (!eventDef) throw new Error("That event doesn't exist");
+
+    const teamRoles = await eventDef.getDiscordRoles();
+    const roleId = teamRoles[team];
+    if (!roleId) return;
+
+    const discordId = await discord.getDiscordId(userId);
+    if (!discordId) return;
+
+    try {
+      await discord.addRoleToUser(discordId, roleId);
+    } catch (e) {
+      console.error(e);
+    }
+  },
+  async processAddRoleQueue() {
+    for (const eventDef of activeEvents) {
+      const queueKey = `event:${eventDef.name}:add-role`;
+      const queueLength = await redis.lLen(queueKey);
+      const queueJson = await redis.lPopCount(queueKey, queueLength);
+      if (!queueJson) continue;
+      const queue = queueJson.map((x) => JSON.parse(x)) as { team: string; userId: number }[];
+
+      // Fetch roles
+      const teamRoles = await eventDef.getDiscordRoles();
+
+      // Fetch discord ids
+      const discordIds = await discord.getDiscordIds(queue.map((x) => x.userId));
+
+      for (const { team, userId } of queue) {
+        const roleId = teamRoles[team];
+        const discordId = discordIds.get(userId);
+        if (!roleId || !discordId) continue;
+
+        try {
+          await discord.addRoleToUser(discordId, roleId);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
   },
 };
 

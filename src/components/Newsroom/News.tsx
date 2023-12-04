@@ -2,6 +2,7 @@ import { Button, Card, createStyles, Stack, Text, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function News({ articles }: { articles: CivitaiNewsItem[] }) {
   return (
@@ -45,11 +46,6 @@ const useStyles = createStyles((theme, _, getRef) => ({
   card: {
     display: 'block',
     overflow: 'hidden',
-    [`@container (min-width: 800px)`]: {
-      display: 'flex',
-      minHeight: '100%',
-      alignItems: 'stretch',
-    },
     [`&:hover`]: {
       // backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
       borderColor: theme.colors.blue[7],
@@ -74,7 +70,7 @@ const useStyles = createStyles((theme, _, getRef) => ({
 
   title: {
     fontSize: theme.fontSizes.lg,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       fontSize: theme.fontSizes.xl,
     },
   },
@@ -88,7 +84,7 @@ const useStyles = createStyles((theme, _, getRef) => ({
     fontSize: theme.fontSizes.md,
     marginTop: theme.spacing.xs,
     marginBottom: theme.spacing.md,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       fontSize: theme.fontSizes.lg,
     },
   },

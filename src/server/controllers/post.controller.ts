@@ -35,6 +35,7 @@ import { Context } from '~/server/createContext';
 import { dbRead } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
+import dayjs from 'dayjs';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -60,18 +61,31 @@ export const createPostHandler = async ({
 }) => {
   try {
     const post = await createPost({ userId: ctx.user.id, ...input });
+    const isScheduled = dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
+    const tags = post.tags.map((x) => x.name);
+    if (isScheduled) tags.push('scheduled');
+
     await ctx.track.post({
       type: 'Create',
       nsfw: post.nsfw,
       postId: post.id,
-      tags: post.tags.map((x) => x.name),
+      tags,
     });
-    if (post.publishedAt && post.publishedAt <= new Date()) {
+
+    if (!isScheduled) {
+      await firstDailyPostReward.apply(
+        {
+          postId: post.id,
+          posterId: post.userId,
+        },
+        ctx.ip
+      );
+
       await ctx.track.post({
         type: 'Publish',
         nsfw: post.nsfw,
         postId: post.id,
-        tags: post.tags.map((x) => x.name),
+        tags,
       });
       await eventEngine.processEngagement({
         userId: post.userId,
@@ -106,7 +120,8 @@ export const updatePostHandler = async ({
     });
     const updatedPost = await updatePost(input);
 
-    if (!post?.publishedAt && updatedPost.publishedAt) {
+    const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
+    if (wasPublished) {
       const postTags = await dbRead.postTag.findMany({
         where: {
           postId: updatedPost.id,
@@ -115,11 +130,14 @@ export const updatePostHandler = async ({
           tagName: true,
         },
       });
+      const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
+      const tags = postTags.map((x) => x.tagName);
+      if (isScheduled) tags.push('scheduled');
       await ctx.track.post({
         type: 'Publish',
         nsfw: updatedPost.nsfw,
         postId: updatedPost.id,
-        tags: postTags.map((x) => x.tagName),
+        tags,
       });
 
       // Give reward to owner of modelVersion
@@ -147,7 +165,7 @@ export const updatePostHandler = async ({
         ctx.ip
       );
 
-      if (updatedPost.publishedAt <= new Date()) {
+      if (!isScheduled) {
         await eventEngine.processEngagement({
           userId: updatedPost.userId,
           type: 'published',

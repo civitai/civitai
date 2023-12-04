@@ -28,10 +28,11 @@ import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: '24px',
     },
   },

@@ -46,6 +46,7 @@ import { env } from '~/env/client.mjs';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -104,7 +105,11 @@ export function ImageDetail() {
                   withUsername
                   linkToProfile
                 />
-                <Group spacing={8} sx={{ [theme.fn.smallerThan('sm')]: { flexGrow: 1 } }} noWrap>
+                <Group
+                  spacing={8}
+                  sx={{ [containerQuery.smallerThan('sm')]: { flexGrow: 1 } }}
+                  noWrap
+                >
                   <TipBuzzButton
                     toUserId={image.user.id}
                     entityId={image.id}
@@ -295,12 +300,11 @@ export function ImageDetail() {
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = `@media (max-width: ${theme.breakpoints.md - 1}px)`;
-  const isDesktop = `@media (min-width: ${theme.breakpoints.md}px)`;
+  const isMobile = containerQuery.smallerThan('md');
+  const isDesktop = containerQuery.largerThan('md');
   return {
     root: {
-      width: '100vw',
-      height: '100vh',
+      flex: 1,
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
@@ -316,6 +320,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',
       flexDirection: 'column',
+      zIndex: 100,
 
       [isMobile]: {
         position: 'absolute',

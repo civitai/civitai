@@ -38,6 +38,8 @@ import { CollectionMode } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { isDefined } from '~/utils/type-guards';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles<string, { count: number; rows: number }>(
   (theme, { count, rows }) => {
@@ -56,7 +58,7 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
           marginTop: theme.spacing.md,
         },
 
-        [theme.fn.smallerThan('md')]: {
+        [containerQuery.smallerThan('md')]: {
           gridAutoFlow: 'column',
           gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
           gridTemplateRows: `repeat(${rows}, auto)`,
@@ -64,7 +66,7 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
           overflowX: 'auto',
         },
 
-        [theme.fn.smallerThan('sm')]: {
+        [containerQuery.smallerThan('sm')]: {
           gridAutoFlow: 'column',
           gridTemplateColumns: `repeat(${count}, 280px)`,
           gridTemplateRows: 'auto',
@@ -82,7 +84,7 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
 
       meta: {
         display: 'none',
-        [theme.fn.smallerThan('md')]: {
+        [containerQuery.smallerThan('md')]: {
           display: 'block',
         },
       },
@@ -96,7 +98,7 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
           flex: 1,
         },
 
-        [theme.fn.smallerThan('md')]: {
+        [containerQuery.smallerThan('md')]: {
           display: 'none',
         },
       },
@@ -277,6 +279,18 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     </Stack>
   );
 
+  const ref = useResizeObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const target = entry.target as HTMLElement;
+        const { height } = target.getBoundingClientRect();
+        if (height === 0) target.style.visibility = 'hidden';
+        else target.style.removeProperty('visibility');
+      }
+    },
+    { observeChildren: true }
+  );
+
   const useGrid =
     metadata.description &&
     !metadata.stackedHeader &&
@@ -287,7 +301,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
-      <div className={classes.grid}>
+      <div className={classes.grid} ref={ref}>
         <ImagesProvider
           hideReactionCount={collection?.mode === CollectionMode.Contest}
           images={items

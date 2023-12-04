@@ -1,6 +1,7 @@
 import { ActionIcon, Box, Button, createStyles, Group, ScrollArea } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type TagProps = { id: number; name: string };
 export function TagScroller({
@@ -119,7 +120,7 @@ const useStyles = createStyles((theme) => ({
   title: {
     display: 'none',
 
-    [theme.fn.largerThan('sm')]: {
+    [containerQuery.largerThan('sm')]: {
       display: 'block',
     },
   },
@@ -145,7 +146,7 @@ const useStyles = createStyles((theme) => ({
       deg: 90,
     }),
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'block',
     },
   },
@@ -163,7 +164,7 @@ const useStyles = createStyles((theme) => ({
       deg: 270,
     }),
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'block',
     },
   },

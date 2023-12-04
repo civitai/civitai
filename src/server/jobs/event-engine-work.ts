@@ -16,3 +16,11 @@ export const eventEngineLeaderboardUpdate = createJob(
     await eventEngine.updateLeaderboard();
   }
 );
+
+export const eventEngineApplyDiscordRoles = createJob(
+  'event-engine-apply-discord-roles',
+  '*/5 * * * *',
+  async () => {
+    await eventEngine.processAddRoleQueue();
+  }
+);

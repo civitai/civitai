@@ -1,6 +1,7 @@
 import { Box, Button, createStyles, Text, Title } from '@mantine/core';
 import { Badge } from './Assets/Badge';
 import { Logo } from './Assets/Logo';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function MediaKit() {
   const { classes, theme } = useStyle();
@@ -89,7 +90,7 @@ const useStyle = createStyles((theme) => ({
     display: 'grid',
     gridTemplateColumns: '1fr',
     gap: theme.spacing.xl,
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       gridTemplateColumns: '1fr 2fr',
     },
     ['&+&']: {
@@ -127,7 +128,7 @@ const useStyle = createStyles((theme) => ({
       justifyContent: 'center',
       padding: theme.spacing.sm,
 
-      [theme.fn.largerThan('md')]: {
+      [containerQuery.largerThan('md')]: {
         height: '10rem',
         padding: theme.spacing.lg,
       },

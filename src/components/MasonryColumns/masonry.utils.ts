@@ -2,9 +2,7 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useWindowEvent } from '@mantine/hooks';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { useDebouncer } from '~/utils/debouncer';
+import { useMemo } from 'react';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
@@ -90,27 +88,4 @@ const getMasonryColumns = <TData>(
   }
 
   return columnItems;
-};
-
-export const useContainerWidth = (elementRef: React.MutableRefObject<HTMLElement | null>) => {
-  const { current: container } = elementRef;
-  const [windowWidth, setWindowWidth] = useState(0);
-  const [width, setWidth] = useState(0);
-
-  const debouncer = useDebouncer(300);
-
-  useWindowEvent('resize', () =>
-    debouncer(() => {
-      setWindowWidth(window.innerWidth);
-    })
-  );
-
-  // using the extra `container?.offsetWidth` dependency because of rapid changes in offsetWidth value on initialize
-  useEffect(() => {
-    const { current } = elementRef;
-    if (!current?.offsetWidth) return;
-    setWidth(current.offsetWidth);
-  }, [windowWidth, container?.offsetWidth, elementRef]);
-
-  return width;
 };

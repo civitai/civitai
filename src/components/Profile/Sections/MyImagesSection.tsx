@@ -5,7 +5,7 @@ import {
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconPhoto } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ImageSort } from '~/server/common/enums';
@@ -15,6 +15,7 @@ import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.ut
 import { ImageCard } from '~/components/Cards/ImageCard';
 import Link from 'next/link';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -81,21 +82,23 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             )
           }
         >
-          <div
+          <ShowcaseGrid
+            itemCount={images.length}
+            rows={2}
             className={cx({
-              [classes.grid]: images.length > 0,
               [classes.nullState]: !images.length,
               [classes.loading]: isRefetching,
             })}
           >
             {!images.length && <ProfileSectionNoResults />}
+
             <ImagesProvider images={images}>
               {images.map((image) => (
                 <ImageCard data={image} key={image.id} />
               ))}
             </ImagesProvider>
             {isRefetching && <Loader className={classes.loader} />}
-          </div>
+          </ShowcaseGrid>
         </ProfileSection>
       )}
     </div>

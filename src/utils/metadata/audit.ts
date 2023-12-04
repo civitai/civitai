@@ -138,7 +138,7 @@ const ageRegexes = templates.map((template) => {
     regexStr = regexStr.replace(`{${key}}`, `(?<${key}>${value})`);
   }
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
-  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
   return new RegExp(regexStr, 'i');
 });
 

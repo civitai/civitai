@@ -235,7 +235,6 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
       u.image,
       (
         SELECT
-          uc.data,
           jsonb_agg(jsonb_build_object(
             'id', c.id,
             'data', c.data,
@@ -247,7 +246,8 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
           )) cosmetic
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        AND "equippedAt" IS NOT NULL
+          AND "equippedAt" IS NOT NULL
+          AND c."type" != 'ContentDecoration'
         WHERE uc."userId" = s."userId"
       ) cosmetics,
       null delta

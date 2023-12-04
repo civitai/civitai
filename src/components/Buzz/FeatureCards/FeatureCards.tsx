@@ -2,7 +2,6 @@ import {
   Button,
   ButtonProps,
   Center,
-  Grid,
   List,
   Paper,
   Stack,
@@ -26,6 +25,7 @@ import { MouseEvent } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const useStyles = createStyles((theme) => ({
   featureCard: {
@@ -88,13 +88,13 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
       {asList ? (
         <FeatureList data={earnings} />
       ) : (
-        <Grid gutter={20}>
+        <ContainerGrid gutter={20}>
           {earnings.map((item) => (
-            <Grid.Col key={item.key} xs={12} md={3}>
+            <ContainerGrid.Col key={item.key} xs={12} md={3}>
               <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
-            </Grid.Col>
+            </ContainerGrid.Col>
           ))}
-        </Grid>
+        </ContainerGrid>
       )}
     </Stack>
   );
@@ -210,13 +210,13 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
       {asList ? (
         <FeatureList data={spendings} />
       ) : (
-        <Grid gutter={20}>
+        <ContainerGrid gutter={20}>
           {spendings.map((item) => (
-            <Grid.Col key={item.key} xs={12} md={3}>
+            <ContainerGrid.Col key={item.key} xs={12} md={3}>
               <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
-            </Grid.Col>
+            </ContainerGrid.Col>
           ))}
-        </Grid>
+        </ContainerGrid>
       )}
     </Stack>
   );

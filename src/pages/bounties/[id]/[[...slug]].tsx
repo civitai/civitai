@@ -3,7 +3,6 @@ import {
   Button,
   Container,
   Divider,
-  Grid,
   Group,
   Stack,
   Text,
@@ -35,7 +34,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -80,7 +78,7 @@ import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -89,14 +87,12 @@ import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
 import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { scrollToTop } from '~/utils/scroll-utils';
 import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
@@ -104,6 +100,10 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { ScrollArea as ScrollAreaMain } from '~/components/ScrollArea/ScrollArea';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -131,7 +131,7 @@ export default function BountyDetailsPage({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useContext();
   const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];
@@ -296,7 +296,7 @@ export default function BountyDetailsPage({
                   {...defaultBadgeProps}
                   icon={<IconMessageCircle2 size={18} />}
                   onClick={() => {
-                    if (discussionSectionRef.current) scrollToTop(discussionSectionRef.current);
+                    discussionSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
                   }}
                 >
                   {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
@@ -336,11 +336,11 @@ export default function BountyDetailsPage({
             )}
           </Group>
         </Stack>
-        <Grid gutterMd={32} gutterLg={64}>
-          <Grid.Col xs={12} md={4} orderMd={2}>
+        <ContainerGrid gutterMd={32} gutterLg={64}>
+          <ContainerGrid.Col xs={12} md={4} orderMd={2}>
             <BountySidebar bounty={bounty} />
-          </Grid.Col>
-          <Grid.Col xs={12} md={8} orderMd={1}>
+          </ContainerGrid.Col>
+          <ContainerGrid.Col xs={12} md={8} orderMd={1}>
             <Stack spacing="xs">
               <ImageGuardReportContext.Provider
                 value={{
@@ -412,8 +412,8 @@ export default function BountyDetailsPage({
                 </Stack>
               </article>
             </Stack>
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid.Col>
+        </ContainerGrid>
       </Container>
       <BountyEntries bounty={bounty} />
       <Container ref={discussionSectionRef} size="xl" mt={32}>
@@ -894,7 +894,7 @@ const useStyles = createStyles((theme) => ({
   titleWrapper: {
     gap: theme.spacing.xs,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       gap: theme.spacing.xs * 0.4,
       alignItems: 'flex-start',
     },
@@ -902,7 +902,7 @@ const useStyles = createStyles((theme) => ({
 
   title: {
     wordBreak: 'break-word',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',
       paddingBottom: 0,
@@ -1076,10 +1076,10 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   );
 };
 
-BountyDetailsPage.getLayout = function getLayout(page: React.ReactNode) {
-  return (
+setPageOptions(BountyDetailsPage, {
+  innerLayout: (page) => (
     <ImageViewer>
-      <AppLayout>{page}</AppLayout>
+      <ScrollAreaMain>{page}</ScrollAreaMain>
     </ImageViewer>
-  );
-};
+  ),
+});

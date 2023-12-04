@@ -21,6 +21,7 @@ import { constants } from '~/server/common/constants';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { QS } from '~/utils/qs';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -70,7 +71,7 @@ export default function ModelsPage() {
             <Announcements
               sx={(theme) => ({
                 marginBottom: -35,
-                [theme.fn.smallerThan('md')]: {
+                [containerQuery.smallerThan('md')]: {
                   marginBottom: -5,
                 },
               })}

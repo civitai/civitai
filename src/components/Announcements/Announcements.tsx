@@ -4,6 +4,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import useIsClient from '~/hooks/useIsClient';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const Announcements = (props: AnnouncementsProps) => {
@@ -111,7 +112,8 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
   announcement: {
     minWidth: 300,
     maxWidth: 600,
-    top: 'calc(var(--mantine-header-height,0) + 16px)',
+    // top: 'calc(var(--mantine-header-height,0) + 16px)',
+    top: 0,
     position: 'sticky',
     margin: '0 auto',
     alignSelf: 'center',
@@ -124,7 +126,7 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
       theme.colorScheme === 'dark'
         ? theme.fn.darken(theme.colors[color][8], 0.5)
         : theme.colors[color][1],
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       marginLeft: -5,
       marginRight: -5,
     },

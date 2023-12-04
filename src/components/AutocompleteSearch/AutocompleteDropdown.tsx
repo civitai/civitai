@@ -9,8 +9,28 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { FilterIcon, FilterIdentifier } from '~/components/QuickSearch/util';
 import { titleCase } from '~/utils/string-helpers';
+import {
+  IconAmpersand,
+  IconAt,
+  IconCurrencyDollar,
+  IconHash,
+  IconSearch,
+  TablerIconsProps,
+} from '@tabler/icons-react';
+
+export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
+export type FilterIdentifier = FilterIndex | 'all';
+
+export function FilterIcon({ type, ...props }: TablerIconsProps & { type: FilterIdentifier }) {
+  return {
+    models: <IconCurrencyDollar {...props} />,
+    users: <IconAt {...props} />,
+    articles: <IconAmpersand {...props} />,
+    tags: <IconHash {...props} />,
+    all: <IconSearch {...props} />,
+  }[type];
+}
 
 const filterOptions: FilterIdentifier[] = ['models', 'users', 'tags', 'articles'];
 const useStyles = createStyles((theme, _, getRef) => {

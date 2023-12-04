@@ -45,6 +45,7 @@ import {
   getUserBuzzBonusAmount,
 } from '~/server/common/user-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -528,13 +529,13 @@ const useStyles = createStyles((theme, _params, getRef) => ({
   steps: {
     marginTop: 20,
     marginBottom: 20,
-    [theme.fn.smallerThan('xs')]: {
+    [containerQuery.smallerThan('xs')]: {
       marginTop: 0,
       marginBottom: 0,
     },
   },
   step: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       '&[data-progress]': {
         display: 'flex',
         [`& .${getRef('stepBody')}`]: {
@@ -545,7 +546,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
   },
   stepBody: {
     ref: getRef('stepBody'),
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -553,7 +554,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     whiteSpace: 'nowrap',
   },
   stepIcon: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -563,7 +564,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     },
   },
   stepCompletedIcon: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 14,
       height: 14,
       minWidth: 14,
@@ -571,7 +572,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     },
   },
   separator: {
-    [theme.fn.smallerThan('xs')]: {
+    [containerQuery.smallerThan('xs')]: {
       marginLeft: 4,
       marginRight: 4,
       minWidth: 10,

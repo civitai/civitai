@@ -4,6 +4,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type SubscriptionCardProps = {
   name: string;
@@ -79,18 +80,18 @@ type PlanMeta = {
 
 const useStyles = createStyles((theme) => ({
   image: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: 96,
       marginBottom: theme.spacing.xs,
     },
   },
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: 20,
     },
   },
   price: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: 16,
     },
   },

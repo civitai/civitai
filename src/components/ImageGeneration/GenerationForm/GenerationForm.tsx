@@ -50,7 +50,6 @@ import {
   Center,
   NumberInputProps,
   Paper,
-  ScrollArea,
   SliderProps,
   Stack,
   Group,
@@ -74,6 +73,8 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler } from '@mantine/hooks';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import Router from 'next/router';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -176,7 +177,8 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
         params: { ...params, baseModel },
       }).catch(() => null); // catching here since error is handled at the mutation event level
       onSuccess?.();
-      generationPanel.setView('queue');
+      // TODO - don't do this if the only view is 'generation'
+      if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
     };
 
     conditionalPerformTransaction(totalCost, performTransaction);
@@ -243,7 +245,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       style={{ width: '100%', position: 'relative', height: '100%' }}
     >
       <Stack spacing={0} h="100%">
-        <ScrollArea sx={{ flex: 1 }}>
+        <ScrollArea scrollRestore={{ key: 'generation-form' }}>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
               <DismissibleAlert

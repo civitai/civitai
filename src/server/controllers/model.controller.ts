@@ -124,6 +124,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const modelCategories = await getCategoryTags('model');
     return {
       ...model,
+      canGenerate: filteredVersions.some((version) => !!version.generationCoverage?.covered),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
       tagsOnModels: model.tagsOnModels
@@ -358,7 +359,7 @@ export const publishModelHandler = async ({
       })
       .catch(handleLogError);
 
-    if (input.publishedAt && input.publishedAt <= new Date()) {
+    if (!input.publishedAt || input.publishedAt <= new Date()) {
       await eventEngine.processEngagement({
         userId: updatedModel.userId,
         type: 'published',

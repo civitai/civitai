@@ -936,20 +936,29 @@ export async function cosmeticStatus({ id, userId }: { id: number; userId: numbe
   };
 }
 
-export async function equipCosmetic({ id, userId }: { id: number; userId: number }) {
-  const userCosmetic = await dbRead.userCosmetic.findFirst({
-    where: { userId, cosmeticId: id },
+export async function equipCosmetic({
+  cosmeticId,
+  userId,
+}: {
+  cosmeticId: number | number[];
+  userId: number;
+}) {
+  if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
+  const userCosmetics = await dbRead.userCosmetic.findMany({
+    where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
-  if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  if (!userCosmetics) throw new Error("You don't have that cosmetic");
+
+  const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
-      where: { userId, equippedAt: { not: null }, cosmetic: { type: userCosmetic.cosmetic.type } },
+      where: { userId, equippedAt: { not: null }, cosmetic: { type: { in: types } } },
       data: { equippedAt: null },
     }),
     dbWrite.userCosmetic.updateMany({
-      where: { userId, cosmeticId: id },
+      where: { userId, cosmeticId: { in: cosmeticId } },
       data: { equippedAt: new Date() },
     }),
   ]);

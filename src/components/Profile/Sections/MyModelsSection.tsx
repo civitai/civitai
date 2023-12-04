@@ -5,7 +5,7 @@ import {
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconCategory } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.utils';
@@ -14,6 +14,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { Button, Loader, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import Link from 'next/link';
+import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 
 const MAX_MODELS_DISPLAY = 32; // 2 rows of 7
 
@@ -78,21 +79,20 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
             )
           }
         >
-          <Stack>
-            <div
-              className={cx({
-                [classes.grid]: models.length > 0,
-                [classes.nullState]: !models.length,
-                [classes.loading]: isRefetching,
-              })}
-            >
-              {!models.length && <ProfileSectionNoResults />}
-              {models.map((model) => (
-                <ModelCard data={model} key={model.id} />
-              ))}
-              {isRefetching && <Loader className={classes.loader} />}
-            </div>
-          </Stack>
+          <ShowcaseGrid
+            itemCount={models.length}
+            rows={2}
+            className={cx({
+              [classes.nullState]: !models.length,
+              [classes.loading]: isRefetching,
+            })}
+          >
+            {!models.length && <ProfileSectionNoResults />}
+            {models.map((model) => (
+              <ModelCard data={model} key={model.id} />
+            ))}
+            {isRefetching && <Loader className={classes.loader} />}
+          </ShowcaseGrid>
         </ProfileSection>
       )}
     </div>
