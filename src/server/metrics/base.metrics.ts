@@ -68,12 +68,14 @@ export function createMetricProcessor({
 
       await setLastUpdate();
     },
-    queueUpdate: async (id: number) => {
-      await dbWrite.$executeRaw`
+    queueUpdate: async (ids: number | number[]) => {
+      if (!Array.isArray(ids)) ids = [ids];
+
+      await dbWrite.$executeRawUnsafe(`
         INSERT INTO "MetricUpdateQueue" ("type", "id")
-        VALUES (${name}, ${id})
+        VALUES ${ids.map((id) => `('${name}', ${id})`).join(',')}
         ON CONFLICT ("type", "id") DO UPDATE SET "createdAt" = NOW()
-      `;
+      `);
     },
   };
 }

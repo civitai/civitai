@@ -552,6 +552,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     }),
     dbWrite.imageReaction.deleteMany({ where: { userId: id } }),
     dbWrite.articleReaction.deleteMany({ where: { userId: id } }),
+    dbWrite.commentReaction.deleteMany({ where: { userId: id } }),
+    dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } }),
   ]);
 
   await modelsSearchIndex.queueUpdate(
@@ -572,8 +574,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   await userMetrics.queueUpdate(id);
-  await Promise.all(images.map((i) => imageMetrics.queueUpdate(i.id)));
-  await Promise.all(articles.map((a) => articleMetrics.queueUpdate(a.id)));
+  await imageMetrics.queueUpdate(images.map((i) => i.id));
+  await articleMetrics.queueUpdate(articles.map((a) => a.id));
 
   return res;
 };
