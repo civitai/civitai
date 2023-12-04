@@ -59,7 +59,7 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
 
       const refresh = () => {
         setTimeout(() => {
-          // window.location.reload();
+          window.location.reload();
         }, 1000);
       };
 
