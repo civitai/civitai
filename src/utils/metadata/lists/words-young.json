@@ -43,9 +43,14 @@
   ],
   "partialNouns": [
     "\\w*girl+\\w*",
-    "\\w*bo+y+\\w*"
+    "\\w*woman\\w*",
+    "\\w*female\\w*",
+    "\\w*bo+y+\\w*",
+    "\\w*man\\w*",
+    "\\w*male\\w*"
   ],
   "nouns": [
+    "very young",
     "\\w*kg[0-9]+\\w*",
     "\\w*infant\\w*",
     "\\w*kindergartener\\w*",
