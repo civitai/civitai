@@ -69,7 +69,7 @@ export async function getEventPartners({ event }: EventInput) {
 export async function activateEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
     // Get cosmetic
-    const { cosmeticId } = await eventEngine.getUserData({ event, userId });
+    const { cosmeticId, team } = await eventEngine.getUserData({ event, userId });
     if (!cosmeticId) throw new Error("You don't have a cosmetic for this event");
     const cosmetic = await getCosmeticDetail({ id: cosmeticId });
     if (!cosmetic) throw new Error("That cosmetic doesn't exist");
@@ -92,6 +92,9 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
       userId.toString(),
       JSON.stringify({ equipped: true, available: true, obtained: true, data, cosmetic })
     );
+
+    // Queue adding to role
+    await eventEngine.queueAddRole({ event, team, userId });
 
     return { cosmetic };
   } catch (error) {
