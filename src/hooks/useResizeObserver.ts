@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { RefObject, useEffect, useRef } from 'react';
 
 export const useResizeObserver = <T extends HTMLElement = any>(
   callback: ResizeObserverCallback,

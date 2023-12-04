@@ -206,3 +206,12 @@ iframe {
 .frame-decor .footer-abs > * {
   bottom: 36px !important;
 }
+
+@keyframes overscroll-spin {
+  from {
+    transform: translateX(-50%) rotate(0deg);
+  }
+  to {
+    transform: translateX(-50%) rotate(360deg);
+  }
+}
