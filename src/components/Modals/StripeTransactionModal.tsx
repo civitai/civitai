@@ -33,7 +33,7 @@ type Props = {
 };
 
 const { openModal, Modal } = createContextModal<Props>({
-  modalId: 'stripe-transaction-modal',
+  id: 'stripe-transaction-modal',
   name: 'stripeTransaction',
   withCloseButton: false,
   size: 'lg',

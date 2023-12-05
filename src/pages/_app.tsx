@@ -55,6 +55,7 @@ import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ScrollRestoration } from '~/components/ScrollRestoration/ScrollRestoration';
+import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -133,6 +134,7 @@ function MyApp(props: CustomAppProps) {
                         <CivitaiLinkProvider>
                           <CustomModalsProvider>
                             <NotificationsProvider zIndex={9999}>
+                              <StripeSetupSuccessProvider />
                               <BrowserRouterProvider>
                                 <ScrollRestoration />
                                 <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
