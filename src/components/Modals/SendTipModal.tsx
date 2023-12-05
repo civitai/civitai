@@ -77,13 +77,13 @@ const useStyles = createStyles((theme) => ({
   chipGroup: {
     gap: 8,
 
-    [containerQuery.smallerThan('sm')]: {
+    [theme.fn.smallerThan('sm')]: {
       gap: theme.spacing.md,
     },
   },
 
   actions: {
-    [containerQuery.smallerThan('sm')]: {
+    [theme.fn.smallerThan('sm')]: {
       flexDirection: 'column',
       position: 'absolute',
       bottom: 0,
@@ -94,14 +94,14 @@ const useStyles = createStyles((theme) => ({
   },
 
   cancelButton: {
-    [containerQuery.smallerThan('sm')]: {
+    [theme.fn.smallerThan('sm')]: {
       width: '100%',
       order: 2,
     },
   },
 
   submitButton: {
-    [containerQuery.smallerThan('sm')]: {
+    [theme.fn.smallerThan('sm')]: {
       width: '100%',
       order: 1,
     },
