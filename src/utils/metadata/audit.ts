@@ -103,6 +103,7 @@ const templateParts = {
 const templates = [
   'aged {age}',
   'age {age}',
+  'age of {age}',
   '{age} age',
   '{age} {old}',
   '{age} {years} {old}',
