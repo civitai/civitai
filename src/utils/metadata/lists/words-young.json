@@ -16,7 +16,6 @@
     "lil",
     "small",
     "tiny",
-    "sm",
     "bairn",
     "nipper",
     "babyish",
@@ -43,10 +42,8 @@
   ],
   "partialNouns": [
     "\\w*girl+\\w*",
-    "\\w*woman\\w*",
     "\\w*female\\w*",
     "\\w*bo+y+\\w*",
-    "\\w*man\\w*",
     "\\w*male\\w*"
   ],
   "nouns": [

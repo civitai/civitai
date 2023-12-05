@@ -4,7 +4,7 @@ export type NestedHeading = {
   id: string;
   title: string | null;
   level: number;
-  items: NestedHeading[];
+  items?: NestedHeading[];
 };
 
 export const useHeadingsData = () => {
@@ -61,10 +61,12 @@ export const useIntersectionObserver = (setActiveId: Dispatch<SetStateAction<str
     });
 
     const headingElements = Array.from(
-      document.querySelectorAll('article h1, article h2, article h3')
+      document.querySelectorAll('article a[id], article h1, article h2, article h3')
     );
 
-    headingElements.forEach((element) => observer.observe(element));
+    for (const element of headingElements) {
+      if (element.id) observer.observe(element);
+    }
 
     return () => observer.disconnect();
   }, [setActiveId]);
@@ -89,7 +91,7 @@ const getNestedHeadings = (headingElements: Element[]) => {
 
     const newHeading: NestedHeading = { id, title, level: Number(level), items: [] };
 
-    if (parentHeading) {
+    if (parentHeading?.items) {
       parentHeading.items.push(newHeading);
     } else {
       nestedHeadings.push(newHeading);

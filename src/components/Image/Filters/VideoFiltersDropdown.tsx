@@ -67,7 +67,6 @@ export function VideoFiltersDropdown({ query, onChange }: Props) {
 
   const mergedFilters = query || filters;
 
-  console.log({ filters, mergedFilters });
   const filterLength =
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +

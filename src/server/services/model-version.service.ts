@@ -1,4 +1,9 @@
-import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import {
+  ModelStatus,
+  ModelVersionEngagementType,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
@@ -18,6 +23,7 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -333,7 +339,8 @@ export const publishModelVersionById = async ({
   id,
   publishedAt,
   meta,
-}: PublishVersionInput & { meta?: ModelVersionMeta }) => {
+  republishing,
+}: PublishVersionInput & { meta?: ModelVersionMeta; republishing?: boolean }) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
@@ -342,7 +349,7 @@ export const publishModelVersionById = async ({
     where: { id },
     data: {
       status,
-      publishedAt,
+      publishedAt: !republishing ? publishedAt : undefined,
       meta,
       posts:
         status !== ModelStatus.Scheduled
@@ -357,7 +364,7 @@ export const publishModelVersionById = async ({
     },
   });
 
-  if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id: version.modelId });
+  if (!republishing) await updateModelLastVersionAt({ id: version.modelId });
   await prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel });
 
   return version;
@@ -376,7 +383,6 @@ export const unpublishModelVersionById = async ({
         where: { id },
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
-          publishedAt: null,
           meta: {
             ...meta,
             ...(reason
@@ -401,6 +407,9 @@ export const unpublishModelVersionById = async ({
         data: { publishedAt: null },
       });
 
+      await modelsSearchIndex.queueUpdate([
+        { id: updatedVersion.model.id, action: SearchIndexUpdateQueueAction.Update },
+      ]);
       await updateModelLastVersionAt({ id: updatedVersion.model.id, tx });
 
       return updatedVersion;

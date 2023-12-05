@@ -10,7 +10,7 @@ export default function PromptHighlight({
 }) {
   const ctx = useMemo(() => {
     return {
-      includesInappropriate: includesInappropriate(prompt),
+      includesInappropriate: includesInappropriate(prompt) !== false,
       html: highlightInappropriate(prompt) ?? prompt ?? '',
     };
   }, [prompt]);

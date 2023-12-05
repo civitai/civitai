@@ -404,7 +404,7 @@ export default function UserTrainingModels() {
                     </td>
                     <td>
                       <Group position="right" spacing={8} pr="xs" noWrap>
-                        {thisModelVersion.trainingStatus === TrainingStatus.Approved && (
+                        {thisModelVersion.trainingStatus === TrainingStatus.InReview && (
                           <Link href={getModelTrainingWizardUrl(model)} passHref>
                             <Button
                               component="a"
