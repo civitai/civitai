@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { ClubTier } from '~/types/router';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';
@@ -16,7 +16,7 @@ import {
   useQueryClubMembership,
 } from '~/components/Club/club.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { openConfirmModal } from '@mantine/modals';
+import { closeModal, openConfirmModal } from '@mantine/modals';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
@@ -24,8 +24,15 @@ import dayjs from 'dayjs';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
+import { useRouter } from 'next/router';
+import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 
 export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
+  const router = useRouter();
   const { classes } = useClubFeedStyles();
   const { isOwner, isLoading: isLoadingOwnership } = useClubContributorStatus({
     clubId: clubTier.clubId,
@@ -33,6 +40,8 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const { data: membership, isLoading } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
     clubId: clubTier.clubId,
   });
+  const { userPaymentMethods } = useUserPaymentMethods();
+
   const {
     creatingClubMembership,
     createClubMembership,
@@ -85,6 +94,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     ) : null;
 
   const handleMembershipJoin = async () => {
+    closeModal('stripe-transaction-modal');
     openConfirmModal({
       modalId: 'club-membership-create',
       centered: true,
@@ -119,6 +129,32 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             title: 'Success',
             message: 'You are now a member of this club! Enjoy your stay.',
           });
+
+          if (userPaymentMethods.length === 0) {
+            dialogStore.trigger({
+              component: StripePaymentMethodSetupModal,
+              props: {
+                redirectUrl: router.asPath,
+                message: (
+                  <Stack>
+                    <Text>You are now a member of this club! Enjoy your stay.</Text>
+                    <Text>
+                      Adding a payment method will ensure that your membership will be renewed by
+                      the end of the month each day. It is the ideal way to keep supporting your
+                      favorite creators. We will only charge you when your membership is renewed and
+                      if your buzz amount does not meet the required amount.
+                    </Text>
+                    <Text>
+                      You can always add a payment method later in your{' '}
+                      <Anchor href="/user/account#payment-methods">account settings.</Anchor>
+                    </Text>
+
+                    <Text weight="bold">Your card will not be charged at this time.</Text>
+                  </Stack>
+                ),
+              },
+            });
+          }
         } catch (err) {
           // Do nothing, alert is handled in the hook
         }
@@ -131,6 +167,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const isNextDowngradeTier = membership && membership.downgradeClubTierId === clubTier.id;
 
   const handleMembershipUpdate = async () => {
+    closeModal('stripe-transaction-modal');
     const onUpdateMembership = async () => {
       try {
         updateClubMembership({

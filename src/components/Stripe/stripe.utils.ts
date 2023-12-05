@@ -1,6 +1,7 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useMutateStripe = () => {
   const queryUtils = trpc.useContext();
@@ -38,7 +39,11 @@ export const useMutateStripe = () => {
 };
 
 export const useUserPaymentMethods = () => {
-  const { data: userPaymentMethods = [], ...rest } = trpc.user.getPaymentMethods.useQuery();
+  const currentUser = useCurrentUser();
+  const { data: userPaymentMethods = [], ...rest } = trpc.user.getPaymentMethods.useQuery(
+    undefined,
+    { enabled: !!currentUser }
+  );
 
   return {
     userPaymentMethods,

@@ -6,12 +6,18 @@ import { useStripePaymentMethodSetup } from '~/components/Buzz/useStripePaymentM
 import { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
 import { Button, Center, Group, Loader, Stack, Text, useMantineTheme } from '@mantine/core';
 
-export const StripePaymentMethodSetup = ({ ...props }: { redirectUrl?: string }) => {
+type Props = {
+  redirectUrl?: string;
+  paymentMethodTypes?: string[];
+  onCancel?: () => void;
+  cancelLabel?: string;
+};
+export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props) => {
   const stripePromise = useStripePromise();
   const theme = useMantineTheme();
 
   const { data, isLoading, isFetching } = trpc.stripe.getSetupIntent.useQuery(
-    { paymentMethodTypes: undefined },
+    { paymentMethodTypes },
     { refetchOnMount: 'always', cacheTime: 0 }
   );
 
@@ -41,7 +47,7 @@ export const StripePaymentMethodSetup = ({ ...props }: { redirectUrl?: string })
   );
 };
 
-const SetupPaymentMethod = ({ redirectUrl }: { redirectUrl?: string }) => {
+const SetupPaymentMethod = ({ redirectUrl, onCancel, cancelLabel }: Props) => {
   const { processingSetup, onConfirmSetup, errorMessage } = useStripePaymentMethodSetup({
     redirectUrl,
   });
@@ -70,6 +76,17 @@ const SetupPaymentMethod = ({ redirectUrl }: { redirectUrl?: string }) => {
           </Text>
         )}
         <Group position="right">
+          {onCancel && (
+            <Button
+              component="button"
+              variant="outline"
+              color="gray"
+              onClick={onCancel}
+              disabled={processingSetup}
+            >
+              {cancelLabel ?? 'Cancel'}
+            </Button>
+          )}
           <Button
             component="button"
             disabled={processingSetup}
