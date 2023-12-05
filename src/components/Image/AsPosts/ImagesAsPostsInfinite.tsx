@@ -76,6 +76,7 @@ export default function ImagesAsPostsInfinite({
     modelVersionId: selectedVersionId,
     modelId,
     username,
+    types: undefined, // override global types image filter
   });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
