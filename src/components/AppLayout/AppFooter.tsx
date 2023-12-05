@@ -63,16 +63,6 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
           <Button
             component={NextLink}
-            href="/pricing"
-            {...buttonProps}
-            variant="subtle"
-            color="pink"
-            px={mobile ? 5 : 'xs'}
-          >
-            Support Us ❤️
-          </Button>
-          <Button
-            component={NextLink}
             prefetch={false}
             href="/content/careers"
             {...buttonProps}
@@ -100,6 +90,16 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           >
             Privacy
           </Button>
+          {features.safety && (
+            <Button component={NextLink} href="/safety" {...buttonProps}>
+              Safety
+            </Button>
+          )}
+          {features.newsroom && (
+            <Button component={NextLink} href="/newsroom" {...buttonProps}>
+              Newsroom
+            </Button>
+          )}
           <Button
             component="a"
             href="/github/wiki/REST-API-Reference"
@@ -111,11 +111,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>
-          {features.newsroom && (
-            <Button component={NextLink} href="/newsroom" {...buttonProps}>
-              Newsroom
-            </Button>
-          )}
+
           <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>

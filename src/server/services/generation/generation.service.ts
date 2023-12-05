@@ -42,6 +42,7 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis } from '~/server/redis/client';
+import { includesNsfw } from '~/utils/metadata/audit';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -56,7 +57,10 @@ export function parseModelVersionId(assetId: string) {
 
 // when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
 const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
-const allSafeNegatives = [...safeNegatives];
+const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
+const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
+const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
+const allInjectedPositives = [...minorPositives];
 
 function mapRequestStatus(label: string): GenerationRequestStatus {
   switch (label) {
@@ -249,8 +253,14 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
 
     // scrub negative prompt
     let negativePrompt = params.negativePrompt ?? '';
-    for (const { triggerWord, id } of allSafeNegatives) {
+    for (const { triggerWord, id } of allInjectedNegatives) {
       negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+      assets = assets.filter((x) => x !== `@civitai/${id}`);
+    }
+
+    let prompt = params.prompt ?? '';
+    for (const { triggerWord, id } of allInjectedPositives) {
+      prompt = prompt.replace(`${triggerWord}, `, '');
       assets = assets.filter((x) => x !== `@civitai/${id}`);
     }
 
@@ -262,6 +272,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       queuePosition: x.queuePosition,
       params: {
         ...params,
+        prompt,
         baseModel,
         negativePrompt,
         seed: params.seed === -1 ? undefined : params.seed,
@@ -386,6 +397,26 @@ export const createGenerationRequest = async ({
     }
   }
 
+  // Inject fallback minor safety nets
+  const isPromptNsfw = includesNsfw(params.prompt);
+  const positivePrompts = [params.prompt];
+  if (isPromptNsfw && env.MINOR_FALLBACK_SYSTEM) {
+    for (const { id, triggerWord } of minorPositives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      positivePrompts.unshift(triggerWord);
+    }
+    for (const { id, triggerWord } of minorNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
   const vae = resources.find((x) => x.modelType === ModelType.VAE);
   if (vae && !isSDXL) {
     additionalNetworks[`@civitai/${vae.id}`] = {
@@ -401,7 +432,7 @@ export const createGenerationRequest = async ({
       quantity: params.quantity,
       additionalNetworks,
       params: {
-        prompt: params.prompt,
+        prompt: positivePrompts.join(', '),
         negativePrompt: negativePrompts.join(', '),
         scheduler: samplersToSchedulers[params.sampler as Sampler],
         steps: params.steps,

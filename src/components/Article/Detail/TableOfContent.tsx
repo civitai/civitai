@@ -38,7 +38,11 @@ function Heading({
           padding: theme.spacing.sm,
           paddingLeft: isFirstLevel ? theme.spacing.sm : `${parentIndex * theme.spacing.md}px`,
           backgroundColor: isActive ? theme.fn.rgba(theme.colors.blue[5], 0.2) : 'transparent',
-          color: isActive ? theme.colors.blue[2] : undefined,
+          color: isActive
+            ? theme.colorScheme === 'dark'
+              ? theme.colors.blue[2]
+              : theme.colors.blue[6]
+            : undefined,
         })}
         onClick={(event) => {
           event.preventDefault();
@@ -52,7 +56,7 @@ function Heading({
           {heading.title}
         </Text>
       </Anchor>
-      {!!heading.items.length ? (
+      {heading.items && !!heading.items.length ? (
         // TODO: update to actually open/close when highlighted
         <Collapse in={true}>
           {heading.items.map((item, index) => (

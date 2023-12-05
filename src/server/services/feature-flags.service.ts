@@ -70,6 +70,7 @@ const featureFlags = createFeatureFlags({
   },
   bounties: ['public'],
   newsroom: ['public'],
+  safety: ['mod'],
   profileOverhaul: {
     toggleable: true,
     default: true,

@@ -15,6 +15,7 @@ body {
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
+
   input:focus,
   select:focus,
   textarea:focus {
@@ -23,7 +24,7 @@ body {
 }
 
 /* helpful hiding classes for mobile */
-@media only screen and (max-width: 600px) {
+@media only screen and (max-width: 768px) {
   .hide-mobile {
     display: none;
   }
@@ -33,7 +34,7 @@ body {
   }
 }
 
-@media only screen and (min-width: 600px) {
+@media only screen and (min-width: 768px) {
   .show-mobile {
     display: none;
   }
@@ -82,7 +83,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2 + p {
+.markdown-content h2+p {
   margin-top: 0;
 }
 
@@ -203,7 +204,7 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs > * {
+.frame-decor .footer-abs>* {
   bottom: 36px !important;
 }
 
@@ -211,6 +212,7 @@ iframe {
   from {
     transform: translateX(-50%) rotate(0deg);
   }
+
   to {
     transform: translateX(-50%) rotate(360deg);
   }
