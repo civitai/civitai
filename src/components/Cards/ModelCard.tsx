@@ -342,7 +342,7 @@ export function ModelCard({ data }: Props) {
                                     placeholder="empty"
                                     className={classes.image}
                                     // loading="lazy"
-                                    wrapperProps={{ style: { height: '100%' } }}
+                                    wrapperProps={{ style: { height: '100%', width: '100%' } }}
                                     contain
                                   />
                                 ) : (
