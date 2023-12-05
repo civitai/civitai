@@ -1,5 +1,6 @@
-import { createStyles, UnstyledButton, Center } from '@mantine/core';
+import { createStyles, UnstyledButton, Center, Button, Group, Box } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
+import { IconBrush } from '@tabler/icons-react';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -7,6 +8,8 @@ import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProv
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { generationPanel } from '~/store/generation.store';
 
 type GalleryCarouselProps = {
   className?: string;
@@ -17,7 +20,7 @@ type GalleryCarouselProps = {
 */
 const maxIndicators = 20;
 export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
-  // const router = useRouter();
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const {
     images,
@@ -53,6 +56,9 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
       onClick={() => navigate(id)}
     />
   ));
+
+  const hasMultipleImages = images.length > 1;
+  const showGenerateButton = !currentUser && !!current.meta;
 
   return (
     <div ref={setRef} className={cx(classes.root, className)}>
@@ -112,13 +118,34 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     anim
                     controls
                   />
+                  {showGenerateButton && (
+                    <Box
+                      sx={(theme) => ({
+                        position: 'absolute',
+                        bottom: hasMultipleImages ? theme.spacing.xl + 8 : theme.spacing.md,
+                        left: '50%',
+                        transform: 'translate(-50%)',
+                      })}
+                    >
+                      <Button
+                        className={classes.generateButton}
+                        variant="default"
+                        radius="xl"
+                        onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                      >
+                        <Group spacing={4} noWrap>
+                          <IconBrush size={20} /> Create images like this!
+                        </Group>
+                      </Button>
+                    </Box>
+                  )}
                 </ImageGuard.Safe>
               </Center>
             </Center>
           );
         }}
       />
-      {images.length <= maxIndicators && images.length > 1 && (
+      {images.length <= maxIndicators && hasMultipleImages && (
         <div className={classes.indicators}>{indicators}</div>
       )}
     </div>
@@ -192,6 +219,34 @@ const useStyles = createStyles((theme, _props, getRef) => {
 
       '&[data-active]': {
         opacity: 1,
+      },
+    },
+
+    generateButton: {
+      position: 'relative',
+
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        left: '-3px',
+        top: '-3px',
+        background: theme.fn.linearGradient(
+          10,
+          theme.colors.blue[9],
+          theme.colors.blue[7],
+          theme.colors.blue[5],
+          theme.colors.cyan[9],
+          theme.colors.cyan[7],
+          theme.colors.cyan[5]
+        ),
+        backgroundSize: '400%',
+        borderRadius: theme.radius.xl,
+        width: 'calc(100% + 6px)',
+        height: 'calc(100% + 6px)',
+        filter: 'blur(4px)',
+        zIndex: -1,
+        animation: 'glowing 20s linear infinite',
+        transition: 'opacity .3s ease-in-out',
       },
     },
   };
