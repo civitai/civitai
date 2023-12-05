@@ -168,7 +168,7 @@ function MyApp(props: CustomAppProps) {
             components: {
               Modal: {
                 styles: {
-                  modal: { maxWidth: '100%', containerName: 'modal', containerType: 'inline-size' },
+                  modal: { maxWidth: '100%' },
                 },
                 // defaultProps: {
                 //   target:
