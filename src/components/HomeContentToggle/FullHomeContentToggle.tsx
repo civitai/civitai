@@ -80,10 +80,12 @@ export function useHomeSelection() {
     defaultValue: features.alternateHome ? 'home' : 'models',
   });
 
-  const url = homeOptions[home].url;
+  console.log(home);
+
+  const url = homeOptions[home]?.url;
   const set = (value: HomeOptions) => {
     setHome(value);
-    return homeOptions[value].url;
+    return homeOptions[value]?.url;
   };
 
   return { home, url, set };

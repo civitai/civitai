@@ -57,3 +57,8 @@ export const getPaymentIntentsForBuzzSchema = z.object({
   startingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
   endingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
 });
+
+export type SetupIntentCreateSchema = z.infer<typeof setupIntentCreateSchema>;
+export const setupIntentCreateSchema = z.object({
+  paymentMethodTypes: z.array(z.string()).nullish(),
+});

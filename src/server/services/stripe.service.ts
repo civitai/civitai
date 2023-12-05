@@ -15,7 +15,6 @@ import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { playfab } from '~/server/playfab/client';
 import { Currency } from '@prisma/client';
-import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
 import { MetadataParam } from '@stripe/stripe-js';
 import { constants } from '~/server/common/constants';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
@@ -505,7 +504,10 @@ export const getPaymentIntent = async ({
   paymentMethodTypes,
   customerId,
   user,
-}: PaymentIntentCreationSchema & { user: { id: number; email: string }; customerId?: string }) => {
+}: Schema.PaymentIntentCreationSchema & {
+  user: { id: number; email: string };
+  customerId?: string;
+}) => {
   // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
   if (!customerId) {
     customerId = await createCustomer(user);
@@ -607,4 +609,41 @@ export const getPaymentIntentsForBuzz = async ({
   }
 
   return processedPurchases;
+};
+
+export const getSetupIntent = async ({
+  paymentMethodTypes,
+  customerId,
+  user,
+}: Schema.SetupIntentCreateSchema & {
+  user: { id: number; email: string };
+  customerId?: string;
+}) => {
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  const stripe = await getServerStripe();
+  const setupIntent = await stripe.setupIntents.create({
+    automatic_payment_methods: !paymentMethodTypes
+      ? {
+          enabled: true,
+        }
+      : undefined,
+    customer: customerId,
+    payment_method_types: paymentMethodTypes || undefined,
+  });
+
+  return {
+    clientSecret: setupIntent.client_secret,
+  };
+};
+
+export const getCustomerPaymentMethods = async (customerId: string) => {
+  const stripe = await getServerStripe();
+  const paymentMethods = await stripe.paymentMethods.list({
+    customer: customerId,
+  });
+
+  return paymentMethods.data;
 };

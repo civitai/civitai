@@ -21,6 +21,7 @@ import {
   userByReferralCodeHandler,
   userRewardDetailsHandler,
   claimCosmeticHandler,
+  getUserPaymentMethodsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -137,4 +138,5 @@ export const userRouter = router({
   equipCosmetic: protectedProcedure
     .input(getByIdSchema)
     .mutation(({ ctx, input }) => equipCosmetic({ userId: ctx.user.id, id: input.id })),
+  getPaymentMethods: protectedProcedure.query(getUserPaymentMethodsHandler),
 });
