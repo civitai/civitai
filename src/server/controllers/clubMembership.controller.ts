@@ -17,6 +17,7 @@ import {
 import { userContributingClubs } from '~/server/services/club.service';
 import { dbRead } from '~/server/db/client';
 import { ClubMembershipRole } from '@prisma/client';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const getInfiniteClubMembershipsHandler = async ({
   input,
@@ -54,6 +55,9 @@ export const getInfiniteClubMembershipsHandler = async ({
         expiresAt: true,
         cancelledAt: true,
         downgradeClubTierId: true,
+        user: {
+          select: userWithCosmeticsSelect,
+        },
         club: {
           select: {
             id: true,
