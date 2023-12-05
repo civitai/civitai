@@ -62,3 +62,8 @@ export type SetupIntentCreateSchema = z.infer<typeof setupIntentCreateSchema>;
 export const setupIntentCreateSchema = z.object({
   paymentMethodTypes: z.array(z.string()).nullish(),
 });
+
+export type PaymentMethodDeleteInput = z.infer<typeof paymentMethodDeleteInput>;
+export const paymentMethodDeleteInput = z.object({
+  paymentMethodId: z.string(),
+});

@@ -2,6 +2,7 @@ import { chunk } from 'lodash-es';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   handleLogError,
+  throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
   withRetries,
@@ -20,6 +21,7 @@ import { constants } from '~/server/common/constants';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
+import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -646,4 +648,35 @@ export const getCustomerPaymentMethods = async (customerId: string) => {
   });
 
   return paymentMethods.data;
+};
+
+export const deleteCustomerPaymentMethod = async ({
+  paymentMethodId,
+  userId,
+  isModerator,
+}: PaymentMethodDeleteInput & {
+  userId: number;
+  isModerator: boolean;
+}) => {
+  const stripe = await getServerStripe();
+  const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+
+  if (!paymentMethod) {
+    throwBadRequestError(`No payment method with id ${paymentMethodId}`);
+  }
+
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { customerId: true },
+  });
+
+  if (!user && !isModerator) throw throwBadRequestError(`No user with id ${userId}`);
+
+  if (user?.customerId !== paymentMethod.customer && !isModerator) {
+    throw throwAuthorizationError(`Payment method does not belong to user with id ${userId}`);
+  }
+
+  console.log(paymentMethodId, paymentMethod);
+
+  return await stripe.paymentMethods.detach(paymentMethodId);
 };

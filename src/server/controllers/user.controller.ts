@@ -78,7 +78,12 @@ import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { createCustomer, getCustomerPaymentMethods } from '~/server/services/stripe.service';
+import {
+  createCustomer,
+  deleteCustomerPaymentMethod,
+  getCustomerPaymentMethods,
+} from '~/server/services/stripe.service';
+import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 
 export const getAllUsersHandler = async ({
   input,
@@ -1013,6 +1018,24 @@ export const getUserPaymentMethodsHandler = async ({ ctx }: { ctx: DeepNonNullab
     const paymentMethods = getCustomerPaymentMethods(customerId);
 
     return paymentMethods;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const deleteUserPaymentMethodHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PaymentMethodDeleteInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return deleteCustomerPaymentMethod({
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+      ...input,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
