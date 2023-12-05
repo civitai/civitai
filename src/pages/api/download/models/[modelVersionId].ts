@@ -1,4 +1,5 @@
 import {
+  ModelFileVisibility,
   ModelModifier,
   ModelStatus,
   ModelType,
@@ -100,14 +101,15 @@ export default RateLimitedEndpoint(
     // Handle non-published models
     const isMod = session?.user?.isModerator;
     const userId = session?.user?.id;
+    const isOwner = !!userId && modelVersion.model.userId === userId;
     const archived = modelVersion.model.mode === ModelModifier.Archived;
 
     if (archived) return errorResponse(410, 'Model archived, not available for download');
 
     const canDownload =
       isMod ||
-      (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published') ||
-      (userId && modelVersion?.model?.userId === userId);
+      isOwner ||
+      (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
     if (!canDownload) return errorResponse(404, 'Model not found');
 
     // Handle unauthenticated downloads
@@ -152,6 +154,7 @@ export default RateLimitedEndpoint(
     } else {
       const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
       if (type) fileWhere.type = type;
+      if (!isOwner || !isMod) fileWhere.visibility = ModelFileVisibility.Public;
       const files = await dbRead.modelFile.findMany({
         where: fileWhere,
         select: {
