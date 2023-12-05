@@ -538,11 +538,6 @@ export const getPaymentIntent = async ({
     customer: customerId,
     metadata: metadata as MetadataParam,
     payment_method_types: paymentMethodTypes || undefined,
-    payment_method_options: {
-      card: {
-        setup_future_usage: 'off_session',
-      },
-    },
   });
 
   return {
@@ -675,8 +670,6 @@ export const deleteCustomerPaymentMethod = async ({
   if (user?.customerId !== paymentMethod.customer && !isModerator) {
     throw throwAuthorizationError(`Payment method does not belong to user with id ${userId}`);
   }
-
-  console.log(paymentMethodId, paymentMethod);
 
   return await stripe.paymentMethods.detach(paymentMethodId);
 };
