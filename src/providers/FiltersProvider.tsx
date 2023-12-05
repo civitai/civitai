@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import { createContext, useCallback, useContext, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { z } from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -285,11 +285,18 @@ export const FiltersProvider = ({
 }) => {
   const storeRef = useRef<FilterStore>();
   const currentUser = useCurrentUser();
+  const showNsfw = (currentUser && currentUser.showNsfw) ?? false;
   if (!storeRef.current)
     storeRef.current = createFilterStore({
       ...value,
-      browsingMode: !currentUser || !currentUser.showNsfw ? BrowsingMode.SFW : value.browsingMode,
+      browsingMode: !showNsfw ? BrowsingMode.SFW : value.browsingMode,
     });
+
+  useEffect(() => {
+    storeRef.current?.setState({
+      browsingMode: !showNsfw ? BrowsingMode.SFW : BrowsingMode.NSFW,
+    });
+  }, [showNsfw]);
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };
