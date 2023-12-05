@@ -140,8 +140,24 @@ export function ImageDetail() {
             >
               <Group position="apart" spacing={8}>
                 <Group spacing={8}>
-                  {!query.postId && image.postId && (
-                    <RoutedDialogLink passHref name="postDetail" state={{ postId: image.postId }}>
+                  {image.postId &&
+                    (!query.postId ? (
+                      <RoutedDialogLink passHref name="postDetail" state={{ postId: image.postId }}>
+                        <Button
+                          component="a"
+                          size="md"
+                          radius="xl"
+                          color="gray"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          compact
+                        >
+                          <Group spacing={4}>
+                            <IconEye size={14} />
+                            <Text size="xs">View post</Text>
+                          </Group>
+                        </Button>
+                      </RoutedDialogLink>
+                    ) : (
                       <Button
                         component="a"
                         size="md"
@@ -149,14 +165,14 @@ export function ImageDetail() {
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         compact
+                        onClick={close}
                       >
                         <Group spacing={4}>
                           <IconEye size={14} />
                           <Text size="xs">View post</Text>
                         </Group>
                       </Button>
-                    </RoutedDialogLink>
-                  )}
+                    ))}
                   <Button
                     size="md"
                     radius="xl"
