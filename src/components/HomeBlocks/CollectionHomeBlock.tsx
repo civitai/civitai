@@ -145,9 +145,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     if (loadingPreferences || !collection?.items) return [];
     return shuffle(collection.items);
   }, [collection?.items, loadingPreferences]);
+
   const items = useMemo(() => {
     const itemsToShow = ITEMS_PER_ROW * rows;
     const usersShown = new Set();
+
+    if (shuffled.length === 0) return [];
+
     const type = shuffled[0].type;
 
     // TODO - find a different way to return collections so that the type isn't set on the individual item
