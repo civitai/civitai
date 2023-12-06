@@ -212,7 +212,20 @@ export function ClubUpsertForm({
                         </Tooltip>
                       </Group>
                       <Text size="xs" color="dimmed">
-                        This bounty is intended to produce mature content.
+                        This club is intended to produce mature content.
+                      </Text>
+                    </Stack>
+                  }
+                />
+                <InputSwitch
+                  name="unlisted"
+                  label={
+                    <Stack spacing={4}>
+                      <Group spacing={4}>
+                        <Text inline>Unlisted</Text>
+                      </Group>
+                      <Text size="xs" color="dimmed">
+                        This club should not appear in the main feed
                       </Text>
                     </Stack>
                   }

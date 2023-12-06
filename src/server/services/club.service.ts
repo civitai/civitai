@@ -608,20 +608,34 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
 }) => {
   const AND: Prisma.Enumerable<Prisma.ClubWhereInput> = [];
 
-  if (userId && engagement) {
-    if (engagement === 'owned') AND.push({ userId });
-    if (engagement === 'memberships')
+  if (userId) {
+    if (engagement) {
+      if (engagement === 'owned') AND.push({ userId });
+      if (engagement === 'memberships')
+        AND.push({
+          memberships: {
+            some: {
+              userId,
+            },
+          },
+        });
+    } else {
+      // Your created clubs or public clubs:
       AND.push({
-        memberships: {
-          some: {
+        OR: [
+          {
             userId,
           },
-        },
+          {
+            unlisted: false,
+          },
+        ],
       });
+    }
   }
 
   if (!userId) {
-    AND.push({ unlisted: false });
+    AND.push({ OR: [{ unlisted: false }] });
   }
 
   const orderBy: Prisma.ClubFindManyArgs['orderBy'] = [];
