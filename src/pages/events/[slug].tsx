@@ -666,6 +666,7 @@ const useCharityStyles = createStyles((theme) => ({
     display: 'grid',
     gridTemplateColumns: 'repeat(2, 1fr)',
     width: '100%',
+    gap: theme.spacing.lg,
     [theme.fn.largerThan('xs')]: {
       gridTemplateColumns: 'repeat(3, 1fr)',
     },
@@ -679,6 +680,7 @@ const useCharityStyles = createStyles((theme) => ({
     width: 120,
     height: 120,
     img: { objectFit: 'cover', objectPosition: 'left', width: '100%' },
+    overflow: 'hidden',
   },
   partner: {
     display: 'flex',
