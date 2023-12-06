@@ -43,7 +43,7 @@ export default function MetadataTester() {
     const failed = new Set<string>();
 
     for (const prompt of input) {
-      const isInappropriate = includesInappropriate(prompt);
+      const isInappropriate = includesInappropriate(prompt) !== false;
       const highlighted = highlightInappropriate(prompt) ?? prompt;
       if (isInappropriate) {
         failed.add(highlighted);
@@ -68,6 +68,9 @@ export default function MetadataTester() {
             </Badge>
             <Badge color="blue" variant="light">
               Minor Word
+            </Badge>
+            <Badge color="teal" variant="light">
+              POI Word
             </Badge>
           </Group>
         </Group>

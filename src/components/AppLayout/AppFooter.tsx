@@ -9,15 +9,12 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { useRouter } from 'next/router';
 import { useState } from 'react';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getScrollPosition } from '~/utils/window-helpers';
 
 const buttonProps: ButtonProps = {
   size: 'xs',
@@ -28,23 +25,14 @@ const buttonProps: ButtonProps = {
 
 const hash = env.NEXT_PUBLIC_GIT_HASH;
 
-export function AppFooter() {
-  const router = useRouter();
-  const { classes, cx } = useStyles();
+export function AppFooter({ fixed = true }: { fixed?: boolean }) {
+  const { classes, cx } = useStyles({ fixed });
   const [showHash, setShowHash] = useState(false);
-  const [showFooter, setShowFooter] = useDebouncedState(true, 200);
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
   const features = useFeatureFlags();
 
-  useWindowEvent('scroll', () => {
-    const scroll = getScrollPosition();
-    setShowFooter(scroll.y < 10);
-  });
-
-  if (router.asPath === '/generate') return null;
-
   return (
-    <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">
+    <Footer className={cx(classes.root)} height="auto" p="sm" py={4}>
       <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
         <Text
           weight={700}
@@ -75,16 +63,6 @@ export function AppFooter() {
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
           <Button
             component={NextLink}
-            href="/pricing"
-            {...buttonProps}
-            variant="subtle"
-            color="pink"
-            px={mobile ? 5 : 'xs'}
-          >
-            Support Us ❤️
-          </Button>
-          <Button
-            component={NextLink}
             prefetch={false}
             href="/content/careers"
             {...buttonProps}
@@ -112,6 +90,16 @@ export function AppFooter() {
           >
             Privacy
           </Button>
+          {features.safety && (
+            <Button component={NextLink} href="/safety" {...buttonProps}>
+              Safety
+            </Button>
+          )}
+          {features.newsroom && (
+            <Button component={NextLink} href="/newsroom" {...buttonProps}>
+              Newsroom
+            </Button>
+          )}
           <Button
             component="a"
             href="/github/wiki/REST-API-Reference"
@@ -123,11 +111,7 @@ export function AppFooter() {
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>
-          {features.newsroom && (
-            <Button component={NextLink} href="/newsroom" {...buttonProps}>
-              Newsroom
-            </Button>
-          )}
+
           <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
@@ -140,6 +124,7 @@ export function AppFooter() {
             variant="light"
             color="yellow"
             target="_blank"
+            size={!fixed ? 'xs' : undefined}
             pl={4}
             pr="xs"
           >
@@ -151,9 +136,9 @@ export function AppFooter() {
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles((theme, args: { fixed: boolean }) => ({
   root: {
-    position: 'fixed',
+    position: args.fixed ? 'fixed' : undefined,
     bottom: 0,
     right: 0,
     left: 0,

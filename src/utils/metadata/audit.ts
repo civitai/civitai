@@ -4,6 +4,7 @@ import blockedNSFW from './lists/blocklist-nsfw.json';
 import blocked from './lists/blocklist.json';
 import nsfwWords from './lists/words-nsfw.json';
 import youngWords from './lists/words-young.json';
+import poiWords from './lists/words-poi.json';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -39,7 +40,10 @@ export const auditPrompt = (prompt: string) => {
   if (found) return { blockedFor: [`${age} year old`], success: false };
 
   const inappropriate = includesInappropriate(prompt);
-  if (inappropriate) return { blockedFor: ['Inappropriate minor content'], success: false };
+  if (inappropriate === 'minor')
+    return { blockedFor: ['Inappropriate minor content'], success: false };
+  else if (inappropriate === 'poi')
+    return { blockedFor: ['Inappropriate real person content'], success: false };
 
   for (const { word, regex } of blockedNSFWRegex) {
     if (regex.test(prompt)) return { blockedFor: [word], success: false };
@@ -99,6 +103,7 @@ const templateParts = {
 const templates = [
   'aged {age}',
   'age {age}',
+  'age of {age}',
   '{age} age',
   '{age} {old}',
   '{age} {years} {old}',
@@ -138,7 +143,7 @@ const ageRegexes = templates.map((template) => {
     regexStr = regexStr.replace(`{${key}}`, `(?<${key}>${value})`);
   }
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
-  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
   return new RegExp(regexStr, 'i');
 });
 
@@ -215,13 +220,28 @@ const words = {
       pluralize: true,
     }),
   },
+  poi: checkable(poiWords),
 };
+
+export function includesNsfw(prompt: string | undefined) {
+  if (!prompt) return false;
+
+  return words.nsfw.inPrompt(prompt);
+}
+
+export function includesPoi(prompt: string | undefined) {
+  if (!prompt) return false;
+
+  return words.poi.inPrompt(prompt);
+}
 
 export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
   prompt = removeAccents(prompt);
-  if (!nsfw && !words.nsfw.inPrompt(prompt)) return false;
-  return words.young.nouns.inPrompt(prompt) || includesMinor(prompt).found;
+  if (!nsfw && !includesNsfw(prompt)) return false;
+  if (includesMinor(prompt).found || words.young.nouns.inPrompt(prompt)) return 'minor';
+  if (includesPoi(prompt)) return 'poi';
+  return false;
 }
 
 // #endregion [inappropriate]
@@ -235,6 +255,10 @@ const highlighters = [
   {
     color: '#339AF0',
     fn: words.young.nouns.highlight,
+  },
+  {
+    color: '#38d9a9',
+    fn: words.poi.highlight,
   },
   {
     color: '#F03E3E',

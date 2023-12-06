@@ -12,6 +12,7 @@ import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -87,7 +88,7 @@ const useStyles = createStyles((theme) => ({
     paddingBottom: theme.spacing.xl * 2,
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
 
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       paddingTop: theme.spacing.md,
       paddingBottom: theme.spacing.md,
     },
@@ -99,23 +100,23 @@ const useStyles = createStyles((theme) => ({
   },
   wrapper: {
     alignItems: 'flex-start',
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       alignItems: 'center',
     },
   },
   outsideImage: {
     display: 'none',
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       display: 'block',
     },
   },
   insideImage: {
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       display: 'none',
     },
   },
   card: {
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+    [containerQuery.smallerThan('xs')]: {
       width: '100%',
     },
   },

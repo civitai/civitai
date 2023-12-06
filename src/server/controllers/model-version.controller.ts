@@ -241,12 +241,14 @@ export const publishModelVersionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const version = await getVersionById({ id: input.id, select: { meta: true } });
+    const version = await getVersionById({ id: input.id, select: { meta: true, status: true } });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
+    const republishing =
+      version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       (version.meta as ModelMeta | null) || {};
-    const updatedVersion = await publishModelVersionById({ ...input, meta });
+    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
 
     await updateModelEarlyAccessDeadline({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');

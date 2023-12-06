@@ -18,7 +18,7 @@ export const processScheduledPublishing = createJob(
     const scheduledModels = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
         id,
-        "userId",
+        "userId"
       FROM "Model"
       WHERE status = 'Scheduled' AND "publishedAt" <= ${now};`;
     const scheduledModelVersions = await dbWrite.$queryRaw<ScheduledEntity[]>`

@@ -95,7 +95,8 @@ export const serverSchema = z.object({
   NEWSLETTER_SERVER: z.string().optional(),
   BUZZ_ENDPOINT: z.string().url().optional(),
   SIGNALS_ENDPOINT: z.string().url().optional(),
-  CACHE_DNS: z.coerce.boolean().default(false),
+  CACHE_DNS: zc.booleanString,
+  MINOR_FALLBACK_SYSTEM: zc.booleanString,
 });
 
 /**

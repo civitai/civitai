@@ -1,3 +1,4 @@
+import { useIsomorphicEffect } from '@mantine/hooks';
 import { createContext, useContext, useEffect, useState } from 'react';
 
 const IsClientContext = createContext<boolean | null>(null);
@@ -9,7 +10,7 @@ export const useIsClient = () => {
 export const IsClientProvider = ({ children }: { children: React.ReactNode }) => {
   const [isClient, setClient] = useState(false);
 
-  useEffect(() => {
+  useIsomorphicEffect(() => {
     setClient(true);
   }, []);
 

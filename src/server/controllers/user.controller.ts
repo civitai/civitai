@@ -62,6 +62,7 @@ import {
   updateOnboardingSteps,
   updateUserById,
   userByReferralCode,
+  equipCosmetic,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -299,22 +300,12 @@ export const updateUserHandler = async ({
         ...data,
         username,
         showNsfw,
-        cosmetics: !isSettingCosmetics
-          ? undefined
-          : {
-              updateMany: {
-                where: { equippedAt: { not: null } },
-                data: { equippedAt: null },
-              },
-              update: payloadCosmeticIds.map((cosmeticId) => ({
-                where: { userId_cosmeticId: { userId: id, cosmeticId } },
-                data: { equippedAt: new Date() },
-              })),
-            },
       },
     });
 
-    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
+    if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
+
+    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
     if (userReferralCode || source || landingPage) {
       await createUserReferral({
         id: updatedUser.id,

@@ -17,6 +17,7 @@ import { useRouter } from 'next/router';
 import { createContext, useContext, useMemo, useState } from 'react';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { useImageFilters } from '~/components/Image/image.utils';
@@ -27,10 +28,12 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+import { ImageIngestionStatus } from '@prisma/client';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -65,7 +68,7 @@ export default function ImagesAsPostsInfinite({
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan('sm');
   // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
 
@@ -76,6 +79,7 @@ export default function ImagesAsPostsInfinite({
     modelVersionId: selectedVersionId,
     modelId,
     username,
+    types: undefined, // override global types image filter
   });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
@@ -89,7 +93,43 @@ export default function ImagesAsPostsInfinite({
       }
     );
 
-  const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+
+  const items = useMemo(() => {
+    // TODO - fetch user reactions for images separately
+    if (isLoadingHidden) return [];
+    const arr = data?.pages.flatMap((x) => x.items) ?? [];
+    const filtered = arr
+      .filter((x) => {
+        if (x.user.id === currentUser?.id) return true;
+        if (hiddenUsers.get(x.user.id)) return false;
+        return true;
+      })
+      .map(({ images, ...x }) => {
+        const filteredImages = images?.filter((i) => {
+          if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
+          if (hiddenImages.get(i.id)) return false;
+          for (const tag of i.tagIds ?? []) {
+            if (hiddenTags.get(tag)) return false;
+          }
+          return true;
+        });
+
+        if (!filteredImages?.length) return null;
+
+        return {
+          ...x,
+          images: filteredImages,
+        };
+      })
+      .filter(isDefined);
+    return filtered;
+  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, isLoadingHidden]);
 
   const isMuted = currentUser?.muted ?? false;
   const addPostLink = `/posts/create?modelId=${modelId}${

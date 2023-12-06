@@ -1,11 +1,12 @@
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { createStyles, Grid } from '@mantine/core';
+import { createStyles } from '@mantine/core';
 import { AnnouncementHomeBlockAnnouncementItem } from '~/components/HomeBlocks/components/AnnouncementHomeBlockAnnouncementItem';
 import { useDismissedAnnouncements } from '~/hooks/useDismissedAnnouncements';
 import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 type Props = { homeBlockId: number };
 
@@ -81,18 +82,18 @@ export const AnnouncementHomeBlock = ({ homeBlockId }: Props) => {
   return (
     <HomeBlockWrapper className={classes.root}>
       <HomeBlockHeaderMeta metadata={metadata} />
-      <Grid gutter="md">
+      <ContainerGrid gutter="md">
         {announcements.map((announcement, index) => {
           return (
-            <Grid.Col key={announcement.id} xs={12} md={sizes[index]}>
+            <ContainerGrid.Col key={announcement.id} xs={12} md={sizes[index]}>
               <AnnouncementHomeBlockAnnouncementItem
                 onAnnouncementDismiss={onAnnouncementDismiss}
                 announcement={announcement}
               />
-            </Grid.Col>
+            </ContainerGrid.Col>
           );
         })}
-      </Grid>
+      </ContainerGrid>
     </HomeBlockWrapper>
   );
 };

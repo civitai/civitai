@@ -246,10 +246,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
     let reviewKey: string | null = null;
-    if (
-      includesInappropriate(prompt, nsfw) ||
-      (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw))
-    ) {
+    const inappropriate = includesInappropriate(prompt, nsfw);
+    if (inappropriate !== false) reviewKey = inappropriate;
+    else if (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
     } else if (nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`

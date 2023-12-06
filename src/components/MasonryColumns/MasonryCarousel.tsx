@@ -1,19 +1,10 @@
 import OneKeyMap from '@essentials/one-key-map';
 import { Carousel } from '@mantine/carousel';
-import {
-  Box,
-  Button,
-  Center,
-  createStyles,
-  Group,
-  Loader,
-  LoadingOverlay,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { createStyles } from '@mantine/core';
 import trieMemoize from 'trie-memoize';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props<TData> = {
   data: TData[];
@@ -87,7 +78,7 @@ const useStyles = createStyles((theme) => ({
       width: 32,
       height: 32,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         minWidth: 16,
         minHeight: 16,
       },

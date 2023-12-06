@@ -176,16 +176,21 @@ const onFetchItemsToIndex = async ({
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
   ), cosmetics AS MATERIALIZED (
     SELECT
-      uc.data,
-      jsonb_agg(jsonb_build_object(
-        'id', c.id,
-        'data', c.data,
-        'type', c.type,
-        'source', c.source,
-        'name', c.name,
-        'leaderboardId', c."leaderboardId",
-        'leaderboardPosition', c."leaderboardPosition"
-      )) cosmetic
+      uc."userId",
+      jsonb_agg(
+        jsonb_build_object( 
+          'data', uc.data,
+          'cosmetic', jsonb_build_object(
+            'id', c.id,
+            'data', c.data,
+            'type', c.type,
+            'source', c.source,
+            'name', c.name,
+            'leaderboardId', c."leaderboardId",
+            'leaderboardPosition', c."leaderboardPosition"
+          )
+        )
+      )  cosmetics
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     AND "equippedAt" IS NOT NULL
@@ -234,7 +239,7 @@ const onFetchItemsToIndex = async ({
   )
   SELECT
     t.*,
-    (SELECT * FROM cosmetics c WHERE c."userId" = t.id),
+    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
     (SELECT rank FROM ranks r WHERE r."userId" = t.id),
     (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
     (SELECT stats FROM stats s WHERE s."userId" = t.id)
@@ -272,7 +277,7 @@ const onFetchItemsToIndex = async ({
           }
         : null,
       metrics: userRecord.metrics ?? {},
-      cosmetics,
+      cosmetics: cosmetics ?? [],
     };
   });
 

@@ -1,4 +1,5 @@
 import { Tabs, TabsProps, createStyles } from '@mantine/core';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme, _params, getRef) => {
   const tabLabelRef = getRef('tabLabel');
@@ -50,7 +51,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
         color: theme.white,
       },
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         padding: `${theme.spacing.xs}px ${theme.spacing.xs}px`,
 
         [`&:not([data-active="true"]) > .${tabLabelRef}`]: {
@@ -64,7 +65,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       display: 'flex',
       alignItems: 'center',
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         marginRight: theme.spacing.xs * 0.4, // 4px
       },
     },

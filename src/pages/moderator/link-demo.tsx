@@ -199,5 +199,4 @@ function Home() {
   );
 }
 
-// Home.getLayout = (page: React.ReactElement) => <>{page}</>;
 export default Home;

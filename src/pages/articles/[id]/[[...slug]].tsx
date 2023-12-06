@@ -41,7 +41,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -51,6 +51,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -78,7 +80,7 @@ export default function ArticleDetailsPage({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
-  const mobile = useIsMobile();
+  const mobile = useContainerSmallerThan('sm');
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
@@ -284,14 +286,14 @@ const useStyles = createStyles((theme) => ({
   titleWrapper: {
     gap: theme.spacing.xs,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       gap: theme.spacing.xs * 0.4,
     },
   },
 
   title: {
     wordBreak: 'break-word',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',
       paddingBottom: 0,
@@ -300,7 +302,7 @@ const useStyles = createStyles((theme) => ({
 
   badgeText: {
     fontSize: theme.fontSizes.md,
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.sm,
     },
   },

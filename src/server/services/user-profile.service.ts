@@ -11,7 +11,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { CollectionReadConfiguration, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
-import { updateLeaderboardRank } from '~/server/services/user.service';
+import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
 
 export const getUserContentOverview = async ({
   username,
@@ -51,11 +51,11 @@ export const getUserContentOverview = async ({
       collectionCount: number;
     }[]
   >`
-    SELECT 
+    SELECT
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published') as "modelCount",
         (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL) as "postCount",
         (SELECT COUNT(*)::INT FROM "Image" i WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL) as "imageCount",
-        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" <= NOW()) as "articleCount", 
+        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" <= NOW()) as "articleCount",
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() ) as "bountyCount",
         (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
         (SELECT COUNT(*)::INT FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id) as "receivedReviewCount",
@@ -162,23 +162,13 @@ export const updateUserProfile = async ({
           data: {
             image: profileImage,
             leaderboardShowcase,
-            cosmetics: shouldUpdateCosmetics
-              ? {
-                  updateMany: {
-                    where: { equippedAt: { not: null } },
-                    data: { equippedAt: null },
-                  },
-                  update: payloadCosmeticIds.map((cosmeticId) => ({
-                    where: { userId_cosmeticId: { userId, cosmeticId } },
-                    data: { equippedAt: new Date() },
-                  })),
-                }
-              : undefined,
           },
         });
 
+        if (shouldUpdateCosmetics) await equipCosmetic({ userId, cosmeticId: payloadCosmeticIds });
+
         if (leaderboardShowcase !== undefined) {
-          await updateLeaderboardRank(userId);
+          await updateLeaderboardRank({ userIds: userId });
         }
       }
 

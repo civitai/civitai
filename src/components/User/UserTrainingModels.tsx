@@ -26,6 +26,8 @@ import {
   IconCheck,
   IconCircleCheck,
   IconExternalLink,
+  IconFileDescription,
+  IconSend,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -48,6 +50,7 @@ import { calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconExclamationCircle } from '@tabler/icons-react';
+import Link from 'next/link';
 
 const useStyles = createStyles((theme) => ({
   header: {
@@ -213,13 +216,12 @@ export default function UserTrainingModels() {
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
               <th>Name</th>
-              <th>Actions</th>
               <th>Type</th>
               <th>Training Status</th>
               <th>Created</th>
               <th>ETA</th>
               <th>Missing info</th>
-              <th />
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -290,194 +292,6 @@ export default function UserTrainingModels() {
                     onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(model))}
                   >
                     <td>{model.name}</td>
-                    <td>
-                      <>
-                        <Modal
-                          opened={opened}
-                          title="Training Details"
-                          overflow="inside"
-                          onClose={close}
-                          size="lg"
-                          centered
-                        >
-                          <DescriptionTable
-                            labelWidth="150px"
-                            items={[
-                              {
-                                label: 'Training Start',
-                                value: modalData.file?.metadata?.trainingResults?.start_time
-                                  ? formatDate(
-                                      modalData.file.metadata.trainingResults
-                                        .start_time as unknown as Date,
-                                      'MMM D, YYYY hh:mm:ss A'
-                                    )
-                                  : 'Unknown',
-                              },
-                              {
-                                label: 'ETA',
-                                value: modalData.eta,
-                              },
-                              {
-                                label: 'Training Attempts',
-                                value: `${Math.min(
-                                  constants.maxTrainingRetries + 1,
-                                  (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
-                                )} / ${constants.maxTrainingRetries + 1}`,
-                              },
-                              {
-                                label: 'History',
-                                value: (
-                                  <Stack spacing={5}>
-                                    {modalData.file?.metadata?.trainingResults?.history
-                                      ? (
-                                          modalData.file?.metadata?.trainingResults?.history || []
-                                        ).map((h) => (
-                                          <Group key={h.time}>
-                                            <Text inline>
-                                              {formatDate(
-                                                h.time as unknown as Date,
-                                                'MM/DD/YYYY hh:mm:ss A'
-                                              )}
-                                            </Text>
-                                            <Text inline>
-                                              <Badge
-                                                color={
-                                                  trainingStatusFields[h.status]?.color ?? 'gray'
-                                                }
-                                              >
-                                                {splitUppercase(
-                                                  h.status === TrainingStatus.InReview
-                                                    ? 'Ready'
-                                                    : h.status
-                                                )}
-                                              </Badge>
-                                            </Text>
-                                          </Group>
-                                        ))
-                                      : 'No history found'}
-                                  </Stack>
-                                ),
-                              },
-                              {
-                                label: 'Images',
-                                value: modalData.file?.metadata?.numImages || 0,
-                              },
-                              {
-                                label: 'Captions',
-                                value: modalData.file?.metadata?.numCaptions || 0,
-                              },
-                              {
-                                label: 'Privacy',
-                                value: (
-                                  <Group>
-                                    <Badge
-                                      color={
-                                        modalData.file?.metadata?.ownRights === true
-                                          ? 'green'
-                                          : 'red'
-                                      }
-                                      leftSection={
-                                        modalData.file?.metadata?.ownRights === true ? (
-                                          <IconCheck size={14} />
-                                        ) : (
-                                          <IconX size={14} />
-                                        )
-                                      }
-                                    >
-                                      Own Rights
-                                    </Badge>
-                                    <Badge
-                                      color={
-                                        modalData.file?.metadata?.shareDataset === true
-                                          ? 'green'
-                                          : 'red'
-                                      }
-                                      leftSection={
-                                        modalData.file?.metadata?.shareDataset === true ? (
-                                          <IconCheck size={14} />
-                                        ) : (
-                                          <IconX size={14} />
-                                        )
-                                      }
-                                    >
-                                      Share Dataset
-                                    </Badge>
-                                  </Group>
-                                ),
-                              },
-                              {
-                                label: 'Dataset',
-                                value: modalData.file?.url ? (
-                                  <DownloadButton
-                                    component="a"
-                                    canDownload
-                                    href={createModelFileDownloadUrl({
-                                      versionId: modalData.id as number,
-                                      type: 'Training Data',
-                                    })}
-                                    sx={{ flex: 1 }}
-                                  >
-                                    <Text align="center">
-                                      {`Download (${formatKBytes(modalData.file?.sizeKB)})`}
-                                    </Text>
-                                  </DownloadButton>
-                                ) : (
-                                  'None'
-                                ),
-                              },
-                              {
-                                label: 'Training Params',
-                                value: modalData.params ? (
-                                  <Accordion
-                                    styles={(theme) => ({
-                                      content: {
-                                        padding: theme.spacing.xs,
-                                      },
-                                      item: {
-                                        // overflow: 'hidden',
-                                        border: 'none',
-                                        background: 'transparent',
-                                      },
-                                      control: {
-                                        padding: theme.spacing.xs,
-                                      },
-                                    })}
-                                  >
-                                    <Accordion.Item value="params">
-                                      <Accordion.Control>Expand</Accordion.Control>
-                                      <Accordion.Panel>
-                                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                                          {JSON.stringify(modalData.params, null, 2)}
-                                        </pre>
-                                      </Accordion.Panel>
-                                    </Accordion.Item>
-                                  </Accordion>
-                                ) : (
-                                  'No training params set'
-                                ),
-                              },
-                            ]}
-                          />
-                        </Modal>
-                        <Button
-                          variant="default"
-                          onMouseUp={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (e.button !== 0) return;
-                            setModalData({
-                              id: thisModelVersion.id,
-                              file: thisFile as TrainingFileData,
-                              params: thisTrainingDetails?.params,
-                              eta: etaStr,
-                            });
-                            open();
-                          }}
-                        >
-                          View Details
-                        </Button>
-                      </>
-                    </td>
                     <td>
                       <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>
                     </td>
@@ -570,11 +384,11 @@ export default function UserTrainingModels() {
                     </td>
                     <td>{etaStr}</td>
                     <td>
-                      <Group>
+                      <Group spacing={8} noWrap>
                         {!hasFiles || !hasTrainingParams ? (
-                          <IconAlertCircle size={16} color="orange" />
+                          <IconAlertCircle color="orange" />
                         ) : (
-                          <IconCircleCheck size={16} color="green" />
+                          <IconCircleCheck color="green" />
                         )}
                         <Stack spacing={4}>
                           {/* technically this step 1 alert should never happen */}
@@ -589,15 +403,49 @@ export default function UserTrainingModels() {
                       </Group>
                     </td>
                     <td>
-                      <Group position="right" pr="xs">
+                      <Group position="right" spacing={8} pr="xs" noWrap>
+                        {thisModelVersion.trainingStatus === TrainingStatus.InReview && (
+                          <Link href={getModelTrainingWizardUrl(model)} passHref>
+                            <Button
+                              component="a"
+                              radius="xl"
+                              size="sm"
+                              rightIcon={<IconSend size={16} />}
+                              onClick={(e) => e.stopPropagation()}
+                              compact
+                            >
+                              Publish
+                            </Button>
+                          </Link>
+                        )}
+                        <ActionIcon
+                          variant="filled"
+                          radius="xl"
+                          size="md"
+                          onMouseUp={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (e.button !== 0) return;
+                            setModalData({
+                              id: thisModelVersion.id,
+                              file: thisFile as TrainingFileData,
+                              params: thisTrainingDetails?.params,
+                              eta: etaStr,
+                            });
+                            open();
+                          }}
+                        >
+                          <IconFileDescription size={16} />
+                        </ActionIcon>
                         <ActionIcon
                           color="red"
-                          variant="subtle"
-                          size="sm"
+                          variant="light"
+                          size="md"
+                          radius="xl"
                           onMouseUp={(e) => !isProcessing && handleDeleteModel(e, model)}
                           disabled={isProcessing}
                         >
-                          <IconTrash />
+                          <IconTrash size={16} />
                         </ActionIcon>
                       </Group>
                     </td>
@@ -625,6 +473,151 @@ export default function UserTrainingModels() {
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
+      <Modal
+        opened={opened}
+        title="Training Details"
+        overflow="inside"
+        onClose={close}
+        size="lg"
+        centered
+      >
+        <DescriptionTable
+          labelWidth="150px"
+          items={[
+            {
+              label: 'Training Start',
+              value: modalData.file?.metadata?.trainingResults?.start_time
+                ? formatDate(
+                    modalData.file.metadata.trainingResults.start_time as unknown as Date,
+                    'MMM D, YYYY hh:mm:ss A'
+                  )
+                : 'Unknown',
+            },
+            {
+              label: 'ETA',
+              value: modalData.eta,
+            },
+            {
+              label: 'Training Attempts',
+              value: `${Math.min(
+                constants.maxTrainingRetries + 1,
+                (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
+              )} / ${constants.maxTrainingRetries + 1}`,
+            },
+            {
+              label: 'History',
+              value: (
+                <Stack spacing={5}>
+                  {modalData.file?.metadata?.trainingResults?.history
+                    ? (modalData.file?.metadata?.trainingResults?.history || []).map((h) => (
+                        <Group key={h.time}>
+                          <Text inline>
+                            {formatDate(h.time as unknown as Date, 'MM/DD/YYYY hh:mm:ss A')}
+                          </Text>
+                          <Text inline>
+                            <Badge color={trainingStatusFields[h.status]?.color ?? 'gray'}>
+                              {splitUppercase(
+                                h.status === TrainingStatus.InReview ? 'Ready' : h.status
+                              )}
+                            </Badge>
+                          </Text>
+                        </Group>
+                      ))
+                    : 'No history found'}
+                </Stack>
+              ),
+            },
+            {
+              label: 'Images',
+              value: modalData.file?.metadata?.numImages || 0,
+            },
+            {
+              label: 'Captions',
+              value: modalData.file?.metadata?.numCaptions || 0,
+            },
+            {
+              label: 'Privacy',
+              value: (
+                <Group>
+                  <Badge
+                    color={modalData.file?.metadata?.ownRights === true ? 'green' : 'red'}
+                    leftSection={
+                      modalData.file?.metadata?.ownRights === true ? (
+                        <IconCheck size={14} />
+                      ) : (
+                        <IconX size={14} />
+                      )
+                    }
+                  >
+                    Own Rights
+                  </Badge>
+                  <Badge
+                    color={modalData.file?.metadata?.shareDataset === true ? 'green' : 'red'}
+                    leftSection={
+                      modalData.file?.metadata?.shareDataset === true ? (
+                        <IconCheck size={14} />
+                      ) : (
+                        <IconX size={14} />
+                      )
+                    }
+                  >
+                    Share Dataset
+                  </Badge>
+                </Group>
+              ),
+            },
+            {
+              label: 'Dataset',
+              value: modalData.file?.url ? (
+                <DownloadButton
+                  component="a"
+                  canDownload
+                  href={createModelFileDownloadUrl({
+                    versionId: modalData.id as number,
+                    type: 'Training Data',
+                  })}
+                  sx={{ flex: 1 }}
+                >
+                  <Text align="center">{`Download (${formatKBytes(modalData.file?.sizeKB)})`}</Text>
+                </DownloadButton>
+              ) : (
+                'None'
+              ),
+            },
+            {
+              label: 'Training Params',
+              value: modalData.params ? (
+                <Accordion
+                  styles={(theme) => ({
+                    content: {
+                      padding: theme.spacing.xs,
+                    },
+                    item: {
+                      // overflow: 'hidden',
+                      border: 'none',
+                      background: 'transparent',
+                    },
+                    control: {
+                      padding: theme.spacing.xs,
+                    },
+                  })}
+                >
+                  <Accordion.Item value="params">
+                    <Accordion.Control>Expand</Accordion.Control>
+                    <Accordion.Panel>
+                      <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                        {JSON.stringify(modalData.params, null, 2)}
+                      </pre>
+                    </Accordion.Panel>
+                  </Accordion.Item>
+                </Accordion>
+              ) : (
+                'No training params set'
+              ),
+            },
+          ]}
+        />
+      </Modal>
     </Stack>
   );
 }

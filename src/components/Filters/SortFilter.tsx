@@ -27,6 +27,7 @@ const sortOptions = {
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
   clubs: Object.values(ClubSort),
+  videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
 };
 
 export function SortFilter(props: SortFilterProps) {

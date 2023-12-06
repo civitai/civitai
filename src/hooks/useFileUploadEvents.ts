@@ -6,6 +6,8 @@ import {
   UploadCompleteEvent,
 } from '~/utils/file-upload/file-upload';
 
+/* THIS IS A WORK IN PROGRESS */
+
 export function useFileUploadEvents(fileUpload: FileUpload, options?: FileUploadOptions) {
   const { onProgress, onComplete, onError, onAbort } = options ?? {};
   const [status, setStatus] = useState<'error' | 'abort' | 'complete'>();

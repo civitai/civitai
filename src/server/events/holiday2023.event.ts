@@ -98,11 +98,11 @@ export const holiday2023 = createEvent('holiday2023', {
 
       // Update cosmetic brightness based on rank
       const brightness = (scores.length - rank + 1) / scores.length;
-      await db.$executeRaw`
+      await db.$executeRawUnsafe(`
         UPDATE "Cosmetic"
-        SET data = jsonb_set(data, '{brightness}', ${brightness})
+        SET data = jsonb_set(data, '{brightness}', to_jsonb(${brightness}))
         WHERE id = ${cosmeticId}
-      `;
+      `);
     }
   },
   async onCleanup({ winner, winnerCosmeticId, db }) {

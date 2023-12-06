@@ -15,10 +15,11 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import { env } from '~/env/client.mjs';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   filtersWrapper: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
 
       '> *': { flexGrow: 1 },
@@ -51,7 +52,7 @@ export default function ImagesPage() {
             <Announcements
               sx={(theme) => ({
                 marginBottom: -35,
-                [theme.fn.smallerThan('md')]: {
+                [containerQuery.smallerThan('md')]: {
                   marginBottom: -5,
                 },
               })}

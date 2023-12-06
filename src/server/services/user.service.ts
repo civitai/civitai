@@ -41,13 +41,14 @@ import blockedUsernames from '~/utils/blocklist-username.json';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import {
   articlesSearchIndex,
+  bountiesSearchIndex,
   collectionsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { userMetrics } from '~/server/metrics';
+import { articleMetrics, imageMetrics, userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
@@ -527,6 +528,10 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     where: { userId: id },
     select: { id: true },
   });
+  const bounties = await dbRead.collection.findMany({
+    where: { userId: id },
+    select: { id: true },
+  });
 
   const res = await dbWrite.$transaction([
     dbWrite.model.deleteMany({ where: { userId: id } }),
@@ -545,6 +550,10 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     dbWrite.bountyEntry.deleteMany({
       where: { userId: id, benefactors: { none: {} } },
     }),
+    dbWrite.imageReaction.deleteMany({ where: { userId: id } }),
+    dbWrite.articleReaction.deleteMany({ where: { userId: id } }),
+    dbWrite.commentReaction.deleteMany({ where: { userId: id } }),
+    dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } }),
   ]);
 
   await modelsSearchIndex.queueUpdate(
@@ -559,9 +568,14 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await collectionsSearchIndex.queueUpdate(
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+  await bountiesSearchIndex.queueUpdate(
+    bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   await userMetrics.queueUpdate(id);
+  await imageMetrics.queueUpdate(images.map((i) => i.id));
+  await articleMetrics.queueUpdate(articles.map((a) => a.id));
 
   return res;
 };
@@ -624,11 +638,25 @@ export const getUserArticleEngagements = async ({ userId }: { userId: number }) 
   );
 };
 
-export const updateLeaderboardRank = async (userId?: number) => {
+export const updateLeaderboardRank = async ({
+  userIds,
+  leaderboardIds,
+}: {
+  userIds?: number | number[];
+  leaderboardIds?: string | string[];
+} = {}) => {
+  if (userIds && !Array.isArray(userIds)) userIds = [userIds];
+  if (leaderboardIds && !Array.isArray(leaderboardIds)) leaderboardIds = [leaderboardIds];
+
+  const WHERE = [Prisma.sql`1=1`];
+  if (userIds) WHERE.push(Prisma.sql`"userId" IN (${Prisma.join(userIds as number[])})`);
+  if (leaderboardIds)
+    WHERE.push(Prisma.sql`"leaderboardId" IN (${Prisma.join(leaderboardIds as string[])})`);
+
   await dbWrite.$transaction([
     dbWrite.$executeRaw`
       UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null, "leaderboardCosmetic" = null
-      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      WHERE ${Prisma.join(WHERE, ' AND ')};
     `,
     dbWrite.$executeRaw`
       WITH user_positions AS (
@@ -671,7 +699,7 @@ export const updateLeaderboardRank = async (userId?: number) => {
       "leaderboardTitle",
       "leaderboardCosmetic"
       FROM lowest_position
-      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      WHERE ${Prisma.join(WHERE, ' AND ')}
       ON CONFLICT ("userId") DO UPDATE SET
         "leaderboardId" = excluded."leaderboardId",
         "leaderboardRank" = excluded."leaderboardRank",
@@ -922,20 +950,29 @@ export async function cosmeticStatus({ id, userId }: { id: number; userId: numbe
   };
 }
 
-export async function equipCosmetic({ id, userId }: { id: number; userId: number }) {
-  const userCosmetic = await dbRead.userCosmetic.findFirst({
-    where: { userId, cosmeticId: id },
+export async function equipCosmetic({
+  cosmeticId,
+  userId,
+}: {
+  cosmeticId: number | number[];
+  userId: number;
+}) {
+  if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
+  const userCosmetics = await dbRead.userCosmetic.findMany({
+    where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
-  if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  if (!userCosmetics) throw new Error("You don't have that cosmetic");
+
+  const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
-      where: { userId, equippedAt: { not: null }, cosmetic: { type: userCosmetic.cosmetic.type } },
+      where: { userId, equippedAt: { not: null }, cosmetic: { type: { in: types } } },
       data: { equippedAt: null },
     }),
     dbWrite.userCosmetic.updateMany({
-      where: { userId, cosmeticId: id },
+      where: { userId, cosmeticId: { in: cosmeticId } },
       data: { equippedAt: new Date() },
     }),
   ]);

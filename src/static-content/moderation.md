@@ -15,7 +15,7 @@ We prioritize user control and offer options to customize the content you see on
 
 ## Automated Content Labeling and Moderation
 We facilitate this high degree of user control through a combination of checkpoints:
-- **Automated Content Labeling**: We use Amazon Rekognition to automatically apply content labels and screen images for moderated content.
+- **Automated Content Labeling**: We use Amazon Rekognition as well as an open-source image tagging system to automatically apply content labels and screen images for moderated content.
 - **Community-Driven Moderation**: Users can vote on the content labels applied to images, helping us refine our image classification system. We encourage users to report content violations and reward their efforts through a Guardian's leaderboard that highlights the most helpful community members.
 - **Manual Reviews**: Certain combinations of tags or resources trigger a manual review before the content becomes publicly visible.
 

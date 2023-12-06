@@ -15,15 +15,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { SessionProvider, getSession } from 'next-auth/react';
-import React, {
-  ReactElement,
-  ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -45,7 +37,6 @@ import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
@@ -54,8 +45,8 @@ import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { ScrollRestoration } from '~/components/ScrollRestoration/ScrollRestoration';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
+import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -65,6 +56,7 @@ dayjs.extend(utc);
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
+  options?: Record<string, unknown>;
 };
 
 type CustomAppProps = {
@@ -111,8 +103,10 @@ function MyApp(props: CustomAppProps) {
   }, [colorScheme]);
 
   const getLayout = useMemo(
-    () => Component.getLayout ?? ((page: React.ReactElement) => <AppLayout>{page}</AppLayout>),
-    [Component.getLayout]
+    () =>
+      Component.getLayout ??
+      ((page: React.ReactElement) => <AppLayout {...Component.options}>{page}</AppLayout>),
+    [Component.getLayout, Component.options]
   );
 
   const content = isMaintenanceMode ? (
@@ -131,19 +125,21 @@ function MyApp(props: CustomAppProps) {
                   <ReferralsProvider>
                     <FiltersProvider value={filters}>
                       <HiddenPreferencesProvider>
-                        <CivitaiLinkProvider>
-                          <CustomModalsProvider>
-                            <NotificationsProvider zIndex={9999}>
-                              <StripeSetupSuccessProvider />
-                              <BrowserRouterProvider>
-                                <ScrollRestoration />
-                                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                                <GenerationPanel />
-                                <DialogProvider />
-                                <RoutedDialogProvider />
-                              </BrowserRouterProvider>
-                            </NotificationsProvider>
-                          </CustomModalsProvider>
+                        <CivitaiLinkProvider> 
+                          <NotificationsProvider zIndex={9999}>
+                            <BrowserRouterProvider>
+                              <BaseLayout>
+                                <CustomModalsProvider>
+                                  <TosProvider>
+                                    {getLayout(<Component {...pageProps} />)}
+                                  </TosProvider>
+                                  <StripeSetupSuccessProvider />
+                                  <DialogProvider />
+                                  <RoutedDialogProvider />
+                                </CustomModalsProvider>
+                              </BaseLayout>
+                            </BrowserRouterProvider>
+                          </NotificationsProvider> 
                         </CivitaiLinkProvider>
                       </HiddenPreferencesProvider>
                     </FiltersProvider>
@@ -172,7 +168,34 @@ function MyApp(props: CustomAppProps) {
           theme={{
             colorScheme,
             components: {
-              Modal: { styles: { modal: { maxWidth: '100%' } } },
+              Modal: {
+                styles: {
+                  modal: { maxWidth: '100%' },
+                },
+                // defaultProps: {
+                //   target:
+                //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
+                // },
+              },
+              Drawer: {
+                styles: {
+                  drawer: {
+                    containerName: 'drawer',
+                    containerType: 'inline-size',
+                    display: 'flex',
+                    flexDirection: 'column',
+                  },
+                  body: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+                  header: { margin: 0 },
+                },
+                // defaultProps: {
+                //   target:
+                //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
+                // },
+              },
+              Tooltip: {
+                defaultProps: { withArrow: true },
+              },
               Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
               Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
               Switch: {

@@ -49,7 +49,8 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
-  IconClubs,
+  IconClubs, 
+  IconBrush, 
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -86,7 +87,6 @@ import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { scrollToTop } from '~/utils/scroll-utils';
 import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
@@ -114,6 +114,8 @@ import {
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -221,6 +223,7 @@ export default function ModelDetailsV2({
     entityType: 'ModelVersion',
     entityId: modelVersionId,
   });
+  const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
@@ -565,6 +568,15 @@ export default function ModelDetailsV2({
                       {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
                     </Text>
                   </IconBadge>
+                  {model.canGenerate && latestGenerationVersion && (
+                    <GenerateButton modelVersionId={latestGenerationVersion.id}>
+                      <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
+                        <Text className={classes.modelBadgeText}>
+                          {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
+                        </Text>
+                      </IconBadge>
+                    </GenerateButton>
+                  )}
                   {features.collections && (
                     <LoginRedirect reason="add-to-collection">
                       <IconBadge
@@ -610,8 +622,7 @@ export default function ModelDetailsV2({
                         rating={model.rank?.ratingAllTime}
                         count={model.rank?.ratingCountAllTime}
                         onClick={() => {
-                          if (!gallerySectionRef.current) return;
-                          scrollToTop(gallerySectionRef.current);
+                          gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
                         }}
                       />
                     </ResourceReviewSummary>
@@ -961,8 +972,7 @@ export default function ModelDetailsV2({
               isFavorite={isFavorite}
               onFavoriteClick={handleToggleFavorite}
               onBrowseClick={() => {
-                if (!gallerySectionRef.current) return;
-                scrollToTop(gallerySectionRef.current);
+                gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
               hasAccess={hasAccess}
             />
@@ -1052,7 +1062,7 @@ export default function ModelDetailsV2({
 
 const useStyles = createStyles((theme) => ({
   actions: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
     },
   },
@@ -1060,14 +1070,14 @@ const useStyles = createStyles((theme) => ({
   titleWrapper: {
     gap: theme.spacing.xs,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       gap: theme.spacing.xs * 0.4,
     },
   },
 
   title: {
     wordBreak: 'break-word',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',
       paddingBottom: 0,
@@ -1075,33 +1085,33 @@ const useStyles = createStyles((theme) => ({
   },
 
   engagementBar: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
 
   mobileCarousel: {
     display: 'none',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'block',
     },
   },
   desktopCarousel: {
     display: 'block',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
 
   modelBadgeText: {
     fontSize: theme.fontSizes.md,
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       fontSize: theme.fontSizes.sm,
     },
   },
 
   discussionActionButton: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
     },
   },
@@ -1112,7 +1122,7 @@ const useStyles = createStyles((theme) => ({
       width: 24,
       height: 24,
 
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         minWidth: 16,
         minHeight: 16,
       },

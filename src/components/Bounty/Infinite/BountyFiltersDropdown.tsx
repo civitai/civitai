@@ -19,6 +19,7 @@ import { BountyStatus } from '~/server/common/enums';
 import { constants, BaseModel } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { PeriodFilter } from '~/components/Filters';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const supportsBaseModel = [
   BountyType.ModelCreation,
@@ -248,7 +249,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   actionButton: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       width: '100%',
     },
   },

@@ -15,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -70,7 +71,7 @@ export default function UserCollectionsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer fluid p={0}>
           <Stack spacing="xs">
             <Group spacing={8}>
               <SortFilter
@@ -90,4 +91,4 @@ export default function UserCollectionsPage() {
   );
 }
 
-UserCollectionsPage.getLayout = UserProfileLayout;
+setPageOptions(UserCollectionsPage, { innerLayout: UserProfileLayout });

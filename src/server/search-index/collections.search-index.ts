@@ -238,16 +238,21 @@ const onFetchItemsToIndex = async ({
     GROUP BY u.id
   ), cosmetics AS MATERIALIZED (
     SELECT
-      uc.data,
-      jsonb_agg(jsonb_build_object(
-        'id', c.id,
-        'data', c.data,
-        'type', c.type,
-        'source', c.source,
-        'name', c.name,
-        'leaderboardId', c."leaderboardId",
-        'leaderboardPosition', c."leaderboardPosition"
-      )) cosmetic
+      uc."userId",
+      jsonb_agg(
+        jsonb_build_object( 
+          'data', uc.data,
+          'cosmetic', jsonb_build_object(
+            'id', c.id,
+            'data', c.data,
+            'type', c.type,
+            'source', c.source,
+            'name', c.name,
+            'leaderboardId', c."leaderboardId",
+            'leaderboardPosition', c."leaderboardPosition"
+          )
+        )
+      )  cosmetics
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     AND "equippedAt" IS NOT NULL
@@ -279,7 +284,7 @@ const onFetchItemsToIndex = async ({
     (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
     (SELECT "image" FROM images i WHERE i.id = t."imageId"),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
-    (SELECT * FROM cosmetics c WHERE c."userId" = t."userId")
+    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t
   `;
 

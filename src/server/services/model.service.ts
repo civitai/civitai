@@ -1231,13 +1231,13 @@ export const publishModelById = async ({
         where: { id },
         data: {
           status: republishing ? ModelStatus.Published : status,
-          publishedAt,
+          publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           modelVersions: includeVersions
             ? {
                 updateMany: {
                   where: { id: { in: versionIds } },
-                  data: { status, publishedAt },
+                  data: { status, publishedAt: !republishing ? publishedAt : undefined },
                 },
               }
             : undefined,
@@ -1265,7 +1265,7 @@ export const publishModelById = async ({
           );
         } catch (e) {}
       }
-      if (status !== ModelStatus.Scheduled) await updateModelLastVersionAt({ id, tx });
+      if (!republishing) await updateModelLastVersionAt({ id, tx });
 
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
@@ -1293,7 +1293,6 @@ export const unpublishModelById = async ({
         where: { id },
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
-          publishedAt: null,
           meta: {
             ...meta,
             ...(reason
@@ -1308,7 +1307,7 @@ export const unpublishModelById = async ({
           modelVersions: {
             updateMany: {
               where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-              data: { status: ModelStatus.Unpublished, publishedAt: null },
+              data: { status: ModelStatus.Unpublished },
             },
           },
         },

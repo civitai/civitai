@@ -14,6 +14,7 @@ import {
   MantineSize,
   Menu,
   Paper,
+  Portal,
   ScrollArea,
   Switch,
   Text,
@@ -48,6 +49,7 @@ import {
   IconUser,
   IconUserCircle,
   IconUsers,
+  IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
@@ -87,10 +89,17 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { constants } from '~/server/common/constants';
+import { EventButton } from '~/components/EventButton/EventButton';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { ContainerGridProvider } from '~/components/ContainerGrid/ContainerGrid.context';
 
 const HEADER_HEIGHT = 70;
 
 const useStyles = createStyles((theme) => ({
+  root: {
+    containerName: 'header',
+    containerType: 'inline-size',
+  },
   header: {
     display: 'flex',
     alignItems: 'center',
@@ -232,7 +241,10 @@ function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSea
   return <AutocompleteSearch />;
 }
 
-export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent }: Props) {
+export function AppHeader({
+  renderSearchComponent = defaultRenderSearchComponent,
+  fixed = true,
+}: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -285,6 +297,18 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Post images
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/posts/create?video',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconVideoPlus stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Post videos
           </Group>
         ),
         rel: 'nofollow',
@@ -487,7 +511,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         .filter(({ visible }) => visible !== false)
         .map((link, index) => {
           const item = link.href ? (
-            <Link key={link.href} href={link.href} as={link.as} passHref>
+            <Link key={index} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
@@ -626,7 +650,13 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   };
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
+    <ContainerProvider
+      component={Header}
+      height={HEADER_HEIGHT}
+      fixed={fixed}
+      zIndex={100}
+      containerName="header"
+    >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -696,6 +726,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               </Menu>
             )}
             <SupportButton />
+            <EventButton />
           </Group>
         </Grid.Col>
         <Grid.Col
@@ -808,79 +839,89 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}
-              onClick={burgerOpened ? closeBurger : openBurger}
+              onMouseDown={!burgerOpened ? openBurger : undefined}
               size="sm"
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Paper
-                  className={classes.dropdown}
-                  withBorder
-                  shadow="md"
-                  style={{ ...styles, borderLeft: 0, borderRight: 0 }}
-                  radius={0}
-                >
-                  {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                  <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
-                    <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
-                    {burgerMenuItems}
-                  </ScrollArea.Autosize>
-                  {currentUser && (
-                    <Box px="md">
-                      <BrowsingModeMenu />
-                    </Box>
-                  )}
-
-                  <Group p="md" position="apart" grow>
-                    <ActionIcon
-                      variant="default"
-                      onClick={() => toggleColorScheme()}
-                      size="lg"
-                      sx={(theme) => ({
-                        color:
-                          theme.colorScheme === 'dark'
-                            ? theme.colors.yellow[theme.fn.primaryShade()]
-                            : theme.colors.blue[theme.fn.primaryShade()],
-                      })}
-                    >
-                      {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-                    </ActionIcon>
+                <Portal>
+                  <Paper
+                    className={classes.dropdown}
+                    withBorder
+                    shadow="md"
+                    style={{ ...styles, borderLeft: 0, borderRight: 0 }}
+                    radius={0}
+                    ref={ref}
+                  >
+                    {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
+                    <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                      <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
+                      {burgerMenuItems}
+                    </ScrollArea.Autosize>
                     {currentUser && (
-                      <>
-                        {currentUser?.showNsfw && (
-                          <BlurToggle iconProps={{ stroke: 1.5 }}>
-                            {({ icon, toggle }) => (
-                              <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
-                                {icon}
-                              </ActionIcon>
-                            )}
-                          </BlurToggle>
-                        )}
-                        <Link href="/user/account">
-                          <ActionIcon variant="default" size="lg" onClick={closeBurger}>
-                            <IconSettings stroke={1.5} />
-                          </ActionIcon>
-                        </Link>
-                        <ActionIcon variant="default" onClick={() => signOut()} size="lg">
-                          <IconLogout
-                            stroke={1.5}
-                            color={theme.colors.red[theme.fn.primaryShade()]}
-                          />
-                        </ActionIcon>
-                      </>
+                      <Box px="md">
+                        <BrowsingModeMenu />
+                      </Box>
                     )}
-                  </Group>
-                </Paper>
+
+                    <Group p="md" position="apart" grow>
+                      <ActionIcon
+                        variant="default"
+                        onClick={() => toggleColorScheme()}
+                        size="lg"
+                        sx={(theme) => ({
+                          color:
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.yellow[theme.fn.primaryShade()]
+                              : theme.colors.blue[theme.fn.primaryShade()],
+                        })}
+                      >
+                        {colorScheme === 'dark' ? (
+                          <IconSun size={18} />
+                        ) : (
+                          <IconMoonStars size={18} />
+                        )}
+                      </ActionIcon>
+                      {currentUser && (
+                        <>
+                          {currentUser?.showNsfw && (
+                            <BlurToggle iconProps={{ stroke: 1.5 }}>
+                              {({ icon, toggle }) => (
+                                <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
+                                  {icon}
+                                </ActionIcon>
+                              )}
+                            </BlurToggle>
+                          )}
+                          <Link href="/user/account">
+                            <ActionIcon variant="default" size="lg" onClick={closeBurger}>
+                              <IconSettings stroke={1.5} />
+                            </ActionIcon>
+                          </Link>
+                          <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                            <IconLogout
+                              stroke={1.5}
+                              color={theme.colors.red[theme.fn.primaryShade()]}
+                            />
+                          </ActionIcon>
+                        </>
+                      )}
+                    </Group>
+                  </Paper>
+                </Portal>
               )}
             </Transition>
           </Group>
         </Grid.Col>
       </Grid>
-    </Header>
+    </ContainerProvider>
   );
 }
 
-type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement };
+type Props = {
+  renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement;
+  fixed?: boolean;
+};
 export type RenderSearchComponentProps = {
   onSearchDone?: () => void;
   isMobile: boolean;

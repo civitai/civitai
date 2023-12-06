@@ -46,6 +46,7 @@ import { env } from '~/env/client.mjs';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -104,7 +105,11 @@ export function ImageDetail() {
                   withUsername
                   linkToProfile
                 />
-                <Group spacing={8} sx={{ [theme.fn.smallerThan('sm')]: { flexGrow: 1 } }} noWrap>
+                <Group
+                  spacing={8}
+                  sx={{ [containerQuery.smallerThan('sm')]: { flexGrow: 1 } }}
+                  noWrap
+                >
                   <TipBuzzButton
                     toUserId={image.user.id}
                     entityId={image.id}
@@ -135,8 +140,24 @@ export function ImageDetail() {
             >
               <Group position="apart" spacing={8}>
                 <Group spacing={8}>
-                  {!query.postId && image.postId && (
-                    <RoutedDialogLink passHref name="postDetail" state={{ postId: image.postId }}>
+                  {image.postId &&
+                    (!query.postId ? (
+                      <RoutedDialogLink passHref name="postDetail" state={{ postId: image.postId }}>
+                        <Button
+                          component="a"
+                          size="md"
+                          radius="xl"
+                          color="gray"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          compact
+                        >
+                          <Group spacing={4}>
+                            <IconEye size={14} />
+                            <Text size="xs">View post</Text>
+                          </Group>
+                        </Button>
+                      </RoutedDialogLink>
+                    ) : (
                       <Button
                         component="a"
                         size="md"
@@ -144,14 +165,14 @@ export function ImageDetail() {
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         compact
+                        onClick={close}
                       >
                         <Group spacing={4}>
                           <IconEye size={14} />
                           <Text size="xs">View post</Text>
                         </Group>
                       </Button>
-                    </RoutedDialogLink>
-                  )}
+                    ))}
                   <Button
                     size="md"
                     radius="xl"
@@ -295,15 +316,15 @@ export function ImageDetail() {
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = `@media (max-width: ${theme.breakpoints.md - 1}px)`;
-  const isDesktop = `@media (min-width: ${theme.breakpoints.md}px)`;
+  const isMobile = containerQuery.smallerThan('md');
+  const isDesktop = containerQuery.largerThan('md');
   return {
     root: {
-      width: '100vw',
-      height: '100vh',
+      flex: 1,
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
+      zIndex: 200,
     },
     carousel: {
       flex: 1,
@@ -316,6 +337,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',
       flexDirection: 'column',
+      zIndex: 100,
 
       [isMobile]: {
         position: 'absolute',

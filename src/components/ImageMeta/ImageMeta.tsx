@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconBrush } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { cloneElement, useMemo, useState } from 'react';
 import { ImageGenerationProcess, ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -27,6 +27,7 @@ type Props = {
   meta: ImageMetaProps;
   generationProcess?: ImageGenerationProcess;
   imageId?: number;
+  onCreateClick?: () => void;
 };
 type MetaDisplay = {
   label: string;
@@ -46,7 +47,7 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   scheduler: 'Scheduler',
 };
 
-export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Props) {
+export function ImageMeta({ meta, imageId, generationProcess = 'txt2img', onCreateClick }: Props) {
   const flags = useFeatureFlags();
 
   const metas = useMemo(() => {
@@ -95,29 +96,6 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
 
   return (
     <Stack spacing="xs">
-      {/* <DismissibleAlert
-        id="image-reproduction"
-        title="What is this?"
-        getInitialValueInEffect={false}
-        content={
-          <>
-            This is the data used to generate this image.{' '}
-            <Text component="span" weight={500} sx={{ lineHeight: 1.1 }}>
-              The image may not be exactly the same when you generate it.
-            </Text>{' '}
-            <Text
-              component="a"
-              td="underline"
-              variant="link"
-              sx={{ lineHeight: 1.1 }}
-              href="/github/wiki/Image-Reproduction"
-              target="_blank"
-            >
-              Learn why...
-            </Text>
-          </>
-        }
-      /> */}
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
           <Group spacing={4} align="center">
@@ -207,24 +185,23 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
           </Group>
         ))}
       </SimpleGrid>
-      {canCreate ? (
-        <Button.Group>
+      <Button.Group>
+        {canCreate && (
           <Button
             size="xs"
             variant="light"
             leftIcon={<IconBrush size={16} />}
-            onClick={() =>
-              generationPanel.open({ type: 'image', id: imageId ?? 0 }, { fullHeight: true })
-            }
+            onClick={() => {
+              generationPanel.open({ type: 'image', id: imageId ?? 0 });
+              onCreateClick?.();
+            }}
             sx={{ flex: 1 }}
           >
             Start Creating
           </Button>
-          <GenerationDataButton meta={meta} iconOnly />
-        </Button.Group>
-      ) : (
-        <GenerationDataButton meta={meta} />
-      )}
+        )}
+        <GenerationDataButton meta={meta} iconOnly={canCreate} />
+      </Button.Group>
     </Stack>
   );
 }
@@ -263,6 +240,7 @@ function GenerationDataButton({
       onClick={() => {
         copy(encodeMetadata(meta));
       }}
+      w={!iconOnly ? '100%' : undefined}
     >
       <Group spacing={4}>
         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
@@ -286,6 +264,8 @@ export function ImageMetaPopover({
   imageId,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
+  const [opened, setOpened] = useState(false);
+
   return (
     <div
       onClick={(e) => {
@@ -293,10 +273,26 @@ export function ImageMetaPopover({
         e.stopPropagation();
       }}
     >
-      <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
-        <Popover.Target>{children}</Popover.Target>
+      <Popover
+        width={350}
+        shadow="md"
+        position="top-end"
+        withArrow
+        withinPortal
+        opened={opened}
+        onChange={(opened) => setOpened(opened)}
+        {...popoverProps}
+      >
+        <Popover.Target>
+          {cloneElement(children, { onClick: () => setOpened((o) => !o) })}
+        </Popover.Target>
         <Popover.Dropdown>
-          <ImageMeta meta={meta} generationProcess={generationProcess} imageId={imageId} />
+          <ImageMeta
+            meta={meta}
+            generationProcess={generationProcess}
+            imageId={imageId}
+            onCreateClick={() => setOpened(false)}
+          />
         </Popover.Dropdown>
       </Popover>
     </div>

@@ -640,14 +640,7 @@ export const getAllImages = async ({
     else orderBy = `i."id" DESC`;
   }
 
-  // Apply user preferences
-  applyUserPreferencesSql(AND, {
-    excludedImageIds,
-    excludedTagIds,
-    excludedUserIds,
-    userId,
-    hidden,
-  });
+  if (hidden) AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
 
   if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
   else if (nsfw !== undefined) {
@@ -801,6 +794,15 @@ export const getAllImages = async ({
     nextCursor = nextItem?.cursorId;
   }
 
+  let tagIdsVar: { tagId: number; imageId: number }[] | undefined;
+  if (include?.includes('tagIds')) {
+    const imageIds = rawImages.map((i) => i.id);
+    tagIdsVar = await dbRead.tagsOnImage.findMany({
+      where: { imageId: { in: imageIds }, disabled: false },
+      select: { tagId: true, imageId: true },
+    });
+  }
+
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (include?.includes('tags')) {
     const imageIds = rawImages.map((i) => i.id);
@@ -851,6 +853,7 @@ export const getAllImages = async ({
   const images: Array<
     ImageV2Model & {
       tags?: VotableTagModel[] | undefined;
+      tagIds?: number[];
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       baseModel?: string | null;
@@ -892,6 +895,7 @@ export const getAllImages = async ({
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
+      tagIds: tagIdsVar?.filter((x) => x.imageId === i.id).map((x) => x.tagId),
     })
   );
 

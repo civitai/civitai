@@ -1,13 +1,14 @@
 import { Sx } from '@mantine/core';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const hideMobile: Sx = (theme) => ({
-  [theme.fn.smallerThan('xs')]: {
+  [containerQuery.smallerThan('xs')]: {
     display: 'none',
   },
 });
 
 export const showMobile: Sx = (theme) => ({
-  [theme.fn.largerThan('xs')]: {
+  [containerQuery.largerThan('xs')]: {
     display: 'none',
   },
 });

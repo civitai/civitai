@@ -13,6 +13,7 @@ import dayjs from 'dayjs';
 import { purgeCache } from '~/server/cloudflare/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { discord } from '~/server/integrations/discord';
+import { updateLeaderboardRank } from '~/server/services/user.service';
 
 // Only include events that aren't completed
 const events = [holiday2023];
@@ -85,6 +86,7 @@ export const eventEngine = {
     }
   },
   async updateLeaderboard() {
+    let updated = false;
     for (const eventDef of activeEvents) {
       // Ignore events that aren't active yet
       if (eventDef.startDate > new Date()) continue;
@@ -193,15 +195,23 @@ export const eventEngine = {
         `),
       ]);
 
+      // Update User Rank
+      const leaderboardIds = Object.keys(leaderboards);
+      await updateLeaderboardRank({ leaderboardIds });
+
       // Purge cache
       await redis.del(`event:${eventDef.name}:contributors`);
       await purgeCache({
         tags: [
           `event-contributors-${eventDef.name}`,
-          ...Object.keys(leaderboards).map((id) => `${eventDef.name}:${id}`),
+          ...leaderboardIds.map((id) => `${eventDef.name}:${id}`),
         ],
       });
+      updated = true;
     }
+
+    // Purge leaderboard positions cache
+    if (updated) await purgeCache({ tags: ['leaderboard-positions'] });
   },
   async getEventData(event: string) {
     const eventDef = events.find((x) => x.name === event);
@@ -283,11 +293,14 @@ export const eventEngine = {
       window,
     });
 
+    const now = new Date();
     const teamScoreHistory = Object.entries(accounts).map(([team, accountId]) => {
       const summary = summaries[accountId];
       return {
         team,
-        scores: summary.map((x) => ({ date: x.date, score: x.balance })),
+        scores: summary
+          .filter((x) => x.date < now)
+          .map((x) => ({ date: x.date, score: x.balance })),
       };
     });
 
@@ -440,7 +453,7 @@ export const eventEngine = {
     const partnersCache = await redis.lRange(`event:${event}:partners`, 0, -1);
     const partners = partnersCache.map((x) => JSON.parse(x)) as EventPartner[];
 
-    return partners;
+    return partners.sort((a, b) => b.amount - a.amount);
   },
   async queueAddRole({ event, team, userId }: { event: string; team: string; userId: number }) {
     const eventDef = events.find((x) => x.name === event);

@@ -32,6 +32,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
@@ -46,7 +47,7 @@ const useStyles = createStyles((theme) => ({
     gridTemplateColumns: `repeat(5, 1fr)`,
     gridGap: 4,
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       gridTemplateColumns: `repeat(3, 1fr)`,
     },
   },

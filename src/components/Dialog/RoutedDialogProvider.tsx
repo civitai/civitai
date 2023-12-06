@@ -20,6 +20,7 @@ export function RoutedDialogProvider() {
   const prevState = useRef<{ url: string; as: string }>();
   const currentUser = useCurrentUser();
 
+  // handle next router popstate
   useEffect(() => {
     router.beforePopState((state) => {
       const previous = prevState.current;
@@ -154,7 +155,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   const handleClick = (e: any) => {
     if (!e.ctrlKey) {
       e.preventDefault();
-      e.stopPropagation();
+      // e.stopPropagation();
       triggerRoutedDialog({ name, state });
     }
   };

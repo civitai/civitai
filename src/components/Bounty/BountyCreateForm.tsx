@@ -3,7 +3,6 @@ import {
   Button,
   createStyles,
   Divider,
-  Grid,
   Group,
   Input,
   Paper,
@@ -31,6 +30,7 @@ import { useRouter } from 'next/router';
 import React from 'react';
 import { z } from 'zod';
 
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -67,6 +67,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -108,7 +109,7 @@ const useStyles = createStyles((theme) => ({
   radioItemWrapper: {
     '& .mantine-Group-root': {
       alignItems: 'stretch',
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         flexDirection: 'column',
       },
     },
@@ -145,17 +146,17 @@ const useStyles = createStyles((theme) => ({
   },
 
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: '24px',
     },
   },
   sectionTitle: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       fontSize: '18px',
     },
   },
   fluid: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       maxWidth: '100% !important',
     },
   },
@@ -163,7 +164,7 @@ const useStyles = createStyles((theme) => ({
     position: 'sticky',
     top: `calc(var(--mantine-header-height) + ${theme.spacing.md}px)`,
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       position: 'relative',
       top: 0,
     },
@@ -292,8 +293,8 @@ export function BountyCreateForm() {
           <BackButton url="/bounties" />
           <Title className={classes.title}>Create a new bounty</Title>
         </Group>
-        <Grid gutter="xl">
-          <Grid.Col xs={12} md={8}>
+        <ContainerGrid gutter="xl">
+          <ContainerGrid.Col xs={12} md={8}>
             <Stack spacing={32}>
               <Stack spacing="xl">
                 <InputText
@@ -563,8 +564,8 @@ export function BountyCreateForm() {
                 )}
               </Stack>
             </Stack>
-          </Grid.Col>
-          <Grid.Col xs={12} md={4}>
+          </ContainerGrid.Col>
+          <ContainerGrid.Col xs={12} md={4}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
@@ -644,8 +645,8 @@ export function BountyCreateForm() {
                 </>
               )}
             </Stack>
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid.Col>
+        </ContainerGrid>
         <Group position="right">
           <NavigateBack url="/bounties">
             {({ onClick }) => (

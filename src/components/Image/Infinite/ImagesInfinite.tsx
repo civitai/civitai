@@ -33,6 +33,7 @@ type ImageFilters = {
   withMeta?: boolean;
   followed?: boolean;
   browsingMode?: BrowsingMode;
+  hidden?: boolean;
 };
 
 type ImagesInfiniteProps = {
@@ -40,6 +41,7 @@ type ImagesInfiniteProps = {
   filters?: ImageFilters;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
+  filterType?: 'images' | 'videos';
 };
 
 export default function ImagesInfinite({
@@ -47,8 +49,9 @@ export default function ImagesInfinite({
   filters: filterOverrides = {},
   showEof = false,
   renderItem: MasonryItem,
+  filterType = 'images',
 }: ImagesInfiniteProps) {
-  const imageFilters = useImageFilters('images');
+  const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);

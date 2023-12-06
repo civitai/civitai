@@ -187,5 +187,3 @@ export default function IntentAvatar() {
     </Container>
   );
 }
-
-// IntentAvatar.getLayout = (page: React.ReactElement) => <>{page}</>;

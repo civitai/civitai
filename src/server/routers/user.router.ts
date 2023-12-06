@@ -139,7 +139,7 @@ export const userRouter = router({
   claimCosmetic: protectedProcedure.input(getByIdSchema).mutation(claimCosmeticHandler),
   equipCosmetic: protectedProcedure
     .input(getByIdSchema)
-    .mutation(({ ctx, input }) => equipCosmetic({ userId: ctx.user.id, id: input.id })),
+    .mutation(({ ctx, input }) => equipCosmetic({ userId: ctx.user.id, cosmeticId: input.id })),
   getPaymentMethods: protectedProcedure.query(getUserPaymentMethodsHandler),
   deletePaymentMethod: protectedProcedure
     .input(paymentMethodDeleteInput)

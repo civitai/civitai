@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import { createContext, useCallback, useContext, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { z } from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -69,7 +69,7 @@ const imageFilterSchema = z.object({
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   view: viewModeSchema.default('feed'),
   excludeCrossPosts: z.boolean().optional(),
-  types: z.array(z.nativeEnum(MediaType)).optional(),
+  types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -140,6 +140,14 @@ const clubFilterSchema = z
     })
   );
 
+type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
+const videoFilterSchema = imageFilterSchema.omit({
+  types: true,
+  view: true,
+  excludeCrossPosts: true,
+});
+
+  
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -154,6 +162,7 @@ type StorageState = {
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
   clubs: ClubFilterSchema;
+  videos: VideoFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
@@ -176,6 +185,7 @@ type StoreState = FilterState & {
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
   setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
+  setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -194,6 +204,7 @@ const localStorageSchemas: LocalStorageSchema = {
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
   clubs: { key: 'clubs-filters', schema: clubFilterSchema },
+  videos: { key: 'videos-filters', schema: videoFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -277,6 +288,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
       setClubFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
+      setVideoFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
     }))
   );
 
@@ -296,11 +309,18 @@ export const FiltersProvider = ({
 }) => {
   const storeRef = useRef<FilterStore>();
   const currentUser = useCurrentUser();
+  const showNsfw = (currentUser && currentUser.showNsfw) ?? false;
   if (!storeRef.current)
     storeRef.current = createFilterStore({
       ...value,
-      browsingMode: !currentUser || !currentUser.showNsfw ? BrowsingMode.SFW : value.browsingMode,
+      browsingMode: !showNsfw ? BrowsingMode.SFW : value.browsingMode,
     });
+
+  useEffect(() => {
+    storeRef.current?.setState({
+      browsingMode: !showNsfw ? BrowsingMode.SFW : BrowsingMode.NSFW,
+    });
+  }, [showNsfw]);
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };
@@ -335,6 +355,7 @@ export function useSetFilters(type: FilterSubTypes) {
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
           clubs: state.setClubFilters,
+          videos: state.setVideoFilters,
         }[type]),
       [type]
     )

@@ -1,18 +1,19 @@
 import { useRouter } from 'next/router';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { EditPostProvider } from './EditPostProvider';
 import { trpc } from '~/utils/trpc';
 import { useEffect } from 'react';
 import { Center, Loader } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 // It turns out, you can't use hooks in a layout component
 // https://github.com/vercel/next.js/discussions/36341#discussioncomment-2628008
 export function PostEditLayout(page: any) {
   return (
-    <AppLayout>
+    <ScrollArea>
       <PostEditWrapper>{page}</PostEditWrapper>
-    </AppLayout>
+    </ScrollArea>
   );
 }
 

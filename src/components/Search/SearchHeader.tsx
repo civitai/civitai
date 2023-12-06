@@ -40,10 +40,11 @@ import {
 } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   wrapper: {
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       overflow: 'auto',
       maxWidth: '100%',
     },
@@ -57,7 +58,7 @@ const useStyles = createStyles((theme) => ({
   root: {
     backgroundColor: 'transparent',
     gap: 8,
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       overflow: 'visible',
       maxWidth: '100%',
     },
