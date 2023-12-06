@@ -517,12 +517,14 @@ export const getAllImages = async ({
   const optionalRank = !!(modelId || modelVersionId || reviewId || username || collectionId);
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
-    if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
-    if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
     if (reviewId) irhAnd.push(Prisma.sql`re."id" = ${reviewId}`);
+    else if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+    else if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ImageResource" irr
-      ${Prisma.raw(modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : '')}
+      ${Prisma.raw(
+        !modelVersionId && modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : ''
+      )}
       ${Prisma.raw(
         reviewId ? 'JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"' : ''
       )}
@@ -2119,7 +2121,7 @@ export const getImageModerationReviewQueue = async ({
     report.status as "reportStatus",
     report.details as "reportDetails",
     ur.username as "reportUsername",
-    ur.id as "reportUserId", 
+    ur.id as "reportUserId",
   `;
 
   const queryFrom = Prisma.sql`
