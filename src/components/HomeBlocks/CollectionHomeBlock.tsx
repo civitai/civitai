@@ -34,7 +34,7 @@ import ReactMarkdown from 'react-markdown';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { CollectionMode } from '@prisma/client';
+import { CollectionMode, ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { isDefined } from '~/utils/type-guards';
@@ -135,38 +135,79 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     models: hiddenModels,
     images: hiddenImages,
     users: hiddenUsers,
+    tags: hiddenTags,
     isLoading: loadingPreferences,
   } = useHiddenPreferencesContext();
 
   const { collection } = homeBlock ?? {};
+
+  const shuffled = useMemo(() => {
+    if (loadingPreferences || !collection?.items) return [];
+    return shuffle(collection.items);
+  }, [collection?.items, loadingPreferences]);
   const items = useMemo(() => {
     const itemsToShow = ITEMS_PER_ROW * rows;
     const usersShown = new Set();
-    const filteredItems = shuffle(collection?.items ?? []).filter((item) => {
-      if (loadingPreferences || !currentUser) return true;
+    const type = shuffled[0].type;
 
-      // TODO: A lot of improvement can be done here like checking images within the model, etc.
-      switch (item.type) {
-        case 'model':
-          return !hiddenModels.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
-        case 'image':
-          if (
-            hiddenImages.get(item.data.id) ||
-            hiddenUsers.get(item.data.user.id) ||
-            usersShown.has(item.data.user.id)
-          )
-            return false;
-          usersShown.add(item.data.user.id);
-          return true;
-        case 'post':
-        case 'article':
-        default:
-          return !hiddenUsers.get(item.data.user.id);
+    // TODO - find a different way to return collections so that the type isn't set on the individual item
+    switch (type) {
+      case 'model':
+        return shuffled
+          .filter((x) => {
+            if (x.data.user.id === currentUser?.id) return true;
+            if (hiddenUsers.get(x.data.user.id)) return false;
+            if (hiddenModels.get(x.data.id)) return false;
+            // @ts-ignore: We know it has tags in it
+            for (const tag of x.data.tags) {
+              if (hiddenTags.get(tag)) return false;
+            }
+            return true;
+          })
+          .map((x) => {
+            // @ts-ignore: We know it has images in it
+            const { images } = x.data;
+            // @ts-ignore: We know it has images in it
+            const filteredImages = images?.filter((i) => {
+              if (hiddenImages.get(i.id)) return false;
+              for (const tag of i.tags ?? []) {
+                if (hiddenTags.get(tag)) return false;
+              }
+              return true;
+            });
+
+            if (!filteredImages?.length) return null;
+
+            // const item = {...x, data: {...x.data, image: filteredImages[0],}}
+
+            return { ...x, data: { ...x.data, image: filteredImages[0] } };
+          })
+          .filter(isDefined)
+          .slice(0, itemsToShow);
+      case 'image':
+        return shuffled
+          .filter((x) => {
+            if (usersShown.has(x.data.user.id)) return false;
+            usersShown.add(x.data.user.id);
+            if (x.data.user.id === currentUser?.id) return true;
+            // @ts-ignore: We know it has ingestion in it
+            if (x.data.ingestion !== ImageIngestionStatus.Scanned) return false;
+            if (hiddenImages.get(x.data.id)) return false;
+            if (hiddenUsers.get(x.data.user.id)) return false;
+            // @ts-ignore: We know it has tagIds in it
+            for (const tag of x.data.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            return true;
+          })
+          .slice(0, itemsToShow);
+      default: {
+        return shuffled
+          .filter((x) => {
+            return !hiddenUsers.get(x.data.user.id);
+          })
+          .slice(0, itemsToShow);
       }
-    });
-
-    return filteredItems.slice(0, itemsToShow);
-  }, [collection?.items, loadingPreferences, hiddenModels, hiddenImages, hiddenUsers, rows]);
+    }
+  }, [shuffled, hiddenModels, hiddenImages, hiddenUsers, rows, hiddenTags, currentUser?.id]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
@@ -304,12 +345,14 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       <div className={classes.grid} ref={ref}>
         <ImagesProvider
           hideReactionCount={collection?.mode === CollectionMode.Contest}
-          images={items
-            .map((x) => {
-              if (x.type === 'image') return x.data;
-              return null;
-            })
-            .filter(isDefined)}
+          images={
+            items
+              .map((x) => {
+                if (x.type === 'image') return x.data;
+                return null;
+              })
+              .filter(isDefined) as any
+          }
         >
           <ReactionSettingsProvider
             settings={{ hideReactionCount: collection?.mode === CollectionMode.Contest }}
@@ -324,11 +367,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
               : items.map((item) => (
                   <Fragment key={item.id}>
                     {item.type === 'model' && (
-                      <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
+                      <ModelCard
+                        data={{ ...item.data, image: (item.data as any).images[0] } as any}
+                      />
                     )}
-                    {item.type === 'image' && <ImageCard data={item.data} />}
-                    {item.type === 'post' && <PostCard data={item.data} />}
-                    {item.type === 'article' && <ArticleCard data={item.data} />}
+                    {item.type === 'image' && <ImageCard data={item.data as any} />}
+                    {item.type === 'post' && <PostCard data={item.data as any} />}
+                    {item.type === 'article' && <ArticleCard data={item.data as any} />}
                   </Fragment>
                 ))}
           </ReactionSettingsProvider>

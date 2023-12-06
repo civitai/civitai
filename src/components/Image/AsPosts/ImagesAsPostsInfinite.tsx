@@ -31,6 +31,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+import { ImageIngestionStatus } from '@prisma/client';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -90,7 +93,43 @@ export default function ImagesAsPostsInfinite({
       }
     );
 
-  const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+
+  const items = useMemo(() => {
+    // TODO - fetch user reactions for images separately
+    if (isLoadingHidden) return [];
+    const arr = data?.pages.flatMap((x) => x.items) ?? [];
+    const filtered = arr
+      .filter((x) => {
+        if (x.user.id === currentUser?.id) return true;
+        if (hiddenUsers.get(x.user.id)) return false;
+        return true;
+      })
+      .map(({ images, ...x }) => {
+        const filteredImages = images?.filter((i) => {
+          if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
+          if (hiddenImages.get(i.id)) return false;
+          for (const tag of i.tagIds ?? []) {
+            if (hiddenTags.get(tag)) return false;
+          }
+          return true;
+        });
+
+        if (!filteredImages?.length) return null;
+
+        return {
+          ...x,
+          images: filteredImages,
+        };
+      })
+      .filter(isDefined);
+    return filtered;
+  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, isLoadingHidden]);
 
   const isMuted = currentUser?.muted ?? false;
   const addPostLink = `/posts/create?modelId=${modelId}${

@@ -192,6 +192,7 @@ export default function Home() {
                         types: undefined,
                         followed: false,
                         withMeta: true,
+                        hidden: false,
                       }}
                     />
                   </IsClient>
