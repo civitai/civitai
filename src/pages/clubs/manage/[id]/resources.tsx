@@ -11,6 +11,7 @@ import { trpc } from '~/utils/trpc';
 import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembershipInfinite';
+import { ClubResourcesPaged } from '~/components/Club/Infinite/ClubResourcesPaged';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -71,12 +72,13 @@ export default function ManageClubMembers({
 
   return (
     <Stack spacing="md">
-      <Title order={2}>Manage Members</Title>
+      <Title order={2}>Manage Club Resources</Title>
       <Text>
-        You can see who has joined your club, how long they&apos;ve been a member, and the club tier
-        they&apos;re in.
+        You can manage your club resources here. You can manage resource tiers, edit, and delete
+        resources. To add new resources, you should go to the resource and use the context menu to{' '}
+        <code>Add to club</code> or use the resource&rsquo;s edit form.
       </Text>
-      <ClubMembershipInfinite clubId={id} />
+      <ClubResourcesPaged clubId={id} />
     </Stack>
   );
 }

@@ -5,14 +5,20 @@ import {
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
+  OwnerRemoveClubMembershipInput,
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import { ClubMembershipSort } from '~/server/common/enums';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwInsufficientFundsError,
+} from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
+import { userContributingClubs } from '~/server/services/club.service';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { cursor, limit: take, clubId, clubTierId, roles, userId, sort },
@@ -342,6 +348,88 @@ export const completeClubMembershipCharge = async ({
         stripePaymentIntentId: clubMembershipCharge.invoiceId,
       },
       externalTransactionId: `club-membership-charge-${clubMembershipCharge.id}`,
+    });
+  });
+};
+
+export const clubOwnerRemoveMember = async ({
+  clubId,
+  userId,
+  sessionUserId,
+  isModerator,
+}: OwnerRemoveClubMembershipInput & {
+  sessionUserId: number;
+  isModerator: boolean;
+}) => {
+  const membership = await dbRead.clubMembership.findFirst({
+    where: { clubId, userId },
+    include: {
+      clubTier: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      club: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  if (!membership) throw throwBadRequestError('Club membership not found');
+  if (membership.userId === sessionUserId)
+    throw throwBadRequestError('You cannot remove and refund yourself from a club');
+
+  const userClubs = await userContributingClubs({ userId: sessionUserId });
+  const isClubOwner = userClubs.find(
+    (c) => c.id === membership.clubId && c.userId === sessionUserId
+  );
+  const isClubAdmin = userClubs.find(
+    (c) => c.id === membership.clubId && c.membership?.role === ClubMembershipRole.Admin
+  );
+
+  if (!(isModerator || isClubOwner || isClubAdmin)) {
+    throw throwAuthorizationError("You are not authorized to remove a user's membership");
+  }
+
+  const clubBuzzAccount = await getUserBuzzAccount({
+    accountId: membership.clubId,
+    accountType: 'Club',
+  });
+
+  console.log(clubBuzzAccount?.balance);
+
+  if ((clubBuzzAccount?.balance ?? 0) < membership.unitAmount) {
+    throw throwInsufficientFundsError(
+      'Club does not have enough funds to refund this user as such, they cannot be removed'
+    );
+  }
+
+  return dbWrite.$transaction(async (tx) => {
+    // Remove the user:
+    await tx.clubMembership.delete({
+      where: { id: membership.id },
+    });
+
+    // Refund the user:
+    await createBuzzTransaction({
+      fromAccountType: 'Club',
+      fromAccountId: membership.clubId,
+      toAccountId: membership.userId,
+      toAccountType: 'User',
+      amount: membership.unitAmount,
+      type: TransactionType.Refund,
+      details: {
+        userId: membership.userId,
+        clubTierId: membership.clubTierId,
+        clubId: membership.clubId,
+        clubMembershipId: membership.id,
+      },
+      description: `Refund for Club Membership: ${membership.club.name} - ${membership.clubTier.name}`,
+      externalTransactionId: `club-membership-refund-${membership.id}`,
     });
   });
 };

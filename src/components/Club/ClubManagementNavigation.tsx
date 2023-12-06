@@ -2,10 +2,14 @@ import { Anchor, Badge, createStyles, Group, Tabs, Text } from '@mantine/core';
 import React from 'react';
 import {
   IconAssembly,
+  IconBolt,
   IconCategory,
+  IconFiles,
   IconLayoutList,
+  IconMoneybag,
   IconPencilMinus,
   IconPhoto,
+  IconUsers,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
@@ -31,17 +35,17 @@ export const ClubManagementNavigation = ({ id }: { id: number }) => {
       url: `${baseUrl}/tiers`,
       icon: <IconCategory />,
     },
-    admins: {
-      url: `${baseUrl}/admins`,
-      icon: <IconLayoutList />,
+    resources: {
+      url: `${baseUrl}/resources`,
+      icon: <IconFiles />,
     },
     members: {
       url: `${baseUrl}/members`,
-      icon: <IconPhoto />,
+      icon: <IconUsers />,
     },
     revenue: {
       url: `${baseUrl}/revenue`,
-      icon: <IconPencilMinus />,
+      icon: <IconBolt />,
     },
   };
 

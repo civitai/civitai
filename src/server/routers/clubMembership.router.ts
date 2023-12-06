@@ -1,16 +1,21 @@
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
+import { isFlagProtected, middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import {
   clubMembershipOnClubInput,
   createClubMembershipInput,
   getInfiniteClubMembershipsSchema,
+  ownerRemoveClubMembershipInput,
   updateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import {
   createClubMembershipHandler,
   getClubMembershipOnClubHandler,
   getInfiniteClubMembershipsHandler,
+  removeAndRefundMemberHandler,
   updateClubMembershipHandler,
 } from '~/server/controllers/clubMembership.controller';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { dbRead } from '~/server/db/client';
+import { getByIdSchema } from '~/server/schema/base.schema';
 
 export const clubMembershipRouter = router({
   getInfinite: publicProcedure
@@ -29,4 +34,7 @@ export const clubMembershipRouter = router({
     .input(clubMembershipOnClubInput)
     .use(isFlagProtected('clubs'))
     .query(getClubMembershipOnClubHandler),
+  removeAndRefundMember: protectedProcedure
+    .input(ownerRemoveClubMembershipInput)
+    .mutation(removeAndRefundMemberHandler),
 });

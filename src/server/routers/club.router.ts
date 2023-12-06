@@ -2,6 +2,9 @@ import { isFlagProtected, protectedProcedure, publicProcedure, router } from '..
 import {
   getClubTiersInput,
   getInfiniteClubSchema,
+  getPaginatedClubResourcesSchema,
+  removeClubResourceInput,
+  updateClubResourceInput,
   upsertClubInput,
   upsertClubResourceInput,
   upsertClubTierInput,
@@ -11,6 +14,9 @@ import {
   getClubResourceDetailsHandler,
   getClubTiersHandler,
   getInfiniteClubsHandler,
+  getPaginatedClubResourcesHandler,
+  removeClubResourceHandler,
+  updateClubResourceHandler,
   upsertClubHandler,
   upsertClubResourceHandler,
   upsertClubTierHandler,
@@ -43,8 +49,20 @@ export const clubRouter = router({
     .input(upsertClubResourceInput)
     .use(isFlagProtected('clubs'))
     .mutation(upsertClubResourceHandler),
+  updateResource: protectedProcedure
+    .input(updateClubResourceInput)
+    .use(isFlagProtected('clubs'))
+    .mutation(updateClubResourceHandler),
+  removeResource: protectedProcedure
+    .input(removeClubResourceInput)
+    .use(isFlagProtected('clubs'))
+    .mutation(removeClubResourceHandler),
   resourceDetails: publicProcedure
     .input(getByEntitySchema)
     .use(isFlagProtected('clubs'))
     .query(getClubResourceDetailsHandler),
+  getPaginatedClubResources: publicProcedure
+    .input(getPaginatedClubResourcesSchema)
+    .use(isFlagProtected('clubs'))
+    .query(getPaginatedClubResourcesHandler),
 });

@@ -1,9 +1,15 @@
 import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
-import { BountyMode, BountyType, Currency, MetricTimeframe } from '@prisma/client';
-import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { BountySort, BountyStatus, ClubSort } from '~/server/common/enums';
+import {
+  BountyMode,
+  BountyType,
+  ClubMembershipRole,
+  Currency,
+  MetricTimeframe,
+} from '@prisma/client';
+import { infiniteQuerySchema, paginationSchema } from '~/server/schema/base.schema';
+import { BountySort, BountyStatus, ClubMembershipSort, ClubSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 
 export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
@@ -111,3 +117,21 @@ export const getInfiniteClubSchema = infiniteQuerySchema.merge(
     limit: z.coerce.number().min(1).max(200).default(60),
   })
 );
+
+export const getPaginatedClubResourcesSchema = paginationSchema.merge(
+  z.object({
+    clubId: z.number(),
+    limit: z.coerce.number().min(1).max(200).default(60),
+    clubTierId: z.number().optional(),
+  })
+);
+
+export type GetPaginatedClubResourcesSchema = z.infer<typeof getPaginatedClubResourcesSchema>;
+
+export const updateClubResourceInput = z.object({
+  entityType: z.enum(supportedClubEntities),
+  entityId: z.number(),
+  club: clubResourceSchema,
+});
+
+export type UpdateClubResourceInput = z.infer<typeof updateClubResourceInput>;

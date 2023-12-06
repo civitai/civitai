@@ -159,6 +159,7 @@ export const entityRequiresClub = async ({
   entities,
   clubId,
   clubIds,
+  tx,
 }: {
   entities: {
     entityId: number;
@@ -166,10 +167,13 @@ export const entityRequiresClub = async ({
   }[];
   clubId?: number;
   clubIds?: number[];
+  tx?: Prisma.TransactionClient;
 }): Promise<ClubEntityAccessStatus[]> => {
   if (entities.length === 0) {
     return [];
   }
+
+  const client = tx || dbRead;
 
   const entitiesWith = `
    WITH entities AS (
@@ -179,7 +183,7 @@ export const entityRequiresClub = async ({
       )
     )`;
 
-  const entitiesAvailability = await dbRead.$queryRaw<
+  const entitiesAvailability = await client.$queryRaw<
     { availability: Availability; entityType: SupportedClubEntities; entityId: number }[]
   >`
    ${Prisma.raw(entitiesWith)}
@@ -226,7 +230,7 @@ export const entityRequiresClub = async ({
     return Prisma.raw('');
   };
 
-  const privateEntitiesAccess = await dbRead.$queryRaw<
+  const privateEntitiesAccess = await client.$queryRaw<
     {
       entityId: number;
       entityType: string;

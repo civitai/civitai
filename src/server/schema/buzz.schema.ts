@@ -17,10 +17,14 @@ export enum TransactionType {
   ClubMembership = 13,
 }
 
+const buzzAccountTypes = ['User', 'Club', 'Other'] as const;
+export type BuzzAccountType = (typeof buzzAccountTypes)[number];
+
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
 export const getUserBuzzAccountSchema = z.object({
   // This is the user id
   accountId: z.number().min(0),
+  accountType: z.enum(buzzAccountTypes).optional(),
 });
 
 export type GetUserBuzzAccountResponse = z.infer<typeof getUserBuzzAccountResponse>;
@@ -77,7 +81,7 @@ export const getUserBuzzTransactionsResponse = z.object({
 
 export const buzzTransactionSchema = z.object({
   // To user id (0 is central bank)
-  toAccountType: z.enum(['User', 'Club', 'Other']).optional(),
+  toAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountId: z.number().optional(),
   type: z.nativeEnum(TransactionType),
   amount: z.number().min(1),

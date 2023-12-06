@@ -7,8 +7,11 @@ import {
 import {
   GetClubTiersInput,
   GetInfiniteClubSchema,
+  GetPaginatedClubResourcesSchema,
+  RemoveClubResourceInput,
   supportedClubEntities,
   SupportedClubEntities,
+  UpdateClubResourceInput,
   UpsertClubInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
@@ -18,6 +21,9 @@ import {
   getClub,
   getClubDetailsForResource,
   getClubTiers,
+  getPaginatedClubResources,
+  removeClubResource,
+  updateClubResource,
   upsertClub,
   upsertClubResource,
   upsertClubTiers,
@@ -231,3 +237,66 @@ export const getInfiniteClubsHandler = async ({
     throw throwDbError(error);
   }
 };
+export const getPaginatedClubResourcesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetPaginatedClubResourcesSchema;
+  ctx: Context;
+}) => {
+  const { user } = ctx;
+  try {
+    return getPaginatedClubResources(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export async function updateClubResourceHandler({
+  input,
+  ctx,
+}: {
+  input: UpdateClubResourceInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    await updateClubResource({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+    });
+
+    const [details] = await getClubDetailsForResource({
+      entities: [
+        {
+          entityType: input.entityType,
+          entityId: input.entityId,
+        },
+      ],
+    });
+
+    return details;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function removeClubResourceHandler({
+  input,
+  ctx,
+}: {
+  input: RemoveClubResourceInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return removeClubResource({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}

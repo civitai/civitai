@@ -3,6 +3,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import {
   GetInfiniteClubPostsSchema,
   GetInfiniteClubSchema,
+  GetPaginatedClubResourcesSchema,
+  getPaginatedClubResourcesSchema,
   SupportedClubEntities,
   UpsertClubInput,
   UpsertClubPostInput,
@@ -21,10 +23,12 @@ import { ClubGetAll, ClubPostGetAll, UserClub } from '~/types/router';
 import {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
+  OwnerRemoveClubMembershipInput,
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { removeAndRefundMemberHandler } from '~/server/controllers/clubMembership.controller';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -172,6 +176,28 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     },
   });
 
+  const removeAndRefundMemberMutation = trpc.clubMembership.removeAndRefundMember.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getInfinite.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to remove and refund user',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to remove and refund user',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -192,6 +218,9 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
   const handleUpdateClubMembership = (data: UpdateClubMembershipInput) => {
     return updateClubMembershipMutation.mutateAsync(data);
   };
+  const handleRemoveAndRefundMemberMutation = (data: OwnerRemoveClubMembershipInput) => {
+    return removeAndRefundMemberMutation.mutateAsync(data);
+  };
 
   return {
     upsertClub: handleUpsertClub,
@@ -206,6 +235,8 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     creatingClubMembership: createClubMembershipMutation.isLoading,
     updateClubMembership: handleUpdateClubMembership,
     updatingClubMembership: updateClubMembershipMutation.isLoading,
+    removeAndRefundMember: handleRemoveAndRefundMemberMutation,
+    removingAndRefundingMember: removeAndRefundMemberMutation.isLoading,
   };
 };
 
@@ -347,6 +378,31 @@ export const useQueryClubMembership = (
   }, [data?.pages]);
 
   return { memberships, ...rest };
+};
+
+export const useQueryClubResources = (
+  clubId: number,
+  filters?: Partial<GetPaginatedClubResourcesSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.club.getPaginatedClubResources.useQuery(
+    {
+      ...filters,
+      clubId,
+    },
+    {
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
+
+  if (data) {
+    const { items: resources = [], ...pagination } = data;
+    return { resources, pagination, ...rest };
+  }
+
+  return { resources: [], pagination: null, ...rest };
 };
 
 export const useClubFilters = () => {

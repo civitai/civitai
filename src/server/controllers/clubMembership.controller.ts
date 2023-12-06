@@ -1,15 +1,21 @@
 import { TRPCError } from '@trpc/server';
-import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+} from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
+  OwnerRemoveClubMembershipInput,
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import {
   clubMembershipOnClub,
+  clubOwnerRemoveMember,
   createClubMembership,
   getClubMemberships,
   updateClubMembership,
@@ -18,6 +24,8 @@ import { userContributingClubs } from '~/server/services/club.service';
 import { dbRead } from '~/server/db/client';
 import { ClubMembershipRole } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { getUserBuzzAccount } from '~/server/services/buzz.service';
 
 export const getInfiniteClubMembershipsHandler = async ({
   input,
@@ -30,7 +38,7 @@ export const getInfiniteClubMembershipsHandler = async ({
   const limit = input.limit + 1 ?? 10;
 
   const userClubs = await userContributingClubs({ userId: user.id });
-  const isClubOwner = userClubs.find((c) => c.id === input.clubId);
+  const isClubOwner = userClubs.find((c) => c.id === input.clubId && c.userId === user.id);
   const isClubAdmin = userClubs.find(
     (c) => c.id === input.clubId && c.membership?.role === ClubMembershipRole.Admin
   );
@@ -52,6 +60,7 @@ export const getInfiniteClubMembershipsHandler = async ({
         startedAt: true,
         nextBillingAt: true,
         unitAmount: true,
+        currency: true,
         expiresAt: true,
         cancelledAt: true,
         downgradeClubTierId: true,
@@ -235,3 +244,23 @@ export async function updateClubMembershipHandler({
     else throwDbError(error);
   }
 }
+
+export const removeAndRefundMemberHandler = async ({
+  input,
+  ctx,
+}: {
+  input: OwnerRemoveClubMembershipInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+
+  try {
+    return clubOwnerRemoveMember({
+      ...input,
+      sessionUserId: user.id,
+      isModerator: !!user.isModerator,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};

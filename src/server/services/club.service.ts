@@ -2,7 +2,10 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetClubTiersInput,
   GetInfiniteClubSchema,
+  GetPaginatedClubResourcesSchema,
+  RemoveClubResourceInput,
   SupportedClubEntities,
+  UpdateClubResourceInput,
   UpsertClubInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
@@ -19,6 +22,7 @@ import {
   entityOwnership,
   entityRequiresClub,
 } from '~/server/services/common.service';
+import { getPagingData } from '~/server/utils/pagination-helpers';
 
 export const userContributingClubs = async ({
   userId,
@@ -445,6 +449,7 @@ export const upsertClubResource = async ({
 
   const clubIds = clubs.map((c) => c.clubId);
   const contributingClubs = await userContributingClubs({ userId, clubIds });
+
   if (!isModerator && clubIds.some((c) => !contributingClubs.find((cc) => cc.id === c))) {
     throw throwAuthorizationError(
       'You do not have permission to add this resource to one of the provided clubs'
@@ -631,5 +636,247 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
       AND,
     },
     orderBy,
+  });
+};
+
+type ModelVersionClubResource = {
+  entityType: 'ModelVersion';
+  data: {
+    id: number;
+    name: string;
+    modelVersion: {
+      id: number;
+      name: string;
+    };
+  };
+};
+
+type Article = {
+  entityType: 'Article';
+  data: {
+    id: number;
+    title: string;
+  };
+};
+
+type PaginatedClubResource = {
+  entityId: number;
+  entityType: string;
+  clubTierIds: number[];
+} & (ModelVersionClubResource | Article);
+
+export const getPaginatedClubResources = async ({
+  clubId,
+  clubTierId,
+  page,
+  limit,
+}: GetPaginatedClubResourcesSchema) => {
+  const AND: Prisma.Sql[] = [Prisma.raw(`(ct."id" IS NOT NULL OR c.id IS NOT NULL)`)];
+
+  if (clubTierId) {
+    // Use exists here rather than a custom join or smt so that we can still capture other tiers this item is available on.
+    AND.push(
+      Prisma.raw(
+        `EXISTS (SELECT 1 FROM "EntityAccess" eat WHERE eat."accessorType" = 'ClubTier' AND eat."accessorId" = ${clubTierId})`
+      )
+    );
+  }
+
+  const fromQuery = Prisma.sql`
+  FROM "EntityAccess" ea 
+    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}  
+    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id AND c."id" = ${clubId}
+    LEFT JOIN "ModelVersion" mv ON mv."id" = ea."accessToId" AND ea."accessToType" = 'ModelVersion'
+    LEFT JOIN "Model" m ON m."id" = mv."modelId"
+    LEFT JOIN "Article" a ON a."id" = ea."accessToId" AND ea."accessToType" = 'Article'
+    
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  const [row] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT COUNT(DISTINCT CONCAT(ea."accessToId", ea."accessToType"))::INT as "count"
+    ${fromQuery}
+  `;
+
+  const items = await dbRead.$queryRaw<PaginatedClubResource[]>`
+    SELECT 
+      ea."accessToId" as "entityId", 
+      ea."accessToType" as "entityType",
+      json_agg(ct."id") as "clubTierIds",
+      CASE 
+        WHEN ea."accessToType" = 'ModelVersion' THEN jsonb_build_object(
+          'id', m."id",
+          'name', m."name",
+          'modelVersion', jsonb_build_object(
+            'id', mv."id",
+            'name', mv."name"
+          )
+        ) 
+        WHEN ea."accessToType" = 'Article' THEN jsonb_build_object(
+          'id', a."id",
+          'title', a."title"
+        )
+        ELSE '{}'::jsonb
+      END
+      as "data"
+    
+    ${fromQuery}
+    GROUP BY "entityId", "entityType", m."id", mv."id", a."id"
+    ORDER BY ea."accessToId" DESC
+    LIMIT ${limit} OFFSET ${(page - 1) * limit}
+  `;
+
+  return getPagingData({ items, count: (row?.count as number) ?? 0 }, limit, page);
+};
+
+export const updateClubResource = async ({
+  userId,
+  isModerator,
+  entityType,
+  entityId,
+  club,
+}: UpdateClubResourceInput & {
+  userId: number;
+  isModerator?: boolean;
+}) => {
+  // First, check that the person is
+  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+
+  if (!isModerator && !ownership.isOwner) {
+    throw throwAuthorizationError('You do not have permission to add this resource to a club');
+  }
+
+  const contributingClubs = await userContributingClubs({ userId, clubIds: [club.clubId] });
+
+  if (!isModerator && !contributingClubs.find((cc) => cc.id === club.clubId)) {
+    throw throwAuthorizationError(
+      'You do not have permission to add this resource to one of the provided clubs'
+    );
+  }
+
+  const clubTiers = await dbRead.clubTier.findMany({
+    where: {
+      clubId: club.clubId,
+    },
+  });
+
+  const clubTierIds = clubTiers.map((t) => t.id);
+
+  // Now, add and/or remove it from clubs:
+  await dbWrite.$transaction(async (tx) => {
+    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+    await tx.entityAccess.deleteMany({
+      where: {
+        accessToId: entityId,
+        accessToType: entityType,
+        OR: [
+          {
+            accessorId: club.clubId,
+            accessorType: 'Club',
+          },
+          {
+            accessorId: {
+              in: clubTierIds,
+            },
+            accessorType: 'ClubTier',
+          },
+        ],
+      },
+    });
+
+    const isGeneralClubAccess = (club.clubTierIds ?? []).length === 0;
+    // Add general club access:
+    if (isGeneralClubAccess) {
+      await tx.entityAccess.create({
+        data: {
+          accessToId: entityId,
+          accessToType: entityType,
+          accessorId: club.clubId,
+          accessorType: 'Club',
+          addedById: userId,
+        },
+      });
+    } else {
+      // Add tier club access:
+      await tx.entityAccess.createMany({
+        data: (club.clubTierIds ?? []).map((clubTierId) => ({
+          accessToId: entityId,
+          accessToType: entityType,
+          accessorId: clubTierId,
+          accessorType: 'ClubTier',
+          addedById: userId,
+        })),
+      });
+    }
+  });
+};
+
+export const removeClubResource = async ({
+  userId,
+  isModerator,
+  entityType,
+  entityId,
+  clubId,
+}: RemoveClubResourceInput & {
+  userId: number;
+  isModerator?: boolean;
+}) => {
+  const contributingClubs = await userContributingClubs({ userId, clubIds: [clubId] });
+
+  if (!isModerator && !contributingClubs.find((cc) => cc.id === clubId)) {
+    throw throwAuthorizationError(
+      'You do not have permission to remove this resource from this club'
+    );
+  }
+
+  const clubTiers = await dbRead.clubTier.findMany({
+    where: {
+      clubId,
+    },
+  });
+
+  const clubTierIds = clubTiers.map((t) => t.id);
+
+  // Now, add and/or remove it from clubs:
+  await dbWrite.$transaction(async (tx) => {
+    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+    await tx.entityAccess.deleteMany({
+      where: {
+        accessToId: entityId,
+        accessToType: entityType,
+        OR: [
+          {
+            accessorId: clubId,
+            accessorType: 'Club',
+          },
+          {
+            accessorId: {
+              in: clubTierIds,
+            },
+            accessorType: 'ClubTier',
+          },
+        ],
+      },
+    });
+
+    // Check if it still requires club access:
+    const access = await tx.entityAccess.findFirst({
+      where: {
+        accessToId: entityId,
+        accessToType: entityType,
+      },
+    });
+
+    if (access) {
+      // Some access type - i.e, user access, is still there.
+      return;
+    }
+
+    // Make this resource public:
+    await entityAvailabilityUpdate({
+      entityType,
+      entityIds: [entityId],
+      availability: Availability.Public,
+    });
   });
 };

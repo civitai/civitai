@@ -102,3 +102,6 @@ export type ClubGetAll = RouterOutput['club']['getInfinite']['items'];
 export type ClubPostGetAll = RouterOutput['clubPost']['getInfiniteClubPosts']['items'];
 export type ClubMembershipGetAllRecord =
   RouterOutput['clubMembership']['getInfinite']['items'][number];
+
+export type ClubResourceGetPaginatedItem =
+  RouterOutput['club']['getPaginatedClubResources']['items'][number];

@@ -45,3 +45,10 @@ export const clubMembershipOnClubInput = z.object({
 });
 
 export type ClubMembershipOnClubInput = z.infer<typeof clubMembershipOnClubInput>;
+
+export const ownerRemoveClubMembershipInput = z.object({
+  userId: z.number(),
+  clubId: z.number(),
+});
+
+export type OwnerRemoveClubMembershipInput = z.infer<typeof ownerRemoveClubMembershipInput>;

@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  BuzzAccountType,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   GetUserBuzzAccountResponse,
@@ -26,10 +27,12 @@ import { eventEngine } from '~/server/events';
 
 type AccountType = 'User';
 
-export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
+export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
   return withRetries(
     async () => {
-      const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
+      const response = await fetch(
+        `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
+      );
       if (!response.ok) {
         switch (response.status) {
           case 400:
@@ -116,10 +119,12 @@ export async function createBuzzTransaction({
   toAccountId,
   amount,
   details,
+  insufficientFundsErrorMsg,
   ...payload
 }: CreateBuzzTransactionInput & {
   fromAccountId: number;
-  fromAccountType?: 'User' | 'Club' | 'Other';
+  fromAccountType?: BuzzAccountType;
+  insufficientFundsErrorMsg?: string;
 }) {
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
@@ -145,11 +150,14 @@ export async function createBuzzTransaction({
     throw throwBadRequestError('You cannot send buzz to the same account');
   }
 
-  const account = await getUserBuzzAccount({ accountId: payload.fromAccountId });
+  const account = await getUserBuzzAccount({
+    accountId: payload.fromAccountId,
+    accountType: payload.fromAccountType,
+  });
 
   // 0 is the bank so technically, it always has funding.
   if (payload.fromAccountId !== 0 && (account.balance ?? 0) < amount) {
-    throw throwInsufficientFundsError();
+    throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
   const body = JSON.stringify({
