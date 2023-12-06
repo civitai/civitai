@@ -47,9 +47,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     createClubMembership,
     updateClubMembership,
     updatingClubMembership,
-  } = useMutateClub({
-    clubId: clubTier.clubId,
-  });
+  } = useMutateClub();
 
   const updating = updatingClubMembership || creatingClubMembership;
   const isTierMember = membership?.clubTier?.id === clubTier.id;

@@ -5,7 +5,9 @@ import {
   GetInfiniteClubSchema,
   GetPaginatedClubResourcesSchema,
   getPaginatedClubResourcesSchema,
+  RemoveClubResourceInput,
   SupportedClubEntities,
+  UpdateClubResourceInput,
   UpsertClubInput,
   UpsertClubPostInput,
   UpsertClubResourceInput,
@@ -35,8 +37,7 @@ export const useQueryClub = ({ id }: { id: number }) => {
   return { club, loading };
 };
 
-export const useMutateClub = (opts?: { clubId?: number }) => {
-  const { clubId } = opts ?? {};
+export const useMutateClub = () => {
   const queryUtils = trpc.useContext();
 
   const upsertClubMutation = trpc.club.upsert.useMutation({
@@ -198,6 +199,50 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     },
   });
 
+  const updateClubResourceMutation = trpc.club.updateResource.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getInfinite.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to update resource',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to update resource',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const removeClubResourceMutation = trpc.club.removeResource.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getInfinite.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to remove resource',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to remove resource',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -208,7 +253,6 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
   const handleUpsertClubResource = (data: UpsertClubResourceInput) => {
     return upsertClubResourceMutation.mutateAsync(data);
   };
-
   const handleUpsertClubPost = (data: UpsertClubPostInput) => {
     return upsertClubPostMutation.mutateAsync(data);
   };
@@ -220,6 +264,12 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
   };
   const handleRemoveAndRefundMemberMutation = (data: OwnerRemoveClubMembershipInput) => {
     return removeAndRefundMemberMutation.mutateAsync(data);
+  };
+  const handleUpdateClubResourceMutation = (data: UpdateClubResourceInput) => {
+    return updateClubResourceMutation.mutateAsync(data);
+  };
+  const handleRemoveClubResourceMutation = (data: RemoveClubResourceInput) => {
+    return removeClubResourceMutation.mutateAsync(data);
   };
 
   return {
@@ -237,6 +287,10 @@ export const useMutateClub = (opts?: { clubId?: number }) => {
     updatingClubMembership: updateClubMembershipMutation.isLoading,
     removeAndRefundMember: handleRemoveAndRefundMemberMutation,
     removingAndRefundingMember: removeAndRefundMemberMutation.isLoading,
+    updateResource: handleUpdateClubResourceMutation,
+    updatingResource: updateClubResourceMutation.isLoading,
+    removeResource: handleRemoveClubResourceMutation,
+    removingResource: removeClubResourceMutation.isLoading,
   };
 };
 

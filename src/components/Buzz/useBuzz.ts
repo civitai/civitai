@@ -5,13 +5,20 @@ import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { BuzzAccountType } from '~/server/schema/buzz.schema';
 
-export const useBuzz = () => {
+export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { data, isLoading } = trpc.buzz.getUserAccount.useQuery(undefined, {
-    enabled: !!currentUser && features.buzz,
-  });
+  const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
+    {
+      accountId: accountId ?? currentUser?.id,
+      accountType: accountType ?? 'User',
+    },
+    {
+      enabled: !!currentUser && features.buzz,
+    }
+  );
 
   return {
     balanceLoading: isLoading,

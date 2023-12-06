@@ -24,6 +24,8 @@ import { GetPaginatedClubResourcesSchema } from '~/server/schema/club.schema';
 import { ClubResourceGetPaginatedItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
+import { ClubResourcePagedUpdateForm } from '~/components/Club/ClubResourcePagedUpdateForm';
+import { showSuccessNotification } from '~/utils/notifications';
 
 const getResourceTitle = (
   resource: ClubResourceGetPaginatedItem
@@ -32,7 +34,7 @@ const getResourceTitle = (
     case 'ModelVersion':
       return {
         label: `${resource.data.name} - ${resource.data.modelVersion.name}`,
-        url: `/models/${resource.data.id}?modelVersion=${resource.data.modelVersion.id}`,
+        url: `/models/${resource.data.id}?modelVersionId=${resource.data.modelVersion.id}`,
       };
     case 'Article':
       return {
@@ -43,6 +45,8 @@ const getResourceTitle = (
 };
 
 export function ClubResourcesPaged({ clubId }: Props) {
+  const utils = trpc.useContext();
+
   // TODO.clubs: Add some custom filters for resources. Model type and perhaps a query of sorts.
   const [filters, setFilters] = useState<Omit<GetPaginatedClubResourcesSchema, 'limit' | 'clubId'>>(
     {
@@ -68,6 +72,34 @@ export function ClubResourcesPaged({ clubId }: Props) {
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
+  const handleResourceRemoved = (resource: ClubResourceGetPaginatedItem) => {
+    utils.club.getPaginatedClubResources.setData(
+      {
+        ...debouncedFilters,
+        clubId,
+      },
+      (prev) => {
+        if (!prev) return prev;
+
+        return {
+          ...prev,
+          items: prev.items.filter(
+            (item) => item.entityId !== resource.entityId && item.entityType !== resource.entityType
+          ),
+        };
+      }
+    );
+
+    showSuccessNotification({ title: 'Resource removed', message: 'Resource removed from club.' });
+  };
+
+  const handleResourceUpdated = (resource: ClubResourceGetPaginatedItem) => {
+    showSuccessNotification({
+      title: 'Resource updated',
+      message: 'Resource has been updated successfuly.',
+    });
+  };
+
   return (
     <>
       {isLoading || isLoadingTiers ? (
@@ -82,6 +114,7 @@ export function ClubResourcesPaged({ clubId }: Props) {
               <tr>
                 <th>Type</th>
                 <th>Resource</th>
+                <th>All members</th>
                 {tiers.map((tier) => (
                   <th key={tier.id}>{tier.name}</th>
                 ))}
@@ -90,26 +123,14 @@ export function ClubResourcesPaged({ clubId }: Props) {
             </thead>
             <tbody>
               {resources.map((resource) => {
-                const { label, url } = getResourceTitle(resource);
                 return (
-                  <tr key={`${resource.entityType}_${resource.entityId}`}>
-                    <td>{resource.entityType}</td>
-                    <td>
-                      <Anchor href={url} target="_blank">
-                        {label}
-                      </Anchor>
-                    </td>
-                    {tiers.map((tier) => (
-                      <td key={tier.id}>
-                        <Checkbox
-                          checked={resource.clubTierIds.includes(tier.id)}
-                          onChange={() => console.log('TODO: Add resource to tier')}
-                          m="auto"
-                        />
-                      </td>
-                    ))}
-                    <td>Remove me</td>
-                  </tr>
+                  <ClubResourcePagedUpdateForm
+                    resource={resource}
+                    clubTiers={tiers}
+                    key={`${resource.entityType}_${resource.entityId}`}
+                    onResourceRemoved={handleResourceRemoved}
+                    onResourceUpdated={handleResourceUpdated}
+                  />
                 );
               })}
             </tbody>

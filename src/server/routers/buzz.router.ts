@@ -1,11 +1,15 @@
 import {
   completeStripeBuzzPurchaseHandler,
   createBuzzTipTransactionHandler,
+  getBuzzAccountHandler,
+  getBuzzAccountTransactionsHandler,
   getUserAccountHandler,
   getUserTransactionsHandler,
 } from '~/server/controllers/buzz.controller';
 import {
   completeStripeBuzzPurchaseTransactionInput,
+  getBuzzAccountSchema,
+  getBuzzAccountTransactionsSchema,
   getUserBuzzTransactionsSchema,
   userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
@@ -13,6 +17,10 @@ import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
   getUserAccount: protectedProcedure.use(isFlagProtected('buzz')).query(getUserAccountHandler),
+  getBuzzAccount: protectedProcedure
+    .input(getBuzzAccountSchema)
+    .use(isFlagProtected('buzz'))
+    .query(getBuzzAccountHandler),
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: protectedProcedure
     .input(getUserBuzzTransactionsSchema)
@@ -26,4 +34,8 @@ export const buzzRouter = router({
     .input(completeStripeBuzzPurchaseTransactionInput)
     .use(isFlagProtected('buzz'))
     .mutation(completeStripeBuzzPurchaseHandler),
+  getAccountTransactions: protectedProcedure
+    .input(getBuzzAccountTransactionsSchema)
+    .use(isFlagProtected('buzz'))
+    .query(getBuzzAccountTransactionsHandler),
 });

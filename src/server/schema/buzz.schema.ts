@@ -125,3 +125,14 @@ export type UserBuzzTransactionInputSchema = z.infer<typeof userBuzzTransactionI
 export const userBuzzTransactionInputSchema = buzzTransactionSchema.omit({
   type: true,
 });
+
+export const getBuzzAccountSchema = z.object({
+  accountId: z.number(),
+  accountType: z.enum(buzzAccountTypes).default('User'),
+});
+
+export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
+
+export const getBuzzAccountTransactionsSchema =
+  getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
+export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;

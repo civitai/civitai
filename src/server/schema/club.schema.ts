@@ -128,10 +128,9 @@ export const getPaginatedClubResourcesSchema = paginationSchema.merge(
 
 export type GetPaginatedClubResourcesSchema = z.infer<typeof getPaginatedClubResourcesSchema>;
 
-export const updateClubResourceInput = z.object({
+export const updateClubResourceInput = clubResourceSchema.extend({
   entityType: z.enum(supportedClubEntities),
   entityId: z.number(),
-  club: clubResourceSchema,
 });
 
 export type UpdateClubResourceInput = z.infer<typeof updateClubResourceInput>;

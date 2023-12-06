@@ -57,8 +57,9 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
 
 export async function getUserBuzzTransactions({
   accountId,
+  accountType,
   ...query
-}: GetUserBuzzTransactionsSchema & { accountId: number }) {
+}: GetUserBuzzTransactionsSchema & { accountId: number; accountType?: BuzzAccountType }) {
   const queryString = QS.stringify({
     ...query,
     start: query.start?.toISOString(),
@@ -68,7 +69,9 @@ export async function getUserBuzzTransactions({
   });
 
   const response = await fetch(
-    `${env.BUZZ_ENDPOINT}/account/${accountId}/transactions?${queryString}`
+    `${env.BUZZ_ENDPOINT}/account/${
+      accountType ? `${accountType}/` : ''
+    }${accountId}/transactions?${queryString}`
   );
 
   if (!response.ok) {

@@ -79,7 +79,7 @@ export function ClubUpsertForm({
 
   const [avatar, coverImage] = form.watch(['avatar', 'coverImage']);
 
-  const { upsertClub, upserting } = useMutateClub({ clubId: club?.id as number | undefined });
+  const { upsertClub, upserting } = useMutateClub();
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
       const result = await upsertClub({

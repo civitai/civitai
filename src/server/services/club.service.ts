@@ -662,6 +662,7 @@ type Article = {
 type PaginatedClubResource = {
   entityId: number;
   entityType: string;
+  clubId: number;
   clubTierIds: number[];
 } & (ModelVersionClubResource | Article);
 
@@ -702,7 +703,11 @@ export const getPaginatedClubResources = async ({
     SELECT 
       ea."accessToId" as "entityId", 
       ea."accessToType" as "entityType",
-      json_agg(ct."id") as "clubTierIds",
+      ${clubId}::INT as "clubId",
+      COALESCE(
+        json_agg(ct."id") FILTER (WHERE ct."id" IS NOT NULL),
+        '[]'
+      ) as "clubTierIds",
       CASE 
         WHEN ea."accessToType" = 'ModelVersion' THEN jsonb_build_object(
           'id', m."id",
@@ -734,7 +739,8 @@ export const updateClubResource = async ({
   isModerator,
   entityType,
   entityId,
-  club,
+  clubId,
+  clubTierIds,
 }: UpdateClubResourceInput & {
   userId: number;
   isModerator?: boolean;
@@ -746,9 +752,9 @@ export const updateClubResource = async ({
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
   }
 
-  const contributingClubs = await userContributingClubs({ userId, clubIds: [club.clubId] });
+  const contributingClubs = await userContributingClubs({ userId, clubIds: [clubId] });
 
-  if (!isModerator && !contributingClubs.find((cc) => cc.id === club.clubId)) {
+  if (!isModerator && !contributingClubs.find((cc) => cc.id === clubId)) {
     throw throwAuthorizationError(
       'You do not have permission to add this resource to one of the provided clubs'
     );
@@ -756,11 +762,11 @@ export const updateClubResource = async ({
 
   const clubTiers = await dbRead.clubTier.findMany({
     where: {
-      clubId: club.clubId,
+      clubId,
     },
   });
 
-  const clubTierIds = clubTiers.map((t) => t.id);
+  const allClubTierIds = clubTiers.map((t) => t.id);
 
   // Now, add and/or remove it from clubs:
   await dbWrite.$transaction(async (tx) => {
@@ -771,12 +777,12 @@ export const updateClubResource = async ({
         accessToType: entityType,
         OR: [
           {
-            accessorId: club.clubId,
+            accessorId: clubId,
             accessorType: 'Club',
           },
           {
             accessorId: {
-              in: clubTierIds,
+              in: allClubTierIds,
             },
             accessorType: 'ClubTier',
           },
@@ -784,14 +790,14 @@ export const updateClubResource = async ({
       },
     });
 
-    const isGeneralClubAccess = (club.clubTierIds ?? []).length === 0;
+    const isGeneralClubAccess = (clubTierIds ?? []).length === 0;
     // Add general club access:
     if (isGeneralClubAccess) {
       await tx.entityAccess.create({
         data: {
           accessToId: entityId,
           accessToType: entityType,
-          accessorId: club.clubId,
+          accessorId: clubId,
           accessorType: 'Club',
           addedById: userId,
         },
@@ -799,7 +805,7 @@ export const updateClubResource = async ({
     } else {
       // Add tier club access:
       await tx.entityAccess.createMany({
-        data: (club.clubTierIds ?? []).map((clubTierId) => ({
+        data: (clubTierIds ?? []).map((clubTierId) => ({
           accessToId: entityId,
           accessToType: entityType,
           accessorId: clubTierId,

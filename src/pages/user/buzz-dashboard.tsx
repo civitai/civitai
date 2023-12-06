@@ -42,6 +42,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/CurrentBuzz';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -115,41 +116,7 @@ const useStyles = createStyles((theme) => ({
 
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
-  const { classes, theme } = useStyles();
-
-  const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getUserTransactions.useQuery({
-    limit: 200,
-  });
-  const { balance, lifetimeBalance, balanceLoading } = useBuzz();
-
-  const transactionsReversed = useMemo(() => [...(transactions ?? [])].reverse(), [transactions]);
-
-  const starterBuzzAmount = (transactions ?? []).reduce((acc, transaction) => {
-    return acc - transaction.amount;
-  }, balance);
-
-  const items: Record<string, number> = useMemo(() => {
-    if (!transactions) return {};
-
-    let start = starterBuzzAmount;
-
-    return transactionsReversed.reduce((acc, transaction) => {
-      const updated = {
-        ...acc,
-        [formatDate(transaction.date, 'MMM-DD')]: start + transaction.amount,
-      };
-
-      start += transaction.amount;
-
-      return updated;
-    }, {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transactions]);
-
-  const dateCount = Object.keys(items).length;
-  // Last 7 days of data pretty much.
-  const labels = Object.keys(items).slice(Math.max(0, dateCount - 7), dateCount);
-  const data = Object.values(items).slice(Math.max(0, dateCount - 7), dateCount);
+  const { classes } = useStyles();
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -169,129 +136,7 @@ export default function UserBuzzDashboard() {
         <Stack spacing="xl">
           <Title order={1}>My Buzz Dashboard</Title>
 
-          {isLoading ? (
-            <Center py="xl">
-              <Loader />
-            </Center>
-          ) : (
-            <Grid>
-              <Grid.Col xs={12} md={7}>
-                <Stack h="100%">
-                  <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
-                    <Stack spacing={0}>
-                      <Title order={3}>Current Buzz</Title>
-                      <UserBuzz textSize="xl" withAbbreviation={false} />
-                    </Stack>
-                    <Stack spacing="xs" mt="xl">
-                      <Line
-                        options={options}
-                        data={{
-                          labels,
-                          datasets: [
-                            {
-                              label: 'Buzz Amount',
-                              data,
-                              borderColor: theme.colors.yellow[7],
-                              backgroundColor: theme.colors.yellow[7],
-                            },
-                          ],
-                        }}
-                      />
-                    </Stack>
-                  </Paper>
-                  <Paper
-                    withBorder
-                    radius="md"
-                    p="xl"
-                    className={classes.lifetimeBuzzContainer}
-                    style={{ flex: 1, display: 'flex' }}
-                  >
-                    <Group position="apart" sx={{ flex: 1 }} noWrap>
-                      <Title order={3} size={22} color="yellow.8">
-                        Lifetime Buzz
-                      </Title>
-                      <Group className={classes.lifetimeBuzzBadge} spacing={2} noWrap>
-                        <CurrencyIcon currency={Currency.BUZZ} size={24} />
-                        {balanceLoading ? (
-                          <Loader variant="dots" color="yellow.7" />
-                        ) : (
-                          <Text
-                            size="xl"
-                            style={{ fontSize: 32, fontWeight: 700, lineHeight: '24px' }}
-                            color="yellow.7"
-                            className={classes.lifetimeBuzz}
-                          >
-                            {numberWithCommas(lifetimeBalance)}
-                          </Text>
-                        )}
-                      </Group>
-                    </Group>
-                  </Paper>
-                </Stack>
-              </Grid.Col>
-              <Grid.Col xs={12} md={5}>
-                <Paper
-                  withBorder
-                  p="lg"
-                  radius="md"
-                  h="100%"
-                  className={classes.tileCard}
-                  style={{ flex: 1 }}
-                >
-                  <Stack spacing={0}>
-                    <Title order={3}>Recent Transactions</Title>
-                    <Text component="a" variant="link" href={`/user/transactions`} size="xs">
-                      <Group spacing={2}>
-                        <IconArrowRight size={18} />
-                        <span>View all</span>
-                      </Group>
-                    </Text>
-                    {transactions.length ? (
-                      <ScrollArea.Autosize maxHeight={400} mt="md">
-                        <Stack spacing={8}>
-                          {transactions.map((transaction) => {
-                            const { amount, date } = transaction;
-                            const isDebit = amount < 0;
-
-                            return (
-                              <Stack key={date.toISOString()} spacing={4}>
-                                <Group position="apart">
-                                  <Stack spacing={0}>
-                                    <Text size="sm" weight="500">
-                                      {TransactionType[transaction.type]}
-                                    </Text>
-                                    <Text size="xs">
-                                      <DaysFromNow date={date} />
-                                    </Text>
-                                  </Stack>
-                                  <Text color={isDebit ? 'red' : 'green'}>
-                                    <Group spacing={2}>
-                                      <IconBolt size={16} fill="currentColor" />
-                                      <Text
-                                        size="lg"
-                                        sx={{ fontVariantNumeric: 'tabular-nums' }}
-                                        span
-                                      >
-                                        {amount.toLocaleString()}
-                                      </Text>
-                                    </Group>
-                                  </Text>
-                                </Group>
-                              </Stack>
-                            );
-                          })}
-                        </Stack>
-                      </ScrollArea.Autosize>
-                    ) : (
-                      <Text color="dimmed" mt="md">
-                        No transactions yet.
-                      </Text>
-                    )}
-                  </Stack>
-                </Paper>
-              </Grid.Col>
-            </Grid>
-          )}
+          <BuzzDashboardOverview accountId={currentUser?.id as number} />
 
           <EarningBuzz withCTA />
 

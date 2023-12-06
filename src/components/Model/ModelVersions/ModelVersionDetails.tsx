@@ -715,7 +715,7 @@ export function ModelVersionDetails({
                     {version.recommendedResources.map((resource) => (
                       <Link
                         key={resource.id}
-                        href={`/models/${resource.modelId}?modelVersion=${resource.id}`}
+                        href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
                         passHref
                       >
                         <Card
