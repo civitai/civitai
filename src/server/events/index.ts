@@ -453,7 +453,7 @@ export const eventEngine = {
     const partnersCache = await redis.lRange(`event:${event}:partners`, 0, -1);
     const partners = partnersCache.map((x) => JSON.parse(x)) as EventPartner[];
 
-    return partners;
+    return partners.sort((a, b) => b.amount - a.amount);
   },
   async queueAddRole({ event, team, userId }: { event: string; team: string; userId: number }) {
     const eventDef = events.find((x) => x.name === event);
