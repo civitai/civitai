@@ -154,7 +154,12 @@ export const BuzzDashboardOverview = ({
           <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
             <Stack spacing={0}>
               <Title order={3}>Current Buzz</Title>
-              <UserBuzz textSize="xl" withAbbreviation={false} />
+              <UserBuzz
+                accountId={accountId}
+                accountType={accountType}
+                textSize="xl"
+                withAbbreviation={false}
+              />
             </Stack>
             <Stack spacing="xs" mt="xl">
               <Line

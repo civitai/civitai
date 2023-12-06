@@ -37,6 +37,7 @@ import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
 import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -87,75 +88,20 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function ManageClubTiers({
-  id,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes } = useClubFeedStyles();
+export default function Revenue({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
 
-  const {
-    data: tiers = [],
-    isLoading: isLoadingTiers,
-    isRefetching,
-  } = trpc.club.getTiers.useQuery({
-    clubId: id,
-    include: ['membershipsCount'],
-  });
-
-  const [addNewTier, setAddNewTier] = useState<boolean>(false);
-
-  if (!loading && !club) return <NotFound />;
-  if (loading || isLoadingTiers) return <PageLoader />;
+  if (loading) return <PageLoader />;
+  if (!club) return <NotFound />;
 
   return (
     <Stack spacing="md">
-      <Title order={2}>Manage Members</Title>
-      <Text>
-        Tiers are a way for you to offer different perks to your members. You can create as many
-        tiers as you want.
-      </Text>
-
-      {tiers.map((tier) => (
-        <ClubTierManageItem clubTier={tier} key={tier.id} />
-      ))}
-      {isRefetching && (
-        <Center>
-          <Loader />
-        </Center>
-      )}
-      {tiers.length === 0 && !isRefetching && (
-        <Center>
-          <Text color="dimmed">It looks like you have not added any tiers yet.</Text>
-        </Center>
-      )}
-      {club && (
-        <>
-          {addNewTier ? (
-            <Paper className={classes.feedContainer}>
-              <ClubTierUpsertForm
-                clubId={club.id}
-                onCancel={() => setAddNewTier(false)}
-                onSuccess={() => {
-                  setAddNewTier(false);
-                }}
-              />
-            </Paper>
-          ) : (
-            <Button
-              onClick={() => setAddNewTier(true)}
-              loading={isRefetching}
-              variant="light"
-              leftIcon={<IconPlus />}
-            >
-              Add new tier
-            </Button>
-          )}
-        </>
-      )}
+      <Title order={2}>Club Revenue</Title>
+      <BuzzDashboardOverview accountId={club.id} accountType="Club" />
     </Stack>
   );
 }
 
-ManageClubTiers.getLayout = function getLayout(page: React.ReactNode) {
+Revenue.getLayout = function getLayout(page: React.ReactNode) {
   return <ClubManagementLayout>{page}</ClubManagementLayout>;
 };

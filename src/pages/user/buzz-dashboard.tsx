@@ -3,60 +3,27 @@ import {
   Container,
   createStyles,
   Divider,
-  Grid,
   Group,
   keyframes,
   Loader,
   Paper,
   RingProgress,
-  ScrollArea,
   Stack,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
-import {
-  CategoryScale,
-  Chart as ChartJS,
-  LinearScale,
-  LineElement,
-  PointElement,
-  Tooltip as ChartTooltip,
-} from 'chart.js';
-import React, { useMemo } from 'react';
-import { Line } from 'react-chartjs-2';
+import { IconInfoCircle } from '@tabler/icons-react';
+import React from 'react';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
-import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
-import { UserBuzz } from '~/components/User/UserBuzz';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { formatDate } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/CurrentBuzz';
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
-
-const options = {
-  aspectRatio: 2.5,
-  plugins: {
-    legend: {
-      display: false,
-    },
-    title: {
-      display: false,
-    },
-  },
-};
+import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -67,50 +34,9 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const moveBackground = keyframes({
-  '0%': {
-    backgroundPosition: '0% 50%',
-  },
-  '50%': {
-    backgroundPosition: '100% 50%',
-  },
-  '100%': {
-    backgroundPosition: '0% 50%',
-  },
-});
-
-const pulse = keyframes({
-  '0%': {
-    stroke: '#FFD43B',
-    opacity: 1,
-  },
-  '50%': {
-    stroke: '#F59F00',
-    opacity: 0.7,
-  },
-  '100%': {
-    stroke: '#F08C00',
-    opacity: 1,
-  },
-});
-
 const useStyles = createStyles((theme) => ({
-  lifetimeBuzzContainer: {
-    border: `2px solid ${theme.colors.yellow[7]}`,
-    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
-    animation: `${moveBackground} 5s ease infinite`,
-    backgroundSize: '200% 200%',
-  },
-  lifetimeBuzzBadge: {
-    background: theme.colors.dark[6],
-    borderRadius: '22px',
-    padding: '10px 20px',
-  },
   tileCard: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
-  lifetimeBuzz: {
-    animation: `${pulse} 1s ease-in-out infinite`,
   },
 }));
 

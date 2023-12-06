@@ -12,7 +12,7 @@ export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
   const features = useFeatureFlags();
   const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
     {
-      accountId: accountId ?? currentUser?.id,
+      accountId: accountId ?? (currentUser?.id as number),
       accountType: accountType ?? 'User',
     },
     {
