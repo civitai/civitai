@@ -27,7 +27,7 @@ export const modelMetrics = createMetricProcessor({
   },
   rank: {
     async refresh(ctx) {
-      await refreshModelVersionRank(ctx);
+      // await refreshModelVersionRank(ctx);
       await refreshModelRank(ctx);
     },
     refreshInterval: 60 * 1000,
@@ -691,16 +691,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
 
 // #region [ranks]
 async function refreshModelRank({ db }: MetricProcessorRunContext) {
-  await db.$executeRaw`DROP TABLE IF EXISTS "ModelRank_New"`;
-  await db.$executeRaw`CREATE TABLE "ModelRank_New" AS SELECT * FROM "ModelRank_Live"`;
-  await db.$executeRaw`ALTER TABLE "ModelRank_New" ADD CONSTRAINT "pk_ModelRank_New" PRIMARY KEY ("modelId")`;
-
-  await db.$transaction([
-    db.$executeRaw`TRUNCATE TABLE "ModelRank"`,
-    db.$executeRaw`INSERT INTO "ModelRank" SELECT * FROM "ModelRank_New"`,
-  ]);
-  db.$executeRaw`VACUUM "ModelRank"`;
-  await db.$executeRaw`DROP TABLE IF EXISTS "ModelRank_New"`;
+  await db.$executeRaw`CALL update_model_rank(10000);`;
 }
 
 async function refreshModelVersionRank({ db }: MetricProcessorRunContext) {
