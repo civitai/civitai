@@ -96,7 +96,6 @@
     "cacheable-lookup": "^7.0.0",
     "chalk": "^5.2.0",
     "chart.js": "^4.4.0",
-    "cheerio": "^1.0.0-rc.12",
     "cloudflare": "^2.9.1",
     "cookies-next": "^2.1.1",
     "cron-parser": "^4.6.0",
