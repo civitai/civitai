@@ -56,6 +56,7 @@ export default MixedAuthEndpoint(async function handler(
         },
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
+          .filter((x) => x.status === 'Published')
           .map(({ images, files, ...version }) => {
             let castedFiles = files as Array<
               Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
