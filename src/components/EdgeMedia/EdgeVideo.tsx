@@ -32,7 +32,13 @@ export function EdgeVideo({
   return (
     // extra div wrapper to prevent positioning errors of parent components that make their child absolute
     <div {...wrapperProps}>
-      <div style={{ position: 'relative', height: contain ? '100%' : 'auto' }}>
+      <div
+        style={{
+          position: 'relative',
+          height: contain ? '100%' : 'auto',
+          width: contain ? '100%' : 'auto',
+        }}
+      >
         <video
           ref={ref}
           muted={muted}

@@ -92,7 +92,7 @@ export function UnroutedImageCard({ data }: Props) {
                               : DEFAULT_EDGE_IMAGE_WIDTH
                           }
                           className={sharedClasses.image}
-                          wrapperProps={{ style: { height: '100%' } }}
+                          wrapperProps={{ style: { height: '100%', width: '100%' } }}
                           loading="lazy"
                           contain
                         />

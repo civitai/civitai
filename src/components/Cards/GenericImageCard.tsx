@@ -90,7 +90,9 @@ export function GenericImageCard({
                         }
                         placeholder="empty"
                         className={sharedClasses.image}
+                        wrapperProps={{ style: { height: '100%', width: '100%' } }}
                         loading="lazy"
+                        contain
                       />
                     ) : (
                       <MediaHash {...image} />
