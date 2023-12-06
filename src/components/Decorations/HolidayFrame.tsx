@@ -11,7 +11,7 @@ const useStyles = createStyles<string, { size: number }>((_, params) => ({
     position: 'absolute',
     bottom: '-10px',
     width: '100%',
-    zIndex: 100,
+    zIndex: 10,
     maxWidth: 360,
   },
   decoration: {

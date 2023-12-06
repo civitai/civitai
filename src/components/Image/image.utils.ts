@@ -1,4 +1,4 @@
-import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { ImageIngestionStatus, MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -10,8 +10,11 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { isEqual } from 'lodash-es';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesImages } from '../Search/search.utils';
+import { ImageGetInfinite } from '~/types/router';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -67,9 +70,9 @@ export const useQueryImages = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  // const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { browsingMode, ...filters },
+    { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
@@ -77,7 +80,28 @@ export const useQueryImages = (
     }
   );
 
-  const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const currentUser = useCurrentUser();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: loadingHidden,
+  } = useHiddenPreferencesContext();
+
+  const images = useMemo(() => {
+    // TODO - fetch user reactions for images separately
+    if (loadingHidden) return [];
+    const arr = data?.pages.flatMap((x) => x.items) ?? [];
+    const filtered = arr.filter((x) => {
+      if (x.user.id === currentUser?.id) return true;
+      if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
+      if (hiddenImages.get(x.id) && !filters?.hidden) return false;
+      if (hiddenUsers.get(x.user.id)) return false;
+      for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+      return true;
+    });
+    return filtered;
+  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, loadingHidden]);
 
   return { data, images, ...rest };
 };
@@ -87,9 +111,9 @@ export const useQueryImageCategories = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  // const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getImagesByCategory.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { ...filters },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
