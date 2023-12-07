@@ -131,7 +131,7 @@ type ModelRaw = {
   };
   user: {
     id: number;
-    username: string;
+    username: string | null;
     deletedAt: Date;
     image: string;
   };

@@ -32,6 +32,7 @@ export const articleWhereSchema = z.object({
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   collectionId: z.number().optional(),
   followed: z.boolean().optional(),
+  clubId: z.number().optional(),
 });
 
 // export const articleSortSchema = z.object({
