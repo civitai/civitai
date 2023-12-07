@@ -324,17 +324,14 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     </Stack>
   );
 
-  const ref = useResizeObserver(
-    (entries) => {
-      for (const entry of entries) {
-        const target = entry.target as HTMLElement;
-        const { height } = target.getBoundingClientRect();
-        if (height === 0) target.style.visibility = 'hidden';
-        else target.style.removeProperty('visibility');
-      }
-    },
-    { observeChildren: true }
-  );
+  const ref = useResizeObserver((entry) => {
+    const children = [...entry.target.childNodes] as HTMLElement[];
+    for (const child of children) {
+      const { height } = child.getBoundingClientRect();
+      if (height === 0) child.style.visibility = 'hidden';
+      else child.style.removeProperty('visibility');
+    }
+  });
 
   const useGrid =
     metadata.description &&

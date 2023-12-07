@@ -23,8 +23,7 @@ type ContainerProviderProps = BoxProps & {
 
 const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
   ({ children, containerName, supportsContainerQuery = true, ...props }, ref) => {
-    const innerRef = useResizeObserver((entries) => {
-      const entry = entries[0];
+    const innerRef = useResizeObserver((entry) => {
       useContainerProviderStore.setState(() => ({ [containerName]: entry.contentBoxSize[0] }));
     });
     const mergedRef = useMergedRef(innerRef, ref);

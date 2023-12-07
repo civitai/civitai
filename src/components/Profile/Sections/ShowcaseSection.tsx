@@ -13,7 +13,6 @@ import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
@@ -63,18 +62,6 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     rowCount: 2,
     widthGrid: '280px',
   });
-
-  // const ref = useResizeObserver(
-  //   (entries) => {
-  //     for (const entry of entries) {
-  //       const target = entry.target as HTMLElement;
-  //       const { height } = target.getBoundingClientRect();
-  //       if (height === 0) target.style.visibility = 'hidden';
-  //       else target.style.removeProperty('visibility');
-  //     }
-  //   },
-  //   { observeChildren: true }
-  // );
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
