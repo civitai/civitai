@@ -99,7 +99,7 @@ type ModelRaw = {
   status: string;
   createdAt: Date;
   lastVersionAt: Date;
-  publishedAt: Date;
+  publishedAt: Date | null;
   locked: boolean;
   earlyAccessDeadline: Date;
   mode: string;
@@ -132,7 +132,7 @@ type ModelRaw = {
   user: {
     id: number;
     username: string | null;
-    deletedAt: Date;
+    deletedAt: Date | null;
     image: string;
   };
   userCosmetics: {

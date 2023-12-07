@@ -70,7 +70,7 @@ type ArticleRaw = {
   user: {
     id: number;
     username: string | null;
-    deletedAt: Date;
+    deletedAt: Date | null;
     image: string;
   };
   userCosmetics: {
@@ -263,7 +263,7 @@ export const getArticles = async ({
     if (clubId) {
       WITH.push(Prisma.sql`
       "clubArticles" AS (
-        SELECT DISTINCT ON (a."id") "articleId"
+        SELECT DISTINCT ON (a."id") a."id" as "articleId"
         FROM "EntityAccess" ea
         JOIN "Article" a ON a."id" = ea."accessToId"
         LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
@@ -285,7 +285,7 @@ export const getArticles = async ({
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleStat" stats ON stats."articleId" = a.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
-      ${clubId ? Prisma.sql`JOIN "clubArticles" cm ON cm."articleId" = a."id"` : Prisma.sql``}
+      ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorId: number })[]>`
