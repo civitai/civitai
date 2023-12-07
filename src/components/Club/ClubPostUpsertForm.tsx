@@ -8,6 +8,8 @@ import {
   ActionIcon,
   Grid,
   Avatar,
+  Modal,
+  Divider,
 } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import React, { useState } from 'react';
@@ -28,20 +30,19 @@ import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ClubPostGetAll, ClubTier } from '~/types/router';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { showSuccessNotification } from '~/utils/notifications';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 const formSchema = upsertClubPostInput;
 
-export function ClubPostUpsertForm({
-  clubPost,
-  clubId,
-  onSuccess,
-  onCancel,
-}: {
+type Props = {
   clubPost?: ClubPostGetAll[number];
   clubId: number;
   onSuccess?: () => void;
   onCancel?: () => void;
-}) {
+};
+
+export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel }: Props) {
   const form = useForm({
     schema: formSchema,
     defaultValues: {
@@ -131,3 +132,28 @@ export function ClubPostUpsertForm({
     </Form>
   );
 }
+
+export const ClubPostUpsertFormModal = (props: { clubId: number }) => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+  const handleSuccess = () => {
+    showSuccessNotification({
+      title: 'Club post created',
+      message: 'Your post was created and is now part of your club',
+    });
+
+    handleClose();
+  };
+
+  return (
+    <Modal {...dialog} size="lg" withCloseButton>
+      <Stack>
+        <Text size="lg" weight={700}>
+          Create new club post
+        </Text>
+        <Divider mx="-lg" />
+        <ClubPostUpsertForm {...props} onCancel={handleClose} onSuccess={handleSuccess} />
+      </Stack>
+    </Modal>
+  );
+};

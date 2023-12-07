@@ -42,9 +42,10 @@ import { useClubContributorStatus, useQueryClubPosts } from '~/components/Club/c
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ClubPostUpsertForm } from '~/components/Club/ClubPostUpsertForm';
+import { ClubPostUpsertForm, ClubPostUpsertFormModal } from '~/components/Club/ClubPostUpsertForm';
 import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubFeed';
 import { ClubTierItem } from '~/components/Club/ClubTierItem';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -265,8 +266,14 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                     <Group>
                       {canPost && (
                         <Button
-                          component={'a'}
-                          href={`/clubs/${club.id}/post`}
+                          onClick={() => {
+                            dialogStore.trigger({
+                              component: ClubPostUpsertFormModal,
+                              props: {
+                                clubId: club.id,
+                              },
+                            });
+                          }}
                           leftIcon={<IconPencilMinus />}
                         >
                           Post content
