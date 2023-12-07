@@ -31,14 +31,13 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
   const [containerWidth, setContainerWidth] = useState(0);
 
   const debouncer = useDebouncer(100);
-  const containerRef = useResizeObserver((entries) =>
+  const containerRef = useResizeObserver((entry) =>
     // (entries) => {
     //   const entry = entries[0];
     //   if (entry) setContainerWidth(entries[0].contentRect.width);
     // }
     debouncer(() => {
-      const entry = entries[0];
-      if (entry) setContainerWidth(entries[0].contentRect.width);
+      setContainerWidth(entry.contentRect.width);
     })
   );
 
