@@ -18,6 +18,7 @@ html {
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
+
   input:focus,
   select:focus,
   textarea:focus {
@@ -85,7 +86,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2 + p {
+.markdown-content h2+p {
   margin-top: 0;
 }
 
@@ -119,18 +120,42 @@ iframe {
 }
 
 .demo-25 {
-  animation: flicker-25 5s ease-in-out infinite;
+  opacity: 0.65;
+  stroke-width: 3;
 }
 
 .demo-50 {
-  animation: flicker-50 4s ease-in-out infinite;
+  opacity: 0.75;
+  stroke-width: 5px;
 }
 
 .demo-75 {
-  animation: flicker-75 3s ease-in-out infinite;
+  opacity: 0.85;
+  stroke-width: 7px;
 }
 
 .demo-100 {
+  opacity: .95;
+  stroke-width: 10px;
+}
+
+.demo-25-animated,
+.frame-decor:hover .demo-25 {
+  animation: flicker-25 5s ease-in-out infinite;
+}
+
+.demo-50-animated,
+.frame-decor:hover .demo-50 {
+  animation: flicker-50 4s ease-in-out infinite;
+}
+
+.demo-75-animated,
+.frame-decor:hover .demo-75 {
+  animation: flicker-75 3s ease-in-out infinite;
+}
+
+.demo-100-animated,
+.frame-decor:hover .demo-100 {
   animation: flicker-100 2s ease-in-out infinite;
 }
 
@@ -206,7 +231,7 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs > * {
+.frame-decor .footer-abs>* {
   bottom: 36px !important;
 }
 

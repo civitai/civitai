@@ -83,7 +83,7 @@ type HolidayGarlandData = {
 const MAX_SIZE = 32;
 const MIN_SIZE = 24;
 
-export function HolidayFrame({ cosmetic, data, force, children }: Props) {
+export function HolidayFrame({ cosmetic, data, force, children, animated }: Props) {
   const { lights = 0, upgradedLights = 0 } = data ?? {};
   const { classes, cx } = useStyles({
     size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
@@ -113,6 +113,7 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
               }
               color={color}
               brightness={brightness}
+              animated={animated}
             />
           ))}
         </div>
@@ -133,7 +134,7 @@ export function HolidayFrame({ cosmetic, data, force, children }: Props) {
   );
 }
 
-export function CardDecoration({ cosmetic, data, className }: Props2) {
+export function CardDecoration({ cosmetic, data, className, animated }: Props2) {
   const { lights = 0, upgradedLights = 0 } = data ?? {};
   const { classes, cx } = useStyles({
     size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
@@ -168,6 +169,7 @@ export function CardDecoration({ cosmetic, data, className }: Props2) {
                 }
                 color={color}
                 brightness={brightness}
+                animated={animated}
               />
             ))}
           </div>
@@ -182,10 +184,12 @@ type Props = {
   data?: { lights?: number; upgradedLights?: number } | null;
   children?: React.ReactNode;
   force?: boolean;
+  animated?: boolean;
 };
 
 type Props2 = {
   cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
   data?: { lights?: number; upgradedLights?: number } | null;
   className?: string;
+  animated?: boolean;
 };

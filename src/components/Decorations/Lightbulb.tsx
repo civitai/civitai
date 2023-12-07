@@ -19,9 +19,9 @@ export function Lightbulb({ variant, ...props }: Props) {
   return variant === 'star' ? <StarVariant {...props} /> : <DefaultVariant {...props} />;
 }
 
-function DefaultVariant({ color, size, brightness = 1, ...props }: Props) {
+function DefaultVariant({ color, size, brightness = 1, animated, ...props }: Props) {
   const { main } = colors[color as LightbulbColor];
-  const flickerClass = `demo-${brightness * 100}`;
+  const flickerClass = `demo-${brightness * 100}${animated ? '-animated' : ''}`;
 
   return (
     <svg
@@ -156,4 +156,5 @@ type Props = React.ComponentPropsWithoutRef<'svg'> & {
   size?: number;
   variant?: 'default' | 'star';
   className?: string;
+  animated?: boolean;
 };
