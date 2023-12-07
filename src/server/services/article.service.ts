@@ -36,6 +36,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
+import { entityRequiresClub } from '~/server/services/common.service';
 
 export const getArticles = async ({
   limit,
@@ -192,27 +193,40 @@ export const getArticles = async ({
       nextCursor = nextItem?.id;
     }
 
-    const articleCategories = await getCategoryTags('article');
-    const items = articles.map(({ tags, stats, ...article }) => ({
-      ...article,
-      tags: tags.map(({ tag }) => ({
-        ...tag,
-        isCategory: articleCategories.some((c) => c.id === tag.id),
+    const clubRequirement = await entityRequiresClub({
+      entities: articles.map((article) => ({
+        entityId: article.id,
+        entityType: 'Article',
       })),
-      stats: stats
-        ? {
-            favoriteCount: stats[`favoriteCount${period}`] as number,
-            commentCount: stats[`commentCount${period}`] as number,
-            likeCount: stats[`likeCount${period}`] as number,
-            dislikeCount: stats[`dislikeCount${period}`] as number,
-            heartCount: stats[`heartCount${period}`] as number,
-            laughCount: stats[`laughCount${period}`] as number,
-            cryCount: stats[`cryCount${period}`] as number,
-            viewCount: stats[`viewCount${period}`] as number,
-            tippedAmountCount: stats[`tippedAmountCount${period}`] as number,
-          }
-        : undefined,
-    }));
+    });
+
+    const articleCategories = await getCategoryTags('article');
+    const items = articles.map(({ tags, stats, ...article }) => {
+      const requiresClub =
+        clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? false;
+
+      return {
+        ...article,
+        requiresClub,
+        tags: tags.map(({ tag }) => ({
+          ...tag,
+          isCategory: articleCategories.some((c) => c.id === tag.id),
+        })),
+        stats: stats
+          ? {
+              favoriteCount: stats[`favoriteCount${period}`] as number,
+              commentCount: stats[`commentCount${period}`] as number,
+              likeCount: stats[`likeCount${period}`] as number,
+              dislikeCount: stats[`dislikeCount${period}`] as number,
+              heartCount: stats[`heartCount${period}`] as number,
+              laughCount: stats[`laughCount${period}`] as number,
+              cryCount: stats[`cryCount${period}`] as number,
+              viewCount: stats[`viewCount${period}`] as number,
+              tippedAmountCount: stats[`tippedAmountCount${period}`] as number,
+            }
+          : undefined,
+      };
+    });
 
     return { nextCursor, items };
   } catch (error) {

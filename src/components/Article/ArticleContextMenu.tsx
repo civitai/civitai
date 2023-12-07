@@ -17,6 +17,7 @@ import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
@@ -167,6 +168,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               </ToggleLockComments>
             )}
           </>
+        )}
+        {isOwner && features.clubs && (
+          <AddToClubMenuItem key="add-to-club" entityType="Article" entityId={article.id} />
         )}
         {(!isOwner || isModerator) && (
           <LoginRedirect reason="report-article">
