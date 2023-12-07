@@ -71,7 +71,7 @@ type ArticleRaw = {
     id: number;
     username: string | null;
     deletedAt: Date | null;
-    image: string;
+    image: string | null;
   };
   userCosmetics: {
     data: Prisma.JsonValue;

@@ -43,7 +43,7 @@ const ClubArticles = () => {
     id: string;
   };
   const id = Number(stringId);
-  const { query } = useArticleQueryParams();
+  const { query, replace } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? ArticleSort.Newest;
 
@@ -61,10 +61,10 @@ const ClubArticles = () => {
           <SortFilter
             type="articles"
             value={sort}
-            onChange={(x) => set({ sort: x as ArticleSort })}
+            onChange={(x) => replace({ sort: x as ArticleSort })}
           />
           <Group spacing="xs">
-            <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
+            <PeriodFilter type="articles" value={period} onChange={(x) => replace({ period: x })} />
             <ArticleFiltersDropdown />
           </Group>
         </Group>
