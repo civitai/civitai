@@ -37,6 +37,7 @@ import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
+import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
 
 export const getArticles = async ({
   limit,
@@ -322,7 +323,17 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
       },
       select: articleDetailSelect,
     });
+
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+    const [entityClubDetails] = await getClubDetailsForResource({
+      entities: [
+        {
+          entityType: 'Article',
+          entityId: article.id,
+        },
+      ],
+    });
 
     const articleCategories = await getCategoryTags('article');
     const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = !access.hasAccess
@@ -340,6 +351,7 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
+      clubs: entityClubDetails?.clubs ?? [],
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -388,6 +400,7 @@ export const upsertArticle = async ({
   userId,
   tags,
   attachments,
+  clubs,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
@@ -427,6 +440,15 @@ export const upsertArticle = async ({
 
         return article;
       });
+
+      if (clubs) {
+        await upsertClubResource({
+          entityType: 'Article',
+          entityId: result.id,
+          clubs,
+          userId: result.userId,
+        });
+      }
 
       return result;
     }
@@ -488,6 +510,7 @@ export const upsertArticle = async ({
 
       return article;
     });
+
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
     // If it was unpublished, need to remove it from the queue.
@@ -507,6 +530,15 @@ export const upsertArticle = async ({
         type: 'published',
         entityType: 'article',
         entityId: result.id,
+      });
+    }
+
+    if (clubs) {
+      await upsertClubResource({
+        entityType: 'Article',
+        entityId: result.id,
+        clubs,
+        userId: result.userId,
       });
     }
 
