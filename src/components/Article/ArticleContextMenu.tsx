@@ -192,5 +192,5 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 }
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
-  article: Omit<ArticleGetAll['items'][number], 'stats'>;
+  article: Omit<ArticleGetAll['items'][number], 'stats' | 'requiresClub'>;
 };

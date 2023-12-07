@@ -5,6 +5,7 @@ import { Anchor, List, Stack, Text } from '@mantine/core';
 import { IconClubs } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useMemo } from 'react';
+import { isDefined } from '~/utils/type-guards';
 
 export const ClubRequirementNotice = ({
   entityId,
@@ -24,7 +25,7 @@ export const ClubRequirementNotice = ({
       include: ['tiers'],
     },
     {
-      enabled: requiresClub && clubRequirement?.clubs?.length > 0,
+      enabled: requiresClub && (clubRequirement?.clubs?.length ?? 0) > 0,
     }
   );
 
@@ -34,7 +35,7 @@ export const ClubRequirementNotice = ({
     return null;
   }
 
-  if (hasAccess || !requiresClub) {
+  if (hasAccess || !requiresClub || !clubs || !clubRequirement) {
     return null;
   }
 
@@ -58,9 +59,9 @@ export const ClubRequirementNotice = ({
                 return null;
               }
 
-              const requiredTiers = requirement.clubTierIds?.map((id) =>
-                club.tiers.find((t) => t.id === id)
-              );
+              const requiredTiers = requirement.clubTierIds
+                ?.map((id) => club.tiers.find((t) => t.id === id))
+                .filter(isDefined);
 
               return (
                 <List.Item key={club.id}>

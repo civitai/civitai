@@ -53,6 +53,7 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -246,9 +247,12 @@ export default function ArticleDetailsPage({
               >
                 <EdgeMedia src={article.cover} width={1320} />
               </Box>
-              <article>
-                <RenderHtml html={article.content} />
-              </article>
+              <ClubRequirementNotice entityId={article.id} entityType="Article" />
+              {article.content && (
+                <article>
+                  <RenderHtml html={article.content} />
+                </article>
+              )}
               <Divider />
               <Group position="apart">
                 <Reactions

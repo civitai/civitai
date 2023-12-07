@@ -36,7 +36,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { entityRequiresClub } from '~/server/services/common.service';
+import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
 
 export const getArticles = async ({
   limit,
@@ -304,6 +304,17 @@ export const getCivitaiNews = async () => {
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   try {
     const isMod = user?.isModerator ?? false;
+    const [access] = await hasEntityAccess({
+      userId: user?.id,
+      isModerator: isMod,
+      entities: [
+        {
+          entityType: 'Article',
+          entityId: id,
+        },
+      ],
+    });
+
     const article = await dbRead.article.findFirst({
       where: {
         id,
@@ -314,10 +325,16 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
     const articleCategories = await getCategoryTags('article');
-    const attachments = await getFilesByEntity({ id, type: 'Article' });
+    const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = !access.hasAccess
+      ? []
+      : await getFilesByEntity({
+          id,
+          type: 'Article',
+        });
 
     return {
       ...article,
+      content: access.hasAccess ? article.content : null,
       attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
