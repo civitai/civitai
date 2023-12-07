@@ -27,7 +27,7 @@ export const modelMetrics = createMetricProcessor({
   },
   rank: {
     async refresh(ctx) {
-      // await refreshModelVersionRank(ctx);
+      await refreshModelVersionRank(ctx);
       await refreshModelRank(ctx);
     },
     refreshInterval: 60 * 1000,
