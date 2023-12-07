@@ -67,12 +67,17 @@ BEGIN
 	  hash,
 	  detected
 	FROM image_resource_id iri
+  LEFT JOIN "ModelVersion" mv ON mv.id = iri."modelVersionId"
 	WHERE (row_number = 1 OR iri.hash IS NULL)
 		AND NOT EXISTS (
 		  SELECT 1 FROM "ImageResource" ir
 		  WHERE "imageId" = iri.id
 		    AND (ir.hash = iri.hash OR ir."modelVersionId" = iri."modelVersionId")
-		)
+		) AND (
+      mv.id IS NULL OR
+      mv.meta IS NULL OR
+      mv.meta->>'excludeFromAutoDetection' IS NULL
+    )
 	ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE SET detected = true, hash = excluded.hash;
 END;
 $$ LANGUAGE plpgsql;
