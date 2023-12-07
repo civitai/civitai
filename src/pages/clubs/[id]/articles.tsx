@@ -3,7 +3,7 @@ import { FeedLayout } from '~/pages/clubs/[id]/index';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { useQueryClubPosts } from '~/components/Club/club.utils';
-import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import {
   Center,
   Divider,
@@ -18,7 +18,7 @@ import {
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IconClubs } from '@tabler/icons-react';
-import { ClubPostUpsertForm } from '~/components/Club/ClubPostUpsertForm';
+import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { constants } from '~/server/common/constants';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { PeriodFilter, SortFilter } from '~/components/Filters';

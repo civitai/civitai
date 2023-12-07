@@ -12,7 +12,7 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
-import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 
 export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);

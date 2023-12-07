@@ -42,8 +42,11 @@ import { useClubContributorStatus, useQueryClubPosts } from '~/components/Club/c
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ClubPostUpsertForm, ClubPostUpsertFormModal } from '~/components/Club/ClubPostUpsertForm';
-import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubFeed';
+import {
+  ClubPostUpsertForm,
+  ClubPostUpsertFormModal,
+} from '~/components/Club/ClubPost/ClubPostUpsertForm';
+import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 

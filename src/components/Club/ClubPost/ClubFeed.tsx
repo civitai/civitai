@@ -2,6 +2,7 @@ import {
   ActionIcon,
   ActionIconProps,
   createStyles,
+  Divider,
   Group,
   Menu,
   MenuItemProps,
@@ -39,6 +40,8 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { isDefined } from '~/utils/type-guards';
 import { ClubMembershipRole } from '@prisma/client';
 import { NextLink } from '@mantine/next';
+import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
+import { useInView } from '~/hooks/useInView';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -112,6 +115,10 @@ export function ClubPostContextMenu({
 
 export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] }) => {
   const { classes } = useClubFeedStyles();
+  const currentUser = useCurrentUser();
+  const { ref, inView } = useInView({
+    triggerOnce: true,
+  });
 
   return (
     <Paper className={classes.feedContainer}>
@@ -149,7 +156,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
             />
           </ImageCSSAspectRatioWrap>
         )}
-        <Title order={3} className={classes.title}>
+        <Title order={3} className={classes.title} ref={ref}>
           {clubPost.title}
         </Title>
         <Group position="apart">
@@ -162,6 +169,8 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
           <ClubPostContextMenu clubPost={clubPost} />
         </Group>
         <RenderHtml html={clubPost.description} />
+        <Divider />
+        {inView && <ClubPostDiscussion clubPostId={clubPost.id} userId={currentUser?.id} />}
       </Stack>
     </Paper>
   );

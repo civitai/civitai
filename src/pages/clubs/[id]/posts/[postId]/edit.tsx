@@ -10,8 +10,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubMembershipRole } from '@prisma/client';
-import { ClubPostUpsertForm } from '~/components/Club/ClubPostUpsertForm';
-import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
+import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 
 export default function ClubPostEdit() {
   const router = useRouter();

@@ -15,6 +15,7 @@ export const commentConnectorSchema = z.object({
     'article',
     'bounty',
     'bountyEntry',
+    'clubPost',
   ]),
   hidden: z.boolean().optional(),
 });
@@ -49,5 +50,6 @@ export const toggleHideCommentSchema = z.object({
     'article',
     'bounty',
     'bountyEntry',
+    'clubPost',
   ]),
 });

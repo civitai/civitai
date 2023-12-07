@@ -36,7 +36,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle, IconArrowLeft } from '@tabler/icons-react';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
-import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';

@@ -36,7 +36,7 @@ import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
-import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 
 const querySchema = z.object({ id: z.coerce.number() });

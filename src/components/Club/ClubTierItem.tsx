@@ -9,7 +9,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { useClubFeedStyles } from '~/components/Club/ClubFeed';
+import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import {
   useClubContributorStatus,
   useMutateClub,
