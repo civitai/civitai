@@ -1,4 +1,5 @@
 import {
+  Accordion,
   ActionIcon,
   Card,
   Center,
@@ -16,7 +17,7 @@ import {
 import React from 'react';
 import { formatDate } from '~/utils/date-helpers';
 import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
-import { IconTrash } from '@tabler/icons-react';
+import { IconCreditCard, IconCurrencyDollar, IconMoodDollar, IconTrash } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 
@@ -162,11 +163,22 @@ export function PaymentMethodsCard() {
             &hellip;You have no payment methods added yet&hellip;
           </Text>
         )}
-        <Text size="lg" weight={700}>
-          Add new payment method
-        </Text>
-        <Divider mx="-lg" />
-        <StripePaymentMethodSetup redirectUrl={'/user/account#payment-methods'} />
+        <Divider mx="-md" />
+        <Accordion variant="default" px={0}>
+          <Accordion.Item value="paymentMethod">
+            <Accordion.Control py={8} px={0}>
+              <Group spacing={8}>
+                <IconCreditCard size={24} />
+                <Text size="lg" weight={700}>
+                  Add new payment method
+                </Text>
+              </Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <StripePaymentMethodSetup redirectUrl={'/user/account#payment-methods'} />
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
       </Stack>
     </Card>
   );
