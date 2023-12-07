@@ -49,8 +49,8 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
-  IconClubs, 
-  IconBrush, 
+  IconClubs,
+  IconBrush,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -116,6 +116,7 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -913,21 +914,7 @@ export default function ModelDetailsV2({
                   : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
               </AlertWithIcon>
             )}
-            {!hasAccess && requiresClub && (
-              <AlertWithIcon color="blue" icon={<IconClubs />} size="md">
-                <Text>
-                  This model version requires a club membership to access. To get access to this
-                  resource, join one of these creator clubs:
-                </Text>
-                <List size="xs" spacing={8}>
-                  <List.Item>
-                    <Anchor href="/clubs/{id}" span>
-                      Sample club
-                    </Anchor>
-                  </List.Item>
-                </List>
-              </AlertWithIcon>
-            )}
+            <ClubRequirementNotice entityType="ModelVersion" entityId={modelVersionId} />
           </Stack>
           <Group spacing={4} noWrap>
             {isOwner ? (

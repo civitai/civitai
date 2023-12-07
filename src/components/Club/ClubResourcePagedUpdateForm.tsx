@@ -1,5 +1,5 @@
 import { ClubResourceGetPaginatedItem, ClubTier } from '~/types/router';
-import { updateClubResourceInput } from '~/server/schema/club.schema';
+import { SupportedClubEntitiesLabels, updateClubResourceInput } from '~/server/schema/club.schema';
 import { z } from 'zod';
 import { ActionIcon, Anchor, Checkbox, Group, Tooltip } from '@mantine/core';
 import React from 'react';
@@ -67,7 +67,7 @@ export const ClubResourcePagedUpdateForm = ({
 
   return (
     <tr>
-      <td>{resource.entityType}</td>
+      <td>{SupportedClubEntitiesLabels[resource.entityType]}</td>
       <td>
         <Anchor href={url} target="_blank">
           {label}

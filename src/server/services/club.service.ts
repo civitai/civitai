@@ -600,13 +600,21 @@ export const getClubDetailsForResource = async ({
 };
 
 export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
-  input: { cursor, limit: take, sort, engagement, userId, nsfw },
+  input: { cursor, limit: take, sort, engagement, userId, nsfw, clubIds },
   select,
 }: {
   input: GetInfiniteClubSchema;
   select: TSelect;
 }) => {
   const AND: Prisma.Enumerable<Prisma.ClubWhereInput> = [];
+
+  if (clubIds) {
+    AND.push({
+      id: {
+        in: clubIds,
+      },
+    });
+  }
 
   if (userId) {
     if (engagement) {

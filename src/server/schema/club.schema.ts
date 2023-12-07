@@ -1,16 +1,9 @@
 import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
-import {
-  BountyMode,
-  BountyType,
-  ClubMembershipRole,
-  Currency,
-  MetricTimeframe,
-} from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { infiniteQuerySchema, paginationSchema } from '~/server/schema/base.schema';
-import { BountySort, BountyStatus, ClubMembershipSort, ClubSort } from '~/server/common/enums';
-import { constants } from '~/server/common/constants';
+import { ClubSort } from '~/server/common/enums';
 
 export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
 export const upsertClubTierInput = z
@@ -61,6 +54,10 @@ export const getClubTiersInput = z.object({
 
 export const supportedClubEntities = ['ModelVersion', 'Article'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
+export const SupportedClubEntitiesLabels: Record<SupportedClubEntities, string> = {
+  ModelVersion: 'Model Version',
+  Article: 'Article',
+};
 
 export const clubResourceSchema = z.object({
   clubId: z.number(),
@@ -115,6 +112,8 @@ export const getInfiniteClubSchema = infiniteQuerySchema.merge(
     engagement: z.enum(['owned', 'memberships']).optional(),
     sort: z.nativeEnum(ClubSort).default(ClubSort.Newest),
     limit: z.coerce.number().min(1).max(200).default(60),
+    clubIds: z.array(z.number()).optional(),
+    include: z.array(z.enum(['tiers'])).optional(),
   })
 );
 

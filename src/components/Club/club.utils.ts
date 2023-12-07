@@ -326,6 +326,7 @@ export const useEntityAccessRequirement = ({
   const requiresClub = clubRequirement?.requiresClub ?? false;
 
   return {
+    clubRequirement,
     hasAccess,
     requiresClub,
     isLoadingAccess,

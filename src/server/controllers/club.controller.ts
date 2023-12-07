@@ -192,6 +192,7 @@ export const getInfiniteClubsHandler = async ({
   const { user } = ctx;
   const limit = input.limit + 1 ?? 10;
   const userId = input.userId ?? user?.id;
+  const { include } = input;
 
   try {
     const items = await getAllClubs({
@@ -206,6 +207,14 @@ export const getInfiniteClubsHandler = async ({
           select: imageSelect,
         },
         nsfw: true,
+        tiers: include?.includes('tiers')
+          ? {
+              select: {
+                id: true,
+                name: true,
+              },
+            }
+          : undefined,
       },
     });
 
