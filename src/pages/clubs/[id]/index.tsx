@@ -308,7 +308,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
               <Grid.Col xs={12} md={3}>
                 <Stack>
                   <Title order={3}>Membership Tiers</Title>
-                  {membership.cancelledAt && (
+                  {membership?.cancelledAt ? (
                     <Alert color="yellow">
                       <Text size="sm">
                         Your membership was cancelled on {formatDate(membership.cancelledAt)} and
@@ -319,7 +319,17 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                         .
                       </Text>
                     </Alert>
-                  )}
+                  ) : membership?.nextBillingAt ? (
+                    <Alert color="yellow">
+                      <Text size="sm">
+                        You have an active membership on this club. Your next billing will be on{' '}
+                        <Text weight="bold" component="span">
+                          {formatDate(membership.nextBillingAt)}
+                        </Text>
+                        .
+                      </Text>
+                    </Alert>
+                  ) : null}
                   {tiers.length > 0 ? (
                     <>
                       {tiers.map((tier) => (
