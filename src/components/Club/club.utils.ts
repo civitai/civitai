@@ -27,6 +27,7 @@ import {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   OwnerRemoveClubMembershipInput,
+  ToggleClubMembershipStatusInput,
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -266,6 +267,28 @@ export const useMutateClub = () => {
     },
   });
 
+  const restoreClubMembershipMutation = trpc.clubMembership.restoreClubMembership.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to restore membership',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to restore membership',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -288,8 +311,11 @@ export const useMutateClub = () => {
   const handleRemoveAndRefundMember = (data: OwnerRemoveClubMembershipInput) => {
     return removeAndRefundMemberMutation.mutateAsync(data);
   };
-  const handleCancelClubMembership = (data: CancelClubMembershipInput) => {
+  const handleCancelClubMembership = (data: ToggleClubMembershipStatusInput) => {
     return cancelClubMembershipMutation.mutateAsync(data);
+  };
+  const handleRestoreClubMembership = (data: ToggleClubMembershipStatusInput) => {
+    return restoreClubMembershipMutation.mutateAsync(data);
   };
   const handleUpdateClubResource = (data: UpdateClubResourceInput) => {
     return updateClubResourceMutation.mutateAsync(data);
@@ -319,6 +345,8 @@ export const useMutateClub = () => {
     removingResource: removeClubResourceMutation.isLoading,
     cancelClubMembership: handleCancelClubMembership,
     cancelingClubMembership: cancelClubMembershipMutation.isLoading,
+    restoreClubMembership: handleRestoreClubMembership,
+    restoringClubMembership: restoreClubMembershipMutation.isLoading,
   };
 };
 

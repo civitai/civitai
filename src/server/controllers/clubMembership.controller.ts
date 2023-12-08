@@ -7,7 +7,7 @@ import {
 import { Context } from '~/server/createContext';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
-  CancelClubMembershipInput,
+  ToggleClubMembershipStatusInput,
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
@@ -20,14 +20,13 @@ import {
   clubOwnerRemoveMember,
   createClubMembership,
   getClubMemberships,
+  restoreClubMembership,
   updateClubMembership,
 } from '~/server/services/clubMembership.service';
 import { userContributingClubs } from '~/server/services/club.service';
 import { dbRead } from '~/server/db/client';
 import { ClubMembershipRole } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { getUserBuzzAccount } from '~/server/services/buzz.service';
 
 export const getInfiniteClubMembershipsHandler = async ({
   input,
@@ -271,7 +270,7 @@ export const cancelClubMembershipHandler = async ({
   input,
   ctx,
 }: {
-  input: CancelClubMembershipInput;
+  input: ToggleClubMembershipStatusInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   const { user } = ctx;
@@ -286,6 +285,33 @@ export const cancelClubMembershipHandler = async ({
       throw throwAuthorizationError('You are not authorized');
 
     return cancelClubMembership({
+      ...input,
+      userId,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const restoreClubMembershipHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleClubMembershipStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  let { userId } = input;
+
+  if (!userId) {
+    userId = user.id;
+  }
+
+  try {
+    if (user.id !== userId && !user.isModerator)
+      throw throwAuthorizationError('You are not authorized');
+
+    return restoreClubMembership({
       ...input,
       userId,
     });

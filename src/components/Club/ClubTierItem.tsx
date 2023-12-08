@@ -49,9 +49,16 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     updatingClubMembership,
     cancelClubMembership,
     cancelingClubMembership,
+    restoreClubMembership,
+    restoringClubMembership,
   } = useMutateClub();
 
-  const updating = updatingClubMembership || creatingClubMembership || cancelingClubMembership;
+  const updating =
+    updatingClubMembership ||
+    creatingClubMembership ||
+    cancelingClubMembership ||
+    restoringClubMembership;
+
   const isTierMember = membership?.clubTier?.id === clubTier.id;
 
   const TierCoverImage = () =>
@@ -254,8 +261,21 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     }
   };
 
-  const handleMembershipRestore = () => {
-    console.log('Restore me');
+  const handleMembershipRestore = async () => {
+    try {
+      await restoreClubMembership({
+        clubId: clubTier.clubId,
+      });
+
+      showSuccessNotification({
+        title: 'Success',
+        message: `Your membership has been restored. Your next billing date is ${formatDate(
+          membership?.nextBillingAt
+        )}.`,
+      });
+    } catch {
+      // Do nothing. Handled in the hook.
+    }
   };
 
   const handleMembershipCancel = async () => {
@@ -326,26 +346,33 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 Active on {formatDate(membership.nextBillingAt)}
               </Button>
             ) : isTierMember ? (
-              <Button
-                loading={updating}
-                radius="md"
-                color="yellow.7"
-                variant="light"
-                onClick={
-                  membership.downgradeClubTierId
-                    ? handleMembershipUpdate
-                    : membership.cancelledAt
-                    ? handleMembershipRestore
-                    : handleMembershipCancel
-                }
-              >
-                Active{' '}
-                {membership.expiresAt
-                  ? `until ${formatDate(membership.expiresAt)}`
-                  : membership.downgradeClubTierId
-                  ? `until ${formatDate(membership.nextBillingAt)}`
-                  : null}
-              </Button>
+              <Stack spacing={4}>
+                <Button
+                  loading={updating}
+                  radius="md"
+                  color="yellow.7"
+                  variant="light"
+                  onClick={
+                    membership.downgradeClubTierId
+                      ? handleMembershipUpdate
+                      : membership.cancelledAt
+                      ? handleMembershipRestore
+                      : handleMembershipCancel
+                  }
+                >
+                  Active{' '}
+                  {membership.expiresAt
+                    ? `until ${formatDate(membership.expiresAt)}`
+                    : membership.downgradeClubTierId
+                    ? `until ${formatDate(membership.nextBillingAt)}`
+                    : null}
+                </Button>
+                {membership?.cancelledAt && (
+                  <Text size="xs" align="center">
+                    Click to restore
+                  </Text>
+                )}
+              </Stack>
             ) : isDowngrade ? (
               <Button
                 loading={updating}

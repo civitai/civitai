@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 import { ClubMembershipRole, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  CancelClubMembershipInput,
+  ToggleClubMembershipStatusInput,
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
@@ -433,7 +433,7 @@ export const clubOwnerRemoveMember = async ({
   });
 };
 
-export const cancelClubMembership = async ({ userId, clubId }: CancelClubMembershipInput) => {
+export const cancelClubMembership = async ({ userId, clubId }: ToggleClubMembershipStatusInput) => {
   const membership = await dbRead.clubMembership.findFirst({
     where: { clubId, userId },
   });
@@ -446,6 +446,38 @@ export const cancelClubMembership = async ({ userId, clubId }: CancelClubMembers
       data: {
         cancelledAt: new Date(),
         expiresAt: membership?.nextBillingAt,
+      },
+    });
+
+    return updatedMembership;
+  });
+
+  return updatedMembership;
+};
+
+export const restoreClubMembership = async ({
+  userId,
+  clubId,
+}: ToggleClubMembershipStatusInput) => {
+  const membership = await dbRead.clubMembership.findFirst({
+    where: { clubId, userId },
+  });
+
+  if (!membership) throw throwBadRequestError('Club membership not found');
+  if (!membership.cancelledAt) {
+    throw throwBadRequestError('Club membership is not cancelled');
+  }
+
+  if (membership.expiresAt && membership.expiresAt < new Date()) {
+    throw throwBadRequestError('Club membership has expired.');
+  }
+
+  const updatedMembership = await dbWrite.$transaction(async (tx) => {
+    const updatedMembership = await tx.clubMembership.update({
+      where: { id: membership.id },
+      data: {
+        cancelledAt: null,
+        expiresAt: null,
       },
     });
 
