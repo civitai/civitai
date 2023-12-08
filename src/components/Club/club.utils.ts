@@ -22,7 +22,7 @@ import {
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
 import { ClubGetAll, ClubPostGetAll, UserClub } from '~/types/router';
-import {,
+import {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   OwnerRemoveClubMembershipInput,
