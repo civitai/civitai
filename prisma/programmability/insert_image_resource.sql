@@ -61,11 +61,11 @@ BEGIN
 	)
 	INSERT INTO "ImageResource"("imageId", "modelVersionId", name, hash, detected)
 	SELECT
-	  id,
-	  "modelVersionId",
-	  REPLACE(REPLACE(REPLACE(name, 'hypernet:', ''), 'embed:', ''), 'lora:', '') "name",
-	  hash,
-	  detected
+	  iri.id,
+	  iri."modelVersionId",
+	  REPLACE(REPLACE(REPLACE(iri.name, 'hypernet:', ''), 'embed:', ''), 'lora:', '') as "name",
+	  iri.hash,
+	  iri.detected
 	FROM image_resource_id iri
   LEFT JOIN "ModelVersion" mv ON mv.id = iri."modelVersionId"
 	WHERE (row_number = 1 OR iri.hash IS NULL)
