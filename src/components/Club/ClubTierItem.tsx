@@ -47,9 +47,11 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     createClubMembership,
     updateClubMembership,
     updatingClubMembership,
+    cancelClubMembership,
+    cancelingClubMembership,
   } = useMutateClub();
 
-  const updating = updatingClubMembership || creatingClubMembership;
+  const updating = updatingClubMembership || creatingClubMembership || cancelingClubMembership;
   const isTierMember = membership?.clubTier?.id === clubTier.id;
 
   const TierCoverImage = () =>
@@ -252,6 +254,54 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     }
   };
 
+  const handleMembershipRestore = () => {
+    console.log('Restore me');
+  };
+
+  const handleMembershipCancel = async () => {
+    const onCancelMembership = async () => {
+      try {
+        await cancelClubMembership({
+          clubId: clubTier.clubId,
+        });
+
+        showSuccessNotification({
+          title: 'Success',
+          message: `Your membership has been canceled. You will have access to this club's resources until ${formatDate(
+            membership?.nextBillingAt
+          )}.`,
+        });
+      } catch {
+        // Do nothing. Handled in the hook.
+      }
+    };
+
+    openConfirmModal({
+      modalId: 'club-membership-cancel',
+      centered: true,
+      title: 'You are about to cancel your current membership',
+      children: (
+        <Center>
+          <Stack>
+            <TierCoverImage />
+            <Text align="center" weight={800}>
+              {clubTier.name}
+            </Text>
+            <Text align="center">
+              {' '}
+              Your membership will be canceled at the end of your current billing period on{' '}
+              {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
+              made.
+            </Text>
+          </Stack>
+        </Center>
+      ),
+      labels: { cancel: `Cancel`, confirm: `Confirm` },
+      closeOnConfirm: true,
+      onConfirm: onCancelMembership,
+    });
+  };
+
   return (
     <Paper className={classes.feedContainer}>
       <Stack style={{ flex: 1 }}>
@@ -281,7 +331,13 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 radius="md"
                 color="yellow.7"
                 variant="light"
-                onClick={membership.downgradeClubTierId ? handleMembershipUpdate : undefined}
+                onClick={
+                  membership.downgradeClubTierId
+                    ? handleMembershipUpdate
+                    : membership.cancelledAt
+                    ? handleMembershipRestore
+                    : handleMembershipCancel
+                }
               >
                 Active{' '}
                 {membership.expiresAt

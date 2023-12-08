@@ -5,6 +5,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import {
+  Alert,
   Anchor,
   Button,
   Center,
@@ -29,6 +30,7 @@ import {
   IconAlertCircle,
   IconClock,
   IconClubs,
+  IconInfoCircle,
   IconManualGearbox,
   IconPencilMinus,
   IconSettings,
@@ -49,6 +51,7 @@ import {
 import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { formatDate } from '~/utils/date-helpers';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -147,6 +150,10 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
   const { data: userClubs = [], isLoading: isLoadingUserClubs } =
     trpc.club.userContributingClubs.useQuery();
+  const { data: membership, isLoading: loadingMembership } =
+    trpc.clubMembership.getClubMembershipOnClub.useQuery({
+      clubId: id,
+    });
   const currentUser = useCurrentUser();
 
   const canPost = useMemo(() => {
@@ -301,6 +308,18 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
               <Grid.Col xs={12} md={3}>
                 <Stack>
                   <Title order={3}>Membership Tiers</Title>
+                  {membership.cancelledAt && (
+                    <Alert color="yellow">
+                      <Text size="sm">
+                        Your membership was cancelled on {formatDate(membership.cancelledAt)} and
+                        will be active until{' '}
+                        <Text weight="bold" component="span">
+                          {formatDate(membership.expiresAt)}
+                        </Text>
+                        .
+                      </Text>
+                    </Alert>
+                  )}
                   {tiers.length > 0 ? (
                     <>
                       {tiers.map((tier) => (

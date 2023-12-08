@@ -2,6 +2,7 @@ import dayjs from 'dayjs';
 import { ClubMembershipRole, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  CancelClubMembershipInput,
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
@@ -70,7 +71,7 @@ export const clubMembershipOnClub = async <TSelect extends Prisma.ClubMembership
               },
               {
                 expiresAt: {
-                  gt: dayjs().toDate(),
+                  gte: dayjs().toDate(),
                 },
               },
             ],
@@ -400,8 +401,6 @@ export const clubOwnerRemoveMember = async ({
     accountType: 'Club',
   });
 
-  console.log(clubBuzzAccount?.balance);
-
   if ((clubBuzzAccount?.balance ?? 0) < membership.unitAmount) {
     throw throwInsufficientFundsError(
       'Club does not have enough funds to refund this user as such, they cannot be removed'
@@ -432,4 +431,26 @@ export const clubOwnerRemoveMember = async ({
       externalTransactionId: `club-membership-refund-${membership.id}`,
     });
   });
+};
+
+export const cancelClubMembership = async ({ userId, clubId }: CancelClubMembershipInput) => {
+  const membership = await dbRead.clubMembership.findFirst({
+    where: { clubId, userId },
+  });
+
+  if (!membership) throw throwBadRequestError('Club membership not found');
+
+  const updatedMembership = await dbWrite.$transaction(async (tx) => {
+    const updatedMembership = await tx.clubMembership.update({
+      where: { id: membership.id },
+      data: {
+        cancelledAt: new Date(),
+        expiresAt: membership?.nextBillingAt,
+      },
+    });
+
+    return updatedMembership;
+  });
+
+  return updatedMembership;
 };

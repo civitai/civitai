@@ -7,6 +7,7 @@ import {
 import { Context } from '~/server/createContext';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
+  CancelClubMembershipInput,
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
@@ -14,6 +15,7 @@ import {
   UpdateClubMembershipInput,
 } from '~/server/schema/clubMembership.schema';
 import {
+  cancelClubMembership,
   clubMembershipOnClub,
   clubOwnerRemoveMember,
   createClubMembership,
@@ -259,6 +261,33 @@ export const removeAndRefundMemberHandler = async ({
       ...input,
       sessionUserId: user.id,
       isModerator: !!user.isModerator,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const cancelClubMembershipHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CancelClubMembershipInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  let { userId } = input;
+
+  if (!userId) {
+    userId = user.id;
+  }
+
+  try {
+    if (user.id !== userId && !user.isModerator)
+      throw throwAuthorizationError('You are not authorized');
+
+    return cancelClubMembership({
+      ...input,
+      userId,
     });
   } catch (error) {
     throw throwDbError(error);

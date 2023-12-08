@@ -23,6 +23,7 @@ import {
 } from '~/components/Search/search.utils';
 import { ClubGetAll, ClubPostGetAll, UserClub } from '~/types/router';
 import {
+  CancelClubMembershipInput,
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   OwnerRemoveClubMembershipInput,
@@ -243,6 +244,28 @@ export const useMutateClub = () => {
     },
   });
 
+  const cancelClubMembershipMutation = trpc.clubMembership.cancelClubMembership.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to cancel membership',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to cancel membership',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -262,13 +285,16 @@ export const useMutateClub = () => {
   const handleUpdateClubMembership = (data: UpdateClubMembershipInput) => {
     return updateClubMembershipMutation.mutateAsync(data);
   };
-  const handleRemoveAndRefundMemberMutation = (data: OwnerRemoveClubMembershipInput) => {
+  const handleRemoveAndRefundMember = (data: OwnerRemoveClubMembershipInput) => {
     return removeAndRefundMemberMutation.mutateAsync(data);
   };
-  const handleUpdateClubResourceMutation = (data: UpdateClubResourceInput) => {
+  const handleCancelClubMembership = (data: CancelClubMembershipInput) => {
+    return cancelClubMembershipMutation.mutateAsync(data);
+  };
+  const handleUpdateClubResource = (data: UpdateClubResourceInput) => {
     return updateClubResourceMutation.mutateAsync(data);
   };
-  const handleRemoveClubResourceMutation = (data: RemoveClubResourceInput) => {
+  const handleRemoveClubResource = (data: RemoveClubResourceInput) => {
     return removeClubResourceMutation.mutateAsync(data);
   };
 
@@ -285,12 +311,14 @@ export const useMutateClub = () => {
     creatingClubMembership: createClubMembershipMutation.isLoading,
     updateClubMembership: handleUpdateClubMembership,
     updatingClubMembership: updateClubMembershipMutation.isLoading,
-    removeAndRefundMember: handleRemoveAndRefundMemberMutation,
+    removeAndRefundMember: handleRemoveAndRefundMember,
     removingAndRefundingMember: removeAndRefundMemberMutation.isLoading,
-    updateResource: handleUpdateClubResourceMutation,
+    updateResource: handleUpdateClubResource,
     updatingResource: updateClubResourceMutation.isLoading,
-    removeResource: handleRemoveClubResourceMutation,
+    removeResource: handleRemoveClubResource,
     removingResource: removeClubResourceMutation.isLoading,
+    cancelClubMembership: handleCancelClubMembership,
+    cancelingClubMembership: cancelClubMembershipMutation.isLoading,
   };
 };
 
