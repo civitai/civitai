@@ -691,7 +691,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
 
 // #region [ranks]
 async function refreshModelRank({ db }: MetricProcessorRunContext) {
-  await db.$executeRaw`CALL update_model_rank(10000);`;
+  await db.$executeRawUnsafe(`CALL update_model_rank(10000);`);
 }
 
 async function refreshModelVersionRank({ db }: MetricProcessorRunContext) {
