@@ -272,7 +272,7 @@ export const upsertClubTiers = async ({
   tx?: Prisma.TransactionClient;
 }) => {
   const dbClient = tx ?? dbWrite;
-  const club = await getClub({ id: clubId, userId });
+  const club = await getClub({ id: clubId, tx: dbClient });
 
   if (userId !== club?.userId && !isModerator) {
     throw throwBadRequestError('Only club owners can edit club tiers');
