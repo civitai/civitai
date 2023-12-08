@@ -91,9 +91,9 @@ export const heartbeat = keyframes({
   },
 });
 
-function StarVariant({ color, size, brightness = 1, ...props }: Omit<Props, 'variant'>) {
+function StarVariant({ color, size, brightness = 1, animated, ...props }: Omit<Props, 'variant'>) {
   const { main } = colors[color as LightbulbColor];
-  const flickerClass = `demo-${brightness * 100}`;
+  const flickerClass = `demo-${brightness * 100}${animated ? '-animated' : ''}`;
 
   return (
     <svg

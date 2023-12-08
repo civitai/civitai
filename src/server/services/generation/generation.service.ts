@@ -42,7 +42,7 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis } from '~/server/redis/client';
-import { includesNsfw } from '~/utils/metadata/audit';
+import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -386,6 +386,10 @@ export const createGenerationRequest = async ({
       return acc;
     }, {} as { [key: string]: object });
 
+  // Add extra negative embedding if includes POI or minor
+  const isPromptNsfw = includesNsfw(params.prompt);
+  if (includesPoi(params.prompt) || includesMinor(params.prompt)) nsfw = false;
+
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && !isSDXL) {
     for (const { id, triggerWord } of safeNegatives) {
@@ -398,7 +402,6 @@ export const createGenerationRequest = async ({
   }
 
   // Inject fallback minor safety nets
-  const isPromptNsfw = includesNsfw(params.prompt);
   const positivePrompts = [params.prompt];
   if (isPromptNsfw && env.MINOR_FALLBACK_SYSTEM) {
     for (const { id, triggerWord } of minorPositives) {

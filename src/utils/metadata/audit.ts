@@ -24,7 +24,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 
   // Add minor check
   if (nsfw) {
-    const { found, age } = includesMinor(meta.prompt);
+    const { found, age } = includesMinorAge(meta.prompt);
     if (found) return { blockedFor: [`${age} year old`], success: false };
   }
 
@@ -36,7 +36,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 };
 
 export const auditPrompt = (prompt: string) => {
-  const { found, age } = includesMinor(prompt);
+  const { found, age } = includesMinorAge(prompt);
   if (found) return { blockedFor: [`${age} year old`], success: false };
 
   const inappropriate = includesInappropriate(prompt);
@@ -150,7 +150,7 @@ const ageRegexes = templates.map((template) => {
 // --------------------------------------
 // Age Check Function
 // --------------------------------------
-export function includesMinor(prompt: string | undefined) {
+export function includesMinorAge(prompt: string | undefined) {
   if (!prompt) return { found: false, age: undefined };
 
   let found = false;
@@ -235,11 +235,17 @@ export function includesPoi(prompt: string | undefined) {
   return words.poi.inPrompt(prompt);
 }
 
+export function includesMinor(prompt: string | undefined) {
+  if (!prompt) return false;
+
+  return includesMinorAge(prompt).found || words.young.nouns.inPrompt(prompt);
+}
+
 export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
   prompt = removeAccents(prompt);
   if (!nsfw && !includesNsfw(prompt)) return false;
-  if (includesMinor(prompt).found || words.young.nouns.inPrompt(prompt)) return 'minor';
+  if (includesMinor(prompt)) return 'minor';
   if (includesPoi(prompt)) return 'poi';
   return false;
 }
