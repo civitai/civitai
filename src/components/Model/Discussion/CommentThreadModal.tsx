@@ -58,6 +58,7 @@ export default function CommentThreadModal({
             deletedAt: null,
             username: currentUser.username ?? '',
             image: currentUser.image ?? '',
+            profilePicture: null, // Not really necessary for reactions
           },
         };
         const reacted = previousReactions.find(

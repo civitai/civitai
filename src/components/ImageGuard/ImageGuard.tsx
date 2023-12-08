@@ -612,6 +612,7 @@ ImageGuard.ToggleImage = function ToggleImage(props: {
   sx?: Sx;
   className?: string;
   size?: MantineSize;
+  variant?: 'badge' | 'button';
 }) {
   const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
@@ -659,6 +660,60 @@ ImageGuard.ToggleConnect = function ToggleConnect(props: {
       onClick={() => (connect ? toggleConnect(connect) : undefined)}
       {...props}
     />
+  );
+};
+
+ImageGuard.ToggleImageButton = function ToggleImageButton(props: {
+  position?: 'static' | 'top-left' | 'top-right';
+  sx?: Sx;
+  className?: string;
+  size?: MantineSize;
+}) {
+  const { position, size, sx, className } = props;
+  const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
+  const showImage = useStore((state) => state.showingImages[image.id.toString()]);
+  const toggleImage = useStore((state) => state.toggleImage);
+
+  if (!showToggleImage || !canToggleNsfw || showImage) return null;
+
+  const { color, shade } = image.nsfw
+    ? nsfwLevelUI[image.nsfw] ?? nsfwLevelUI[NsfwLevel.X]
+    : nsfwLevelUI[NsfwLevel.X];
+
+  return (
+    <ImageGuardPopover nsfw={isNsfwImage({ nsfw: image.nsfw ?? NsfwLevel.X })}>
+      <ActionIcon
+        color={color}
+        radius="xl"
+        size={size}
+        sx={(theme) => ({
+          backgroundColor: theme.fn.rgba(theme.colors[color][shade], 0.6),
+          color: 'white',
+          backdropFilter: 'blur(7px)',
+          boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+          ...(position !== 'static'
+            ? {
+                position: 'absolute',
+                top: theme.spacing.xs,
+                left: position === 'top-left' ? theme.spacing.xs : undefined,
+                right: position === 'top-right' ? theme.spacing.xs : undefined,
+                zIndex: 10,
+              }
+            : {
+                zIndex: 10,
+              }),
+          ...(sx && sx instanceof Function ? sx(theme) : sx),
+        })}
+        className={className}
+        onClick={canToggleNsfw ? () => toggleImage(image.id) : undefined}
+      >
+        {showImage ? (
+          <IconEyeOff size={14} strokeWidth={2.5} />
+        ) : (
+          <IconEye size={14} strokeWidth={2.5} />
+        )}
+      </ActionIcon>
+    </ImageGuardPopover>
   );
 };
 

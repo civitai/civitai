@@ -24,7 +24,6 @@ import {
   InputProfileImageUpload,
   InputShowcaseItemsInput,
   InputSimpleImageUpload,
-  InputSwitch,
   InputText,
   InputTextArea,
   useForm,
@@ -125,16 +124,25 @@ const { openModal, Modal } = createContextModal({
       shouldUnregister: false,
     });
 
-    const [badgeId, nameplateId, message, bio, location, profileImage, profileSectionsSettings] =
-      form.watch([
-        'badgeId',
-        'nameplateId',
-        'message',
-        'bio',
-        'location',
-        'profileImage',
-        'profileSectionsSettings',
-      ]);
+    const [
+      badgeId,
+      nameplateId,
+      message,
+      bio,
+      location,
+      profileImage,
+      profilePicture,
+      profileSectionsSettings,
+    ] = form.watch([
+      'badgeId',
+      'nameplateId',
+      'message',
+      'bio',
+      'location',
+      'profileImage',
+      'profilePicture',
+      'profileSectionsSettings',
+    ]);
     const displayShowcase = useMemo(() => {
       const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
       return !!sections.find((s) => s.key === 'showcase' && s.enabled);
@@ -171,9 +179,14 @@ const { openModal, Modal } = createContextModal({
           badgeId: selectedBadge?.id ?? null,
           nameplateId: selectedNameplate?.id ?? null,
           leaderboardShowcase: user?.leaderboardShowcase ?? null,
+          profilePicture: user.profilePicture
+            ? (user.profilePicture as z.infer<typeof userProfileUpdateSchema>['profilePicture'])
+            : user.image
+            ? { url: user.image }
+            : null,
         });
       }
-    }, [user?.profile, equippedCosmetics]);
+    }, [equippedCosmetics, user]);
 
     const handleClose = () => context.close();
     const handleSubmit = (data: z.infer<typeof userProfileUpdateSchema>) => {
@@ -237,9 +250,9 @@ const { openModal, Modal } = createContextModal({
               user={user}
               badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
-              profileImage={profileImage}
+              profileImage={profilePicture?.url ?? profileImage}
             />
-            <InputProfileImageUpload name="profileImage" label="Edit profile image" />
+            <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
             <Stack>
               <InputSelect
                 name="nameplateId"
@@ -480,6 +493,10 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
     image: profileImage || user.image,
     cosmetics: [],
     deletedAt: null,
+    profilePicture: {
+      ...user.profilePicture,
+      url: profileImage || user.image,
+    } as UserWithCosmetics['profilePicture'],
   };
 
   if (badge)

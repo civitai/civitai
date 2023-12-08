@@ -24,7 +24,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
-import { usernameInputSchema } from '~/server/schema/user.schema';
+import { usernameInputSchema, profilePictureSchema } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
@@ -39,6 +39,7 @@ const schema = z.object({
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),
   leaderboardShowcase: z.string().nullable(),
+  profilePicture: profilePictureSchema.nullish(),
 });
 
 export function ProfileCard() {
@@ -77,7 +78,12 @@ export function ProfileCard() {
   const form = useForm({
     schema,
     mode: 'onChange',
-    defaultValues: { ...currentUser },
+    defaultValues: {
+      ...currentUser,
+      profilePicture: currentUser?.profilePicture
+        ? (currentUser.profilePicture as z.infer<typeof schema>['profilePicture'])
+        : { url: currentUser?.image },
+    },
     shouldUnregister: false,
   });
 
@@ -91,10 +97,13 @@ export function ProfileCard() {
         ...currentUser,
         nameplateId: selectedNameplate?.id ?? null,
         badgeId: selectedBadge?.id ?? null,
+        profilePicture: currentUser?.profilePicture
+          ? (currentUser.profilePicture as z.infer<typeof schema>['profilePicture'])
+          : { url: currentUser.image },
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [equippedCosmetics]);
+  }, [currentUser, equippedCosmetics]);
 
   const formUser = form.watch();
   const { nameplates = [], badges = [] } = cosmetics || {};
@@ -113,12 +122,14 @@ export function ProfileCard() {
       <Form
         form={form}
         onSubmit={(data) => {
-          const { id, username, nameplateId, badgeId, image, leaderboardShowcase } = data;
+          const { id, username, nameplateId, badgeId, image, profilePicture, leaderboardShowcase } =
+            data;
           mutate({
             id,
             username,
             nameplateId,
             image,
+            profilePicture,
             badgeId,
             leaderboardShowcase:
               leaderboardShowcase !== currentUser?.leaderboardShowcase
@@ -188,7 +199,7 @@ export function ProfileCard() {
               />
             </Grid.Col>
             <Grid.Col span={12}>
-              <InputProfileImageUpload name="image" label="Profile Image" />
+              <InputProfileImageUpload name="profilePicture" label="Profile Image" />
             </Grid.Col>
             <Grid.Col span={12}>
               <Stack spacing={0}>
@@ -344,6 +355,7 @@ function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
     ...user,
     cosmetics: [],
     deletedAt: null,
+    profilePicture: (user.profilePicture as UserWithCosmetics['profilePicture']) ?? null,
   };
   if (badge)
     userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });

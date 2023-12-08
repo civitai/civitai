@@ -140,6 +140,7 @@ export const updateUserProfile = async ({
   userId,
   coverImage,
   leaderboardShowcase,
+  profilePicture,
   ...profile
 }: UserProfileUpdateSchema & { userId: number }) => {
   const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
@@ -155,13 +156,32 @@ export const updateUserProfile = async ({
       const shouldUpdateUser = shouldUpdateCosmetics || profileImage || leaderboardShowcase;
 
       if (shouldUpdateUser) {
-        await tx.user.update({
+        const updatedUser = await tx.user.update({
           where: {
             id: userId,
           },
           data: {
             image: profileImage,
             leaderboardShowcase,
+            profilePicture:
+              profilePicture === null
+                ? { delete: true }
+                : profilePicture
+                ? {
+                    delete: true,
+                    upsert: {
+                      where: { id: profilePicture.id },
+                      update: {
+                        ...profilePicture,
+                        userId,
+                      },
+                      create: {
+                        ...profilePicture,
+                        userId,
+                      },
+                    },
+                  }
+                : undefined,
           },
         });
 
@@ -170,6 +190,18 @@ export const updateUserProfile = async ({
         if (leaderboardShowcase !== undefined) {
           await updateLeaderboardRank({ userIds: userId });
         }
+
+        if (profilePicture && updatedUser.profilePictureId)
+          await ingestImage({
+            image: {
+              id: updatedUser.profilePictureId,
+              url: profilePicture.url,
+              type: profilePicture.type,
+              height: profilePicture.height,
+              width: profilePicture.width,
+            },
+            tx,
+          });
       }
 
       const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];
@@ -255,7 +287,7 @@ export const updateUserProfile = async ({
     },
     {
       // Wait double of time because it might be a long transaction
-      timeout: 15000,
+      timeout: 30000,
     }
   );
 

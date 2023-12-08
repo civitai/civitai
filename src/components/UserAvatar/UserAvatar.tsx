@@ -2,13 +2,17 @@ import {
   Avatar,
   AvatarProps,
   BadgeProps,
+  Center,
   Group,
   Indicator,
   IndicatorProps,
   MantineNumberSize,
   MantineSize,
+  MantineTheme,
+  Paper,
   Stack,
   Text,
+  useMantineTheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 
@@ -18,6 +22,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
+import { ImageGuard } from '../ImageGuard/ImageGuard';
+import { MediaHash } from '../ImageHash/ImageHash';
+import { IconUser } from '@tabler/icons-react';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -27,6 +35,39 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
     lg: { textSize: 'md', subTextSize: 'sm' },
     xl: { textSize: 'lg', subTextSize: 'sm' },
   };
+
+/**
+ * Gets explicit avatar size in pixels
+ */
+const getRawAvatarSize = (size: MantineNumberSize) => {
+  if (typeof size === 'number') return size;
+
+  // Based off Mantine avatar sizes
+  switch (size) {
+    case 'xs':
+      return 16;
+    case 'sm':
+      return 26;
+    case 'md':
+      return 38;
+    case 'lg':
+      return 56;
+    case 'xl':
+      return 84;
+    default:
+      return 96;
+  }
+};
+
+/**
+ * Gets explicit avatar size in pixels
+ */
+const getRawAvatarRadius = (radius: MantineNumberSize, theme: MantineTheme) => {
+  if (typeof radius === 'number') return radius;
+  if (radius === 'xl') return '50%';
+
+  return theme.radius[radius];
+};
 
 export function UserAvatar({
   user,
@@ -47,6 +88,7 @@ export function UserAvatar({
   indicatorProps,
 }: Props) {
   const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
 
   const { data: fallbackUser } = trpc.user.getById.useQuery(
     { id: userId as number },
@@ -62,7 +104,10 @@ export function UserAvatar({
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
 
-  const avatar = (
+  const imageSize = getRawAvatarSize(avatarSize ?? size);
+  const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
+
+  return (
     <Group align="center" spacing={spacing} noWrap>
       {includeAvatar && (
         <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
@@ -74,30 +119,93 @@ export function UserAvatar({
             disabled={!indicatorProps}
             withBorder
           >
-            <Avatar
-              src={
-                avatarUser.image && !userDeleted
-                  ? getEdgeUrl(avatarUser.image, {
-                      width: typeof avatarSize === 'number' ? avatarSize : 96,
-                      anim: currentUser
-                        ? !currentUser.autoplayGifs
-                          ? false
-                          : undefined
-                        : undefined,
-                    })
-                  : undefined
-              }
-              alt={
-                avatarUser.username && !userDeleted ? `${avatarUser.username}'s Avatar` : undefined
-              }
-              radius={radius || 'xl'}
-              size={avatarSize ?? size}
-              imageProps={{ loading: 'lazy' }}
-              sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
-              {...avatarProps}
-            >
-              {avatarUser.username && !userDeleted ? getInitials(avatarUser.username) : null}
-            </Avatar>
+            {avatarUser.profilePicture && !userDeleted ? (
+              <Paper
+                w={imageSize}
+                h={imageSize}
+                style={{
+                  overflow: 'hidden',
+                  position: 'relative',
+                  backgroundColor: 'rgba(0,0,0,0.31)',
+                  borderRadius: imageRadius,
+                }}
+              >
+                <ImageGuard
+                  images={[avatarUser.profilePicture]}
+                  render={(image) => (
+                    <ImageGuard.Content>
+                      {({ safe }) =>
+                        !image ? (
+                          <Text size={textSize}>
+                            {avatarUser.username ? (
+                              getInitials(avatarUser.username)
+                            ) : (
+                              <IconUser size={imageSize} />
+                            )}
+                          </Text>
+                        ) : (
+                          <Center h="100%">
+                            <ImageGuard.ToggleImageButton position="static" />
+                            {safe ? (
+                              <EdgeMedia
+                                src={image.url}
+                                width="original"
+                                name={image.name ?? image.id.toString()}
+                                alt={
+                                  avatarUser.username && !userDeleted
+                                    ? `${avatarUser.username}'s Avatar`
+                                    : undefined
+                                }
+                                type={image.type}
+                                loading="lazy"
+                                anim={
+                                  currentUser
+                                    ? !currentUser.autoplayGifs
+                                      ? false
+                                      : undefined
+                                    : undefined
+                                }
+                                wrapperProps={{ style: { width: '100%', height: '100%' } }}
+                                contain
+                              />
+                            ) : (
+                              <MediaHash {...image} style={{ borderRadius: imageRadius }} />
+                            )}
+                          </Center>
+                        )
+                      }
+                    </ImageGuard.Content>
+                  )}
+                />
+              </Paper>
+            ) : (
+              <Avatar
+                src={
+                  avatarUser.image && !userDeleted
+                    ? getEdgeUrl(avatarUser.image, {
+                        width: typeof avatarSize === 'number' ? avatarSize : 96,
+                        anim: currentUser
+                          ? !currentUser.autoplayGifs
+                            ? false
+                            : undefined
+                          : undefined,
+                      })
+                    : undefined
+                }
+                alt={
+                  avatarUser.username && !userDeleted
+                    ? `${avatarUser.username}'s Avatar`
+                    : undefined
+                }
+                radius={radius || 'xl'}
+                size={avatarSize ?? size}
+                imageProps={{ loading: 'lazy' }}
+                sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
+                {...avatarProps}
+              >
+                {avatarUser.username && !userDeleted ? getInitials(avatarUser.username) : null}
+              </Avatar>
+            )}
           </Indicator>
         </UserProfileLink>
       )}
@@ -122,9 +230,27 @@ export function UserAvatar({
       ) : null}
     </Group>
   );
-
-  return avatar;
 }
+
+type Props = {
+  user?: Partial<UserWithCosmetics> | null;
+  withUsername?: boolean;
+  withLink?: boolean;
+  avatarProps?: AvatarProps;
+  subText?: React.ReactNode;
+  subTextForce?: boolean;
+  size?: MantineSize;
+  spacing?: MantineNumberSize;
+  badge?: React.ReactElement<BadgeProps> | null;
+  linkToProfile?: boolean;
+  textSize?: MantineSize;
+  subTextSize?: MantineSize;
+  includeAvatar?: boolean;
+  radius?: MantineNumberSize;
+  avatarSize?: MantineSize | number;
+  userId?: number;
+  indicatorProps?: Omit<IndicatorProps, 'children'>;
+};
 
 const UserProfileLink = ({
   children,
@@ -145,33 +271,4 @@ const UserProfileLink = ({
       {children}
     </NextLink>
   );
-
-  // return (
-  //   <Link href={href} passHref>
-  //     <Anchor
-  //       variant="text"
-  //       onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-  //     ></Anchor>
-  //   </Link>
-  // );
-};
-
-type Props = {
-  user?: Partial<UserWithCosmetics> | null;
-  withUsername?: boolean;
-  withLink?: boolean;
-  avatarProps?: AvatarProps;
-  subText?: React.ReactNode;
-  subTextForce?: boolean;
-  size?: MantineSize;
-  spacing?: MantineNumberSize;
-  badge?: React.ReactElement<BadgeProps> | null;
-  linkToProfile?: boolean;
-  textSize?: MantineSize;
-  subTextSize?: MantineSize;
-  includeAvatar?: boolean;
-  radius?: MantineSize;
-  avatarSize?: MantineSize | number;
-  userId?: number;
-  indicatorProps?: Omit<IndicatorProps, 'children'>;
 };

@@ -20,6 +20,7 @@ import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import { ImageMetadata } from '~/server/schema/media.schema';
+import { ImageModel } from '../selectors/image.selector';
 
 const READ_BATCH_SIZE = 250; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -144,6 +145,7 @@ type BountyForSearchIndex = {
     image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    profilePicture?: ImageModel | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;

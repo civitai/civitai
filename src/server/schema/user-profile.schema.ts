@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '@prisma/client';
+import { profilePictureSchema } from './user.schema';
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;
 export const getUserProfileSchema = z.object({
@@ -53,6 +54,7 @@ export const userProfileUpdateSchema = z.object({
   bio: z.string().nullish(),
   location: z.string().max(100).nullish(),
   profileImage: z.string().nullish(),
+  profilePicture: profilePictureSchema.nullish(),
   coverImage: imageSchema.nullish(),
   socialLinks: z
     .array(
