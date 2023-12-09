@@ -179,6 +179,11 @@ export default defineNextConfig(withAxiom({
         source: '/holiday2023',
         destination: '/events/holiday2023',
         permanent: true,
+      },
+      {
+        source: '/blocked-by-octoml',
+        destination: '/articles/3307',
+        permanent: true,
       }
     ];
   },

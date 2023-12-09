@@ -7,6 +7,7 @@ export namespace Generation {
     maxStrength: number;
   }>;
 
+  export type ImageStatus = 'Success' | 'Started' | 'Error' | 'RemovedForSafety';
   export type Image = {
     id: number;
     hash: string;
@@ -14,7 +15,8 @@ export namespace Generation {
     available: boolean;
     requestId: number;
     seed?: number; // TODO.generation - check if this prop will be set
-    status?: 'Success' | 'Started' | 'Error';
+    status?: ImageStatus;
+    removedForSafety: boolean;
   };
 
   export type Data = {
