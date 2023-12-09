@@ -9,7 +9,12 @@ import {
   TagTarget,
   TagType,
 } from '@prisma/client';
-import { auditMetaData, includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import {
+  auditMetaData,
+  getTagsFromPrompt,
+  includesInappropriate,
+  includesPoi,
+} from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
@@ -126,10 +131,19 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   }
 
   // Add prompt based tags
-  const imageMeta = image.meta as Prisma.JsonObject | undefined;
-  if (imageMeta?.prompt) {
-    const realPersonName = includesPoi(imageMeta.prompt as string);
-    if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
+  const assessPrompt = source === TagSource.Rekognition;
+  if (assessPrompt) {
+    const imageMeta = image.meta as Prisma.JsonObject | undefined;
+    const prompt = imageMeta?.prompt as string | undefined;
+    if (prompt) {
+      // Detect real person in prompt
+      const realPersonName = includesPoi(prompt);
+      if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
+
+      // Detect tags from prompt
+      const promptTags = getTagsFromPrompt(prompt);
+      if (promptTags) incomingTags.push(...promptTags.map((tag) => ({ tag, confidence: 70 })));
+    }
   }
 
   // Handle underscores coming out of WD14

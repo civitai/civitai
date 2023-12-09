@@ -15,6 +15,7 @@ const tagCombos: ComputedTagCombo[] = [
       'female pubic hair',
       'male pubic hair',
       'colored skin + clothes lift',
+      'anus',
     ],
     sources: [TagSource.WD14],
   },
@@ -158,7 +159,7 @@ const tagCombos: ComputedTagCombo[] = [
   },
   {
     tag: 'barechested male',
-    qualifiers: ['topless male', 'bare pectorals'],
+    qualifiers: ['topless male', 'bare pectorals', 'pectorals + nipples'],
     sources: [TagSource.WD14],
   },
   {

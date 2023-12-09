@@ -5,6 +5,7 @@ import blocked from './lists/blocklist.json';
 import nsfwWords from './lists/words-nsfw.json';
 import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
+import promptTags from './lists/prompt-tags.json';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -255,7 +256,19 @@ const words = {
     }),
   },
   poi: checkable(poiWords),
+  tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
+
+export function getTagsFromPrompt(prompt: string | undefined) {
+  if (!prompt) return false;
+
+  const tags = new Set<string>();
+  for (const lookup of words.tags) {
+    if (lookup.words.inPrompt(prompt)) tags.add(lookup.tag);
+  }
+
+  return [...tags];
+}
 
 export function includesNsfw(prompt: string | undefined) {
   if (!prompt) return false;
