@@ -115,8 +115,8 @@ export const getFormData = (type: RunType, data: Partial<GenerateFormModel>) => 
 
 // TODO - move these somewhere that makes more sense
 export const getBaseModelSetKey = (baseModel: string) =>
-  Object.entries(baseModelSets).find(([, baseModels]) =>
-    baseModels.includes(baseModel as any)
+  Object.entries(baseModelSets).find(
+    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as any)
   )?.[0] as BaseModelSetType | undefined;
 
 export const getBaseModelset = (baseModel: string) =>

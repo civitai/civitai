@@ -429,6 +429,7 @@ export const createGenerationRequest = async ({
 
   const generationRequest = {
     userId,
+    nsfw,
     job: {
       model: `@civitai/${checkpoint.id}`,
       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
