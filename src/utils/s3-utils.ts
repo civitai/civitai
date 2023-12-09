@@ -94,10 +94,15 @@ export function deleteObject(bucket: string, key: string, s3: S3Client | null = 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
-export async function getMultipartPutUrl(key: string, size: number, s3: S3Client | null = null) {
+export async function getMultipartPutUrl(
+  key: string,
+  size: number,
+  s3: S3Client | null = null,
+  bucket: string | null
+) {
   if (!s3) s3 = getS3Client();
 
-  const bucket = await getBucket();
+  if (!bucket) bucket = await getBucket();
   const { UploadId } = await s3.send(
     new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })
   );

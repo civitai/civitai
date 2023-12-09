@@ -28,6 +28,7 @@ import { useRouter } from 'next/router';
 import { getLoginLink } from '~/utils/login-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEffect } from 'react';
+import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 
 const reports = [
   {
@@ -114,7 +115,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
     // #region [temp for gallery image reports]
     const router = useRouter();
     const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
-    const reviewId = router.query.reviewId ? Number(router.query.reviewId) : undefined;
     // #endregion
 
     //TODO - redirect if no user is authenticated
@@ -132,6 +132,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
         `Report ${entityType}`,
       [reason, entityType]
     );
+    const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
 
     const queryUtils = trpc.useContext();
     const { data, isInitialLoading } = trpc.model.getModelReportDetails.useQuery(
@@ -173,48 +174,40 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               break;
             case ReportEntity.Comment:
               // Nothing changes here so nothing to invalidate...
-              // await queryUtils.comment.getById.invalidate({ id: variables.id });
-              // await queryUtils.comment.getAll.invalidate();
-              // await queryUtils.comment.getCommentsById.invalidate();
               break;
             case ReportEntity.CommentV2:
               break;
             case ReportEntity.Image:
               if (variables.reason === ReportReason.NSFW) {
-                // await queryUtils.image.getGalleryImagesInfinite.invalidate();
-                // await queryUtils.image.getGalleryImages.invalidate();
-                await queryUtils.tag.getVotableTags.invalidate({ id: variables.id, type: 'image' });
+                const { tags } = variables.details;
+                if (tags) handleVote({ tags, vote: 1 });
               }
-              // model invalidate
-              if (modelId) {
-                await queryUtils.model.getAll.invalidate();
-              }
+              // // model invalidate
+              // if (modelId) {
+              //   await queryUtils.model.getAll.invalidate();
+              // }
               break;
             case ReportEntity.Article:
-              queryUtils.article.getById.setData(
-                { id: variables.id },
-                produce((old) => {
-                  if (old) {
-                    if (variables.reason === ReportReason.NSFW) {
-                      old.nsfw = true;
-                    }
-                  }
-                })
-              );
+              if (variables.reason === ReportReason.NSFW) {
+                queryUtils.article.getById.setData(
+                  { id: variables.id },
+                  produce((old) => {
+                    if (old) old.nsfw = true;
+                  })
+                );
+              }
               await queryUtils.article.getInfinite.invalidate();
               await queryUtils.article.getByCategory.invalidate();
               break;
             case ReportEntity.Bounty:
-              queryUtils.bounty.getById.setData(
-                { id: variables.id },
-                produce((old) => {
-                  if (old) {
-                    if (variables.reason === ReportReason.NSFW) {
-                      old.nsfw = true;
-                    }
-                  }
-                })
-              );
+              if (variables.reason === ReportReason.NSFW) {
+                queryUtils.bounty.getById.setData(
+                  { id: variables.id },
+                  produce((old) => {
+                    if (old) old.nsfw = true;
+                  })
+                );
+              }
               await queryUtils.bounty.getInfinite.invalidate();
               break;
             default:

@@ -13,8 +13,6 @@ import { booleanString, numericString, numericStringArray } from '~/utils/zod-he
 import { isEqual } from 'lodash-es';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesImages } from '../Search/search.utils';
-import { ImageGetInfinite } from '~/types/router';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -40,7 +38,7 @@ export const imagesQueryParamSchema = z
       z.array(z.nativeEnum(MediaType))
     ),
     withMeta: booleanString(),
-    section: z.enum(['images', 'reactions']),
+    section: z.enum(['images', 'reactions', 'draft']),
     hidden: z.coerce.boolean(),
     followed: z.coerce.boolean(),
   })

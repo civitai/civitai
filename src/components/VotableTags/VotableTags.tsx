@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
+import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useUpdateHiddenPreferences } from '~/hooks/hidden-preferences';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
@@ -29,8 +30,6 @@ export function VotableTags({
   collapsible = false,
   ...props
 }: GalleryTagProps) {
-  const queryUtils = trpc.useContext();
-  const setVote = useVotableTagStore((state) => state.setVote);
   const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
@@ -38,51 +37,7 @@ export function VotableTags({
   canAdd = canAdd && !initialTags;
   canAddModerated = canAddModerated && !initialTags;
 
-  const updateHiddenPreferences = useUpdateHiddenPreferences();
-
-  const handleTagMutation = (changedTags: string[], vote: number, tagType: TagType) => {
-    const preppedTags = changedTags.map(
-      (tag) =>
-        ({
-          ...defaultVotable,
-          name: tag,
-          type: tagType,
-          vote,
-        } as VotableTagModel)
-    );
-
-    queryUtils.tag.getVotableTags.setData(
-      { id, type },
-      produce((old: VotableTagModel[] | undefined) => {
-        if (!old) return;
-        for (const tag of preppedTags) {
-          const existingIndex = old.findIndex((x) => x.name === tag.name);
-          if (existingIndex !== -1) {
-            const existing = old[existingIndex];
-            if (existing.id === 0 && vote <= 0) old.splice(existingIndex, 1);
-            else {
-              setVote({ entityId: id, entityType: type, name: tag.name, vote });
-              existing.vote = vote;
-            }
-          } else {
-            old.push(tag);
-            setVote({ entityId: id, entityType: type, name: tag.name, vote });
-          }
-        }
-      })
-    );
-  };
-
-  const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation();
-  const { mutate: removeVotes } = trpc.tag.removeTagVotes.useMutation();
-
-  const handleVote = ({ tag, tagType, vote }: { tag: string; tagType?: TagType; vote: number }) => {
-    tagType ??= 'UserGenerated';
-    if (vote == 0) removeVotes({ tags: [tag], type, id });
-    else addVotes({ tags: [tag], vote, type, id });
-    handleTagMutation([tag], vote, tagType);
-    updateHiddenPreferences({ kind: type, data: [{ id }], hidden: vote > 0 });
-  };
+  const handleVote = useVoteForTags({ entityType: type, entityId: id });
 
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
@@ -117,7 +72,7 @@ export function VotableTags({
         {canAdd && (
           <VotableTagAdd
             addTag={(tag) => {
-              handleVote({ tag, vote: 1 });
+              handleVote({ tags: [tag], vote: 1 });
             }}
           />
         )}
@@ -136,7 +91,7 @@ export function VotableTags({
             nsfw={tag.nsfw}
             score={tag.score}
             onChange={({ name, vote }) => {
-              handleVote({ tag: name, vote });
+              handleVote({ tags: [name], vote });
             }}
           />
         ))}
@@ -147,7 +102,7 @@ export function VotableTags({
                 tags={tags}
                 addTag={(tag) => {
                   const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
-                  handleVote({ tag, vote, tagType: 'Moderation' });
+                  handleVote({ tags: [tag], vote, tagType: 'Moderation' });
                 }}
               />
             )}

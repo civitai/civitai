@@ -10,7 +10,6 @@ import {
 } from '~/server/schema/report.schema';
 import { addTagVotes } from '~/server/services/tag.service';
 import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -83,30 +82,32 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.BountyEntry]: 'bountyEntry',
 };
 
+const reportTypeConnectionMap = {
+  [ReportEntity.User]: 'userId',
+  [ReportEntity.Model]: 'modelId',
+  [ReportEntity.Comment]: 'commentId',
+  [ReportEntity.CommentV2]: 'commentId',
+  [ReportEntity.Image]: 'imageId',
+  [ReportEntity.ResourceReview]: 'reviewId',
+  [ReportEntity.Article]: 'articleId',
+  [ReportEntity.Post]: 'postId',
+  [ReportEntity.Collection]: 'collectionId',
+  [ReportEntity.Bounty]: 'bountyId',
+  [ReportEntity.BountyEntry]: 'bountyEntryId',
+} as const;
+
+const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
+  [ReportReason.NSFW]: ReportStatus.Actioned,
+};
+
+type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
 export const createReport = async ({
   userId,
   type,
   id,
   isModerator,
   ...data
-}: CreateReportInput & { userId: number; isModerator?: boolean }) => {
-  let isReportingLocked = false;
-  if (type === ReportEntity.Image) {
-    const image = await dbRead.imageResource.findFirst({
-      where: { imageId: id, modelVersion: { model: { underAttack: true } } },
-      select: { imageId: true },
-    });
-    isReportingLocked = !!image;
-  } else if (type === ReportEntity.Model) {
-    const model = await dbRead.model.findFirst({
-      where: { id, underAttack: true },
-      select: { id: true },
-    });
-    isReportingLocked = !!model;
-  }
-
-  if (isReportingLocked) throwBadRequestError('Reporting is locked for this model.');
-
+}: CreateReportProps) => {
   // Add report type to details for notifications
   if (!data.details) data.details = {};
   (data.details as MixedObject).reportType = reportTypeNameMap[type];
@@ -122,19 +123,27 @@ export const createReport = async ({
       : null;
   if (validReport) return validReport;
 
-  const report: Prisma.ReportCreateNestedOneWithoutModelInput = {
-    create: {
-      ...data,
-      userId,
-      status: data.reason === ReportReason.NSFW ? ReportStatus.Actioned : ReportStatus.Pending,
-    },
-  };
+  await dbWrite.$transaction(async (tx) => {
+    // create the report
+    await tx.report.create({
+      data: {
+        ...data,
+        userId,
+        status: statusOverrides[data.reason] ?? ReportStatus.Pending,
+        [type]: {
+          create: {
+            [reportTypeConnectionMap[type]]: id,
+          },
+        },
+      },
+    });
 
-  return dbWrite.$transaction(async (tx) => {
-    switch (type) {
-      case ReportEntity.Model:
-        if (data.reason === ReportReason.NSFW)
-          await addTagVotes({
+    // handle NSFW
+    if (data.reason === ReportReason.NSFW)
+      switch (type) {
+        case ReportEntity.Model:
+        case ReportEntity.Image:
+          return await addTagVotes({
             userId,
             type,
             id,
@@ -142,123 +151,28 @@ export const createReport = async ({
             isModerator,
             vote: 1,
           });
+        case ReportEntity.Collection:
+          return await tx.collection.update({ where: { id }, data: { nsfw: true } });
+        case ReportEntity.Article:
+          return await tx.article.update({ where: { id }, data: { nsfw: true } });
+        case ReportEntity.Post:
+          return await tx.post.update({ where: { id }, data: { nsfw: true } });
+      }
 
-        await tx.modelReport.create({
-          data: {
-            model: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Comment:
-        await tx.commentReport.create({
-          data: {
-            comment: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.CommentV2:
-        await tx.commentV2Report.create({
-          data: {
-            commentV2: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Image:
-        if (data.reason === ReportReason.NSFW)
-          addTagVotes({ userId, type, id, tags: data.details.tags ?? [], isModerator, vote: 1 });
-
-        await tx.imageReport.create({
-          data: {
-            image: { connect: { id } },
-            report,
-          },
-        });
-        if (data.reason === ReportReason.TOSViolation) {
-          await tx.imageEngagement.create({
+    // handle TOS violations
+    if (data.reason === ReportReason.TOSViolation)
+      switch (type) {
+        case ReportEntity.Image:
+          await dbWrite.imageEngagement.create({
             data: {
               imageId: id,
               userId,
               type: ImageEngagementType.Hide,
             },
           });
-          await refreshHiddenImagesForUser({ userId });
-        }
-
-        break;
-      case ReportEntity.ResourceReview:
-        await tx.resourceReviewReport.create({
-          data: {
-            resourceReview: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Article:
-        if (data.reason === ReportReason.NSFW)
-          await tx.article.update({ where: { id }, data: { nsfw: true } });
-
-        await tx.articleReport.create({
-          data: {
-            article: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Post:
-        if (data.reason === ReportReason.NSFW)
-          await tx.post.update({ where: { id }, data: { nsfw: true } });
-
-        await tx.postReport.create({
-          data: {
-            post: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.User:
-        await tx.userReport.create({
-          data: {
-            user: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Collection:
-        if (data.reason === ReportReason.NSFW)
-          await tx.collection.update({ where: { id }, data: { nsfw: true } });
-
-        await tx.collectionReport.create({
-          data: {
-            collection: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.Bounty:
-        if (data.reason === ReportReason.NSFW)
-          await tx.bounty.update({ where: { id }, data: { nsfw: true } });
-
-        await tx.bountyReport.create({
-          data: {
-            bounty: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      case ReportEntity.BountyEntry:
-        await tx.bountyEntryReport.create({
-          data: {
-            bountyEntry: { connect: { id } },
-            report,
-          },
-        });
-        break;
-      default:
-        throw new Error('unhandled report type');
-    }
+          refreshHiddenImagesForUser({ userId });
+          break;
+      }
   });
 };
 

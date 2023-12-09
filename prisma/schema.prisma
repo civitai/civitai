@@ -2291,6 +2291,19 @@ model BountyEntryMetric {
   @@id([bountyEntryId, timeframe])
 }
 
+model CsamReport {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  createdAt       DateTime  @default(now())
+  reportedById    Int
+  reportSentAt    DateTime?
+  archivedAt      DateTime?
+  reportId        Int?
+  details         Json      @default("{}")
+  images          Json      @default("[]")
+  modelVersionIds Int[]     @default([])
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

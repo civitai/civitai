@@ -97,6 +97,12 @@ export const serverSchema = z.object({
   SIGNALS_ENDPOINT: z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
+  CSAM_CYBERTIP_URL: z.string().optional(),
+  CSAM_UPLOAD_KEY: z.string().optional(),
+  CSAM_UPLOAD_SECRET: z.string().optional(),
+  CSAM_BUCKET_NAME: z.string().optional(),
+  CSAM_UPLOAD_REGION: z.string().optional(),
+  CSAM_UPLOAD_ENDPOINT: z.string().optional(),
 });
 
 /**
