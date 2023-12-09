@@ -107,14 +107,16 @@ export function GeneratedImage({
           /> */}
           <Card
             p={0}
-            sx={{
+            sx={(theme) => ({
               position: 'relative',
               boxShadow:
                 '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
               cursor: image.available ? 'pointer' : undefined,
               width: '100%',
               height: '100%',
-            }}
+              background:
+                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            })}
           >
             <Box onClick={handleImageClick}>
               <Box
@@ -127,8 +129,6 @@ export function GeneratedImage({
                   height: '100%',
                   boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
                   borderRadius: theme.radius.sm,
-                  background:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
                 })}
               />
               {!image.available ? (
