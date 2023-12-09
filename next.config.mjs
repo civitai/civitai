@@ -184,6 +184,16 @@ export default defineNextConfig(withAxiom({
         source: '/blocked-by-octoml',
         destination: '/articles/3307',
         permanent: true,
+      },
+      {
+        source: '/wiki',
+        destination: 'https://wiki.civitai.com',
+        permanent: true,
+      },
+      {
+        source: '/education',
+        destination: 'https://education.civitai.com',
+        permanent: true,
       }
     ];
   },

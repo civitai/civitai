@@ -111,6 +111,12 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>
+          <Button component="a" href="/wiki" {...buttonProps} target="_blank">
+            Wiki
+          </Button>
+          <Button component="a" href="/education" {...buttonProps} target="_blank">
+            Education
+          </Button>
 
           <SocialLinks />
         </Group>

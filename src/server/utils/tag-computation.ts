@@ -97,6 +97,7 @@ const tagCombos: ComputedTagCombo[] = [
       'group sex',
       'clothed sex',
       'tentacle sex',
+      'restrained + tentacles + blush',
       'gangbang',
       'handjob',
       'double handjob',
