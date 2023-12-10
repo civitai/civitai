@@ -176,9 +176,9 @@ export const constants = {
   imageGeneration: {
     drawerZIndex: 301,
     requestBlocking: {
-      warned: 5,
+      warned: 4,
       notified: 8,
-      muted: 16,
+      muted: 12,
     },
     maxConcurrentRequests: 10,
   },
