@@ -96,6 +96,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const form = useForm<GenerateFormModel>({
     resolver: zodResolver(generateFormSchema),
+    reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     shouldUnregister: false,
     defaultValues,
@@ -199,8 +200,10 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
+    console.log(promptError);
     if (promptError?.type === 'custom') {
       const status = blockedRequest.status();
+      console.log(status);
       if (status === 'notified' || status === 'muted') {
         const isBlocked = await reportProhibitedRequest({ prompt });
         if (isBlocked) currentUser?.refresh();
