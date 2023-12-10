@@ -96,10 +96,10 @@ export function QueueItem({ request }: Props) {
   const baseModelSetKey = getBaseModelSetKey(details.baseModel ?? 'SD1');
 
   const removedForSafety = request.images?.some((x) => x.removedForSafety);
-  const fullCoverageModels = baseModelSetKey
+  let fullCoverageModels = baseModelSetKey
     ? fullCoverageModelsDictionary[baseModelSetKey]
     : undefined;
-  // console.log({ removedForSafety, baseModelSetKey, fullCoverageModels });
+  if (!request.alternativesAvailable) fullCoverageModels = undefined;
 
   // const boost = (request: Generation.Request) => {
   //   console.log('boost it', request);

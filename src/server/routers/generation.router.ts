@@ -15,7 +15,7 @@ import {
   deleteGenerationRequest,
   getGenerationRequests,
   getGenerationResources,
-  getGenerationStatusMessage,
+  getGenerationStatus,
 } from '~/server/services/generation/generation.service';
 import {
   guardedProcedure,
@@ -60,7 +60,12 @@ export const generationRouter = router({
     .input(checkResourcesCoverageSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ input }) => checkResourcesCoverage(input)),
-  getStatusMessage: publicProcedure
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(() => getGenerationStatusMessage()),
+  getStatus: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(() => getGenerationStatus()),
+  // TODO: Remove temp backwards compatibility
+  getStatusMessage: publicProcedure.use(edgeCacheIt({ ttl: CacheTTL.sm })).query(async () => {
+    const { message } = await getGenerationStatus();
+    return message;
+  }),
 });

@@ -468,7 +468,6 @@ export function GenerateFormView({
                 } more jobs`}
           </Text>
         </Stack>
-        <GenerationStatusMessage />
         {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
         {isSDXL && (
           <DismissibleAlert
@@ -661,24 +660,6 @@ const getAspectRatioControls = (baseModel?: string) => {
     ),
     value: `${index}`,
   }));
-};
-
-const GenerationStatusMessage = () => {
-  const { data: status, isLoading } = trpc.generation.getStatusMessage.useQuery(undefined, {
-    cacheTime: 0,
-  });
-  if (isLoading || !status) return null;
-
-  return (
-    <AlertWithIcon
-      color="yellow"
-      title="Image Generation Status Alert"
-      icon={<IconAlertTriangle />}
-      iconColor="yellow"
-    >
-      {status}
-    </AlertWithIcon>
-  );
 };
 
 const clipSkipMarks = Array(10)
