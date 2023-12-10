@@ -364,6 +364,7 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+    nsfw: false,
     model: {
       id: 128713,
       name: '8',

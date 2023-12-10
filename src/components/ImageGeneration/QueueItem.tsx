@@ -201,7 +201,7 @@ export function QueueItem({ request }: Props) {
               <Text>
                 <strong>Blocked by OctoML?</strong>{' '}
                 {`We're currently adding new providers. Select an
-              option below to swap to one of the current full-coverage models.`}
+              option below to swap to one of the current Full Coverage models.`}
               </Text>
               <Group spacing="xs">
                 {fullCoverageModels.map(({ id, name }) => (

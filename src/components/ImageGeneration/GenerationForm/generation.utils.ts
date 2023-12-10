@@ -13,6 +13,7 @@ import { uniqBy } from 'lodash';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
+import { fullCoverageModelsDictionary } from '~/server/common/constants';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -29,9 +30,16 @@ export const useDerivedGenerationState = () => {
     calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
   );
 
-  const baseModel = useGenerationFormStore(({ model }) =>
-    model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined
-  );
+  const { baseModel, isFullCoverageModel } = useGenerationFormStore(({ model }) => {
+    const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
+    const isFullCoverageModel = baseModel
+      ? fullCoverageModelsDictionary[baseModel]?.some(({ id }) => id === model?.id)
+      : false;
+    return {
+      baseModel,
+      isFullCoverageModel,
+    };
+  });
 
   const hasResources = useGenerationFormStore(
     ({ resources = [], vae }) => [...resources, vae].filter(isDefined).length > 0
@@ -68,6 +76,7 @@ export const useDerivedGenerationState = () => {
     samplerCfgOffset,
     isSDXL: baseModel === 'SDXL',
     isLCM,
+    isFullCoverageModel,
   };
 };
 

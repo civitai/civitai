@@ -14,7 +14,11 @@ export default AuthedEndpoint(
       switch (req.method) {
         case 'POST':
           const createInput = createGenerationRequestSchema.parse(req.body);
-          const createResult = await createGenerationRequest({ ...createInput, userId: user.id });
+          const createResult = await createGenerationRequest({
+            ...createInput,
+            userId: user.id,
+            isModerator: user.isModerator,
+          });
           return res.status(200).json(createResult);
         case 'GET':
           const queryInput = getGenerationRequestsSchema.parse(req.query);

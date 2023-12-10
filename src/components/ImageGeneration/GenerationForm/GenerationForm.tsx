@@ -89,7 +89,8 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { nsfw, quantity } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
-    nsfw: nsfw ?? currentUser?.showNsfw,
+    // nsfw: nsfw ?? currentUser?.showNsfw,
+    nsfw: nsfw ?? false,
     quantity: quantity ?? generation.defaultValues.quantity,
   };
 
@@ -123,6 +124,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     samplerCfgOffset,
     isSDXL,
     isLCM,
+    isFullCoverageModel,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -421,7 +423,15 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   onKeyDown={promptKeyHandler}
                   autosize
                 />
-                {!isSDXL && <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />}
+                <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+                <Text size="xs" color="dimmed" mt={-16}>
+                  {nsfw &&
+                    isFullCoverageModel &&
+                    'You are using a model with Full Coverage, your generation times may be longer than average.'}
+                  {nsfw && !isFullCoverageModel && 'Your generation may be censored by OctoML.'}
+                  {!nsfw &&
+                    'Your generation may still be blocked by OctoML due to flaws in their filter.'}
+                </Text>
               </Stack>
             </Card>
             <Card {...sharedCardProps} style={{ overflow: 'visible' }}>
