@@ -558,7 +558,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
         </ScrollArea>
         <Stack spacing={4} p="md">
-          {!reviewed ? (
+          {status.available && !reviewed ? (
             <Alert color="yellow" title="Image Generation Terms">
               <Text size="xs">
                 By using the image generator you confirm that you have read and agree to our{' '}
@@ -652,7 +652,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
               <Text size="xs" color="dimmed">
                 {reachedRequestLimit
                   ? 'You have reached the request limit. Please wait until your current requests are finished.'
-                  : `!You can queue ${
+                  : `You can queue ${
                       constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                     } more jobs`}
               </Text>
@@ -669,7 +669,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </AlertWithIcon>
           )}
           {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {isSDXL && (
+          {status.available && isSDXL && (
             <DismissibleAlert
               id="sdxl-free-preview"
               title="Free SDXL Generations!"
