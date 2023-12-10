@@ -7,6 +7,8 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';
+import { useInView } from '~/hooks/useInView';
+import { useEffect } from 'react';
 
 const linkQuery: Record<string, string> = {
   overall: '/models',
@@ -35,10 +37,14 @@ export function CreatorCard({
   data: LeaderboardGetModel;
   index: number;
 }) {
+  const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
 
-  const { position: queryPosition, id: leaderboardId } = router.query;
+  const { position: queryPosition, id: leaderboardId } = router.query as {
+    position: string;
+    id: string;
+  };
 
   const isTop3 = position <= 3;
   const iconColor = [
@@ -50,56 +56,63 @@ export function CreatorCard({
   let link = `/user/${user.username}`;
   if (leaderboardId && typeof leaderboardId === 'string') link += linkQuery[leaderboardId] ?? '';
 
+  useEffect(() => {
+    if (position === Number(queryPosition))
+      document.getElementById(queryPosition)?.scrollIntoView({ block: 'center', inline: 'center' });
+  }, [queryPosition]);
+
   return (
-    <div className={classes.wrapper}>
-      <NextLink href={link}>
-        <Paper
-          className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
-          p="sm"
-          radius="md"
-          shadow="xs"
-          withBorder
-        >
-          <ContainerGrid align="center">
-            <ContainerGrid.Col span={2}>
-              <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
-                {isTop3 && (
-                  <IconCrown
-                    size={64}
-                    color={iconColor}
-                    className={classes.crown}
-                    style={{ fill: iconColor }}
-                  />
-                )}
-                <Text size="lg" weight="bold">
-                  {position}
-                </Text>
-                {delta && delta.position !== 0 && (
-                  <Text
-                    size="xs"
-                    weight="bold"
-                    color={delta.position > 0 ? 'red' : 'green'}
-                    className={classes.delta}
-                  >
-                    {delta.position > 0 ? (
-                      <IconChevronDown strokeWidth={4} size={14} />
-                    ) : (
-                      <IconChevronUp strokeWidth={4} size={14} />
-                    )}
-                    {Math.abs(delta.position)}
+    <div className={classes.wrapper} ref={ref} id={position.toString()}>
+      {inView && (
+        <NextLink href={link}>
+          <Paper
+            className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
+            p="sm"
+            radius="md"
+            shadow="xs"
+            withBorder
+          >
+            <ContainerGrid align="center">
+              <ContainerGrid.Col span={2}>
+                <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
+                  {isTop3 && (
+                    <IconCrown
+                      size={64}
+                      color={iconColor}
+                      className={classes.crown}
+                      style={{ fill: iconColor }}
+                    />
+                  )}
+                  <Text size="lg" weight="bold">
+                    {position}
                   </Text>
-                )}
-              </Stack>
-            </ContainerGrid.Col>
-            <ContainerGrid.Col span={10}>
-              <Stack spacing={8}>
-                <UserAvatar user={user} textSize="lg" size="md" withUsername />
-                <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
-              </Stack>
-            </ContainerGrid.Col>
-          </ContainerGrid>
-        </Paper>
-      </NextLink>
+                  {delta && delta.position !== 0 && (
+                    <Text
+                      size="xs"
+                      weight="bold"
+                      color={delta.position > 0 ? 'red' : 'green'}
+                      className={classes.delta}
+                    >
+                      {delta.position > 0 ? (
+                        <IconChevronDown strokeWidth={4} size={14} />
+                      ) : (
+                        <IconChevronUp strokeWidth={4} size={14} />
+                      )}
+                      {Math.abs(delta.position)}
+                    </Text>
+                  )}
+                </Stack>
+              </ContainerGrid.Col>
+              <ContainerGrid.Col span={10}>
+                <Stack spacing={8}>
+                  <UserAvatar user={user} textSize="lg" size="md" withUsername />
+                  <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
+                </Stack>
+              </ContainerGrid.Col>
+            </ContainerGrid>
+          </Paper>
+        </NextLink>
+      )}
     </div>
   );
 }
