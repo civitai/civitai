@@ -101,6 +101,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   });
 
   const status = useGenerationStatus();
+  if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
 
   useEffect(() => {
     form.reset({

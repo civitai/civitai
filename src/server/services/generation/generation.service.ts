@@ -365,9 +365,15 @@ async function checkGenerationAvailability(resources: CreateGenerationRequestInp
 
 export const createGenerationRequest = async ({
   userId,
+  isModerator,
   resources,
   params: { nsfw, negativePrompt, ...params },
-}: CreateGenerationRequestInput & { userId: number }) => {
+}: CreateGenerationRequestInput & { userId: number; isModerator?: boolean }) => {
+  // Handle generator disabled
+  const status = await getGenerationStatus();
+  if (!status.available && !isModerator)
+    throw throwBadRequestError('Generation is currently disabled');
+
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
