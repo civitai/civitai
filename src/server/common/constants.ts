@@ -253,16 +253,6 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
   SDXLDistilled: ['SDXL Distilled'],
 };
-export const fullCoverageModelsDictionary: Partial<
-  Record<BaseModelSetType, { id: number; name: string }[]>
-> = {
-  SDXL: [{ id: 240840, name: 'SDXL' }],
-  SD1: [
-    { id: 119057, name: 'Anime' },
-    { id: 128713, name: 'Semi-Real' },
-    { id: 143906, name: 'Photo-Real' },
-  ],
-};
 
 type LicenseDetails = {
   url: string;

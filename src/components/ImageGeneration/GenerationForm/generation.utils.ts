@@ -11,9 +11,8 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
-import { fullCoverageModelsDictionary } from '~/server/common/constants';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -26,20 +25,27 @@ export const useTempGenerateStore = create<{
 }>(() => ({}));
 
 export const useDerivedGenerationState = () => {
+  const status = useGenerationStatus();
   const totalCost = useGenerationFormStore(({ baseModel, aspectRatio, steps, quantity }) =>
     calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
   );
 
-  const { baseModel, isFullCoverageModel } = useGenerationFormStore(({ model }) => {
-    const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
-    const isFullCoverageModel = baseModel
-      ? fullCoverageModelsDictionary[baseModel]?.some(({ id }) => id === model?.id)
-      : false;
-    return {
-      baseModel,
-      isFullCoverageModel,
-    };
-  });
+  const { baseModel, isFullCoverageModel } = useGenerationFormStore(
+    useCallback(
+      ({ model }) => {
+        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
+        const isFullCoverageModel =
+          baseModel && status?.fullCoverageModels
+            ? status?.fullCoverageModels[baseModel]?.some(({ id }) => id === model?.id)
+            : false;
+        return {
+          baseModel,
+          isFullCoverageModel,
+        };
+      },
+      [status]
+    )
+  );
 
   const hasResources = useGenerationFormStore(
     ({ resources = [], vae }) => [...resources, vae].filter(isDefined).length > 0
@@ -82,12 +88,13 @@ export const useDerivedGenerationState = () => {
 
 export const useGenerationStatus = () => {
   const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
-    cacheTime: 0,
+    cacheTime: 60,
   });
 
   return {
     available: isLoading || status?.available,
     message: status?.message,
+    fullCoverageModels: status?.fullCoverageModels ?? {},
   };
 };
 

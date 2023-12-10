@@ -24,11 +24,14 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { constants, fullCoverageModelsDictionary } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
-import { getBaseModelSetKey } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import {
+  getBaseModelSetKey,
+  useGenerationStatus,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -49,6 +52,8 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
 export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const { classes } = useStyle();
+  const generationStatus = useGenerationStatus();
+
   const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
@@ -96,9 +101,10 @@ export function QueueItem({ request }: Props) {
   const baseModelSetKey = getBaseModelSetKey(details.baseModel ?? 'SD1');
 
   const removedForSafety = request.images?.some((x) => x.removedForSafety);
-  let fullCoverageModels = baseModelSetKey
-    ? fullCoverageModelsDictionary[baseModelSetKey]
-    : undefined;
+  let fullCoverageModels =
+    baseModelSetKey && generationStatus.fullCoverageModels
+      ? generationStatus.fullCoverageModels[baseModelSetKey]
+      : undefined;
   if (!request.alternativesAvailable) fullCoverageModels = undefined;
 
   // const boost = (request: Generation.Request) => {
@@ -177,11 +183,13 @@ export function QueueItem({ request }: Props) {
             </Text>
           </Group>
           <Group spacing="xs">
-            <Tooltip {...tooltipProps} label="Generate">
-              <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
-                <IconPlayerPlayFilled />
-              </ActionIcon>
-            </Tooltip>
+            {generationStatus.available && (
+              <Tooltip {...tooltipProps} label="Generate">
+                <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
+                  <IconPlayerPlayFilled />
+                </ActionIcon>
+              </Tooltip>
+            )}
             <Tooltip {...tooltipProps} label={verbage.tooltip}>
               <ActionIcon
                 size="md"
@@ -194,7 +202,7 @@ export function QueueItem({ request }: Props) {
           </Group>
         </Group>
       </Card.Section>
-      {removedForSafety && fullCoverageModels && (
+      {removedForSafety && !!fullCoverageModels?.length && (
         <Card.Section>
           <Alert color="yellow">
             <Stack spacing="xs">

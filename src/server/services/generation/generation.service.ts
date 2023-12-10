@@ -578,14 +578,10 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   return result?.covered ?? false;
 }
 
-type GenerationStatus = {
-  message?: string;
-  available?: boolean;
-};
 export async function getGenerationStatus() {
   const status = JSON.parse(
     (await redis.hGet('system:features', 'generation:status')) ?? '{}'
-  ) as GenerationStatus;
+  ) as Generation.Status;
   status.available ??= true;
 
   return status;

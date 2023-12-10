@@ -573,11 +573,11 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <Alert color="yellow" title="Image Generation Terms">
               <Text size="xs">
                 By using the image generator you confirm that you have read and agree to our{' '}
-                <Text component={NextLink} href="/content/tos">
+                <Text component={NextLink} href="/content/tos" td="underline">
                   Terms of Service
                 </Text>{' '}
                 presented during onboarding. Failure to abide by{' '}
-                <Text component={NextLink} href="/content/tos">
+                <Text component={NextLink} href="/content/tos" td="underline">
                   our content policies
                 </Text>{' '}
                 will result in the loss of your access to the image generator.

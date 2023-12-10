@@ -1,4 +1,5 @@
 import { ModelType } from '@prisma/client';
+import { BaseModelSetType } from '~/server/common/constants';
 
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
@@ -22,6 +23,12 @@ export namespace Generation {
   export type Data = {
     params?: Partial<Params>;
     resources: Resource[];
+  };
+
+  export type Status = {
+    message?: string;
+    available?: boolean;
+    fullCoverageModels?: Partial<Record<BaseModelSetType, { id: number; name: string }[]>>;
   };
 
   export type Params = {
