@@ -126,9 +126,9 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
-  NEXT_PUBLIC_UI_CATEGORY_VIEWS: z.coerce.boolean().default(true),
-  NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.coerce.boolean().default(true),
-  NEXT_PUBLIC_LOG_TRPC: z.coerce.boolean().default(false)
+  NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
+  NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: zc.booleanString.default(true),
+  NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false)
 });
 
 /**

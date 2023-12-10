@@ -93,7 +93,6 @@ export function GeneratedImage({
 
   const imageRef = useRef<HTMLImageElement>(null);
   const isLandscape = request.params.width > request.params.height;
-  const isBlocked = image.removedForSafety || image.status === 'RemovedForSafety';
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -142,7 +141,7 @@ export function GeneratedImage({
                   })}
                   p="xs"
                 >
-                  {isBlocked ? (
+                  {image.removedForSafety ? (
                     <Stack align="center" spacing={0}>
                       <Box
                         className={classes.blockedMessage}

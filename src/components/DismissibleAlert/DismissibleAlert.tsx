@@ -16,7 +16,7 @@ export const DismissibleAlert = ({
   const { classes, cx } = useStyles({ color });
   const [dismissed, setDismissed] = useLocalStorage({
     key: `alert-dismissed-${id}`,
-    defaultValue: false,
+    defaultValue: window?.localStorage?.getItem(`alert-dismissed-${id}`) === 'true',
     getInitialValueInEffect,
   });
 

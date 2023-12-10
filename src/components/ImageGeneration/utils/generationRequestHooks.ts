@@ -190,6 +190,7 @@ export const useImageGenStatusUpdate = () => {
               matched = true;
               image.status = status;
               if (image.status === 'Success') image.available = true;
+              if (image.status === 'RemovedForSafety') image.removedForSafety = true;
               break pages;
             }
           }

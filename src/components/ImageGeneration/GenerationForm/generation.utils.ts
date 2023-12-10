@@ -12,6 +12,7 @@ import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { trpc } from '~/utils/trpc';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -70,6 +71,17 @@ export const useDerivedGenerationState = () => {
   };
 };
 
+export const useGenerationStatus = () => {
+  const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
+    cacheTime: 0,
+  });
+
+  return {
+    available: isLoading || status?.available,
+    message: status?.message,
+  };
+};
+
 export const getFormData = (type: RunType, data: Partial<GenerateFormModel>) => {
   const formData = useGenerationFormStore.getState();
   switch (type) {
@@ -115,8 +127,8 @@ export const getFormData = (type: RunType, data: Partial<GenerateFormModel>) => 
 
 // TODO - move these somewhere that makes more sense
 export const getBaseModelSetKey = (baseModel: string) =>
-  Object.entries(baseModelSets).find(([, baseModels]) =>
-    baseModels.includes(baseModel as any)
+  Object.entries(baseModelSets).find(
+    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as any)
   )?.[0] as BaseModelSetType | undefined;
 
 export const getBaseModelset = (baseModel: string) =>

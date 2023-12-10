@@ -12,6 +12,7 @@ import {
   Tooltip,
   TooltipProps,
   createStyles,
+  Alert,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -20,15 +21,14 @@ import { IconBolt, IconPhoto, IconPlayerPlayFilled, IconTrash, IconX } from '@ta
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { openBoostModal } from '~/components/ImageGeneration/BoostModal';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { constants } from '~/server/common/constants';
+import { constants, fullCoverageModelsDictionary } from '~/server/common/constants';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
-import { FeedItem } from './FeedItem';
+import { getBaseModelSetKey } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -93,6 +93,13 @@ export function QueueItem({ request }: Props) {
   };
 
   const { prompt, ...details } = request.params;
+  const baseModelSetKey = getBaseModelSetKey(details.baseModel ?? 'SD1');
+
+  const removedForSafety = request.images?.some((x) => x.removedForSafety);
+  let fullCoverageModels = baseModelSetKey
+    ? fullCoverageModelsDictionary[baseModelSetKey]
+    : undefined;
+  if (!request.alternativesAvailable) fullCoverageModels = undefined;
 
   // const boost = (request: Generation.Request) => {
   //   console.log('boost it', request);
@@ -187,6 +194,35 @@ export function QueueItem({ request }: Props) {
           </Group>
         </Group>
       </Card.Section>
+      {removedForSafety && fullCoverageModels && (
+        <Card.Section>
+          <Alert color="yellow">
+            <Stack spacing="xs">
+              <Text>
+                <strong>Blocked by OctoML?</strong>{' '}
+                {`We're currently adding new providers. Select an
+              option below to swap to one of the current full-coverage models.`}
+              </Text>
+              <Group spacing="xs">
+                {fullCoverageModels.map(({ id, name }) => (
+                  <Button
+                    key={id}
+                    onClick={() => generationPanel.open({ type: 'modelVersion', id })}
+                    size="xs"
+                    color="yellow"
+                    variant="light"
+                    compact
+                    rightIcon={<IconPlayerPlayFilled size={14} />}
+                    styles={{ rightIcon: { marginLeft: 2 } }}
+                  >
+                    {name}
+                  </Button>
+                ))}
+              </Group>
+            </Stack>
+          </Alert>
+        </Card.Section>
+      )}
       <Stack py="xs" spacing={8} className={classes.container}>
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>

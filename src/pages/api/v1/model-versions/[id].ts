@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { getDownloadFilename } from '~/server/services/file.service';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import {

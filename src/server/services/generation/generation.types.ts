@@ -80,6 +80,7 @@ export namespace Generation {
 
   export type Request = {
     id: number;
+    alternativesAvailable?: boolean;
     createdAt: Date;
     estimatedCompletionDate: Date;
     status: GenerationRequestStatus;

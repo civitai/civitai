@@ -11,6 +11,7 @@ import {
   useDerivedGenerationState,
   useGenerationFormStore,
   keyupEditAttention,
+  useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import React, { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -60,6 +61,7 @@ import {
   Input,
   Divider,
   Badge,
+  Alert,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -72,13 +74,18 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
-import { getHotkeyHandler } from '@mantine/hooks';
+import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import Router from 'next/router';
+import { NextLink } from '@mantine/next';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
+  const [reviewed, setReviewed] = useLocalStorage({
+    key: 'review-generation-terms',
+    defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
+  });
   const { nsfw, quantity } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
@@ -92,6 +99,9 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     shouldUnregister: false,
     defaultValues,
   });
+
+  const status = useGenerationStatus();
+  if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
 
   useEffect(() => {
     form.reset({
@@ -549,81 +559,118 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
         </ScrollArea>
         <Stack spacing={4} p="md">
-          <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
-            <Card withBorder className={classes.generateButtonQuantity} p={0}>
-              <Stack spacing={0}>
-                <Text
-                  size="xs"
-                  color="dimmed"
-                  weight={500}
-                  ta="center"
-                  className={classes.generateButtonQuantityText}
-                >
-                  Quantity
-                </Text>
-                <InputNumber
-                  name="quantity"
-                  min={1}
-                  max={generation.maxValues.quantity}
-                  className={classes.generateButtonQuantityInput}
-                />
-              </Stack>
-            </Card>
-            <LoginRedirect reason="image-gen" returnUrl="/generate">
-              {/* TODO.generation: Uncomment this out by next week */}
-              {/* {isSDXL ? (
-                      <BuzzTransactionButton
-                        type="submit"
-                        size="lg"
-                        label="Generate"
-                        loading={isSubmitting || loading}
-                        className={classes.generateButtonButton}
-                        disabled={disableGenerateButton}
-                        buzzAmount={totalCost}
-                      />
-                    ) : (
-                      <Button
-                        type="submit"
-                        size="lg"
-                        loading={isSubmitting || loading}
-                        className={classes.generateButtonButton}
-                        disabled={disableGenerateButton}
-                      >
-                        Generate
-                      </Button>
-                    )} */}
+          {status.available && !reviewed ? (
+            <Alert color="yellow" title="Image Generation Terms">
+              <Text size="xs">
+                By using the image generator you confirm that you have read and agree to our{' '}
+                <Text component={NextLink} href="/content/tos">
+                  Terms of Service
+                </Text>{' '}
+                presented during onboarding. Failure to abide by{' '}
+                <Text component={NextLink} href="/content/tos">
+                  our content policies
+                </Text>{' '}
+                will result in the loss of your access to the image generator.
+              </Text>
               <Button
-                type="submit"
-                size="lg"
-                loading={isLoading}
-                className={classes.generateButtonButton}
-                disabled={disableGenerateButton}
+                color="yellow"
+                variant="light"
+                onClick={() => setReviewed(true)}
+                style={{ marginTop: 10 }}
+                leftIcon={<IconCheck />}
+                fullWidth
               >
-                Generate
+                I Confirm, Start Generating
               </Button>
-            </LoginRedirect>
-            {/* <Tooltip label="Reset" color="dark" withArrow> */}
-            <Button
-              onClick={handleClearAll}
-              variant="outline"
-              className={classes.generateButtonReset}
-              px="xs"
+            </Alert>
+          ) : status.available ? (
+            <>
+              <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
+                <Card withBorder className={classes.generateButtonQuantity} p={0}>
+                  <Stack spacing={0}>
+                    <Text
+                      size="xs"
+                      color="dimmed"
+                      weight={500}
+                      ta="center"
+                      className={classes.generateButtonQuantityText}
+                    >
+                      Quantity
+                    </Text>
+                    <InputNumber
+                      name="quantity"
+                      min={1}
+                      max={generation.maxValues.quantity}
+                      className={classes.generateButtonQuantityInput}
+                    />
+                  </Stack>
+                </Card>
+                <LoginRedirect reason="image-gen" returnUrl="/generate">
+                  {/* TODO.generation: Uncomment this out by next week */}
+                  {/* {isSDXL ? (
+                        <BuzzTransactionButton
+                          type="submit"
+                          size="lg"
+                          label="Generate"
+                          loading={isSubmitting || loading}
+                          className={classes.generateButtonButton}
+                          disabled={disableGenerateButton}
+                          buzzAmount={totalCost}
+                        />
+                      ) : (
+                        <Button
+                          type="submit"
+                          size="lg"
+                          loading={isSubmitting || loading}
+                          className={classes.generateButtonButton}
+                          disabled={disableGenerateButton}
+                        >
+                          Generate
+                        </Button>
+                      )} */}
+                  <Button
+                    type="submit"
+                    size="lg"
+                    loading={isLoading}
+                    className={classes.generateButtonButton}
+                    disabled={disableGenerateButton}
+                  >
+                    Generate
+                  </Button>
+                </LoginRedirect>
+                {/* <Tooltip label="Reset" color="dark" withArrow> */}
+                <Button
+                  onClick={handleClearAll}
+                  variant="outline"
+                  className={classes.generateButtonReset}
+                  px="xs"
+                >
+                  {/* <IconX size={20} strokeWidth={3} /> */}
+                  Clear All
+                </Button>
+                {/* </Tooltip> */}
+              </Group>
+              <Text size="xs" color="dimmed">
+                {reachedRequestLimit
+                  ? 'You have reached the request limit. Please wait until your current requests are finished.'
+                  : `You can queue ${
+                      constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
+                    } more jobs`}
+              </Text>
+            </>
+          ) : null}
+          {status.message && (
+            <AlertWithIcon
+              color="yellow"
+              title="Image Generation Status Alert"
+              icon={<IconAlertTriangle size={20} />}
+              iconColor="yellow"
             >
-              {/* <IconX size={20} strokeWidth={3} /> */}
-              Clear All
-            </Button>
-            {/* </Tooltip> */}
-          </Group>
-          <Text size="xs" color="dimmed">
-            {reachedRequestLimit
-              ? 'You have reached the request limit. Please wait until your current requests are finished.'
-              : `You can queue ${
-                  constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
-                } more jobs`}
-          </Text>
-          <GenerationStatusMessage />
+              {status.message}
+            </AlertWithIcon>
+          )}
           {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {isSDXL && (
+          {status.available && isSDXL && (
             <DismissibleAlert
               id="sdxl-free-preview"
               title="Free SDXL Generations!"
@@ -804,24 +851,6 @@ const getAspectRatioControls = (baseModel?: string) => {
     ),
     value: `${index}`,
   }));
-};
-
-const GenerationStatusMessage = () => {
-  const { data: status, isLoading } = trpc.generation.getStatusMessage.useQuery(undefined, {
-    cacheTime: 0,
-  });
-  if (isLoading || !status) return null;
-
-  return (
-    <AlertWithIcon
-      color="yellow"
-      title="Image Generation Status Alert"
-      icon={<IconAlertTriangle />}
-      iconColor="yellow"
-    >
-      {status}
-    </AlertWithIcon>
-  );
 };
 
 const clipSkipMarks = Array(10)
