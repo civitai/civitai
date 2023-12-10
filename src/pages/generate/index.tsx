@@ -16,7 +16,6 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
-import { usePreserveVerticalScrollPosition } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -24,7 +23,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 /**
  * NOTE: This is still a WIP. We are currently working on a new design for the
