@@ -177,8 +177,8 @@ export const constants = {
     drawerZIndex: 301,
     requestBlocking: {
       warned: 4,
-      notified: 8,
-      muted: 12,
+      notified: 6,
+      muted: 8,
     },
     maxConcurrentRequests: 10,
   },
