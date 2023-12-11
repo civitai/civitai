@@ -967,7 +967,11 @@ export const getImage = async ({
     ${Prisma.raw(
       withoutPost
         ? ''
-        : `JOIN "Post" p ON p.id = i."postId" ${!isModerator ? 'AND p."publishedAt" < now()' : ''}`
+        : // Now that moderators can review images without post, we need to make this optional
+          // in case they land in an image-specific review flow
+          `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
+            !isModerator ? 'AND p."publishedAt" < now()' : ''
+          }`
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
