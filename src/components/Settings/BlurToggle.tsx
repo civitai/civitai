@@ -13,7 +13,7 @@ export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
       setIsLoading(true);
     },
     async onSuccess() {
-      user?.refresh();
+      await user?.refresh();
     },
     onSettled() {
       setIsLoading(false);

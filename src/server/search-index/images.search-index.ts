@@ -134,7 +134,7 @@ type ImageForSearchIndex = {
     image: string | null;
     username: string | null;
     deletedAt: Date | null;
-    profilePicture?: ImageModel | null;
+    profilePicture: ImageModel | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;

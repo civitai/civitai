@@ -53,8 +53,8 @@ export const userProfileUpdateSchema = z.object({
   message: z.string().nullish(),
   bio: z.string().nullish(),
   location: z.string().max(100).nullish(),
-  profileImage: z.string().nullish(),
-  profilePicture: profilePictureSchema.nullish(),
+  // profileImage: z.string().nullish(),
+  // profilePicture: profilePictureSchema.nullish(),
   coverImage: imageSchema.nullish(),
   socialLinks: z
     .array(
@@ -74,7 +74,7 @@ export const userProfileUpdateSchema = z.object({
       })
     )
     .optional(),
-  badgeId: z.number().nullish(),
-  nameplateId: z.number().nullish(),
-  leaderboardShowcase: z.string().nullish(),
+  // badgeId: z.number().nullish(),
+  // nameplateId: z.number().nullish(),
+  // leaderboardShowcase: z.string().nullish(),
 });

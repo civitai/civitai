@@ -62,7 +62,7 @@ export function ProfileCard() {
       showSuccessNotification({ message: 'Your profile has been saved' });
       // await utils.model.getAll.invalidate();
       await queryUtils.comment.getAll.invalidate();
-      currentUser?.refresh();
+      await currentUser?.refresh();
 
       if (user)
         form.reset({

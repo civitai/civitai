@@ -145,7 +145,7 @@ type BountyForSearchIndex = {
     image: string | null;
     username: string | null;
     deletedAt: Date | null;
-    profilePicture?: ImageModel | null;
+    profilePicture: ImageModel | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;
@@ -216,6 +216,7 @@ const onFetchItemsToIndex = async ({
         'username', u.username,
         'deletedAt', u."deletedAt",
         'image', u.image
+        'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u
     WHERE u.id IN (SELECT "userId" FROM target)

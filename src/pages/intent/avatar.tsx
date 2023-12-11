@@ -60,7 +60,7 @@ export default function IntentAvatar() {
 
   const { mutate } = trpc.user.update.useMutation({
     async onSuccess() {
-      currentUser?.refresh();
+      await currentUser?.refresh();
       router.push('/user/account').then(() => {
         showSuccessNotification({ message: 'Your avatar has been updated.' });
         setWaiting(false);

@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Center,
-  Grid,
   Group,
   MantineTheme,
   Menu,
@@ -16,7 +15,6 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
@@ -100,7 +98,6 @@ export function ModelVersionDetails({
   const features = useFeatureFlags();
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
-  const [opened, { toggle }] = useDisclosure(false);
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 
   const primaryFile = getPrimaryFile(version.files, {

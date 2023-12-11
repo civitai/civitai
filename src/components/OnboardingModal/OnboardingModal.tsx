@@ -154,9 +154,12 @@ export default function OnboardingModal() {
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     if (!user) return;
-    // TOS is true here because it was already accepted
+
+    // Strip out unnecessary fields
+    const { profilePicture, ...userData } = user;
     mutate(
-      { ...user, ...values, tos: true },
+      // TOS is true here because it was already accepted
+      { ...userData, ...values, tos: true },
       {
         async onSuccess() {
           await user?.refresh();
@@ -184,12 +187,14 @@ export default function OnboardingModal() {
             return;
           }
 
-          if (user)
+          if (user) {
+            const { profilePicture, ...userData } = user;
             mutate({
-              ...user,
+              ...userData,
               userReferralCode: showReferral ? userReferral.code : undefined,
               source: showReferral ? userReferral.source : undefined,
             });
+          }
         },
       }
     );
