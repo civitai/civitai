@@ -239,11 +239,12 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
             <Title order={1}>{club.name}</Title>
             {!hasJoinableTiers && !isLoadingTiers && (
               <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconAlertCircle />}>
-                It looks like no you have not setup any joinable Club tier yet. Please go to the{' '}
+                It looks like you haven&rsquo;t set up any joinable Club Tiers yet! Navigate to the{' '}
                 <Anchor href={`/clubs/manage/${club.id}/tiers`} rel="nofollow" target="_blank">
                   Club tiers&rsquo; management page
                 </Anchor>{' '}
-                to set these up. Other users will not be able to join your club otherwise.
+                to set those up. Users will not be able to join your club until there is at least
+                one valid, joinable, Tier.
               </AlertWithIcon>
             )}
           </Stack>
