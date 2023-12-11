@@ -329,7 +329,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
-      zIndex: 200,
+      // zIndex: 200,
     },
     carousel: {
       flex: 1,
@@ -342,7 +342,6 @@ const useStyles = createStyles((theme, _props, getRef) => {
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',
       flexDirection: 'column',
-      zIndex: 100,
 
       [isMobile]: {
         position: 'absolute',
