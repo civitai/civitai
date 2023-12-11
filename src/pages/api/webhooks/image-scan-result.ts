@@ -162,9 +162,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   );
   tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
 
-  console.log(tags);
-  return tags;
-
   // Get Ids for tags
   const tagsToFind: string[] = [];
   for (const tag of tags) {
