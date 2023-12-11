@@ -670,11 +670,11 @@ ImageGuard.ToggleImageButton = function ToggleImageButton(props: {
   size?: MantineSize;
 }) {
   const { position, size, sx, className } = props;
-  const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
+  const { image, showToggleImage, canToggleNsfw, isOwner } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
   const toggleImage = useStore((state) => state.toggleImage);
 
-  if (!showToggleImage || !canToggleNsfw || showImage) return null;
+  if (!showToggleImage || !canToggleNsfw || showImage || isOwner) return null;
 
   const { color, shade } = image.nsfw
     ? nsfwLevelUI[image.nsfw] ?? nsfwLevelUI[NsfwLevel.X]

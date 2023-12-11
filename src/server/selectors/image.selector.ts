@@ -1,13 +1,9 @@
-import { Prisma, TagTarget } from '@prisma/client';
-import { SessionUser } from 'next-auth';
+import { Prisma } from '@prisma/client';
 
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
-import { isTag } from '~/server/schema/tag.schema';
 
-import { getReactionsSelectV2 } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';
-import { userWithCosmeticsSelect } from './user.selector';
 
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
@@ -26,6 +22,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   type: true,
   metadata: true,
   createdAt: true,
+  ingestion: true,
   tags: {
     select: {
       tag: { select: { ...simpleTagSelect, type: true } },
@@ -39,7 +36,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
 const { name, ...imageSelectWithoutName } = imageSelect;
 export { imageSelectWithoutName };
 
-const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
+const image = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: imageSelect });
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
 export const prepareCreateImage = (image: ImageUploadProps) => {

@@ -106,6 +106,7 @@ export function UserAvatar({
 
   const imageSize = getRawAvatarSize(avatarSize ?? size);
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
+  const isSelf = !!currentUser && currentUser.id === avatarUser.id;
 
   return (
     <Group align="center" spacing={spacing} noWrap>
@@ -119,7 +120,7 @@ export function UserAvatar({
             disabled={!indicatorProps}
             withBorder
           >
-            {avatarUser.profilePicture && !userDeleted ? (
+            {avatarUser.profilePicture && avatarUser.profilePicture.id && !userDeleted ? (
               <Paper
                 w={imageSize}
                 h={imageSize}
@@ -146,7 +147,7 @@ export function UserAvatar({
                         ) : (
                           <Center h="100%">
                             <ImageGuard.ToggleImageButton position="static" />
-                            {safe ? (
+                            {safe || isSelf ? (
                               <EdgeMedia
                                 src={image.url}
                                 width="original"

@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Center,
@@ -305,7 +306,16 @@ const { openModal, Modal } = createContextModal({
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
               profileImage={profilePicture?.url ?? profileImage}
             />
-            <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+            <Stack spacing={8}>
+              <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+              {currentUser?.profilePicture?.ingestion === 'Pending' && (
+                <Alert color="yellow">
+                  Your profile picture is currently being scanned. You&apos;ll still be able to see
+                  it, but other users won&apos;t see your profile picture until it has finished the
+                  scan process.
+                </Alert>
+              )}
+            </Stack>
             <Stack>
               <InputSelect
                 name="nameplateId"

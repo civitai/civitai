@@ -83,7 +83,9 @@ export function ProfileCard() {
       ...currentUser,
       profilePicture: currentUser?.profilePicture
         ? (currentUser.profilePicture as z.infer<typeof schema>['profilePicture'])
-        : { url: currentUser?.image },
+        : currentUser?.image
+        ? { url: currentUser.image, type: 'image' as const }
+        : undefined,
     },
     shouldUnregister: false,
   });
@@ -100,7 +102,9 @@ export function ProfileCard() {
         badgeId: selectedBadge?.id ?? null,
         profilePicture: currentUser?.profilePicture
           ? (currentUser.profilePicture as z.infer<typeof schema>['profilePicture'])
-          : { url: currentUser.image },
+          : currentUser.image
+          ? { url: currentUser.image, type: 'image' as const }
+          : undefined,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,7 +205,16 @@ export function ProfileCard() {
               />
             </Grid.Col>
             <Grid.Col span={12}>
-              <InputProfileImageUpload name="profilePicture" label="Profile Image" />
+              <Stack spacing={8}>
+                <InputProfileImageUpload name="profilePicture" label="Profile Image" />
+                {currentUser?.profilePicture?.ingestion === 'Pending' && (
+                  <Alert color="yellow">
+                    Your profile picture is currently being scanned. You&apos;ll still be able to
+                    see it, but other users won&apos;t see your profile picture until it has
+                    finished the scan process.
+                  </Alert>
+                )}
+              </Stack>
             </Grid.Col>
             <Grid.Col span={12}>
               <Stack spacing={0}>
