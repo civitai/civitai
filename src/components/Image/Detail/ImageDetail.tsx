@@ -145,12 +145,7 @@ export function ImageDetail() {
                 <Group spacing={8}>
                   {image.postId &&
                     (!query.postId ? (
-                      <RoutedDialogLink
-                        name="postDetail"
-                        state={{ postId: image.postId }}
-                        style={{ zIndex: 210 }}
-                        passHref
-                      >
+                      <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} passHref>
                         <Button
                           component="a"
                           size="md"

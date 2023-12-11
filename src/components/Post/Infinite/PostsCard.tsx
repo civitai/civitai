@@ -36,11 +36,7 @@ export function PostsCard({
                     )}
                     <ImageGuard.Report context="post" />
                     <ImageGuard.ToggleConnect position="top-left" />
-                    <RoutedDialogLink
-                      name="postDetail"
-                      state={{ postId: id }}
-                      style={{ zIndex: 210 }}
-                    >
+                    <RoutedDialogLink name="postDetail" state={{ postId: id }}>
                       {!safe ? (
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                           <MediaHash {...image} />

@@ -189,7 +189,6 @@ export function ImageDetailByProps({
                           passHref
                           name="postDetail"
                           state={{ postId: image.postId }}
-                          style={{ zIndex: 210 }}
                         >
                           <Button
                             component="a"
