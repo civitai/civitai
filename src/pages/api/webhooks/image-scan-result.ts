@@ -130,25 +130,22 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error('Image not found');
   }
 
-  // Add prompt based tags
-  const assessPrompt = source === TagSource.Rekognition;
-  if (assessPrompt) {
-    const imageMeta = image.meta as Prisma.JsonObject | undefined;
-    const prompt = imageMeta?.prompt as string | undefined;
-    if (prompt) {
-      // Detect real person in prompt
-      const realPersonName = includesPoi(prompt);
-      if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
-
-      // Detect tags from prompt
-      const promptTags = getTagsFromPrompt(prompt);
-      if (promptTags) incomingTags.push(...promptTags.map((tag) => ({ tag, confidence: 70 })));
-    }
-  }
-
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
     for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
+  }
+
+  // Add prompt based tags
+  const imageMeta = image.meta as Prisma.JsonObject | undefined;
+  const prompt = imageMeta?.prompt as string | undefined;
+  if (prompt) {
+    // Detect real person in prompt
+    const realPersonName = includesPoi(prompt);
+    if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
+
+    // Detect tags from prompt
+    const promptTags = getTagsFromPrompt(prompt);
+    if (promptTags) incomingTags.push(...promptTags.map((tag) => ({ tag, confidence: 70 })));
   }
 
   // De-dupe incoming tags and keep tag with highest confidence
@@ -164,6 +161,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     source
   );
   tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
+
+  console.log(tags);
+  return tags;
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
