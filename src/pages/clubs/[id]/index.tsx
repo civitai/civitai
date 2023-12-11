@@ -161,6 +161,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   }, [userClubs, isLoadingUserClubs]);
 
   const isOwner = currentUser && club?.userId === currentUser?.id;
+  const isModerator = currentUser?.isModerator;
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -272,7 +273,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                       <RenderHtml html={club.description} />
                     </ContentClamp>
                   )}
-                  {(canPost || isOwner) && (
+                  {(canPost || isOwner || isModerator) && (
                     <Group>
                       {canPost && (
                         <Button
@@ -289,7 +290,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                           Post content
                         </Button>
                       )}
-                      {isOwner && (
+                      {(isOwner || isModerator) && (
                         <Button
                           component={'a'}
                           href={`/clubs/manage/${club.id}`}
