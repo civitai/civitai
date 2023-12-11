@@ -109,7 +109,9 @@ export function ModelVersionDetails({
 
   const filesCount = version.files.length;
   const hasFiles = filesCount > 0;
-  const filesVisible = version.files.filter((f) => true);
+  const filesVisible = version.files.filter(
+    (f) => f.visibility === ModelFileVisibility.Public || model.user.id === user?.id
+  );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
 
