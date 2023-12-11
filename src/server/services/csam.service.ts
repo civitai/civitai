@@ -13,10 +13,19 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isDefined } from '~/utils/type-guards';
 import JSZip from 'jszip';
 import { fetchBlob } from '~/utils/file-utils';
-import { CreateMultipartUploadCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  AbortMultipartUploadCommandOutput,
+  CompleteMultipartUploadCommandOutput,
+  CreateMultipartUploadCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { env } from '~/env/server.mjs';
 import { completeMultipartUpload, getMultipartPutUrl } from '~/utils/s3-utils';
+import fsAsync from 'fs/promises';
 import fs from 'fs';
+import archiver from 'archiver';
+import stream from 'stream';
+import { Upload } from '@aws-sdk/lib-storage';
 
 export const createCsamReport = async ({
   reportedById,
@@ -344,8 +353,36 @@ export const processCsamReport = async (report: CsamReportProps) => {
   });
 };
 
-const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
-const uploadCsamZipFile = async ({ userId, file }: { userId: number; file: File }) => {
+const imagesDir = `${process.cwd()}/csam-images`;
+const zipDir = `${process.cwd()}/csam-zip`;
+const getPath = (filename: string) => {
+  return `${imagesDir}/${filename}`;
+};
+
+function zipDirectory(sourceDir: string, outPath: string) {
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  const stream = fs.createWriteStream(outPath);
+
+  return new Promise<void>((resolve, reject) => {
+    archive
+      .directory(sourceDir, false)
+      .on('error', (err) => reject(err))
+      .pipe(stream);
+
+    stream.on('close', () => resolve());
+    archive.finalize();
+  });
+}
+
+function uploadStream({
+  stream: readStream,
+  userId,
+  filename,
+}: {
+  stream: fs.ReadStream;
+  userId: number;
+  filename: string;
+}) {
   if (
     !env.CSAM_UPLOAD_KEY ||
     !env.CSAM_UPLOAD_SECRET ||
@@ -355,7 +392,7 @@ const uploadCsamZipFile = async ({ userId, file }: { userId: number; file: File 
   )
     throw new Error('missing CSAM env vars');
 
-  const s3 = new S3Client({
+  const client = new S3Client({
     credentials: {
       accessKeyId: env.CSAM_UPLOAD_KEY,
       secretAccessKey: env.CSAM_UPLOAD_SECRET,
@@ -364,81 +401,74 @@ const uploadCsamZipFile = async ({ userId, file }: { userId: number; file: File 
     endpoint: env.CSAM_UPLOAD_ENDPOINT,
   });
 
-  const bucket = env.CSAM_BUCKET_NAME;
-  const key = `${userId}/${file.name}`;
+  const passThroughStream = new stream.PassThrough();
 
-  const { urls, uploadId } = await getMultipartPutUrl(key, file.size, s3, bucket);
-  if (!uploadId) throw new Error('missing upload id');
+  const Bucket = env.CSAM_BUCKET_NAME;
+  const Key = `${userId}/${filename}`;
 
-  const partsCount = urls.length;
-  const uploadPart = (url: string, i: number) =>
-    new Promise<boolean>((resolve) => {
-      let eTag: string;
-      const start = (i - 1) * FILE_CHUNK_SIZE;
-      const end = i * FILE_CHUNK_SIZE;
-      const part = i === partsCount ? file.slice(start) : file.slice(start, end);
-      const xhr = new XMLHttpRequest();
-      xhr.addEventListener('loadend', () => {
-        const success = xhr.readyState === 4 && xhr.status === 200;
-        if (success) {
-          parts.push({ ETag: eTag, PartNumber: i });
-          resolve(true);
-        }
+  return new Promise<void>(async (resolve, reject) => {
+    try {
+      const parallelUploads3 = new Upload({
+        client,
+        params: {
+          Bucket,
+          Key,
+          Body: passThroughStream,
+        },
+        queueSize: 4,
+        partSize: 1024 * 1024 * 5, // 5 MB
+        leavePartsOnError: false,
       });
-      xhr.addEventListener('load', () => {
-        eTag = xhr.getResponseHeader('ETag') ?? '';
-      });
-      xhr.addEventListener('error', () => resolve(false));
-      xhr.open('PUT', url);
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-      xhr.send(part);
-    });
 
-  const parts: { ETag: string; PartNumber: number }[] = [];
-  for (const { url, partNumber } of urls as { url: string; partNumber: number }[]) {
-    // Retry up to 3 times
-    let retryCount = 0;
-    while (retryCount < 3) {
-      if (await uploadPart(url, partNumber)) break;
-      retryCount++;
-      await new Promise((resolve) => setTimeout(resolve, 5000 * retryCount));
+      parallelUploads3.on('httpUploadProgress', (progress) => {
+        console.log({ progress });
+      });
+
+      readStream.pipe(passThroughStream);
+      await parallelUploads3.done();
+      console.dir('upload finished', { depth: null });
+      resolve();
+    } catch (e) {
+      console.log(e);
+      reject();
     }
-  }
-
-  await completeMultipartUpload(bucket, key, uploadId, parts, s3);
-};
+  });
+}
 
 export const bundleCsamData = async ({ userId }: { userId: number }) => {
   const images = await dbRead.image.findMany({
     where: { userId },
     select: { id: true, url: true, type: true, name: true },
   });
-  console.log(`images: ${images.length}`);
 
-  const zip = new JSZip();
-  console.log(1);
   await Promise.all(
     images.map(async (image) => {
-      // Do I need to use the file system here?
-      // console.log('url', getEdgeUrl(image.url, image));
       const blob = await fetchBlob(getEdgeUrl(image.url, image));
-      const name = image.name ?? image.url;
-      const lastIndex = name.lastIndexOf('.');
-      console.log({ name: name.substring(0, lastIndex), type: blob.type });
-      zip.file(`${name.substring(0, lastIndex)}.${blob.type.split('/').pop()}`, blob);
+      const arrayBuffer = await blob.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      const imageName = image.name
+        ? image.name.substring(0, image.name.lastIndexOf('.'))
+        : image.url;
+      const name = imageName.length ? imageName : image.url;
+      const filename = `${name}.${blob.type.split('/').pop()}`;
+      const path = getPath(filename);
+
+      if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
+      await fsAsync.writeFile(path, buffer);
     })
   );
-  console.log(2);
 
-  zip
-    .generateNodeStream({ type: 'nodebuffer', streamFiles: true })
-    .pipe(fs.createWriteStream(`${userId}_csam.zip`))
-    .on('finish', (stream) => {});
-  // zip.generateAsync({ type: 'blob' }).then(async (content) => {
-  //   const file = new File([content], `${userId}_csam.zip`, { type: 'application/zip' });
-  //   console.log({ file });
-  //   // await uploadCsamZipFile({ userId, file });
-  // });
-  console.log(3);
-  // TODO - remove user data
+  if (!fs.existsSync(zipDir)) fs.mkdirSync(zipDir);
+  const outPath = `${zipDir}/${userId}_csam.zip`;
+  await zipDirectory(imagesDir, outPath);
+
+  const readableStream = fs.createReadStream(outPath);
+  await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
+  readableStream.close();
+
+  fs.rmSync(zipDir, { recursive: true });
+  fs.rmSync(imagesDir, { recursive: true });
 };
+
+// TODO - remove user data

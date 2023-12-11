@@ -27,19 +27,6 @@ export const useScrollAreaRef = (args?: { onScroll?: () => void }) => {
   return ref;
 };
 
-// export function ScrollArea({ children, className, scrollRestore, ...props }: ScrollAreaProps) {
-//   const { classes, cx } = useStyles();
-//   const ref = useScrollRestore<HTMLDivElement>(scrollRestore);
-
-//   return (
-//     <ScrollAreaContext.Provider value={{ ref }}>
-//       <Box ref={ref} className={cx(classes.root, className)} py="md" {...props}>
-//         {children}
-//       </Box>
-//     </ScrollAreaContext.Provider>
-//   );
-// }
-
 export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
   ({ children, className, scrollRestore, ...props }, ref) => {
     const { classes, cx } = useStyles();
