@@ -93,7 +93,9 @@ export default RateLimitedEndpoint(
       const tracker = new Tracker(req, res);
       await tracker.modelVersionEvent({
         type: 'Download',
-        ...fileResult,
+        modelId: fileResult.modelId,
+        modelVersionId,
+        nsfw: fileResult.nsfw,
         time: now,
       });
 
