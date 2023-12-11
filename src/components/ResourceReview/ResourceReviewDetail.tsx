@@ -7,8 +7,6 @@ import {
   Text,
   Title,
   Badge,
-  Rating,
-  Box,
   Divider,
   CloseButton,
   Button,
@@ -34,12 +32,10 @@ import { Meta } from '~/components/Meta/Meta';
 import { truncate } from 'lodash-es';
 import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
   const isModelPage = !!router.query.id && !router.pathname.includes('/reviews');
-  const inModal = !!router.query.modal;
 
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
   const { data: relatedPosts, isLoading: loadingRelatedPosts } = trpc.post.getInfinite.useQuery(
@@ -94,7 +90,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}
         schema={metaSchema}
       />
-      <Container mb="md">
+      <Container my="md" w="100%">
         <Stack>
           <Group position="apart" noWrap align="center">
             <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -113,6 +109,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
             <Group spacing={4} noWrap>
               <ResourceReviewMenu
+                size="lg"
                 reviewId={reviewId}
                 userId={data.user.id}
                 review={{
@@ -121,11 +118,9 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                   modelVersionId: data.modelVersion.id,
                 }}
               />
-              {inModal && (
-                <NavigateBack url={getModelWithVersionUrl(data)}>
-                  {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
-                </NavigateBack>
-              )}
+              <NavigateBack url={getModelWithVersionUrl(data)}>
+                {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
+              </NavigateBack>
             </Group>
           </Group>
           <Group spacing="xs" align="center">
@@ -166,7 +161,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
           reviewId={reviewId}
         />
       )}
-      <Container>
+      <Container pb="md" w="100%">
         <Stack>
           <Group spacing={4}>
             {!!relatedPosts?.items.length && (
@@ -211,17 +206,17 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   );
 }
 
-function EditableRating({ id, rating }: { id: number; rating: number }) {
-  const { mutate, isLoading } = trpc.resourceReview.update.useMutation();
-  return (
-    <Rating
-      value={rating}
-      onChange={(value) => mutate({ id, rating: value })}
-      readOnly={isLoading}
-    />
-  );
-}
+// function EditableRating({ id, rating }: { id: number; rating: number }) {
+//   const { mutate, isLoading } = trpc.resourceReview.update.useMutation();
+//   return (
+//     <Rating
+//       value={rating}
+//       onChange={(value) => mutate({ id, rating: value })}
+//       readOnly={isLoading}
+//     />
+//   );
+// }
 
-function EditableDetails({ id, details }: { id: number; details?: string }) {
-  return <></>;
-}
+// function EditableDetails({ id, details }: { id: number; details?: string }) {
+//   return <></>;
+// }
