@@ -575,7 +575,7 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models.map(({ userCosmetics, rank, modelVersion, ...model }) => ({
+    items: models.map(({ userCosmetics, rank, modelVersion, cursorId, ...model }) => ({
       ...model,
       rank: {
         [`downloadCount${input.period}`]: rank.downloadCount,

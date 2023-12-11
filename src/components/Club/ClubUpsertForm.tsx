@@ -98,7 +98,7 @@ export function ClubUpsertForm({
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12}>
+          <Grid.Col xs={12} md={8}>
             <Stack spacing={32}>
               <Stack spacing="xl">
                 <InputText
@@ -115,7 +115,7 @@ export function ClubUpsertForm({
                   withAsterisk
                   stickyToolbar
                 />
-                <Group grow>
+                <Group grow noWrap>
                   {avatar && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -146,6 +146,7 @@ export function ClubUpsertForm({
                   <InputSimpleImageUpload
                     name="avatar"
                     label="Profile Image"
+                    description="This will appear on your club's header as your club's avatar. Only people who enter your club's feed will see this image. Ideal resolution is 1024x1024."
                     aspectRatio={1}
                     // Im aware ideally this should ideally be 450, but images will look better on a higher res here
                     previewWidth={96}
@@ -153,7 +154,7 @@ export function ClubUpsertForm({
                     style={{ maxWidth: '100%' }}
                   />
                 </Group>
-                <Group grow>
+                <Group grow noWrap>
                   {coverImage && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -184,7 +185,7 @@ export function ClubUpsertForm({
                   <InputSimpleImageUpload
                     name="coverImage"
                     label="Cover Image"
-                    description="This will appear in the main feed as your club's cover image."
+                    description="This will appear in the main feed as your club's cover image. Make sure to use a really eye catching image! Ideal resolution is 1024x1024."
                     aspectRatio={1}
                     // Im aware ideally this should ideally be 450, but images will look better on a higher res here
                     previewWidth={96}
@@ -199,38 +200,53 @@ export function ClubUpsertForm({
                   aspectRatio={constants.clubs.headerImageAspectRatio}
                   previewWidth={constants.profile.coverImageWidth}
                 />
-                <InputSwitch
-                  name="nsfw"
-                  label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
-                        <Text inline>Mature theme</Text>
-                        <Tooltip label={matureLabel} {...tooltipProps}>
-                          <ThemeIcon radius="xl" size="xs" color="gray">
-                            <IconQuestionMark />
-                          </ThemeIcon>
-                        </Tooltip>
-                      </Group>
-                      <Text size="xs" color="dimmed">
-                        This club is intended to produce mature content.
-                      </Text>
-                    </Stack>
-                  }
-                />
-                <InputSwitch
-                  name="unlisted"
-                  label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
-                        <Text inline>Unlisted</Text>
-                      </Group>
-                      <Text size="xs" color="dimmed">
-                        This club should not appear in the main feed
-                      </Text>
-                    </Stack>
-                  }
-                />
               </Stack>
+            </Stack>
+          </Grid.Col>
+          <Grid.Col xs={12} md={4}>
+            <Stack>
+              <Divider label="Properties" />
+              <InputSwitch
+                name="nsfw"
+                label={
+                  <Stack spacing={4}>
+                    <Group spacing={4}>
+                      <Text inline>Mature theme</Text>
+                      <Tooltip label={matureLabel} {...tooltipProps}>
+                        <ThemeIcon radius="xl" size="xs" color="gray">
+                          <IconQuestionMark />
+                        </ThemeIcon>
+                      </Tooltip>
+                    </Group>
+                    <Text size="xs" color="dimmed">
+                      This club is intended to produce mature content. A badge will be added to the
+                      club&rsquo;s card on the main feed.
+                    </Text>
+                  </Stack>
+                }
+              />
+              <InputSwitch
+                name="unlisted"
+                label={
+                  <Stack spacing={4}>
+                    <Group spacing={4}>
+                      <Text inline>Unlisted</Text>
+                    </Group>
+                    <Text size="xs" color="dimmed">
+                      This club should not appear in the main feed
+                    </Text>
+                  </Stack>
+                }
+              />
+              <List size="xs" spacing={8}>
+                <List.Item>
+                  Clubs requests MUST adhere to the content rules defined in our{' '}
+                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                    TOS
+                  </Anchor>
+                  .
+                </List.Item>
+              </List>
             </Stack>
           </Grid.Col>
         </Grid>

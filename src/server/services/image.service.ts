@@ -1886,6 +1886,22 @@ export const getEntityCoverImage = async ({
                   ) mi
                   WHERE mi.rn = 1
                 )
+        WHEN e."entityType" = 'ModelVersion'
+            THEN  (
+                SELECT mi."imageId" FROM (
+                  SELECT
+                    mv.id,
+                    i.id as "imageId"
+                  FROM "Image" i
+                  JOIN "Post" p ON p.id = i."postId"
+                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+                  WHERE mv."id" = e."entityId"
+                      AND i."ingestion" = 'Scanned'
+                      AND i."needsReview" IS NULL
+                  ORDER BY mv.index, i."postId", i.index
+                  ) mi
+                  LIMIT 1
+                )
         WHEN e."entityType" = 'Image'
             THEN e."entityId"
         ELSE (

@@ -1,4 +1,4 @@
-import { Group, HoverCard, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { Badge, Group, HoverCard, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -36,6 +36,11 @@ export function ClubCard({ data }: Props) {
                     <Group spacing={4}>
                       <ImageGuard.ToggleConnect position="static" />
                     </Group>
+                    {data.nsfw && (
+                      <Badge color="red" variant="filled" radius="xl">
+                        NSFW
+                      </Badge>
+                    )}
                   </Group>
                   {image ? (
                     safe ? (

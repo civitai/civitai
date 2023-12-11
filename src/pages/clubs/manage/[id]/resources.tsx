@@ -12,6 +12,8 @@ import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembershipInfinite';
 import { ClubResourcesPaged } from '~/components/Club/Infinite/ClubResourcesPaged';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { AddResourceToClubModal } from '~/components/Club/AddResourceToClubModal';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -78,6 +80,15 @@ export default function ManageClubMembers({
         resources. To add new resources, you should go to the resource and use the context menu to{' '}
         <code>Add to club</code> or use the resource&rsquo;s edit form.
       </Text>
+      <Button
+        onClick={() => {
+          dialogStore.trigger({
+            component: AddResourceToClubModal,
+          });
+        }}
+      >
+        Add new resource
+      </Button>
       <ClubResourcesPaged clubId={id} />
     </Stack>
   );

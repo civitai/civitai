@@ -77,8 +77,12 @@ export function GenericImageCard({
 
                 return (
                   <>
-                    <ImageGuard.Report context="image" position="top-right" withinPortal />
-                    <ImageGuard.ToggleImage position="top-left" />
+                    {!disabled && (
+                      <>
+                        <ImageGuard.Report context="image" position="top-right" withinPortal />
+                        <ImageGuard.ToggleImage position="top-left" />
+                      </>
+                    )}
                     {safe ? (
                       <EdgeMedia
                         src={image.url}

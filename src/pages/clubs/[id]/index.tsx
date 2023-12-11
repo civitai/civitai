@@ -94,7 +94,25 @@ const Feed = () => {
               </Center>
             </InViewLoader>
           )}
-          {!hasNextPage && <EndOfFeed />}
+          {!hasNextPage && (
+            <Stack mt="xl">
+              <Divider
+                size="sm"
+                label={
+                  <Group spacing={4}>
+                    <IconClock size={16} stroke={1.5} />
+                    You are all caught up
+                  </Group>
+                }
+                labelPosition="center"
+                labelProps={{ size: 'sm' }}
+              />
+              <Text color="dimmed" align="center" size="sm">
+                Looks like you&rsquo;re all caught up for now. Come back later and the owner might
+                have added more stuff
+              </Text>
+            </Stack>
+          )}
         </div>
       ) : (
         <Stack mt="xl">
@@ -117,25 +135,6 @@ const Feed = () => {
             </Stack>
           </Center>
         </Stack>
-      )}
-      {canPost && (
-        <>
-          <Divider
-            size="sm"
-            labelProps={{ size: 'sm' }}
-            label="Create a new post"
-            labelPosition="center"
-            my="md"
-          />
-          <Paper className={classes.feedContainer}>
-            <ClubPostUpsertForm
-              clubId={id}
-              onSuccess={() => {
-                utils.clubPost.getInfiniteClubPosts.invalidate({ clubId: id });
-              }}
-            />
-          </Paper>
-        </>
       )}
     </>
   );
