@@ -244,3 +244,17 @@ iframe {
     transform: translateX(-50%) rotate(360deg);
   }
 }
+
+@keyframes glowing {
+  0% {
+    background-position: 0 0;
+  }
+
+  50% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: 0 0;
+  }
+}
