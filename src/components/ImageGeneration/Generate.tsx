@@ -1,7 +1,6 @@
 import { Stack, Center, ThemeIcon, Text } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-import { GenerateFormLogic } from '~/components/ImageGeneration/GenerationForm/GenerateFormLogic';
 import { IconLock } from '@tabler/icons-react';
 import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 

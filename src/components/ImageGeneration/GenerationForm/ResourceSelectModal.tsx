@@ -65,7 +65,7 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getBaseModelset } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ModelType } from '@prisma/client';
 
 type ResourceSelectModalProps = {
@@ -106,7 +106,7 @@ export default function ResourceSelectModal({
   const { resources = [], canGenerate } = options;
   const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
     let aggregate: BaseModel[] = [];
-    if (baseModelSet) aggregate = getBaseModelset(baseModelSet) ?? [];
+    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet) ?? [];
     if (baseModels) aggregate = [...new Set([...aggregate, ...baseModels])];
     return { type, baseModels: aggregate };
   });
