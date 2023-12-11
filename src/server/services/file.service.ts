@@ -204,7 +204,7 @@ export const getFileForModelVersion = async ({
   } else {
     const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
     if (type) fileWhere.type = type;
-    if (!isOwner || !isMod) fileWhere.visibility = ModelFileVisibility.Public;
+    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
     const files = await dbRead.modelFile.findMany({
       where: fileWhere,
       select: {
