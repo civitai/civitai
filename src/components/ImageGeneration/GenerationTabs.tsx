@@ -6,11 +6,11 @@ import {
   useGetGenerationRequests,
   usePollGenerationRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useEffect } from 'react';
+import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 
 export default function GenerationTabs({
   tabs: tabsToInclude,
@@ -40,7 +40,7 @@ export default function GenerationTabs({
       Icon: IconBrush,
       render: () => (
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <Generate />
+          <GenerationForm />
         </Box>
       ),
       label: <>Generate</>,

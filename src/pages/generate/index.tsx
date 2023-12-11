@@ -1,26 +1,13 @@
-import {
-  Center,
-  Container,
-  Group,
-  Stack,
-  Tabs,
-  Text,
-  ThemeIcon,
-  createStyles,
-} from '@mantine/core';
-import { usePrevious } from '@mantine/hooks';
+import { Center, Group, Stack, Tabs, Text, ThemeIcon, createStyles } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import useIsClient from '~/hooks/useIsClient';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -46,8 +33,6 @@ export const getServerSideProps = createServerSideProps({
 export default function GeneratePage() {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const isMobile = useContainerSmallerThan('sm');
-  const isClient = useIsClient();
   const [tab, setTab] = useState<string>('queue');
 
   const result = useGetGenerationRequests();
@@ -63,15 +48,6 @@ export default function GeneratePage() {
         </Stack>
       </Center>
     );
-
-  // mobile view
-  // if (!isClient) return null;
-  // if (isMobile)
-  //   return (
-  //     <div className={classes.mobileContent}>
-  //       <GenerationTabs />
-  //     </div>
-  //   );
 
   // desktop view
   return (

@@ -12,7 +12,7 @@ import {
   createStyles,
   ThemeIcon,
 } from '@mantine/core';
-import { openConfirmModal, openContextModal } from '@mantine/modals';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
   IconBan,
@@ -33,6 +33,8 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInView } from '~/hooks/useInView';
 import { useRef } from 'react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 
 export function GeneratedImage({
   image,
@@ -48,16 +50,9 @@ export function GeneratedImage({
 
   const handleImageClick = () => {
     if (!image || !image.available) return;
-    openContextModal({
-      modal: 'generatedImageLightbox',
-      zIndex: 400,
-      transitionDuration: 200,
-      fullScreen: true,
-      closeButtonLabel: 'Close lightbox',
-      innerProps: {
-        image,
-        request,
-      },
+    dialogStore.trigger({
+      component: GeneratedImageLightbox,
+      props: { image, request },
     });
   };
 

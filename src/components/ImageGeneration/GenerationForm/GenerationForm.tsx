@@ -57,6 +57,7 @@ import {
   Divider,
   Badge,
   Alert,
+  ThemeIcon,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -73,6 +74,7 @@ import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import Router from 'next/router';
 import { NextLink } from '@mantine/next';
+import { IconLock } from '@tabler/icons-react';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -716,6 +718,20 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
 };
 
 export const GenerationForm = (args: { onSuccess?: () => void }) => {
+  const currentUser = useCurrentUser();
+
+  if (currentUser?.muted)
+    return (
+      <Center h="100%" w="75%" mx="auto">
+        <Stack spacing="xl" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow">
+            <IconLock />
+          </ThemeIcon>
+          <Text align="center">You cannot create new generations because you have been muted</Text>
+        </Stack>
+      </Center>
+    );
+
   return (
     <IsClient>
       <GenerationFormInnner {...args} />
