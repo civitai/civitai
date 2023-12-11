@@ -24,6 +24,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                 name="postDetail"
                 state={{ postId: data.id }}
                 className={classes.link}
+                style={{ zIndex: 210 }}
               >
                 <AspectRatio
                   ratio={1}

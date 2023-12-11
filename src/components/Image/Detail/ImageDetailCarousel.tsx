@@ -239,7 +239,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
           theme.colors.cyan[7],
           theme.colors.cyan[5]
         ),
-        backgroundSize: '400%',
+        backgroundSize: '200%',
         borderRadius: theme.radius.xl,
         width: 'calc(100% + 6px)',
         height: 'calc(100% + 6px)',
