@@ -1,9 +1,5 @@
 import { updateDocs } from '~/server/meilisearch/client';
-import {
-  getOrCreateIndex,
-  onSearchIndexDocumentsCleanup,
-  waitForTasksWithRetries,
-} from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import {
   createSearchIndexUpdateProcessor,
@@ -17,6 +13,8 @@ import {
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { isDefined } from '~/utils/type-guards';
+import { ImageModel, imageSelect } from '~/server/selectors/image.selector';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -97,6 +95,8 @@ type UserForSearchIndex = {
   createdAt: Date;
   image: string | null;
   deletedAt: Date | null;
+  profilePictureId: number | null;
+  profilePicture: ImageModel | null;
   metrics: {
     followerCount: number;
     uploadCount: number;
@@ -166,13 +166,14 @@ const onFetchItemsToIndex = async ({
   const users = await db.$queryRaw<UserForSearchIndex[]>`
   WITH target AS MATERIALIZED (
     SELECT
-    u.id,
+      u.id,
       u.username,
-    u."deletedAt",
-    u."createdAt",
-    u.image
-      FROM "User" u
-      WHERE ${Prisma.join(WHERE, ' AND ')}
+      u."deletedAt",
+      u."createdAt",
+      u."profilePictureId",
+      u.image
+    FROM "User" u
+    WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
   ), cosmetics AS MATERIALIZED (
     SELECT
@@ -259,9 +260,16 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
+  const profilePictures = await db.image.findMany({
+    where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
+    select: imageSelect,
+  });
+
   const indexReadyRecords = users.map((userRecord) => {
     const stats = userRecord.stats;
     const cosmetics = userRecord.cosmetics ?? [];
+    const profilePicture =
+      profilePictures.find((p) => p.id === userRecord.profilePictureId) ?? null;
 
     const weightedRating = !stats
       ? 0
@@ -278,6 +286,7 @@ const onFetchItemsToIndex = async ({
         : null,
       metrics: userRecord.metrics ?? {},
       cosmetics: cosmetics ?? [],
+      profilePicture,
     };
   });
 

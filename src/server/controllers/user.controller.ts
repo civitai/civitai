@@ -287,31 +287,24 @@ export const updateUserHandler = async ({
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
+
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
         username,
         showNsfw,
-        profilePicture:
-          profilePicture === null
-            ? { delete: true }
-            : profilePicture
-            ? {
-                delete: true,
-                upsert: {
-                  where: { id: profilePicture.id },
-                  update: {
-                    ...profilePicture,
-                    userId: id,
-                  },
-                  create: {
-                    ...profilePicture,
-                    userId: id,
-                  },
+        profilePicture: profilePicture
+          ? {
+              connectOrCreate: {
+                where: { id: profilePicture.id ?? -1 },
+                create: {
+                  ...profilePicture,
+                  userId: id,
                 },
-              }
-            : undefined,
+              },
+            }
+          : undefined,
       },
     });
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);

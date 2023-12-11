@@ -44,7 +44,7 @@ const schema = z.object({
 
 export function ProfileCard() {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  // const queryUtils = trpc.useContext();
 
   const { data: cosmetics, isLoading: loadingCosmetics } = trpc.user.getCosmetics.useQuery(
     undefined,
@@ -58,10 +58,10 @@ export function ProfileCard() {
     trpc.leaderboard.getLeaderboards.useQuery();
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
-    async onSuccess(user, { badgeId, nameplateId }) {
+    async onSuccess(user, { badgeId, nameplateId, profilePicture }) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       // await utils.model.getAll.invalidate();
-      await queryUtils.comment.getAll.invalidate();
+      // await queryUtils.comment.getAll.invalidate();
       await currentUser?.refresh();
 
       if (user)
@@ -71,6 +71,7 @@ export function ProfileCard() {
           username: user.username ?? undefined,
           badgeId: badgeId ?? null,
           nameplateId: nameplateId ?? null,
+          profilePicture,
         });
     },
   });
@@ -152,6 +153,7 @@ export function ProfileCard() {
                   user={{ ...formUser, createdAt: currentUser.createdAt }}
                   badge={selectedBadge}
                   nameplate={selectedNameplate}
+                  profileImage={formUser.profilePicture?.url ?? formUser.image}
                 />
               </Grid.Col>
             )}
@@ -350,12 +352,15 @@ export function ProfileCard() {
   );
 }
 
-function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
+function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
     cosmetics: [],
     deletedAt: null,
-    profilePicture: (user.profilePicture as UserWithCosmetics['profilePicture']) ?? null,
+    profilePicture: {
+      ...user.profilePicture,
+      url: profileImage || user.image,
+    } as UserWithCosmetics['profilePicture'],
   };
   if (badge)
     userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
@@ -381,4 +386,5 @@ type ProfilePreviewProps = {
   user: z.infer<typeof schema> & { createdAt?: Date };
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
+  profileImage?: string | null;
 };
