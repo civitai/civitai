@@ -16,12 +16,7 @@ import {
 import React, { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import {
-  constants,
-  generation,
-  generationConfig,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import {
   useCreateGenerationRequest,
@@ -152,24 +147,6 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     if (!createData) return;
     const { data, type } = createData;
     const formData = getFormData(type, data);
-
-    // set default model
-    const hasSdxlResources = formData.resources?.some((x) => x.baseModel?.includes('SDXL'));
-    if (!formData.model) {
-      formData.model = hasSdxlResources
-        ? generationConfig.SDXL.checkpoint
-        : generationConfig.SD1.checkpoint;
-    }
-
-    // Make sure we don't exceed max values
-    const maxValueKeys = Object.keys(generation.maxValues);
-    for (const item of maxValueKeys) {
-      const key = item as keyof typeof generation.maxValues;
-      if (formData[key]) {
-        formData[key] = Math.min(formData[key] ?? 0, generation.maxValues[key]);
-      }
-    }
-
     useGenerationStore.setState({ data: undefined });
     form.reset(formData);
   }, [createData]); // eslint-disable-line
