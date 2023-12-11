@@ -1,30 +1,7 @@
-import {
-  ActionIcon,
-  Center,
-  Group,
-  Loader,
-  Text,
-  Tooltip,
-  createStyles,
-  TooltipProps,
-  LoadingOverlay,
-  Stack,
-} from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
-import { IconCloudUpload, IconSquareOff, IconTrash, IconWindowMaximize } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
+import { Center, Loader, createStyles, Stack } from '@mantine/core';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import {
-  useDeleteGenerationRequestImages,
-  useGetGenerationRequests,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { constants } from '~/server/common/constants';
-import { Generation } from '~/server/services/generation/generation.types';
-import { generationPanel } from '~/store/generation.store';
-import { postImageTransmitter } from '~/store/post-image-transmitter.store';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 export function Feed({

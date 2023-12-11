@@ -10,10 +10,12 @@ import {
   Box,
   Menu,
   createStyles,
+  ThemeIcon,
 } from '@mantine/core';
-import { openConfirmModal, openContextModal } from '@mantine/modals';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
+  IconBan,
   IconDotsVertical,
   IconHourglass,
   IconInfoCircle,
@@ -30,6 +32,9 @@ import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/u
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInView } from '~/hooks/useInView';
 import { useRef } from 'react';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 
 export function GeneratedImage({
   image,
@@ -45,16 +50,9 @@ export function GeneratedImage({
 
   const handleImageClick = () => {
     if (!image || !image.available) return;
-    openContextModal({
-      modal: 'generatedImageLightbox',
-      zIndex: 400,
-      transitionDuration: 200,
-      fullScreen: true,
-      closeButtonLabel: 'Close lightbox',
-      innerProps: {
-        image,
-        request,
-      },
+    dialogStore.trigger({
+      component: GeneratedImageLightbox,
+      props: { image, request },
     });
   };
 
@@ -89,7 +87,7 @@ export function GeneratedImage({
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
-
+  const isLandscape = request.params.width > request.params.height;
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -103,20 +101,20 @@ export function GeneratedImage({
           /> */}
           <Card
             p={0}
-            sx={{
+            sx={(theme) => ({
               position: 'relative',
               boxShadow:
                 '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
-              cursor: 'pointer',
+              cursor: image.available ? 'pointer' : undefined,
               width: '100%',
               height: '100%',
-            }}
+              background:
+                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            })}
           >
-            <Box
-              onClick={handleImageClick}
-              sx={(theme) => ({
-                [`& > *::after`]: {
-                  content: '""',
+            <Box onClick={handleImageClick}>
+              <Box
+                sx={(theme) => ({
                   display: 'block',
                   position: 'absolute',
                   top: 0,
@@ -125,9 +123,8 @@ export function GeneratedImage({
                   height: '100%',
                   boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
                   borderRadius: theme.radius.sm,
-                },
-              })}
-            >
+                })}
+              />
               {!image.available ? (
                 <Center
                   sx={(theme) => ({
@@ -136,11 +133,67 @@ export function GeneratedImage({
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    background: theme.colors.dark[5],
                   })}
                   p="xs"
                 >
-                  {image.status === 'Started' ? (
+                  {image.removedForSafety ? (
+                    <Stack align="center" spacing={0}>
+                      <Box
+                        className={classes.blockedMessage}
+                        sx={{
+                          flexDirection: isLandscape ? 'row' : 'column',
+                        }}
+                      >
+                        <ThemeIcon
+                          color="red"
+                          size={isLandscape ? 36 : 48}
+                          className={classes.iconBlocked}
+                          radius="xl"
+                          variant="light"
+                          sx={(theme) => ({
+                            marginBottom: isLandscape ? 0 : theme.spacing.sm,
+                            marginRight: isLandscape ? theme.spacing.sm : 0,
+                          })}
+                        >
+                          <IconBan size={isLandscape ? 24 : 36} />
+                        </ThemeIcon>
+                        <Stack spacing={0} align={isLandscape ? undefined : 'center'}>
+                          <Text
+                            color="red.5"
+                            weight={500}
+                            size="sm"
+                            align="center"
+                            sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
+                          >
+                            Blocked by OctoML
+                          </Text>
+                          <Text
+                            size="xs"
+                            component="a"
+                            td="underline"
+                            color="dimmed"
+                            href="/blocked-by-octoml"
+                            target="_blank"
+                          >
+                            Why?
+                          </Text>
+                        </Stack>
+                      </Box>
+                      <Text size="xs" color="dimmed" className={classes.mistake}>
+                        Is this a mistake?
+                      </Text>
+                      <Text
+                        size="xs"
+                        component="a"
+                        td="underline"
+                        color="dimmed"
+                        href="https://octoml.ai/contact-us/"
+                        target="_blank"
+                      >
+                        Contact OctoML
+                      </Text>
+                    </Stack>
+                  ) : image.status === 'Started' ? (
                     <Stack align="center">
                       <Loader size={24} />
                       <Text color="dimmed" size="xs" align="center">
@@ -272,5 +325,20 @@ const useStyles = createStyles((theme) => ({
     padding: theme.spacing.xs,
     position: 'absolute',
     cursor: 'pointer',
+  },
+  iconBlocked: {
+    [containerQuery.smallerThan(380)]: {
+      display: 'none',
+    },
+  },
+  mistake: {
+    [containerQuery.largerThan(380)]: {
+      marginTop: theme.spacing.sm,
+    },
+  },
+  blockedMessage: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 }));

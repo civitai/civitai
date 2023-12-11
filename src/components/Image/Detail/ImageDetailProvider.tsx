@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useContext, createContext, useState } from 'react';
+import { useMemo, useEffect, useContext, createContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
@@ -7,7 +7,7 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
-import { CollectionMode, ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '@prisma/client';
 import { ImageGetById, ImageGetInfinite } from '~/types/router';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -183,7 +183,7 @@ export function ImageDetailProvider({
       value={{
         images,
         image,
-        isLoading: imagesLoading || imageLoading,
+        isLoading: !image ? imagesLoading || imageLoading : imageLoading,
         active,
         connect,
         toggleInfo,

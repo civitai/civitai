@@ -133,7 +133,7 @@ function ImageController({
       <EdgeMedia
         src={previewUrl ?? url}
         alt={name ?? undefined}
-        width={width ?? 1200}
+        width="original"
         type={type}
         onLoad={() => setWithBorder(true)}
         className={cx({ [classes.blocked]: isBlocked })}

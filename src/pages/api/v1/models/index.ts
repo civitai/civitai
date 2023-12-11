@@ -3,9 +3,8 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
-
+import { getDownloadFilename } from '~/server/services/file.service';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { BrowsingMode } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';

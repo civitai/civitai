@@ -130,7 +130,7 @@ export const toggleUserBountyEngagementSchema = getUserBountyEngagementsSchema.e
 
 export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
 export const reportProhibitedRequestSchema = z.object({
-  prompt: z.string(),
+  prompt: z.string().optional(),
 });
 
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });

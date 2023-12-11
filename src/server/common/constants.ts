@@ -176,9 +176,9 @@ export const constants = {
   imageGeneration: {
     drawerZIndex: 301,
     requestBlocking: {
-      warned: 5,
-      notified: 8,
-      muted: 16,
+      warned: 4,
+      notified: 6,
+      muted: 8,
     },
     maxConcurrentRequests: 10,
   },
@@ -354,6 +354,7 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+    nsfw: false,
     model: {
       id: 128713,
       name: '8',

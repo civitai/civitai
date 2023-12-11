@@ -239,7 +239,12 @@ export default function EventPageDetails({
               <>
                 <Grid.Col xs={12} sm="auto">
                   <Card className={classes.card} py="xl" px="lg" radius="lg" h="100%">
-                    <HolidayFrame cosmetic={eventCosmetic.cosmetic} data={cosmeticData} force />
+                    <HolidayFrame
+                      cosmetic={eventCosmetic.cosmetic}
+                      data={cosmeticData}
+                      force
+                      animated
+                    />
                     <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg * 2}>
                       <Text size="xl" weight={590}>
                         Your Garland
@@ -250,7 +255,7 @@ export default function EventPageDetails({
                           alignItems: 'flex-end',
                         }}
                       >
-                        <Lightbulb color={userTeam} size={48} transform="rotate(180)" />
+                        <Lightbulb color={userTeam} size={48} transform="rotate(180)" animated />
                         <Text size={80} weight={590} color={userTeam} lh="70px">
                           {cosmeticData?.lights ?? 0}
                         </Text>
@@ -336,6 +341,7 @@ export default function EventPageDetails({
                                     color={color}
                                     brightness={brightness}
                                     size={32}
+                                    animated
                                   />
                                 </Group>
                                 <Group spacing={4} noWrap>

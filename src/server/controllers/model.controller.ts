@@ -8,7 +8,6 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
@@ -50,6 +49,7 @@ import {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getDownloadFilename } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,

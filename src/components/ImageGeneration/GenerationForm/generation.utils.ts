@@ -2,6 +2,9 @@ import {
   BaseModel,
   BaseModelSetType,
   baseModelSets,
+  generation,
+  generationConfig,
+  getGenerationConfig,
   samplerOffsets,
 } from '~/server/common/constants';
 import { create } from 'zustand';
@@ -11,7 +14,11 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useCallback } from 'react';
+import { trpc } from '~/utils/trpc';
+import { Generation } from '~/server/services/generation/generation.types';
+import { findClosest } from '~/utils/number-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -24,12 +31,26 @@ export const useTempGenerateStore = create<{
 }>(() => ({}));
 
 export const useDerivedGenerationState = () => {
+  const status = useGenerationStatus();
   const totalCost = useGenerationFormStore(({ baseModel, aspectRatio, steps, quantity }) =>
     calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
   );
 
-  const baseModel = useGenerationFormStore(({ model }) =>
-    model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined
+  const { baseModel, isFullCoverageModel } = useGenerationFormStore(
+    useCallback(
+      ({ model }) => {
+        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
+        const isFullCoverageModel =
+          baseModel && status?.fullCoverageModels
+            ? status?.fullCoverageModels[baseModel]?.some(({ id }) => id === model?.id)
+            : false;
+        return {
+          baseModel,
+          isFullCoverageModel,
+        };
+      },
+      [status]
+    )
   );
 
   const hasResources = useGenerationFormStore(
@@ -67,62 +88,145 @@ export const useDerivedGenerationState = () => {
     samplerCfgOffset,
     isSDXL: baseModel === 'SDXL',
     isLCM,
+    isFullCoverageModel,
   };
 };
 
-export const getFormData = (type: RunType, data: Partial<GenerateFormModel>) => {
-  const formData = useGenerationFormStore.getState();
-  switch (type) {
-    case 'remix':
-    case 'params':
-    case 'random':
-      return { ...formData, ...data };
-    case 'run': {
-      const baseModel = data.baseModel as BaseModelSetType | undefined;
-      const resources = (formData.resources ?? []).concat(data.resources ?? []);
-      const uniqueResources = !!resources.length ? uniqBy(resources, 'id') : undefined;
-      const filteredResources = baseModel
-        ? uniqueResources?.filter((x) =>
-            baseModelSets[baseModel].includes(x.baseModel as BaseModel)
-          )
-        : uniqueResources;
-      const parsedModel = data.model ?? formData.model;
-      const [model] = parsedModel
-        ? baseModel
-          ? [parsedModel].filter((x) => baseModelSets[baseModel].includes(x.baseModel as BaseModel))
-          : [parsedModel]
-        : [];
+export const useGenerationStatus = () => {
+  const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
+    cacheTime: 60,
+  });
 
-      const parsedVae = data.vae ?? formData.vae;
-      const [vae] = parsedVae
-        ? baseModel
-          ? [parsedVae].filter((x) => baseModelSets[baseModel].includes(x.baseModel as BaseModel))
-          : [parsedVae]
-        : [];
+  return {
+    available: isLoading || status?.available,
+    message: status?.message,
+    fullCoverageModels: status?.fullCoverageModels ?? {},
+  };
+};
 
-      return {
-        ...formData,
-        ...data,
-        model,
-        resources: filteredResources,
-        vae,
-      };
+export const getFormData = (
+  type: RunType,
+  { resources = [], params }: Partial<Generation.Data>
+) => {
+  const state = useGenerationFormStore.getState();
+  let formData = { ...state, ...params };
+
+  formData.model = resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
+
+  /* baseModel needs to be determined as soon as possible
+    if(type === 'run') selected resource determines the baseModel
+    else baseModel is based off checkpoint model */
+  let baseModel = getBaseModelSetKey(formData.model?.baseModel) ?? 'SD1';
+  if (type === 'run') {
+    const resource = resources[0];
+    const newBaseModel = getBaseModelSetKey(resource.baseModel) ?? baseModel;
+    if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') {
+      baseModel = newBaseModel;
+    } else {
+      // only use generationConfig for previous and new baseModels
+      const config = Object.entries(generationConfig)
+        .filter(([key]) => [baseModel, newBaseModel].includes(key as BaseModelSetType))
+        .map(([key, value]) => value);
+
+      const shouldUpdate = !config.every(({ additionalResourceTypes }) => {
+        return additionalResourceTypes.some(({ type, baseModelSet, baseModels }) => {
+          if (type !== resource.modelType) return false;
+          let allSupportedBaseModels = getBaseModelSet(baseModelSet) ?? [];
+          if (baseModels) {
+            for (const baseModel of baseModels) {
+              allSupportedBaseModels = [
+                ...new Set(allSupportedBaseModels.concat(getBaseModelSet(baseModel) ?? [])),
+              ];
+            }
+          }
+          return allSupportedBaseModels.includes(resource.baseModel as BaseModel);
+        });
+      });
+      if (shouldUpdate) baseModel = newBaseModel;
     }
-    default:
-      throw new Error(`unhandled RunType: ${type}`);
   }
+
+  const { additionalResourceTypes, checkpoint } = getGenerationConfig(baseModel);
+
+  // filter out any additional resources that don't belong
+  const resourceFilter = (resource: Generation.Resource) => {
+    const baseModelSetKey = getBaseModelSetKey(resource.baseModel);
+    return additionalResourceTypes.some((x) => {
+      const modelTypeMatches = x.type === resource.modelType;
+      const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
+      const baseModelIncluded = x.baseModels?.includes(resource.baseModel as BaseModel);
+      return modelTypeMatches && (baseModelSetMatches || baseModelIncluded);
+    });
+  };
+
+  if (type === 'run') {
+    formData.vae =
+      resources.filter((x) => x.modelType === 'VAE').filter(resourceFilter)[0] ?? formData.vae;
+    formData.resources = [...(formData.resources ?? []), ...resources]
+      .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
+      .filter(resourceFilter);
+  } else if (type === 'remix') {
+    formData.vae = resources.filter((x) => x.modelType === 'VAE')[0];
+    formData.resources = resources.filter(
+      (x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE'
+    );
+  }
+
+  if (params) {
+    formData.aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
+    if (params.sampler)
+      formData.sampler = generation.samplers.includes(params.sampler as any)
+        ? params.sampler
+        : undefined;
+  }
+
+  // set default model
+  const baseModelMatches = getBaseModelSetKey(formData.model?.baseModel) === baseModel;
+  if (!baseModelMatches) {
+    formData.model = checkpoint;
+  }
+
+  const maxValueKeys = Object.keys(generation.maxValues);
+  for (const item of maxValueKeys) {
+    const key = item as keyof typeof generation.maxValues;
+    if (formData[key]) {
+      formData[key] = Math.min(formData[key] ?? 0, generation.maxValues[key]);
+    }
+  }
+
+  if (type !== 'remix') formData = removeEmpty(formData);
+  formData.resources = formData.resources?.length ? uniqBy(formData.resources, 'id') : undefined;
+
+  return {
+    ...formData,
+    baseModel,
+  };
+};
+
+export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
+  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
+  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
+  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  const ratios = aspectRatios.map((x) => x.width / x.height);
+  const closest = findClosest(ratios, width / height);
+  const index = ratios.indexOf(closest);
+  return `${index ?? 0}`;
 };
 
 // TODO - move these somewhere that makes more sense
-export const getBaseModelSetKey = (baseModel: string) =>
-  Object.entries(baseModelSets).find(([, baseModels]) =>
-    baseModels.includes(baseModel as any)
+export const getBaseModelSetKey = (baseModel?: string) => {
+  if (!baseModel) return undefined;
+  return Object.entries(baseModelSets).find(
+    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as any)
   )?.[0] as BaseModelSetType | undefined;
+};
 
-export const getBaseModelset = (baseModel: string) =>
-  Object.entries(baseModelSets).find(
+export const getBaseModelSet = (baseModel?: string) => {
+  if (!baseModel) return undefined;
+  return Object.entries(baseModelSets).find(
     ([key, set]) => key === baseModel || set.includes(baseModel as any)
   )?.[1];
+};
 
 /**
  * Taken from stable-diffusion-webui github repo and modified to fit our needs
@@ -248,42 +352,3 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
   target.selectionStart = selectionStart;
   target.selectionEnd = selectionEnd;
 }
-
-export const usePreserveVerticalScrollPosition = <T extends { createdAt: any }>(options: {
-  data?: T[];
-  node: Element | null;
-}) => {
-  const ref = useRef<{
-    now: number;
-    scrollHeight?: number;
-    count?: number;
-  }>({
-    now: Date.now(),
-  });
-
-  const { data, node } = options;
-
-  const count = useMemo(() => {
-    const { now, count: prevCount } = ref.current;
-
-    // get count of data entities not created during this session
-    const count = data
-      ? data.filter((x) => new Date(x.createdAt).getTime() <= now).length
-      : undefined;
-
-    if (prevCount && count !== prevCount) {
-      ref.current.scrollHeight = node?.scrollHeight;
-    }
-
-    ref.current.count = count;
-    return count;
-  }, [data]);
-
-  useEffect(() => {
-    const { scrollHeight: prevScrollHeight } = ref.current;
-    if (!node || !prevScrollHeight) return;
-    // allows me to remove data items without updating scroll position
-    if (prevScrollHeight > node.scrollHeight) return;
-    node.scrollTop = node.scrollHeight - prevScrollHeight;
-  }, [count]);
-};

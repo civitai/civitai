@@ -20,7 +20,7 @@ import {
   IconEye,
   IconPlaylistAdd,
 } from '@tabler/icons-react';
-import { IconShare3 } from '@tabler/icons-react';
+import { IconShare3, IconBrush } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
@@ -47,11 +47,15 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { generationPanel } from '~/store/generation.store';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
+const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
   const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
   const { query } = useBrowserRouter();
+  const currentUser = useCurrentUser();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -60,7 +64,11 @@ export function ImageDetail() {
     <>
       <Meta
         title={`Image posted by ${image.user.username}`}
-        image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
+        image={
+          image.url == null || !UNFURLABLE.includes(image.nsfw)
+            ? undefined
+            : getEdgeUrl(image.url, { width: 1200 })
+        }
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={
           image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
@@ -142,7 +150,7 @@ export function ImageDetail() {
                 <Group spacing={8}>
                   {image.postId &&
                     (!query.postId ? (
-                      <RoutedDialogLink passHref name="postDetail" state={{ postId: image.postId }}>
+                      <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} passHref>
                         <Button
                           component="a"
                           size="md"
@@ -191,6 +199,21 @@ export function ImageDetail() {
                       <Text size="xs">Save</Text>
                     </Group>
                   </Button>
+                  {currentUser && image.meta && (
+                    <Button
+                      size="md"
+                      radius="xl"
+                      color="gray"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                      compact
+                    >
+                      <Group spacing={4} noWrap>
+                        <IconBrush size={14} />
+                        <Text size="xs">Create</Text>
+                      </Group>
+                    </Button>
+                  )}
                   <ShareButton
                     url={shareUrl}
                     title={`Image by ${image.user.username}`}
@@ -324,7 +347,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
-      zIndex: 200,
+      // zIndex: 200,
     },
     carousel: {
       flex: 1,
@@ -337,7 +360,6 @@ const useStyles = createStyles((theme, _props, getRef) => {
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',
       flexDirection: 'column',
-      zIndex: 100,
 
       [isMobile]: {
         position: 'absolute',

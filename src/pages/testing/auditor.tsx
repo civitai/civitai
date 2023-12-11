@@ -12,11 +12,20 @@ import {
   Title,
 } from '@mantine/core';
 import { useState } from 'react';
-import { highlightInappropriate, includesInappropriate } from '~/utils/metadata/audit';
+import {
+  getTagsFromPrompt,
+  highlightInappropriate,
+  includesInappropriate,
+} from '~/utils/metadata/audit';
+
+type AuditResult = {
+  highlighted: string;
+  tags: string[];
+};
 
 export default function MetadataTester() {
   const [prompts, setPrompts] = useState<string[]>([]);
-  const [results, setResults] = useState<{ passed: string[]; failed: string[] }>({
+  const [results, setResults] = useState<{ passed: AuditResult[]; failed: AuditResult[] }>({
     passed: [],
     failed: [],
   });
@@ -39,16 +48,17 @@ export default function MetadataTester() {
   const updateResults = (input?: string[]) => {
     input ??= prompts;
     if (!input) return;
-    const passed = new Set<string>();
-    const failed = new Set<string>();
+    const passed = new Set<AuditResult>();
+    const failed = new Set<AuditResult>();
 
     for (const prompt of input) {
       const isInappropriate = includesInappropriate(prompt) !== false;
+      const tags = getTagsFromPrompt(prompt) || [];
       const highlighted = highlightInappropriate(prompt) ?? prompt;
       if (isInappropriate) {
-        failed.add(highlighted);
+        failed.add({ highlighted, tags });
       } else {
-        passed.add(highlighted);
+        passed.add({ highlighted, tags });
       }
     }
     setResults({ passed: [...passed], failed: [...failed] });
@@ -87,9 +97,18 @@ export default function MetadataTester() {
                 {key}
               </Text>
               <Stack spacing="xs">
-                {values.map((value) => (
-                  <Card withBorder key={value}>
-                    <div dangerouslySetInnerHTML={{ __html: value }} />
+                {values.map(({ highlighted, tags }) => (
+                  <Card withBorder key={highlighted}>
+                    <div dangerouslySetInnerHTML={{ __html: highlighted }} />
+                    {tags.length > 0 && (
+                      <Group spacing={4} mt="sm">
+                        {tags.map((tag) => (
+                          <Badge size="xs" key={tag}>
+                            {tag}
+                          </Badge>
+                        ))}
+                      </Group>
+                    )}
                   </Card>
                 ))}
               </Stack>

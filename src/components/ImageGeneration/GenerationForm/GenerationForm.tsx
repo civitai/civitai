@@ -11,16 +11,12 @@ import {
   useDerivedGenerationState,
   useGenerationFormStore,
   keyupEditAttention,
+  useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import React, { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import {
-  constants,
-  generation,
-  generationConfig,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import {
   useCreateGenerationRequest,
@@ -60,6 +56,8 @@ import {
   Input,
   Divider,
   Badge,
+  Alert,
+  ThemeIcon,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -72,26 +70,37 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
-import { getHotkeyHandler } from '@mantine/hooks';
+import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import Router from 'next/router';
+import { NextLink } from '@mantine/next';
+import { IconLock } from '@tabler/icons-react';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
-  const { nsfw, quantity } = useGenerationFormStore.getState();
+  const [reviewed, setReviewed] = useLocalStorage({
+    key: 'review-generation-terms',
+    defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
+  });
+  const { nsfw, quantity, prompt } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
-    nsfw: nsfw ?? currentUser?.showNsfw,
+    // nsfw: nsfw ?? currentUser?.showNsfw,
+    nsfw: nsfw ?? false,
     quantity: quantity ?? generation.defaultValues.quantity,
   };
 
   const form = useForm<GenerateFormModel>({
     resolver: zodResolver(generateFormSchema),
+    reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     shouldUnregister: false,
     defaultValues,
   });
+
+  const status = useGenerationStatus();
+  if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
 
   useEffect(() => {
     form.reset({
@@ -113,6 +122,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     samplerCfgOffset,
     isSDXL,
     isLCM,
+    isFullCoverageModel,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -139,24 +149,6 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     if (!createData) return;
     const { data, type } = createData;
     const formData = getFormData(type, data);
-
-    // set default model
-    const hasSdxlResources = formData.resources?.some((x) => x.baseModel?.includes('SDXL'));
-    if (!formData.model) {
-      formData.model = hasSdxlResources
-        ? generationConfig.SDXL.checkpoint
-        : generationConfig.SD1.checkpoint;
-    }
-
-    // Make sure we don't exceed max values
-    const maxValueKeys = Object.keys(generation.maxValues);
-    for (const item of maxValueKeys) {
-      const key = item as keyof typeof generation.maxValues;
-      if (formData[key]) {
-        formData[key] = Math.min(formData[key] ?? 0, generation.maxValues[key]);
-      }
-    }
-
     useGenerationStore.setState({ data: undefined });
     form.reset(formData);
   }, [createData]); // eslint-disable-line
@@ -187,10 +179,12 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
+    console.log(promptError);
     if (promptError?.type === 'custom') {
       const status = blockedRequest.status();
+      console.log(status);
       if (status === 'notified' || status === 'muted') {
-        const isBlocked = await reportProhibitedRequest({ prompt: promptError.ref.value });
+        const isBlocked = await reportProhibitedRequest({ prompt });
         if (isBlocked) currentUser?.refresh();
       }
     }
@@ -411,7 +405,15 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   onKeyDown={promptKeyHandler}
                   autosize
                 />
-                {!isSDXL && <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />}
+                <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+                <Text size="xs" color="dimmed" mt={-16}>
+                  {nsfw &&
+                    isFullCoverageModel &&
+                    'You are using a model with Full Coverage, your generation times may be longer than average.'}
+                  {nsfw && !isFullCoverageModel && 'Your generation may be censored by OctoML.'}
+                  {!nsfw &&
+                    'Your generation may still be blocked by OctoML due to flaws in their filter.'}
+                </Text>
               </Stack>
             </Card>
             <Card {...sharedCardProps} style={{ overflow: 'visible' }}>
@@ -549,81 +551,118 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
         </ScrollArea>
         <Stack spacing={4} p="md">
-          <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
-            <Card withBorder className={classes.generateButtonQuantity} p={0}>
-              <Stack spacing={0}>
-                <Text
-                  size="xs"
-                  color="dimmed"
-                  weight={500}
-                  ta="center"
-                  className={classes.generateButtonQuantityText}
-                >
-                  Quantity
-                </Text>
-                <InputNumber
-                  name="quantity"
-                  min={1}
-                  max={generation.maxValues.quantity}
-                  className={classes.generateButtonQuantityInput}
-                />
-              </Stack>
-            </Card>
-            <LoginRedirect reason="image-gen" returnUrl="/generate">
-              {/* TODO.generation: Uncomment this out by next week */}
-              {/* {isSDXL ? (
-                      <BuzzTransactionButton
-                        type="submit"
-                        size="lg"
-                        label="Generate"
-                        loading={isSubmitting || loading}
-                        className={classes.generateButtonButton}
-                        disabled={disableGenerateButton}
-                        buzzAmount={totalCost}
-                      />
-                    ) : (
-                      <Button
-                        type="submit"
-                        size="lg"
-                        loading={isSubmitting || loading}
-                        className={classes.generateButtonButton}
-                        disabled={disableGenerateButton}
-                      >
-                        Generate
-                      </Button>
-                    )} */}
+          {status.available && !reviewed ? (
+            <Alert color="yellow" title="Image Generation Terms">
+              <Text size="xs">
+                By using the image generator you confirm that you have read and agree to our{' '}
+                <Text component={NextLink} href="/content/tos" td="underline">
+                  Terms of Service
+                </Text>{' '}
+                presented during onboarding. Failure to abide by{' '}
+                <Text component={NextLink} href="/content/tos" td="underline">
+                  our content policies
+                </Text>{' '}
+                will result in the loss of your access to the image generator.
+              </Text>
               <Button
-                type="submit"
-                size="lg"
-                loading={isLoading}
-                className={classes.generateButtonButton}
-                disabled={disableGenerateButton}
+                color="yellow"
+                variant="light"
+                onClick={() => setReviewed(true)}
+                style={{ marginTop: 10 }}
+                leftIcon={<IconCheck />}
+                fullWidth
               >
-                Generate
+                I Confirm, Start Generating
               </Button>
-            </LoginRedirect>
-            {/* <Tooltip label="Reset" color="dark" withArrow> */}
-            <Button
-              onClick={handleClearAll}
-              variant="outline"
-              className={classes.generateButtonReset}
-              px="xs"
+            </Alert>
+          ) : status.available ? (
+            <>
+              <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
+                <Card withBorder className={classes.generateButtonQuantity} p={0}>
+                  <Stack spacing={0}>
+                    <Text
+                      size="xs"
+                      color="dimmed"
+                      weight={500}
+                      ta="center"
+                      className={classes.generateButtonQuantityText}
+                    >
+                      Quantity
+                    </Text>
+                    <InputNumber
+                      name="quantity"
+                      min={1}
+                      max={generation.maxValues.quantity}
+                      className={classes.generateButtonQuantityInput}
+                    />
+                  </Stack>
+                </Card>
+                <LoginRedirect reason="image-gen" returnUrl="/generate">
+                  {/* TODO.generation: Uncomment this out by next week */}
+                  {/* {isSDXL ? (
+                        <BuzzTransactionButton
+                          type="submit"
+                          size="lg"
+                          label="Generate"
+                          loading={isSubmitting || loading}
+                          className={classes.generateButtonButton}
+                          disabled={disableGenerateButton}
+                          buzzAmount={totalCost}
+                        />
+                      ) : (
+                        <Button
+                          type="submit"
+                          size="lg"
+                          loading={isSubmitting || loading}
+                          className={classes.generateButtonButton}
+                          disabled={disableGenerateButton}
+                        >
+                          Generate
+                        </Button>
+                      )} */}
+                  <Button
+                    type="submit"
+                    size="lg"
+                    loading={isLoading}
+                    className={classes.generateButtonButton}
+                    disabled={disableGenerateButton}
+                  >
+                    Generate
+                  </Button>
+                </LoginRedirect>
+                {/* <Tooltip label="Reset" color="dark" withArrow> */}
+                <Button
+                  onClick={handleClearAll}
+                  variant="outline"
+                  className={classes.generateButtonReset}
+                  px="xs"
+                >
+                  {/* <IconX size={20} strokeWidth={3} /> */}
+                  Clear All
+                </Button>
+                {/* </Tooltip> */}
+              </Group>
+              <Text size="xs" color="dimmed">
+                {reachedRequestLimit
+                  ? 'You have reached the request limit. Please wait until your current requests are finished.'
+                  : `You can queue ${
+                      constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
+                    } more jobs`}
+              </Text>
+            </>
+          ) : null}
+          {status.message && (
+            <AlertWithIcon
+              color="yellow"
+              title="Image Generation Status Alert"
+              icon={<IconAlertTriangle size={20} />}
+              iconColor="yellow"
             >
-              {/* <IconX size={20} strokeWidth={3} /> */}
-              Clear All
-            </Button>
-            {/* </Tooltip> */}
-          </Group>
-          <Text size="xs" color="dimmed">
-            {reachedRequestLimit
-              ? 'You have reached the request limit. Please wait until your current requests are finished.'
-              : `You can queue ${
-                  constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
-                } more jobs`}
-          </Text>
-          <GenerationStatusMessage />
+              {status.message}
+            </AlertWithIcon>
+          )}
           {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {isSDXL && (
+          {status.available && isSDXL && (
             <DismissibleAlert
               id="sdxl-free-preview"
               title="Free SDXL Generations!"
@@ -679,6 +718,20 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
 };
 
 export const GenerationForm = (args: { onSuccess?: () => void }) => {
+  const currentUser = useCurrentUser();
+
+  if (currentUser?.muted)
+    return (
+      <Center h="100%" w="75%" mx="auto">
+        <Stack spacing="xl" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow">
+            <IconLock />
+          </ThemeIcon>
+          <Text align="center">You cannot create new generations because you have been muted</Text>
+        </Stack>
+      </Center>
+    );
+
   return (
     <IsClient>
       <GenerationFormInnner {...args} />
@@ -804,24 +857,6 @@ const getAspectRatioControls = (baseModel?: string) => {
     ),
     value: `${index}`,
   }));
-};
-
-const GenerationStatusMessage = () => {
-  const { data: status, isLoading } = trpc.generation.getStatusMessage.useQuery(undefined, {
-    cacheTime: 0,
-  });
-  if (isLoading || !status) return null;
-
-  return (
-    <AlertWithIcon
-      color="yellow"
-      title="Image Generation Status Alert"
-      icon={<IconAlertTriangle />}
-      iconColor="yellow"
-    >
-      {status}
-    </AlertWithIcon>
-  );
 };
 
 const clipSkipMarks = Array(10)
