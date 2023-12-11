@@ -1,8 +1,10 @@
 import {
   Anchor,
   Box,
+  Button,
   Center,
   Container,
+  Divider,
   Grid,
   Group,
   Loader,
@@ -24,7 +26,7 @@ import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import UserProfileEntry from '~/pages/user/[username]';
-import { useQueryClub } from '~/components/Club/club.utils';
+import { useMutateClub, useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -33,13 +35,14 @@ import React from 'react';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertCircle, IconArrowLeft } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowLeft, IconTrash } from '@tabler/icons-react';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';
+import { openConfirmModal } from '@mantine/modals';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -85,11 +88,44 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ManageClub({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const router = useRouter();
   const { club, loading } = useQueryClub({ id });
   const { classes } = useClubFeedStyles();
+  const { deleteClub, deletingClub } = useMutateClub();
 
   if (!loading && !club) return <NotFound />;
-  if (loading) return <PageLoader />;
+  if (loading || deletingClub) return <PageLoader />;
+  const onDelete = () => {
+    const handleDelete = async () => {
+      await deleteClub({ id });
+      showSuccessNotification({
+        title: 'Club deleted',
+        message: 'Your club has been deleted successfully',
+      });
+      router.push(`/clubs`);
+    };
+
+    openConfirmModal({
+      centered: true,
+      title: 'Delete club',
+      children: (
+        <Stack>
+          <Text>Are you sure you want to delete this club?</Text>
+          <Text>
+            Buzz in this club will be transfered to your account, but will not be refunded to your
+            members.
+          </Text>
+          <Text color="red" weight="bold">
+            This action is not reversible
+          </Text>
+        </Stack>
+      ),
+      labels: { cancel: `Cancel`, confirm: `Delete Club` },
+      confirmProps: { color: 'red' },
+      closeOnConfirm: true,
+      onConfirm: handleDelete,
+    });
+  };
 
   return (
     <Stack>
@@ -104,6 +140,20 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
             });
           }}
         />
+      </Paper>
+      <Divider labelPosition="center" label="Danger zone" color="red" />
+      <Paper className={classes.feedContainer}>
+        <Stack spacing="lg">
+          <Title order={3}>Delete this club</Title>
+          <Text>
+            By deleting this club, all resources in it will be automatically be made publicly
+            available, meaning users will not lose access to the resources, however, buzz will not
+            be refunded to any of your members, so use with care.
+          </Text>
+          <Button color="red" mt="lg" fullWidth onClick={onDelete} leftIcon={<IconTrash />}>
+            Delete this club
+          </Button>
+        </Stack>
       </Paper>
     </Stack>
   );

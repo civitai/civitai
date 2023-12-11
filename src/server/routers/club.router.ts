@@ -10,6 +10,7 @@ import {
   upsertClubTierInput,
 } from '~/server/schema/club.schema';
 import {
+  deleteClubHandler,
   getClubHandler,
   getClubResourceDetailsHandler,
   getClubTiersHandler,
@@ -65,4 +66,8 @@ export const clubRouter = router({
     .input(getPaginatedClubResourcesSchema)
     .use(isFlagProtected('clubs'))
     .query(getPaginatedClubResourcesHandler),
+  delete: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('clubs'))
+    .mutation(deleteClubHandler),
 });

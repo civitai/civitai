@@ -17,6 +17,7 @@ import {
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
 import {
+  deleteClub,
   getAllClubs,
   getClub,
   getClubDetailsForResource,
@@ -300,6 +301,25 @@ export async function removeClubResourceHandler({
 }) {
   try {
     return removeClubResource({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function deleteClubHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return deleteClub({
       ...input,
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,

@@ -31,6 +31,7 @@ import {
 } from '~/server/schema/clubMembership.schema';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { GetByIdInput } from '~/server/schema/base.schema';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -287,6 +288,28 @@ export const useMutateClub = () => {
     },
   });
 
+  const deleteClubMutation = trpc.club.delete.useMutation({
+    async onSuccess() {
+      await queryUtils.club.getInfinite.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to delete club',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to delete club',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -321,6 +344,9 @@ export const useMutateClub = () => {
   const handleRemoveClubResource = (data: RemoveClubResourceInput) => {
     return removeClubResourceMutation.mutateAsync(data);
   };
+  const handleDeleteClub = (data: GetByIdInput) => {
+    return deleteClubMutation.mutateAsync(data);
+  };
 
   return {
     upsertClub: handleUpsertClub,
@@ -345,6 +371,8 @@ export const useMutateClub = () => {
     cancelingClubMembership: cancelClubMembershipMutation.isLoading,
     restoreClubMembership: handleRestoreClubMembership,
     restoringClubMembership: restoreClubMembershipMutation.isLoading,
+    deleteClub: handleDeleteClub,
+    deletingClub: deleteClubMutation.isLoading,
   };
 };
 

@@ -1,4 +1,4 @@
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetClubTiersInput,
   GetInfiniteClubSchema,
@@ -23,6 +23,8 @@ import {
   entityRequiresClub,
 } from '~/server/services/common.service';
 import { getPagingData } from '~/server/utils/pagination-helpers';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { TransactionType } from '~/server/schema/buzz.schema';
 
 export const userContributingClubs = async ({
   userId,
@@ -906,5 +908,38 @@ export const removeClubResource = async ({
       entityIds: [entityId],
       availability: Availability.Public,
     });
+  });
+};
+
+export const deleteClub = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator: boolean }) => {
+  const club = await getClub({ id, userId, isModerator: true });
+  if (!club) {
+    throw throwBadRequestError('Club does not exist');
+  }
+
+  if (club.userId !== userId && !isModerator) {
+    throw throwBadRequestError('Only club owners can delete clubs');
+  }
+
+  const buzzAccount = await getUserBuzzAccount({ accountId: club.id, accountType: 'Club' });
+
+  if ((buzzAccount?.balance ?? 0) > 0) {
+    await createBuzzTransaction({
+      toAccountId: club.userId,
+      fromAccountId: club.id,
+      fromAccountType: 'Club',
+      type: TransactionType.Tip,
+      amount: buzzAccount.balance as number,
+    });
+  }
+
+  return dbWrite.club.delete({
+    where: {
+      id,
+    },
   });
 };
