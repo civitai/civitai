@@ -105,3 +105,5 @@ export type ClubMembershipGetAllRecord =
 
 export type ClubResourceGetPaginatedItem =
   RouterOutput['club']['getPaginatedClubResources']['items'][number];
+
+export type UserPaymentMethod = RouterOutput['user']['getPaymentMethods'][number];

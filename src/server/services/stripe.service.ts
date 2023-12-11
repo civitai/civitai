@@ -538,6 +538,7 @@ export const getPaymentIntent = async ({
     customer: customerId,
     metadata: metadata as MetadataParam,
     payment_method_types: paymentMethodTypes || undefined,
+    setup_future_usage: 'off_session',
   });
 
   return {

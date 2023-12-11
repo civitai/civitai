@@ -20,7 +20,93 @@ import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stri
 import { IconCreditCard, IconCurrencyDollar, IconMoodDollar, IconTrash } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
+import { UserPaymentMethod } from '~/types/router';
 
+export const PaymentMethodItem = ({
+  paymentMethod,
+  children,
+}: {
+  paymentMethod: UserPaymentMethod;
+  children?: React.ReactNode;
+}) => {
+  const { type } = paymentMethod;
+  const groupProps: GroupProps = {
+    position: 'apart',
+  };
+
+  switch (type) {
+    case 'card':
+      return (
+        <Group {...groupProps}>
+          <Stack spacing={0}>
+            <Text size="xs" color="dimmed">
+              Card
+            </Text>
+            <Text size="sm">
+              <Text component="span" weight="bold" transform="capitalize">
+                {paymentMethod.card?.brand}
+              </Text>{' '}
+              ending in{' '}
+              <Text component="span" weight="bold">
+                {paymentMethod.card?.last4}
+              </Text>
+            </Text>
+          </Stack>
+
+          {children}
+        </Group>
+      );
+    case 'sepa_debit':
+      return (
+        <Group {...groupProps}>
+          <Stack spacing={0}>
+            <Text size="xs" color="dimmed">
+              SEPA Debit
+            </Text>
+            <Text size="sm">
+              Ending in{' '}
+              <Text component="span" weight="bold">
+                {paymentMethod.sepa_debit?.last4}
+              </Text>
+            </Text>
+          </Stack>
+
+          {children}
+        </Group>
+      );
+    case 'link':
+      return (
+        <Group {...groupProps}>
+          <Stack spacing={0}>
+            <Text size="xs" color="dimmed">
+              Link
+            </Text>
+            <Text size="sm">
+              Email:{' '}
+              <Text component="span" weight="bold">
+                {paymentMethod.link?.email}
+              </Text>
+            </Text>
+          </Stack>
+
+          {children}
+        </Group>
+      );
+    default:
+      return (
+        <Group {...groupProps}>
+          <Stack spacing={0}>
+            <Text size="xs" transform="capitalize" color="dimmed">
+              {type.replace('_', ' ')}
+            </Text>
+            <Text size="sm">Created on: {formatDate(new Date(paymentMethod.created * 1000))}</Text>
+          </Stack>
+
+          {children}
+        </Group>
+      );
+  }
+};
 export function PaymentMethodsCard() {
   const { deletingPaymentMethod, deletePaymentMethod } = useMutateStripe();
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
@@ -77,85 +163,11 @@ export function PaymentMethodsCard() {
                 </Tooltip>
               );
 
-              const groupProps: GroupProps = {
-                position: 'apart',
-                key: paymentMethod.id,
-              };
-
-              switch (type) {
-                case 'card':
-                  return (
-                    <Group {...groupProps}>
-                      <Stack spacing={0}>
-                        <Text size="xs" color="dimmed">
-                          Card
-                        </Text>
-                        <Text size="sm">
-                          <Text component="span" weight="bold" transform="capitalize">
-                            {paymentMethod.card?.brand}
-                          </Text>{' '}
-                          ending in{' '}
-                          <Text component="span" weight="bold">
-                            {paymentMethod.card?.last4}
-                          </Text>
-                        </Text>
-                      </Stack>
-
-                      {deleteAction}
-                    </Group>
-                  );
-                case 'sepa_debit':
-                  return (
-                    <Group {...groupProps}>
-                      <Stack spacing={0}>
-                        <Text size="xs" color="dimmed">
-                          SEPA Debit
-                        </Text>
-                        <Text size="sm">
-                          Ending in{' '}
-                          <Text component="span" weight="bold">
-                            {paymentMethod.sepa_debit?.last4}
-                          </Text>
-                        </Text>
-                      </Stack>
-
-                      {deleteAction}
-                    </Group>
-                  );
-                case 'link':
-                  return (
-                    <Group {...groupProps}>
-                      <Stack spacing={0}>
-                        <Text size="xs" color="dimmed">
-                          Link
-                        </Text>
-                        <Text size="sm">
-                          Email:{' '}
-                          <Text component="span" weight="bold">
-                            {paymentMethod.link?.email}
-                          </Text>
-                        </Text>
-                      </Stack>
-
-                      {deleteAction}
-                    </Group>
-                  );
-                default:
-                  return (
-                    <Group {...groupProps}>
-                      <Stack spacing={0}>
-                        <Text size="xs" transform="capitalize" color="dimmed">
-                          {type.replace('_', ' ')}
-                        </Text>
-                        <Text size="sm">
-                          Created on: {formatDate(new Date(paymentMethod.created * 1000))}
-                        </Text>
-                      </Stack>
-
-                      {deleteAction}
-                    </Group>
-                  );
-              }
+              return (
+                <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
+                  {deleteAction}
+                </PaymentMethodItem>
+              );
             })}
           </Stack>
         ) : (

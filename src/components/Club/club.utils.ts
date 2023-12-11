@@ -31,7 +31,6 @@ import {
 } from '~/server/schema/clubMembership.schema';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-import { removeAndRefundMemberHandler } from '~/server/controllers/clubMembership.controller';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
