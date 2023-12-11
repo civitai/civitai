@@ -57,8 +57,6 @@ export function ImageDetail() {
   const { query } = useBrowserRouter();
   const currentUser = useCurrentUser();
 
-  console.log({ isLoading, image: !!image });
-
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
