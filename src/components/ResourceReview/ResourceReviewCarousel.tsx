@@ -105,7 +105,6 @@ export function ResourceReviewCarousel({
                             )}
                           </AspectRatio>
                         </RoutedDialogLink>
-
                         <Reactions
                           entityId={image.id}
                           entityType="image"
