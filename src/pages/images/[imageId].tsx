@@ -26,6 +26,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { imageId: string };
     const id = Number(params.imageId);
+    console.log({ params });
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.image.get.prefetch({ id });
