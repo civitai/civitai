@@ -48,6 +48,7 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
+const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
   const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
@@ -60,7 +61,11 @@ export function ImageDetail() {
     <>
       <Meta
         title={`Image posted by ${image.user.username}`}
-        image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
+        image={
+          image.url == null || !UNFURLABLE.includes(image.nsfw)
+            ? undefined
+            : getEdgeUrl(image.url, { width: 1200 })
+        }
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={
           image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
