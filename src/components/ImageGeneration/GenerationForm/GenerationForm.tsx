@@ -79,6 +79,7 @@ import { IconLock } from '@tabler/icons-react';
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
+  const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
@@ -135,6 +136,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const handleClearAll = () => {
     const { nsfw, quantity } = useGenerationFormStore.getState();
+    setPromptWarning(null);
     form.reset({
       ...generation.defaultValues,
       nsfw,
@@ -173,20 +175,23 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
     };
 
+    setPromptWarning(null);
     conditionalPerformTransaction(totalCost, performTransaction);
   };
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
-    console.log(promptError);
     if (promptError?.type === 'custom') {
       const status = blockedRequest.status();
       console.log(status);
+      setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
         const isBlocked = await reportProhibitedRequest({ prompt });
         if (isBlocked) currentUser?.refresh();
       }
+    } else {
+      setPromptWarning(null);
     }
   };
   // #endregion
@@ -649,6 +654,16 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                     } more jobs`}
               </Text>
+              {promptWarning && (
+                <Group noWrap spacing={5} mb={5} align="flex-start">
+                  <ThemeIcon color="red" size="md">
+                    <IconAlertTriangle size={16} />
+                  </ThemeIcon>
+                  <Text color="red" lh={1.1} size="xs">
+                    {promptWarning}
+                  </Text>
+                </Group>
+              )}
             </>
           ) : null}
           {status.message && (

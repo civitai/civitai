@@ -73,19 +73,15 @@ const baseGenerationParamsSchema = z.object({
 });
 
 export const blockedRequest = (() => {
-  let isBlocked = false;
   let instances: number[] = [];
   const updateStorage = () => {
     localStorage.setItem('brc', JSON.stringify(instances));
   };
   const increment = () => {
-    if (isBlocked) return instances.length;
-    isBlocked = true;
     instances.push(Date.now());
     updateStorage();
     return instances.length;
   };
-  const clear = () => (isBlocked = false);
   const status = () => {
     const count = instances.length;
     if (count > constants.imageGeneration.requestBlocking.muted) return 'muted';
@@ -101,7 +97,6 @@ export const blockedRequest = (() => {
   }
 
   return {
-    clear,
     status,
     increment,
   };
@@ -129,8 +124,6 @@ const sharedGenerationParamsSchema = z.object({
           message,
           params: { count },
         });
-      } else {
-        blockedRequest.clear();
       }
     }),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
