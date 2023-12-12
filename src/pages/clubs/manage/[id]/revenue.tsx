@@ -1,42 +1,13 @@
-import {
-  Anchor,
-  Box,
-  Button,
-  Center,
-  Container,
-  Grid,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Stack, Title } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { useQueryBounty } from '~/components/Bounty/bounty.utils';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { BountyGetById } from '~/types/router';
-import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
-import { InputText } from '~/libs/form';
-import { useRouter } from 'next/router';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
-import UserProfileEntry from '~/pages/user/[username]';
 import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import React, { useState } from 'react';
-import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
-import { trpc } from '~/utils/trpc';
-import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
-import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
-import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 
 const querySchema = z.object({ id: z.coerce.number() });

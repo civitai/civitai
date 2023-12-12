@@ -32,6 +32,7 @@ import { Currency } from '@prisma/client';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { getDisplayName } from '~/utils/string-helpers';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -237,7 +238,7 @@ export const BuzzDashboardOverview = ({
                         <Group position="apart">
                           <Stack spacing={0}>
                             <Text size="sm" weight="500">
-                              {TransactionType[transaction.type]}
+                              {getDisplayName(TransactionType[transaction.type])}
                             </Text>
                             <Text size="xs">
                               <DaysFromNow date={date} />

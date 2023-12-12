@@ -27,23 +27,6 @@ import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { ClubResourcePagedUpdateForm } from '~/components/Club/ClubResourcePagedUpdateForm';
 import { showSuccessNotification } from '~/utils/notifications';
 
-const getResourceTitle = (
-  resource: ClubResourceGetPaginatedItem
-): { label: string; url: string } => {
-  switch (resource.entityType) {
-    case 'ModelVersion':
-      return {
-        label: `${resource.data.name} - ${resource.data.modelVersion.name}`,
-        url: `/models/${resource.data.id}?modelVersionId=${resource.data.modelVersion.id}`,
-      };
-    case 'Article':
-      return {
-        label: resource.data.title,
-        url: `/articles/${resource.data.id}`,
-      };
-  }
-};
-
 export function ClubResourcesPaged({ clubId }: Props) {
   const utils = trpc.useContext();
 

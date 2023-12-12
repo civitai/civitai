@@ -145,7 +145,7 @@ export function ClubUpsertForm({
                   )}
                   <InputSimpleImageUpload
                     name="avatar"
-                    label="Profile Image"
+                    label="Club Avatar"
                     description="This will appear on your club's header as your club's avatar. Only people who enter your club's feed will see this image. Ideal resolution is 1024x1024."
                     aspectRatio={1}
                     // Im aware ideally this should ideally be 450, but images will look better on a higher res here
@@ -240,7 +240,7 @@ export function ClubUpsertForm({
               />
               <List size="xs" spacing={8}>
                 <List.Item>
-                  Clubs requests MUST adhere to the content rules defined in our{' '}
+                  Clubs MUST adhere to the content rules defined in our{' '}
                   <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
                     TOS
                   </Anchor>

@@ -32,7 +32,13 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
   }
 
   if (!clientSecret) {
-    throw new Error('Failed to create client secret');
+    return (
+      <Center>
+        <Text color="red" size="sm">
+          There was an error attempting to setup a payment method. Please try again later.
+        </Text>
+      </Center>
+    );
   }
 
   const options: StripeElementsOptions = {

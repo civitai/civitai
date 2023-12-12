@@ -267,7 +267,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                 label={
                   <Group spacing={4}>
                     <IconClock size={16} stroke={1.5} />
-                    You are all caught up
+                    No more members to show.
                   </Group>
                 }
                 labelPosition="center"

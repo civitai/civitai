@@ -4,7 +4,11 @@ import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useQueryClub, useQueryClubMembership } from '~/components/Club/club.utils';
+import {
+  useClubContributorStatus,
+  useQueryClub,
+  useQueryClubMembership,
+} from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
 import { trpc } from '~/utils/trpc';
@@ -75,6 +79,7 @@ export default function ManageClubMembers({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
+  const { membership, isOwner } = useClubContributorStatus({ clubId: id });
 
   if (!loading && !club) return <NotFound />;
   if (loading) return <PageLoader />;
@@ -87,15 +92,17 @@ export default function ManageClubMembers({
         resources. To add new resources, you should go to the resource and use the context menu to{' '}
         <code>Add to club</code> or use the resource&rsquo;s edit form.
       </Text>
-      <Button
-        onClick={() => {
-          dialogStore.trigger({
-            component: AddResourceToClubModal,
-          });
-        }}
-      >
-        Add new resource
-      </Button>
+      {(isOwner || !!membership) && (
+        <Button
+          onClick={() => {
+            dialogStore.trigger({
+              component: AddResourceToClubModal,
+            });
+          }}
+        >
+          Add new resource
+        </Button>
+      )}
       <ClubResourcesPaged clubId={id} />
     </Stack>
   );

@@ -1,7 +1,7 @@
 import { ClubResourceGetPaginatedItem, ClubTier } from '~/types/router';
 import { SupportedClubEntitiesLabels, updateClubResourceInput } from '~/server/schema/club.schema';
 import { z } from 'zod';
-import { ActionIcon, Anchor, Checkbox, Group, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Button, Checkbox, Group, Tooltip } from '@mantine/core';
 import React from 'react';
 import { IconCheck, IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -98,20 +98,19 @@ export const ClubResourcePagedUpdateForm = ({
           />
         </td>
       ))}
-      <td>
-        <Group>
-          <Tooltip label="Update">
-            <ActionIcon
-              size="sm"
-              color="blue"
-              disabled={!isDirty}
-              variant="outline"
-              onClick={handleUpdate}
-              loading={isLoading}
-            >
-              <IconCheck size={16} stroke={1.5} />
-            </ActionIcon>
-          </Tooltip>
+      <td align="right">
+        <Group position="right">
+          <Button
+            size="xs"
+            color="blue"
+            disabled={!isDirty}
+            variant="outline"
+            onClick={handleUpdate}
+            loading={isLoading}
+            h={24}
+          >
+            Save
+          </Button>
           <Tooltip label="Remove">
             <ActionIcon
               size="sm"

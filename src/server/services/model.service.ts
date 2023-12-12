@@ -217,15 +217,15 @@ export const getModelsRaw = async ({
   if (tagname ?? tag) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "TagsOnModels" tom WHERE tom."modelId" = m."id" AND tom."tagId" = ${
-            tagname ?? tag
-          }
+          SELECT 1 FROM "TagsOnModels" tom
+          JOIN "Tag" t on tom."tagId" = t."id"
+          WHERE tom."modelId" = m."id" AND t."name" = ${tagname ?? tag}
         )`
     );
   }
 
   if (username || user) {
-    AND.push(Prisma.sql`u.username = ${username ?? user}`);
+    AND.push(Prisma.raw(`u."username" = '${username ?? user ?? ''}'`));
   }
 
   if (types?.length) {
@@ -308,6 +308,7 @@ export const getModelsRaw = async ({
         status.map((s) => `'${s}'::"ModelStatus"`).join(',')
       )})`
     );
+
     isPrivate = true;
   }
 
@@ -365,7 +366,6 @@ export const getModelsRaw = async ({
     );
   }
 
-  // TODO: Support collections
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
       userId: sessionUser?.id,
@@ -426,7 +426,6 @@ export const getModelsRaw = async ({
   }
 
   if (!ignoreListedStatus) {
-    // TODO: This might be more conditional than anything really.
     AND.push(
       Prisma.sql`
       (
