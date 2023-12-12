@@ -8,11 +8,12 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { publicApiContext } from '~/server/createContext';
+import { authedApiContext, publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -23,6 +24,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: `Invalid id: ${results.error.flatten().fieldErrors.id}` });
+
+  // Handle Delete command
+  if (req.method === 'DELETE') {
+    return await handleDelete(req, res);
+  }
 
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelId' });
@@ -99,3 +105,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
   }
 });
+
+async function handleDelete(req: NextApiRequest, res: NextApiResponse) {
+  const session = await getServerAuthSession({ req, res });
+  if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const apiCaller = appRouter.createCaller(authedApiContext(req, res, session.user));
+  const input = { id: Number(req.query.id) };
+  res.send(await apiCaller.model.delete(input));
+}

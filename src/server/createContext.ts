@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { Session } from 'next-auth';
+import { Session, SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { parseFilterCookies } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
@@ -72,6 +72,17 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
     canCache: true,
   },
   res,
+});
+
+export const authedApiContext = (req: NextApiRequest, res: NextApiResponse, user: SessionUser) => ({
+  ...publicApiContext(req, res),
+  user,
+  cache: {
+    browserCacheTTL: 0,
+    edgeCacheTTL: 0,
+    staleWhileRevalidate: 0,
+    canCache: false,
+  },
 });
 
 export type Context = AsyncReturnType<typeof createContext>;
