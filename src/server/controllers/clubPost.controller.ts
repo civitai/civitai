@@ -6,6 +6,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import {
+  deleteClubPost,
   getAllClubPosts,
   getClubPostById,
   upsertClubPost,
@@ -125,6 +126,25 @@ export async function upsertClubPostHandler({
 }) {
   try {
     await upsertClubPost({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function deleteClubPostHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    await deleteClubPost({
       ...input,
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,

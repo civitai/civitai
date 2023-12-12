@@ -388,7 +388,9 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('Some of your resources are not available for generation');
 
   const access = await checkResourcesAccess(resources, userId).catch(() => false);
-  if (!access) throw throwAuthorizationError('You do not have access to some of the resources');
+
+  if (!access)
+    throw throwAuthorizationError('You do not have access to some of the selected resources');
 
   const isSDXL = params.baseModel === 'SDXL';
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);

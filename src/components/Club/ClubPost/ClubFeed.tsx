@@ -9,6 +9,7 @@ import {
   MenuProps,
   Paper,
   Stack,
+  Text,
   Title,
 } from '@mantine/core';
 import React from 'react';
@@ -21,7 +22,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { formatDate } from '~/utils/date-helpers';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { useClubContributorStatus } from '~/components/Club/club.utils';
+import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRouter } from 'next/router';
 import { useMutateBounty } from '~/components/Bounty/bounty.utils';
@@ -42,6 +43,8 @@ import { ClubMembershipRole } from '@prisma/client';
 import { NextLink } from '@mantine/next';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
 import { useInView } from '~/hooks/useInView';
+import { showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -66,6 +69,8 @@ export function ClubPostContextMenu({
 }) {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
+  const queryUtils = trpc.useContext();
+  const { deleteClubPost, deletingClubPost } = useMutateClub();
 
   const { isOwner, role } = useClubContributorStatus({
     clubId: clubPost.clubId,
@@ -77,6 +82,37 @@ export function ClubPostContextMenu({
     (clubPost.createdBy?.id === currentUser?.id && role === ClubMembershipRole.Contributor) ||
     role === ClubMembershipRole.Admin;
 
+  const canDeletePost = isModerator || isOwner || role === ClubMembershipRole.Admin;
+
+  const handleDeletePost = () => {
+    const onDelete = async () => {
+      await deleteClubPost({ id: clubPost.id });
+
+      showSuccessNotification({
+        title: 'Success',
+        message: 'Post deleted successfully',
+      });
+
+      await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
+    };
+
+    openConfirmModal({
+      title: 'Delete Club Post',
+      children: (
+        <Stack>
+          <Text>Are you sure you want to delete this club post?</Text>
+          <Text size="sm" color="red">
+            This action not reversible
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      labels: { confirm: 'Delete club post', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red' },
+      onConfirm: onDelete,
+    });
+  };
+
   const menuItems: React.ReactElement<MenuItemProps>[] = [
     canUpdatePost ? (
       <Menu.Item
@@ -86,6 +122,16 @@ export function ClubPostContextMenu({
         component={NextLink}
       >
         Edit
+      </Menu.Item>
+    ) : null,
+    canDeletePost ? (
+      <Menu.Item
+        key="edit"
+        icon={<IconTrash size={14} stroke={1.5} />}
+        onClick={handleDeletePost}
+        color="red"
+      >
+        Delete post
       </Menu.Item>
     ) : null,
   ].filter(isDefined);

@@ -2,6 +2,7 @@ import { isFlagProtected, protectedProcedure, publicProcedure, router } from '..
 import { getInfiniteClubPostsSchema, upsertClubPostInput } from '~/server/schema/club.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  deleteClubPostHandler,
   getClubPostByIdHandler,
   getInfiniteClubPostsHandler,
   upsertClubPostHandler,
@@ -20,4 +21,8 @@ export const clubPostRouter = router({
     .input(upsertClubPostInput)
     .use(isFlagProtected('clubs'))
     .mutation(upsertClubPostHandler),
+  delete: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('clubs'))
+    .mutation(deleteClubPostHandler),
 });

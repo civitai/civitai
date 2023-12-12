@@ -310,6 +310,28 @@ export const useMutateClub = () => {
     },
   });
 
+  const deleteClubPostMutation = trpc.clubPost.delete.useMutation({
+    async onSuccess() {
+      await queryUtils.club.getInfinite.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to delete club post',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to delete club post',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -347,6 +369,9 @@ export const useMutateClub = () => {
   const handleDeleteClub = (data: GetByIdInput) => {
     return deleteClubMutation.mutateAsync(data);
   };
+  const handleDeleteClubPost = (data: GetByIdInput) => {
+    return deleteClubPostMutation.mutateAsync(data);
+  };
 
   return {
     upsertClub: handleUpsertClub,
@@ -373,6 +398,8 @@ export const useMutateClub = () => {
     restoringClubMembership: restoreClubMembershipMutation.isLoading,
     deleteClub: handleDeleteClub,
     deletingClub: deleteClubMutation.isLoading,
+    deleteClubPost: handleDeleteClubPost,
+    deletingClubPost: deleteClubPostMutation.isLoading,
   };
 };
 

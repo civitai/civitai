@@ -115,7 +115,6 @@ export const upsertClubPost = async ({
   isModerator?: boolean;
 }) => {
   const dbClient = dbWrite;
-  const club = await getClub({ id: input.clubId as number, userId });
 
   const [userClub] = await userContributingClubs({ userId, clubIds: [input.clubId as number] });
   const isOwner = userClub.userId === userId;
@@ -181,4 +180,36 @@ export const upsertClubPost = async ({
 
     return post;
   }
+};
+
+export const deleteClubPost = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) => {
+  const post = await dbRead.clubPost.findUniqueOrThrow({
+    where: { id },
+  });
+
+  const [userClub] = await userContributingClubs({ userId, clubIds: [post.clubId] });
+
+  if (!userClub && !isModerator) {
+    throw throwAuthorizationError('You do not have permission to delete posts on this club.');
+  }
+
+  const isClubOwner = userClub.userId === userId;
+
+  if (
+    !isClubOwner &&
+    !isModerator &&
+    !userClub.memberships.find((m) => m.role === ClubMembershipRole.Admin)
+  ) {
+    throw throwAuthorizationError('You do not have permission to delete this post.');
+  }
+
+  return dbWrite.clubPost.delete({
+    where: {
+      id,
+    },
+  });
 };
