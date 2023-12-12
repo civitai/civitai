@@ -3,6 +3,7 @@ import {
   Button,
   Center,
   Checkbox,
+  Chip,
   createStyles,
   Divider,
   Group,
@@ -31,7 +32,6 @@ export const ClubResourceManagementInput = ({
   ...props
 }: ClubResourceManagementInputProps) => {
   const [error, setError] = useState<string | null>(null);
-  const [selectedClubId, setSelectedClubId] = useState<number | null>(null);
   const [clubResources, setClubResources] = useState<ClubResourceSchema[]>(value || []);
   const { data: clubTiers = [], isFetching } = trpc.club.getTiers.useQuery(
     {
@@ -95,10 +95,6 @@ export const ClubResourceManagementInput = ({
     );
   };
 
-  const unusedClubs = useMemo(() => {
-    return userClubs?.filter((c) => !clubResources.find((cr) => cr.clubId === c.id)) ?? [];
-  }, [clubResources, userClubs]);
-
   if (isLoadingUserClubs) {
     return (
       <Center>
@@ -110,75 +106,64 @@ export const ClubResourceManagementInput = ({
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack spacing="xs" mt="sm">
-        {unusedClubs.length === 0 ? (
-          <Center>
-            <Text color="dimmed" size="sm">
-              No more clubs to select from
-            </Text>
-          </Center>
-        ) : (
-          <Group grow align="flex-end">
-            <Select
-              label="My Clubs"
-              name="myClubs"
-              data={unusedClubs.map((c) => ({ label: c.name, value: c.id.toString() }))}
-              onChange={(value: string) => setSelectedClubId(Number(value))}
-              value={selectedClubId === null ? null : selectedClubId.toString()}
-              disabled={isLoadingUserClubs || unusedClubs.length === 0}
-            />
-            <Button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onToggleClub(selectedClubId as number);
-                setSelectedClubId(null);
-              }}
-              disabled={!selectedClubId}
-            >
-              Add to this club
-            </Button>
-          </Group>
-        )}
-        {clubResources.map((clubResource, index) => {
-          const tiers = clubTiers.filter((t) => t.clubId === clubResource.clubId);
-          const clubTierIds = clubResource.clubTierIds ?? [];
+        {(userClubs ?? []).map((club) => {
+          const clubResource = clubResources.find((cr) => cr.clubId === club.id);
+          const tiers = clubTiers.filter((t) => t.clubId === club.id);
+          const clubTierIds = clubResource?.clubTierIds ?? [];
 
           return (
-            <Paper key={clubResource.clubId} p="sm" radius="md" withBorder>
-              <Text size="sm" weight={500}>
-                {userClubs?.find((c) => c.id === clubResource.clubId)?.name ?? 'Unknown Club'}
-              </Text>
-              <Stack spacing="xs" mt="sm">
-                <Checkbox
-                  label="All tiers"
-                  checked={clubTierIds.length === 0}
-                  onChange={() => {
-                    onSetAllTierAccess(clubResource.clubId);
-                  }}
-                />
-                {tiers.map((tier) => (
-                  <Checkbox
-                    key={tier.id}
-                    label={tier.name}
-                    checked={clubTierIds.includes(tier.id)}
-                    onChange={() => onToggleTierId(clubResource.clubId, tier.id)}
-                  />
-                ))}
-                {tiers.length === 0 ? (
-                  isFetching ? (
-                    <Loader />
-                  ) : (
-                    <Text color="dimmed" size="sm">
-                      No tiers avilable for this club.
-                    </Text>
-                  )
-                ) : null}
-              </Stack>
-              <Divider my="md" />
-              <Button size="sm" onClick={() => onToggleClub(clubResource.clubId)} color="red">
-                Remove from this club
-              </Button>
-            </Paper>
+            <Stack key={club.id}>
+              <Checkbox
+                checked={!!clubResource}
+                onChange={() => {
+                  onToggleClub(club.id);
+                }}
+                label={club.name}
+              />
+              {clubResource && (
+                <Group>
+                  <Chip
+                    variant="filled"
+                    radius="xs"
+                    size="xs"
+                    checked={clubTierIds.length === 0}
+                    onChange={() => {
+                      onSetAllTierAccess(club.id);
+                    }}
+                  >
+                    All tiers
+                  </Chip>
+                  {tiers.length === 0 ? (
+                    isFetching ? (
+                      <Loader size="xs" />
+                    ) : (
+                      <Text color="dimmed" size="sm">
+                        No tiers avilable for this club.
+                      </Text>
+                    )
+                  ) : null}
+                  {tiers.length > 0 && (
+                    <>
+                      {tiers.map((t) => (
+                        <Chip
+                          key={t.id}
+                          variant="filled"
+                          radius="xs"
+                          size="xs"
+                          checked={clubResource.clubTierIds?.includes(t.id)}
+                          onChange={() => {
+                            onToggleTierId(club.id, t.id);
+                          }}
+                        >
+                          {t.name}
+                        </Chip>
+                      ))}
+                    </>
+                  )}
+                </Group>
+              )}
+              <Divider />
+            </Stack>
           );
         })}
       </Stack>
