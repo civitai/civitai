@@ -294,7 +294,7 @@ export function includesMinor(prompt: string | undefined) {
 
 export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
-  prompt = removeAccents(prompt);
+  prompt = removeAccents(prompt).replace(/'|\.|\-/g, '');
   if (!nsfw && !includesNsfw(prompt)) return false;
   if (includesMinor(prompt)) return 'minor';
   if (includesPoi(prompt)) return 'poi';
