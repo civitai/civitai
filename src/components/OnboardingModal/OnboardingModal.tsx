@@ -344,9 +344,6 @@ export default function OnboardingModal() {
                 title={
                   <Group spacing="xs">
                     <Title order={2}>Content Experience</Title>
-                    <Badge color="yellow" size="xs">
-                      Beta
-                    </Badge>
                   </Group>
                 }
                 description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."

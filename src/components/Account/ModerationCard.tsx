@@ -82,9 +82,6 @@ export function ModerationCard({
     <Stack key="title" spacing={0} mb="md">
       <Group spacing="xs">
         <Title order={2}>Content Moderation</Title>
-        <Badge color="yellow" size="xs">
-          Beta
-        </Badge>
       </Group>
       <Text color="dimmed" size="sm">
         {`Choose the type of content you don't want to see on the site.`}
