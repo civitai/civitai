@@ -5,259 +5,217 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { withRetries } from '~/server/utils/errorHandling';
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 import orchestratorCaller from '../http/orchestrator/orchestrator.caller';
+import { createTrainingRequest } from '~/server/services/training.service';
 
-const minutesPerRun = 10;
+const SUBMITTED_CHECK_INTERVAL = 10;
+const PROCESSING_CHECK_INTERVAL = 20;
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'handle-long-trainings', type: 'error', ...data }, 'webhooks').catch();
 };
 
-const _handleJob = async (
-  mf_id: number,
-  mv_id: number,
-  updated: string,
-  status: TrainingStatus,
-  job_id: string | null,
-  transaction_id: string | null
-) => {
-  if (!job_id) {
-    logJob({
-      message: `No jobId present`,
-      data: {
-        jobId: job_id,
-        modelFileId: mf_id,
-        important: true,
-      },
-    });
-    return;
+type JobStatus =
+  | { status: 'Failed' }
+  | {
+      status: 'Succeeded' | 'Deleted' | 'Expired' | 'Processing';
+      date: Date;
+    };
+const failedState: JobStatus = { status: 'Failed' };
+async function getJobStatus(jobId: string, log: (message: string) => void) {
+  function fail(message: string) {
+    log(message);
+    return failedState;
   }
 
   const eventResp = await orchestratorCaller.getEventById({
-    id: job_id,
+    id: jobId,
     descending: true,
     take: 1,
   });
-
-  if (!eventResp.ok) {
-    logJob({
-      message: `Couldn't fetch events for job`,
-      data: {
-        jobId: job_id,
-        modelFileId: mf_id,
-        important: true,
-      },
-    });
-    return;
-  }
+  if (!eventResp.ok) return fail(`Couldn't fetch events for job`);
 
   const eventData = eventResp.data;
-  if (!eventData) {
-    logJob({
-      message: `Couldn't parse JSON events for job`,
-      data: {
-        // error: (e as Error)?.message,
-        // cause: (e as Error)?.cause,
-        jobId: job_id,
-        modelFileId: mf_id,
-        important: true,
-      },
-    });
-    return;
+  if (!eventData) return fail(`Couldn't parse JSON events for job`);
+  if (!eventData.length) return fail(`No event history for job`);
+
+  const { type: status, dateTime: date } = eventData[0];
+  if (!status || !date) return fail(`Couldn't grab latest type/date for job`);
+
+  return { status, date: new Date(date) } as JobStatus;
+}
+
+const handleJob = async (
+  modelFileId: number,
+  modelVersionId: number,
+  trainingStatus: TrainingStatus,
+  jobId: string | null,
+  transactionId: string | null
+) => {
+  if (!jobId) {
+    log(`No job ID`);
+    return await requeueTraining();
   }
 
-  if (!eventData.length) {
-    logJob({
-      message: `No event history for job`,
-      data: {
-        jobId: job_id,
-        modelFileId: mf_id,
-        important: true,
-      },
-    });
-    return;
-  }
-
-  const { type: jobType, dateTime: jobDate } = eventData[0];
-
-  if (!jobType || !jobDate) {
-    // Q: should we consider this and the above checks as "failed"?
-    logJob({
-      message: `Couldn't grab latest type/date for job`,
-      data: {
-        jobId: job_id,
-        modelFileId: mf_id,
-        important: true,
-      },
-    });
-    return;
+  const job = await getJobStatus(jobId, log);
+  if (['Failed', 'Deleted', 'Expired'].includes(job.status)) {
+    await updateStatus('Failed');
+    return await refund();
   }
 
   // nb: we should really be updating the history too, but...it's annoying
-  if (jobType === 'Succeeded') {
-    await dbWrite.modelVersion.update({
-      where: { id: mv_id },
-      data: { trainingStatus: 'InReview' },
-    });
+  if (job.status === 'Succeeded') {
+    await updateStatus('InReview');
     return true;
-  } else if (['Failed', 'Deleted', 'Expired'].includes(jobType)) {
-    await dbWrite.modelVersion.update({
-      where: { id: mv_id },
-      data: { trainingStatus: 'Failed' },
-    });
+  }
 
-    if (!transaction_id) {
+  // Otherwise we're still processing
+  if (job.status !== 'Processing') return true; // Should never run...
+
+  const jobUpdated = job.date.getTime();
+  const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
+  if (trainingStatus === 'Submitted') {
+    // - if it's not in the queue after 10 minutes, resubmit it
+    if (minsDiff > SUBMITTED_CHECK_INTERVAL) {
+      const queueResponse = await orchestratorCaller.getJobById({ id: jobId });
+      // If we found it in the queue, we're good
+      if (queueResponse.ok && queueResponse.data?.serviceProviders?.length) return true;
+
+      // Otherwise, resubmit it
+      log(`Could not fetch position in queue.`);
+      return await requeueTraining();
+      // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
+    }
+  }
+
+  if (trainingStatus === 'Processing') {
+    // - if it hasn't gotten an update in 20 minutes, mark failed
+    if (minsDiff > PROCESSING_CHECK_INTERVAL) {
+      await updateStatus('Failed');
+      return await refund();
+    }
+  }
+
+  return true;
+
+  //#region helper functions
+  function log(message: string) {
+    logJob({
+      message,
+      data: {
+        jobId,
+        modelFileId,
+        important: true,
+      },
+    });
+  }
+
+  async function requeueTraining() {
+    try {
+      log(`Resubmitting training request`);
+      await createTrainingRequest({ modelVersionId });
+      log(`Resubmitted training request`);
+      return true;
+    } catch (e) {
+      return log(`Error resubmitting training request`);
+    }
+  }
+
+  async function refund() {
+    if (!transactionId) {
+      log(`No transaction ID - need to manually refund.`);
+      return;
+    }
+
+    log(`Refunding transaction`);
+    await withRetries(async () =>
+      refundTransaction(transactionId, 'Refund due to a long-running/failed training job.')
+    );
+    log(`Refunded transaction`);
+
+    return true;
+  }
+
+  async function updateStatus(status: TrainingStatus) {
+    await dbWrite.modelVersion.update({
+      where: { id: modelVersionId },
+      data: { trainingStatus: status, updatedAt: new Date() },
+    });
+    log(`Updated training status to ${status}`);
+  }
+  //#endregion
+};
+
+type TrainingRunResult = {
+  mf_id: number;
+  mv_id: number;
+  updated: string;
+  status: TrainingStatus;
+  job_id: string | null;
+  transaction_id: string | null;
+};
+
+export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * * *`, async () => {
+  const [lastRun, setLastRun] = await getJobDate('handle-long-trainings');
+  const oldTraining = await dbWrite.$queryRaw<TrainingRunResult[]>`
+      SELECT
+        "ModelFile".id as mf_id,
+        "ModelVersion".id as mv_id,
+        "ModelVersion"."trainingStatus" as status,
+        COALESCE("ModelFile"."metadata" -> 'trainingResults' ->> 'jobId', "ModelFile"."metadata" -> 'trainingResults' -> 'history' -> -1 ->> 'jobId') job_id,
+        "ModelFile"."metadata" -> 'trainingResults' ->> 'transactionId' transaction_id
+      FROM "ModelVersion"
+      JOIN "ModelFile" ON "ModelVersion".id = "ModelFile"."modelVersionId"
+      JOIN "Model" ON "Model".id="ModelVersion"."modelId"
+      WHERE "ModelFile".type = 'Training Data' AND "Model"."uploadType" = 'Trained'
+      AND "ModelVersion"."trainingStatus" in ('Processing', 'Submitted')
+      -- Hasn't had a recent update
+      AND "ModelVersion"."updatedAt" between '10/16/2023' and ${lastRun}
+      --  AND (("ModelFile".metadata -> 'trainingResults' -> 'start_time')::TEXT)::TIMESTAMP < (now() - interval '24 hours')
+      ORDER BY mf_id desc;
+    `;
+
+  if (oldTraining.length === 0) {
+    logJob({
+      type: 'info',
+      message: `No long running jobs to process.`,
+    });
+    await setLastRun();
+    return { status: 'ok' };
+  }
+
+  logJob({
+    type: 'info',
+    message: `Found long running jobs to process`,
+    data: { count: oldTraining.length },
+  });
+
+  let successes = 0;
+  for (const { mf_id, mv_id, status, job_id, transaction_id } of oldTraining) {
+    try {
+      const success = await handleJob(mf_id, mv_id, status, job_id, transaction_id);
+      if (success === true) successes += 1;
+    } catch (e) {
       logJob({
-        message: `No transaction ID - need to manually refund.`,
+        message: `Error handling job`,
         data: {
+          error: (e as Error)?.message,
+          cause: (e as Error)?.cause,
           jobId: job_id,
           modelFileId: mf_id,
           important: true,
         },
       });
-      return;
-    }
-    await withRetries(async () =>
-      refundTransaction(transaction_id, 'Refund due to a long-running/failed training job.')
-    );
-
-    return true;
-  } else {
-    const jobUpdated = new Date(jobDate).getTime();
-    const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
-    if (status === 'Submitted') {
-      // - if it's not in the queue after 10 minutes, resubmit it
-      if (minsDiff > 10) {
-        const queueResponse = await orchestratorCaller.getJobById({ id: job_id });
-        if (!queueResponse.ok) {
-          logJob({
-            message: `Could not fetch position in queue.`,
-            data: {
-              jobId: job_id,
-              modelFileId: mf_id,
-              important: true,
-            },
-          });
-          return;
-        }
-
-        const queueData = queueResponse.data;
-        if (!queueData?.serviceProviders || isEmpty(queueData.serviceProviders)) {
-          logJob({
-            message: `Not in queue, needs resubmission.`,
-            data: {
-              jobId: job_id,
-              modelFileId: mf_id,
-              important: true,
-            },
-          });
-          return;
-        }
-        return true;
-      }
-    } else if (status === 'Processing') {
-      // - if it hasn't gotten an update in 20 minutes, mark failed
-      if (minsDiff > 20) {
-        await dbWrite.modelVersion.update({
-          where: { id: mv_id },
-          data: { trainingStatus: 'Failed' },
-        });
-
-        if (!transaction_id) {
-          logJob({
-            message: `No transaction ID - need to manually refund.`,
-            data: {
-              jobId: job_id,
-              modelFileId: mf_id,
-              important: true,
-            },
-          });
-          return;
-        }
-        await withRetries(async () =>
-          refundTransaction(transaction_id, 'Refund due to a long-running/failed training job.')
-        );
-        return true;
-      }
     }
   }
 
-  return true;
-};
+  logJob({
+    type: 'info',
+    message: `Finished`,
+    data: { successes, total: oldTraining.length },
+  });
 
-export const handleLongTrainings = createJob(
-  'handle-long-trainings',
-  `*/${minutesPerRun} * * * *`,
-  async () => {
-    const oldTraining = await dbWrite.$queryRaw<
-      {
-        mf_id: number;
-        mv_id: number;
-        updated: string;
-        status: TrainingStatus;
-        job_id: string | null;
-        transaction_id: string | null;
-      }[]
-    >`
-    SELECT
-      "ModelFile".id as mf_id,
-      "ModelVersion".id as mv_id,
-      "ModelVersion"."updatedAt" as updated,
-      "ModelVersion"."trainingStatus" as status,
-      COALESCE("ModelFile"."metadata" -> 'trainingResults' ->> 'jobId', "ModelFile"."metadata" -> 'trainingResults' -> 'history' -> -1 ->> 'jobId') job_id,
-      "ModelFile"."metadata" -> 'trainingResults' ->> 'transactionId' transaction_id
-    FROM "ModelVersion"
-    JOIN "ModelFile" ON "ModelVersion".id = "ModelFile"."modelVersionId"
-    JOIN "Model" ON "Model".id="ModelVersion"."modelId"
-    WHERE "ModelFile".type = 'Training Data' AND "Model"."uploadType" = 'Trained'
-    AND "ModelVersion"."trainingStatus" in ('Processing', 'Submitted')
-    AND "ModelVersion"."updatedAt" between '10/16/2023' and now() - interval '${
-      minutesPerRun - 1
-    } minutes'
---           AND (("ModelFile".metadata -> 'trainingResults' -> 'start_time')::TEXT)::TIMESTAMP < (now() - interval '24 hours')
-    ORDER BY mf_id desc;
-    `;
-
-    if (oldTraining.length === 0) {
-      logJob({
-        type: 'info',
-        message: `No long running jobs to process.`,
-      });
-      return { status: 'ok' };
-    }
-
-    logJob({
-      type: 'info',
-      message: `Found long running jobs to process`,
-      data: { count: oldTraining.length },
-    });
-
-    let successes = 0;
-    for (const { mf_id, mv_id, updated, status, job_id, transaction_id } of oldTraining) {
-      try {
-        const success = await _handleJob(mf_id, mv_id, updated, status, job_id, transaction_id);
-        if (success === true) successes += 1;
-      } catch (e) {
-        logJob({
-          message: `Error handling job`,
-          data: {
-            error: (e as Error)?.message,
-            cause: (e as Error)?.cause,
-            jobId: job_id,
-            modelFileId: mf_id,
-            important: true,
-          },
-        });
-      }
-    }
-
-    logJob({
-      type: 'info',
-      message: `Finished`,
-      data: { successes, total: oldTraining.length },
-    });
-
-    return { status: 'ok', successes, total: oldTraining.length };
-  }
-);
+  await setLastRun();
+  return { status: 'ok', successes, total: oldTraining.length };
+});

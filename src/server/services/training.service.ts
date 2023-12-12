@@ -35,6 +35,7 @@ type TrainingRequest = {
   modelName: string;
   trainingUrl: string;
   fileId: number;
+  userId: number;
   fileMetadata: FileMetadata | null;
 };
 
@@ -99,22 +100,25 @@ export const deleteAssets = async (jobId: string) => {
 export const createTrainingRequest = async ({
   userId,
   modelVersionId,
-}: CreateTrainingRequestInput & { userId: number }) => {
+}: CreateTrainingRequestInput & { userId?: number }) => {
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           m."userId",
            mf.url      "trainingUrl",
            mf.id       "fileId",
            mf.metadata "fileMetadata"
     FROM "ModelVersion" mv
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-    WHERE m."userId" = ${userId}
-      AND mv.id = ${modelVersionId}
+    WHERE mv.id = ${modelVersionId}
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
   const modelVersion = modelVersions[0];
+
+  // Don't allow a user to queue anything but their own training
+  if (userId && userId != modelVersion.userId) throw throwBadRequestError('Invalid user');
 
   const trainingParams = modelVersion.trainingDetails.params;
   const baseModel = modelVersion.trainingDetails.baseModel;
@@ -137,39 +141,44 @@ export const createTrainingRequest = async ({
     }
   }
 
-  const eta = calcEta(
-    trainingParams.networkDim,
-    trainingParams.networkAlpha,
-    trainingParams.targetSteps,
-    baseModel
-  );
-  const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
-  if (price === undefined) {
-    throw throwBadRequestError(
-      'Could not compute Buzz price for training - please check your parameters.'
+  // Determine if we still need to charge them for this training
+  let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
+  if (!transactionId) {
+    // And if so, charge them
+    const eta = calcEta(
+      trainingParams.networkDim,
+      trainingParams.networkAlpha,
+      trainingParams.targetSteps,
+      baseModel
     );
-  }
-  const account = await getUserBuzzAccount({ accountId: userId });
-  if ((account.balance ?? 0) < price) {
-    throw throwInsufficientFundsError(
-      `You don't have enough Buzz to perform this action (required: ${price})`
-    );
+    const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+    if (price === undefined) {
+      throw throwBadRequestError(
+        'Could not compute Buzz price for training - please check your parameters.'
+      );
+    }
+    const account = await getUserBuzzAccount({ accountId: modelVersion.userId });
+    if ((account.balance ?? 0) < price) {
+      throw throwInsufficientFundsError(
+        `You don't have enough Buzz to perform this action (required: ${price})`
+      );
+    }
+
+    // nb: going to hold off on externalTransactionId for now
+    //     if we fail it, they'll never be able to proceed
+    //     if we catch it, we have to match on a very changeable error message rather than code
+    //        also, we will not have a transactionId, which means we can't refund them later in the process
+    const { transactionId: newTransactionId } = await createBuzzTransaction({
+      fromAccountId: modelVersion.userId,
+      toAccountId: 0,
+      amount: price,
+      type: TransactionType.Training,
+      // externalTransactionId: `training|mvId:${modelVersionId}`,
+    });
+    transactionId = newTransactionId;
   }
 
   const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
-
-  // nb: going to hold off on externalTransactionId for now
-  //     if we fail it, they'll never be able to proceed
-  //     if we catch it, we have to match on a very changeable error message rather than code
-  //        also, we will not have a transactionId, which means we can't refund them later in the process
-  const { transactionId } = await createBuzzTransaction({
-    fromAccountId: userId,
-    toAccountId: 0,
-    amount: price,
-    type: TransactionType.Training,
-    // externalTransactionId: `training|mvId:${modelVersionId}`,
-  });
-
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobPayload = {
     // priority: 10,
     callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/resource-training?token=${env.WEBHOOK_TOKEN}`,
@@ -185,10 +194,12 @@ export const createTrainingRequest = async ({
   };
 
   const response = await orchestratorCaller.imageResourceTraining({ payload: generationRequest });
-
-  if (!response.ok) {
+  if (!response.ok && transactionId) {
     await withRetries(async () =>
-      refundTransaction(transactionId, 'Refund due to an error submitting the training job.')
+      refundTransaction(
+        transactionId as string,
+        'Refund due to an error submitting the training job.'
+      )
     );
   }
 
