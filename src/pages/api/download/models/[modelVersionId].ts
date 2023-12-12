@@ -122,10 +122,10 @@ export default RateLimitedEndpoint(
     if (archived) return errorResponse(410, 'Model archived, not available for download');
 
     const canDownload =
-      isMod || 
+      isMod ||
       isOwner ||
-      (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published'); 
-    
+      (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
+
     if (!canDownload) return errorResponse(404, 'Model not found');
 
     // Handle unauthenticated downloads
