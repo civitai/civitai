@@ -313,9 +313,9 @@ const { openModal, Modal } = createContextModal({
             </Group>
 
             {badges.length > 0 ? (
-              <Group spacing={8} noWrap>
+              <Group spacing={8}>
                 {badges.map((cosmetic) => {
-                  const data = (cosmetic.data ?? {}) as { url?: string };
+                  const data = (cosmetic.data ?? {}) as BadgeCosmetic['data'];
                   const url = (data.url ?? '') as string;
                   const isSelected = badgeId === cosmetic.id;
 
@@ -350,7 +350,7 @@ const { openModal, Modal } = createContextModal({
                           }}
                           sx={{ height: 64, width: 64 }}
                         >
-                          <EdgeMedia src={url} width={64} />
+                          <EdgeMedia src={url} width={data.animated ? 'original' : 64} />
                         </Button>
                       </HoverCard.Target>
                       <HoverCard.Dropdown>

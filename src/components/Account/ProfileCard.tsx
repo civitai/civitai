@@ -229,7 +229,12 @@ export function ProfileCard() {
                 </Group>
                 <Group spacing="xs" align="stretch" noWrap>
                   {selectedBadge?.data.url ? (
-                    <EdgeMedia src={selectedBadge.data.url} width={96} />
+                    <Box w={96}>
+                      <EdgeMedia
+                        src={selectedBadge.data.url}
+                        width={selectedBadge.data.animated ? 'original' : 96}
+                      />
+                    </Box>
                   ) : (
                     <Paper
                       withBorder
@@ -278,7 +283,10 @@ export function ProfileCard() {
                                 }
                                 sx={{ height: 64, width: 64 }}
                               >
-                                <EdgeMedia src={cosmetic.data.url as string} width={64} />
+                                <EdgeMedia
+                                  src={cosmetic.data.url as string}
+                                  width={cosmetic?.data.animated ? 'original' : 64}
+                                />
                               </Button>
                             </HoverCard.Target>
                             <HoverCard.Dropdown>
