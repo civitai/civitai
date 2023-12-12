@@ -633,14 +633,18 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
 
   if (userId) {
     if (engagement) {
-      if (engagement === 'owned') AND.push({ userId });
-      if (engagement === 'memberships')
+      if (engagement === 'engaged')
         AND.push({
-          memberships: {
-            some: {
-              userId,
+          OR: [
+            { userId },
+            {
+              memberships: {
+                some: {
+                  userId,
+                },
+              },
             },
-          },
+          ],
         });
     } else {
       // Your created clubs or public clubs:

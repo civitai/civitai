@@ -242,7 +242,7 @@ export const constants = {
     minMonthlyBuzz: 5000,
     headerImageAspectRatio: 1 / 6,
     postCoverImageAspectRatio: 1 / 4,
-    engagementTypes: ['owned', 'memberships'],
+    engagementTypes: ['engaged'],
     clubMembershipRoleHiearchy: [
       ClubMembershipRole.Admin,
       ClubMembershipRole.Contributor,

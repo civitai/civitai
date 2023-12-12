@@ -417,7 +417,7 @@ export function AppHeader({
         ),
       },
       {
-        href: '/clubs?engagement=owned',
+        href: '/clubs?engagement=engaged',
         as: '/clubs',
         visible: !!currentUser && features.clubs,
         label: (

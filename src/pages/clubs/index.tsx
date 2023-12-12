@@ -113,7 +113,7 @@ export default function ClubsPage() {
                 />
               </Stack>
             )}
-            <ClubsInfinite filters={{ engagement }} />
+            <ClubsInfinite filters={{ engagement }} showEof={!engagement} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

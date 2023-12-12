@@ -109,7 +109,7 @@ export const getInfiniteClubSchema = infiniteQuerySchema.merge(
   z.object({
     nsfw: z.boolean().optional(),
     userId: z.number().optional(),
-    engagement: z.enum(['owned', 'memberships']).optional(),
+    engagement: z.enum(['engaged']).optional(),
     sort: z.nativeEnum(ClubSort).default(ClubSort.Newest),
     limit: z.coerce.number().min(1).max(200).default(60),
     clubIds: z.array(z.number()).optional(),
