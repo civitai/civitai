@@ -155,14 +155,13 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
       clubId: id,
     });
   const currentUser = useCurrentUser();
-
-  const canPost = useMemo(() => {
-    return userClubs.some((c) => c.id === id);
-  }, [userClubs, isLoadingUserClubs]);
-
   const isOwner = currentUser && club?.userId === currentUser?.id;
   const isModerator = currentUser?.isModerator;
   const isAdmin = membership?.role === ClubMembershipRole.Admin;
+
+  const canPost = useMemo(() => {
+    return isModerator || isOwner || userClubs.some((c) => c.id === id);
+  }, [membership, userClubs, isLoadingUserClubs]);
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -274,35 +273,33 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                       <RenderHtml html={club.description} />
                     </ContentClamp>
                   )}
-                  {(canPost || isOwner || isModerator) && (
-                    <Group>
-                      {canPost && (
-                        <Button
-                          onClick={() => {
-                            dialogStore.trigger({
-                              component: ClubPostUpsertFormModal,
-                              props: {
-                                clubId: club.id,
-                              },
-                            });
-                          }}
-                          leftIcon={<IconPencilMinus />}
-                        >
-                          Post content
-                        </Button>
-                      )}
-                      {(isOwner || isAdmin || isModerator) && (
-                        <Button
-                          component={'a'}
-                          href={`/clubs/manage/${club.id}`}
-                          leftIcon={<IconSettings />}
-                          color="gray"
-                        >
-                          Manage
-                        </Button>
-                      )}
-                    </Group>
-                  )}
+                  <Group>
+                    {canPost && (
+                      <Button
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: ClubPostUpsertFormModal,
+                            props: {
+                              clubId: club.id,
+                            },
+                          });
+                        }}
+                        leftIcon={<IconPencilMinus />}
+                      >
+                        Post content
+                      </Button>
+                    )}
+                    {(isOwner || isAdmin || isModerator) && (
+                      <Button
+                        component={'a'}
+                        href={`/clubs/manage/${club.id}`}
+                        leftIcon={<IconSettings />}
+                        color="gray"
+                      >
+                        Manage
+                      </Button>
+                    )}
+                  </Group>
                   <ClubFeedNavigation id={club.id} />
                 </Stack>
                 {children}
