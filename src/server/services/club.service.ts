@@ -127,7 +127,7 @@ export const getClub = async ({
   };
 };
 
-export function upsertClub({
+export async function upsertClub({
   isModerator,
   userId,
   id,
@@ -137,7 +137,20 @@ export function upsertClub({
   isModerator: boolean;
 }) {
   if (id) {
-    // TODO: Update club
+    // Check for permission:
+    const [club] = await userContributingClubs({ userId });
+
+    if (!club && !isModerator) {
+      throw throwAuthorizationError('You do not have permission to edit this club');
+    }
+
+    const isOwner = club.userId === userId;
+    const isAdmin = club.memberships.some((m) => m.role === ClubMembershipRole.Admin);
+
+    if (!isOwner && !isAdmin && !isModerator) {
+      throw throwAuthorizationError('You do not have permission to edit this club');
+    }
+
     return updateClub({ ...input, id, userId });
   } else {
     return createClub({ ...input, userId });

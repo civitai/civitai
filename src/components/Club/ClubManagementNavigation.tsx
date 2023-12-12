@@ -13,18 +13,26 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import { useClubContributorStatus } from '~/components/Club/club.utils';
 
 const overviewPath = '[id]';
 
 export const ClubManagementNavigation = ({ id }: { id: number }) => {
   const router = useRouter();
   const activePath = router.pathname.split('/').pop() || overviewPath;
+  const { isOwner, isModerator } = useClubContributorStatus({ clubId: id });
 
   const baseUrl = `/clubs/manage/${id}`;
 
   const opts: Record<
     string,
-    { url: string; icon: React.ReactNode; label?: string; count?: number | string }
+    {
+      url: string;
+      icon: React.ReactNode;
+      label?: string;
+      count?: number | string;
+      disabled?: boolean;
+    }
   > = {
     [overviewPath]: {
       url: `${baseUrl}/`,
@@ -34,6 +42,7 @@ export const ClubManagementNavigation = ({ id }: { id: number }) => {
     tiers: {
       url: `${baseUrl}/tiers`,
       icon: <IconCategory />,
+      disabled: !isOwner && !isModerator,
     },
     resources: {
       url: `${baseUrl}/resources`,
@@ -46,6 +55,7 @@ export const ClubManagementNavigation = ({ id }: { id: number }) => {
     revenue: {
       url: `${baseUrl}/revenue`,
       icon: <IconBolt />,
+      disabled: !isOwner && !isModerator,
     },
   };
 

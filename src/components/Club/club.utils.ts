@@ -515,6 +515,7 @@ export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
     userClub,
     membership,
     isOwner: currentUser && userClub?.userId === currentUser?.id,
+    isModerator: currentUser?.isModerator,
     ...rest,
   };
 };

@@ -52,6 +52,7 @@ import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/Club
 import { ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
+import { ClubMembershipRole } from '@prisma/client';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -161,6 +162,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
 
   const isOwner = currentUser && club?.userId === currentUser?.id;
   const isModerator = currentUser?.isModerator;
+  const isAdmin = membership?.role === ClubMembershipRole.Admin;
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -289,7 +291,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                           Post content
                         </Button>
                       )}
-                      {(isOwner || isModerator) && (
+                      {(isOwner || isAdmin || isModerator) && (
                         <Button
                           component={'a'}
                           href={`/clubs/manage/${club.id}`}
@@ -333,7 +335,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                   {tiers.length > 0 ? (
                     <>
                       {tiers.map((tier) => (
-                        <ClubTierItem clubTier={tier} />
+                        <ClubTierItem key={tier.id} clubTier={tier} />
                       ))}
                     </>
                   ) : (

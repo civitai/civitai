@@ -26,7 +26,11 @@ import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import UserProfileEntry from '~/pages/user/[username]';
-import { useMutateClub, useQueryClub } from '~/components/Club/club.utils';
+import {
+  useClubContributorStatus,
+  useMutateClub,
+  useQueryClub,
+} from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -43,6 +47,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';
 import { openConfirmModal } from '@mantine/modals';
+import { ClubMembershipRole } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -71,9 +76,15 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
+    const membership = await dbRead.clubMembership.findFirst({
+      where: { clubId: id, userId: session.user?.id },
+    });
+
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    if (!isOwner && !isModerator)
+    const isAdmin = membership?.role === ClubMembershipRole.Admin;
+
+    if (!isOwner && !isModerator && !isAdmin)
       return {
         redirect: {
           destination: `/clubs/${id}`,
@@ -92,6 +103,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
   const { club, loading } = useQueryClub({ id });
   const { classes } = useClubFeedStyles();
   const { deleteClub, deletingClub } = useMutateClub();
+  const { isOwner, isModerator } = useClubContributorStatus({ clubId: id });
 
   if (!loading && !club) return <NotFound />;
   if (loading || deletingClub) return <PageLoader />;
@@ -141,20 +153,24 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
           }}
         />
       </Paper>
-      <Divider labelPosition="center" label="Danger zone" color="red" />
-      <Paper className={classes.feedContainer}>
-        <Stack spacing="lg">
-          <Title order={3}>Delete this club</Title>
-          <Text>
-            By deleting this club, all resources in it will be automatically be made publicly
-            available, meaning users will not lose access to the resources, however, buzz will not
-            be refunded to any of your members, so use with care.
-          </Text>
-          <Button color="red" mt="lg" fullWidth onClick={onDelete} leftIcon={<IconTrash />}>
-            Delete this club
-          </Button>
-        </Stack>
-      </Paper>
+      {(isOwner || isModerator) && (
+        <>
+          <Divider labelPosition="center" label="Danger zone" color="red" />
+          <Paper className={classes.feedContainer}>
+            <Stack spacing="lg">
+              <Title order={3}>Delete this club</Title>
+              <Text>
+                By deleting this club, all resources in it will be automatically be made publicly
+                available, meaning users will not lose access to the resources, however, buzz will
+                not be refunded to any of your members, so use with care.
+              </Text>
+              <Button color="red" mt="lg" fullWidth onClick={onDelete} leftIcon={<IconTrash />}>
+                Delete this club
+              </Button>
+            </Stack>
+          </Paper>
+        </>
+      )}
     </Stack>
   );
 }

@@ -234,7 +234,7 @@ export async function updateClubMembershipHandler({
 
     return updateClubMembership({
       ...input,
-      userId: ctx.user.isModerator ? input.userId ?? ctx.user.id : ctx.user.id,
+      userId: input.userId ?? ctx.user.id,
       // This is important. If the user assigning this new memberships is not itself, we want to
       // keep the unitAmount of the previous membership
       unitAmount: targetUserIsNotCurrentUser ? membership?.unitAmount : undefined,

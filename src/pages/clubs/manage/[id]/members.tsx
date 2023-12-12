@@ -11,6 +11,7 @@ import { trpc } from '~/utils/trpc';
 import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembershipInfinite';
+import { ClubMembershipRole } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -39,9 +40,15 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
+    const membership = await dbRead.clubMembership.findFirst({
+      where: { clubId: id, userId: session.user?.id },
+    });
+
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    if (!isOwner && !isModerator)
+    const isAdmin = membership?.role === ClubMembershipRole.Admin;
+
+    if (!isOwner && !isModerator && !isAdmin)
       return {
         redirect: {
           destination: `/clubs/${id}`,

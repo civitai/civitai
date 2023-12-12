@@ -1,4 +1,5 @@
 import {
+  ClubMembershipRole,
   Currency,
   MetricTimeframe,
   ModelStatus,
@@ -242,6 +243,24 @@ export const constants = {
     headerImageAspectRatio: 1 / 6,
     postCoverImageAspectRatio: 1 / 4,
     engagementTypes: ['owned', 'memberships'],
+    clubMembershipRoleHiearchy: [
+      ClubMembershipRole.Admin,
+      ClubMembershipRole.Contributor,
+      ClubMembershipRole.Member,
+    ],
+    contributorMembershipFeatures: [
+      'Create new club posts',
+      'Edit & delete owned club posts',
+      'Add & remove owned resources',
+    ],
+    adminMembershipFeatures: [
+      'Create new club posts',
+      'Edit & delete all club posts',
+      'Add & remove owned resources',
+      'Remove all resources',
+      'Add & remove contributors',
+      'Edit club details',
+    ],
   },
 } as const;
 
