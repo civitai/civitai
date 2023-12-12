@@ -17,16 +17,17 @@ export function InViewLoader({
   style?: CSSProperties;
 }) {
   const { ref, inView } = useInView();
-  const [canLoad, setCanLoad] = useState(false);
+  const [initialCanLoad, setInitialCanLoad] = useState(false);
+  const [canLoad, setCanLoad] = useState(true);
 
   useEffect(() => {
     setTimeout(() => {
-      setCanLoad(true);
+      setInitialCanLoad(true);
     }, loadTimeout);
   }, [loadTimeout]);
 
   useEffect(() => {
-    if (inView && loadCondition && canLoad) {
+    if (inView && loadCondition && initialCanLoad && canLoad) {
       const handleLoad = async () => {
         await loadFn();
         setTimeout(() => setCanLoad(true), loadTimeout);
@@ -35,7 +36,7 @@ export function InViewLoader({
       setCanLoad(false);
       handleLoad();
     }
-  }, [inView, loadCondition]); // eslint-disable-line
+  }, [inView, loadCondition, initialCanLoad]); // eslint-disable-line
 
   return (
     <div ref={ref} className={className} style={style}>

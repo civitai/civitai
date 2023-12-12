@@ -1,18 +1,6 @@
-import {
-  ActionIcon,
-  Group,
-  Text,
-  Tooltip,
-  TooltipProps,
-  LoadingOverlay,
-  Card,
-  BoxProps,
-  Box,
-  MantineNumberSize,
-  GroupProps,
-} from '@mantine/core';
+import { ActionIcon, Text, Tooltip, MantineNumberSize } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconCloudUpload, IconSquareOff, IconTrash, IconWindowMaximize } from '@tabler/icons-react';
+import { IconCloudUpload, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
@@ -29,8 +17,10 @@ import { showErrorNotification } from '~/utils/notifications';
 export function GeneratedImageActions({
   actionIconSize = 'lg',
   iconSize = 20,
-  ...props
-}: GroupProps & { actionIconSize?: MantineNumberSize; iconSize?: number }) {
+}: {
+  actionIconSize?: MantineNumberSize;
+  iconSize?: number;
+}) {
   const { selected, deselect, isMutating, deleteSelectedImages, postSelectedImages } =
     useGeneratedImageActions();
 
