@@ -70,6 +70,7 @@ import {
 } from './../schema/model.schema';
 import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
 import { entityRequiresClub } from '~/server/services/common.service';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -134,6 +135,7 @@ type ModelRaw = {
     username: string | null;
     deletedAt: Date | null;
     image: string;
+    profilePictureId?: number | null;
   };
   userCosmetics: {
     data: Prisma.JsonValue;
@@ -536,7 +538,8 @@ export const getModelsRaw = async ({
         'id', u."id",
         'username', u."username",
         'deletedAt', u."deletedAt",
-        'image', u."image"
+        'image', u."image",
+        "profilePictureId", u."profilePictureId"
       ) as "user",
       (
         SELECT
@@ -567,6 +570,11 @@ export const getModelsRaw = async ({
     LIMIT ${take}
   `;
 
+  const profilePictures = await dbRead.image.findMany({
+    where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
+    select: { ...imageSelect, ingestion: true },
+  });
+
   let nextCursor: string | bigint | undefined;
   if (take && models.length >= take) {
     const nextItem = models.pop();
@@ -588,6 +596,7 @@ export const getModelsRaw = async ({
       modelVersions: [modelVersion].filter(isDefined),
       user: {
         ...model.user,
+        profilePicture: profilePictures.find((p) => p.id === model.user.profilePictureId),
         cosmetics: userCosmetics,
       },
     })),
