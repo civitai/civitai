@@ -347,7 +347,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
-      // zIndex: 200,
+      zIndex: 200,
     },
     carousel: {
       flex: 1,

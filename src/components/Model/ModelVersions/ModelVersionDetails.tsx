@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Center,
-  Grid,
   Group,
   MantineTheme,
   Menu,
@@ -16,7 +15,6 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
@@ -100,7 +98,6 @@ export function ModelVersionDetails({
   const features = useFeatureFlags();
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
-  const [opened, { toggle }] = useDisclosure(false);
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 
   const primaryFile = getPrimaryFile(version.files, {
@@ -110,7 +107,9 @@ export function ModelVersionDetails({
 
   const filesCount = version.files.length;
   const hasFiles = filesCount > 0;
-  const filesVisible = version.files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  const filesVisible = version.files.filter(
+    (f) => f.visibility === ModelFileVisibility.Public || model.user.id === user?.id
+  );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
 
@@ -331,7 +330,7 @@ export function ModelVersionDetails({
   );
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
-  const downloadMenuItems = version.files.map((file) =>
+  const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (
       <Menu.Item
         key={file.id}
@@ -368,9 +367,16 @@ export function ModelVersionDetails({
     >
       <Stack spacing={4}>
         <Group position="apart" noWrap>
-          <Text size="xs" weight={500} lineClamp={2}>
-            {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
-          </Text>
+          <Group spacing={4}>
+            <Text size="xs" weight={500} lineClamp={2}>
+              {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
+            </Text>
+            {file.visibility !== 'Public' ? (
+              <Badge size="xs" radius="xl" color="violet">
+                {file.visibility}
+              </Badge>
+            ) : null}
+          </Group>
           <Button
             component="a"
             variant="subtle"

@@ -1,7 +1,17 @@
-import { Button, Container, Group, Stack, Stepper, Title } from '@mantine/core';
+import {
+  Button,
+  Container,
+  Group,
+  LoadingOverlay,
+  Popover,
+  Stack,
+  Stepper,
+  Title,
+} from '@mantine/core';
 import { ModelUploadType, TrainingStatus } from '@prisma/client';
 import { NextRouter, useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
@@ -15,6 +25,8 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import { TemplateSelect } from './TemplateSelect';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -22,7 +34,13 @@ export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
 
 type WizardState = {
   step: number;
+  selectedTemplate?: { id: number; name: string };
 };
+
+const querySchema = z.object({
+  id: z.coerce.number().optional(),
+  templateId: z.coerce.number().optional(),
+});
 
 const CreateSteps = ({
   step,
@@ -41,7 +59,7 @@ const CreateSteps = ({
   hasVersions: boolean | undefined;
   goBack: () => void;
   goNext: () => void;
-  modelId: string | string[] | undefined;
+  modelId: number | undefined;
   router: NextRouter;
   postId: number | undefined;
 }) => {
@@ -51,24 +69,38 @@ const CreateSteps = ({
   );
   const editing = !!model;
 
+  const result = querySchema.safeParse(router.query);
+  const templateId = result.success ? result.data.templateId : undefined;
+
+  const { data: templateFields, isInitialLoading } = trpc.model.getTemplateFields.useQuery(
+    // Explicit casting since we know it's a number at this point
+    { id: templateId as number },
+    { enabled: !!templateId }
+  );
+
   return (
     <Stepper
       active={step - 1}
       onStepClick={(step) =>
-        router.replace(`/models/${modelId}/wizard?step=${step + 1}`, undefined, { shallow: true })
+        router.replace(getWizardUrl({ id: modelId, step: step + 1, templateId }), undefined, {
+          shallow: true,
+        })
       }
       allowNextStepsSelect={false}
       size="sm"
     >
       {/* Step 1: Model Info */}
       <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
-        <Stack>
+        <Stack pos="relative">
+          <LoadingOverlay visible={isInitialLoading} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
           <ModelUpsertForm
-            model={model}
+            model={model ?? templateFields}
             onSubmit={({ id }) => {
               if (editing) return goNext();
-              router.replace(`/models/${id}/wizard?step=2`);
+              router.replace(
+                `/models/${id}/wizard?step=2${templateId ? `&templateId=${templateId}` : ''}`
+              );
             }}
           >
             {({ loading }) => (
@@ -86,7 +118,11 @@ const CreateSteps = ({
       <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'}>
         <Stack>
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
-          <ModelVersionUpsertForm model={model} version={modelVersion} onSubmit={goNext}>
+          <ModelVersionUpsertForm
+            model={model ?? templateFields}
+            version={modelVersion ?? templateFields?.version}
+            onSubmit={goNext}
+          >
             {({ loading }) => (
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>
@@ -143,7 +179,7 @@ const TrainSteps = ({
   modelVersion: ModelWithTags['modelVersions'][number];
   goBack: () => void;
   goNext: () => void;
-  modelId: string | string[] | undefined;
+  modelId: number | undefined;
   router: NextRouter;
   postId: number | undefined;
 }) => {
@@ -151,7 +187,9 @@ const TrainSteps = ({
     <Stepper
       active={step - 1}
       onStepClick={(step) =>
-        router.replace(`/models/${modelId}/wizard?step=${step + 1}`, undefined, { shallow: true })
+        router.replace(getWizardUrl({ id: modelId, step: step + 1 }), undefined, {
+          shallow: true,
+        })
       }
       allowNextStepsSelect={false}
       size="sm"
@@ -228,12 +266,29 @@ const TrainSteps = ({
   );
 };
 
+function getWizardUrl({
+  id,
+  step,
+  templateId,
+}: {
+  step: number;
+  id?: number;
+  templateId?: number;
+}) {
+  if (!id) return '';
+  return `/models/${id}/wizard?step=${step}${templateId ? `&templateId=${templateId}` : ''}`;
+}
+
 export function ModelWizard() {
+  const currentUser = useCurrentUser();
   const router = useRouter();
 
-  const { id } = router.query;
+  const result = querySchema.safeParse(router.query);
+  const id = result.success ? result.data.id : undefined;
+  const templateId = result.success ? result.data.templateId : undefined;
   const isNew = router.pathname.includes('/create');
   const [state, setState] = useState<WizardState>({ step: 1 });
+  const [opened, setOpened] = useState(false);
 
   const {
     data: model,
@@ -254,34 +309,39 @@ export function ModelWizard() {
     );
 
   const goNext = () => {
-    if (state.step < maxSteps)
-      router.replace(`/models/${id}/wizard?step=${state.step + 1}`, undefined, {
+    if (state.step < maxSteps) {
+      router.replace(getWizardUrl({ id, step: state.step + 1, templateId }), undefined, {
         shallow: true,
         scroll: true,
       });
+    }
   };
 
   const goBack = () => {
-    if (state.step > 1)
-      router.replace(`/models/${id}/wizard?step=${state.step - 1}`, undefined, {
+    if (state.step > 1) {
+      router.replace(getWizardUrl({ id, step: state.step - 1, templateId }), undefined, {
         shallow: true,
         scroll: true,
       });
+    }
   };
+
+  const showTraining = model?.uploadType === ModelUploadType.Trained;
 
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
       // don't redirect for Trained type
-      if (model?.uploadType === ModelUploadType.Trained) return;
+      if (showTraining) return;
 
-      if (!hasVersions) router.replace(`/models/${id}/wizard?step=2`, undefined, { shallow: true });
+      if (!hasVersions)
+        router.replace(getWizardUrl({ id, step: 2, templateId }), undefined, { shallow: true });
       else if (!hasFiles)
-        router.replace(`/models/${id}/wizard?step=3`, undefined, { shallow: true });
-      else router.replace(`/models/${id}/wizard?step=4`, undefined, { shallow: true });
+        router.replace(getWizardUrl({ id, step: 3, templateId }), undefined, { shallow: true });
+      else router.replace(getWizardUrl({ id, step: 4, templateId }), undefined, { shallow: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, hasVersions, id, isNew, model]);
+  }, [hasFiles, hasVersions, id, isNew, model, templateId]);
 
   useEffect(() => {
     // set current step based on query param
@@ -312,11 +372,31 @@ export function ModelWizard() {
           <NotFound />
         ) : (
           <Stack pb="xl">
-            <Title mb="sm" order={2}>
-              Publish a Model
-            </Title>
+            <Group position="apart" noWrap>
+              <Title mb="sm" order={2}>
+                Publish a Model
+              </Title>
+              {isNew && !showTraining && currentUser && (
+                <Popover
+                  opened={opened}
+                  width={400}
+                  position="bottom-end"
+                  onChange={setOpened}
+                  withArrow
+                >
+                  <Popover.Target>
+                    <Button variant="subtle" onClick={() => setOpened(true)}>
+                      {state.selectedTemplate || templateId ? 'Swap template' : 'Use a template'}
+                    </Button>
+                  </Popover.Target>
+                  <Popover.Dropdown p={4}>
+                    <TemplateSelect userId={currentUser.id} onSelect={() => setOpened(false)} />
+                  </Popover.Dropdown>
+                </Popover>
+              )}
+            </Group>
 
-            {model?.uploadType === ModelUploadType.Trained ? (
+            {showTraining ? (
               <TrainSteps
                 model={modelFlatTags!}
                 modelVersion={modelVersion!}

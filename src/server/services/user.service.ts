@@ -52,6 +52,7 @@ import { articleMetrics, imageMetrics, userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import { imageSelect } from '../selectors/image.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -491,9 +492,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
       referral: { select: { id: true } },
+      profilePicture: { select: { ...imageSelect, ingestion: true } },
     },
   });
-
   if (!user) return undefined;
 
   const { subscription, ...rest } = user;

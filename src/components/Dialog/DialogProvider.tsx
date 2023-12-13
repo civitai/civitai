@@ -5,12 +5,17 @@ import trieMemoize from 'trie-memoize';
 type DialogState = {
   opened: boolean;
   onClose: () => void;
+  zIndex: number;
 };
 
-const DialogContext = createContext<DialogState>({ opened: false, onClose: () => undefined });
+const DialogContext = createContext<DialogState>({
+  opened: false,
+  onClose: () => undefined,
+  zIndex: 200,
+});
 export const useDialogContext = () => useContext(DialogContext);
 
-const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
+const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
   const [opened, setOpened] = useState(false);
 
   const Dialog = dialog.component;
@@ -26,7 +31,7 @@ const DialogProviderInner = ({ dialog }: { dialog: Dialog }) => {
   }, []);
 
   return (
-    <DialogContext.Provider value={{ opened, onClose }}>
+    <DialogContext.Provider value={{ opened, onClose, zIndex: 200 + index }}>
       <Dialog {...dialog.props} />
     </DialogContext.Provider>
   );
@@ -37,12 +42,12 @@ export const DialogProvider = () => {
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <div key={dialog.id.toString()}>{createRenderElement(dialog)}</div>
+        <div key={dialog.id.toString()}>{createRenderElement(dialog, i)}</div>
       ))}
     </>
   );
 };
 
-const createRenderElement = trieMemoize([WeakMap], (dialog) => (
-  <DialogProviderInner dialog={dialog} />
+const createRenderElement = trieMemoize([WeakMap, {}], (dialog, index) => (
+  <DialogProviderInner dialog={dialog} index={index} />
 ));
