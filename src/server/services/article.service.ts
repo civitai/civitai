@@ -332,7 +332,7 @@ export const getArticles = async ({
           'username', u."username",
           'deletedAt', u."deletedAt",
           'image', u."image",
-          "profilePictureId", u."profilePictureId"
+          'profilePictureId', u."profilePictureId"
         ) as "user",
         (
           SELECT
