@@ -163,7 +163,7 @@ export const AddResourceToClubModal = (props: Props) => {
                   form.setValue('entityType', item.entityType as SupportedClubEntities);
                 }
               }}
-              filters={`user.username='${'theally' ?? currentUser.username}'`}
+              filters={`user.username='${currentUser.username}'`}
               dropdownItemLimit={25}
             />
           )}
