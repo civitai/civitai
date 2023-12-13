@@ -26,7 +26,7 @@ interface ExtendedUser {
     id: number;
   };
   profilePictureId?: number;
-  profilePicture?: import('~/server/selectors/image.selector').ImageModel;
+  profilePicture?: import('~/server/selectors/image.selector').ImageModelWithIngestion;
 }
 
 declare module 'next-auth' {

@@ -854,7 +854,7 @@ export const getAllImages = async ({
     : undefined;
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) } },
-    select: imageSelect,
+    select: { ...imageSelect, ingestion: true },
   });
 
   const images: Array<
@@ -1006,7 +1006,10 @@ export const getImage = async ({
 
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
   const profilePicture = profilePictureId
-    ? await dbRead.image.findUnique({ where: { id: profilePictureId }, select: imageSelect })
+    ? await dbRead.image.findUnique({
+        where: { id: profilePictureId },
+        select: { ...imageSelect, ingestion: true },
+      })
     : null;
 
   const image = {

@@ -83,7 +83,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       // TODO.leaderboard: uncomment when migration is done
       // leaderboardShowcase: true,
       rank: { select: { leaderboardRank: true } },
-      profilePicture: { select: imageSelect },
+      profilePicture: { select: { ...imageSelect, ingestion: true } },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {

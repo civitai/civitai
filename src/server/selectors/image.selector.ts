@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { ImageIngestionStatus, Prisma } from '@prisma/client';
 
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
@@ -22,7 +22,6 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   type: true,
   metadata: true,
   createdAt: true,
-  ingestion: true,
   tags: {
     select: {
       tag: { select: { ...simpleTagSelect, type: true } },
@@ -38,6 +37,7 @@ export { imageSelectWithoutName };
 
 const image = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: imageSelect });
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
+export type ImageModelWithIngestion = ImageModel & { ingestion: ImageIngestionStatus };
 
 export const prepareCreateImage = (image: ImageUploadProps) => {
   let name = image.name;

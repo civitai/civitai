@@ -26,7 +26,7 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { chunk } from 'lodash-es';
 import { withRetries } from '~/server/utils/errorHandling';
-import { ImageModel, imageSelect } from '../selectors/image.selector';
+import { ImageModelWithIngestion, imageSelect } from '../selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
@@ -136,7 +136,7 @@ type ImageForSearchIndex = {
     username: string | null;
     deletedAt: Date | null;
     profilePictureId: number | null;
-    profilePicture: ImageModel | null;
+    profilePicture: ImageModelWithIngestion | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;
@@ -325,7 +325,7 @@ const onFetchItemsToIndex = async ({
 
       const profilePictures = await db.image.findMany({
         where: { id: { in: images.map((i) => i.user.profilePictureId).filter(isDefined) } },
-        select: imageSelect,
+        select: { ...imageSelect, ingestion: true },
       });
 
       console.log(

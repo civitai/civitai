@@ -14,7 +14,7 @@ import {
 } from '@prisma/client';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
-import { ImageModel, imageSelect } from '~/server/selectors/image.selector';
+import { ImageModelWithIngestion, imageSelect } from '~/server/selectors/image.selector';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -96,7 +96,7 @@ type UserForSearchIndex = {
   image: string | null;
   deletedAt: Date | null;
   profilePictureId: number | null;
-  profilePicture: ImageModel | null;
+  profilePicture: ImageModelWithIngestion | null;
   metrics: {
     followerCount: number;
     uploadCount: number;
@@ -262,7 +262,7 @@ const onFetchItemsToIndex = async ({
 
   const profilePictures = await db.image.findMany({
     where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
-    select: imageSelect,
+    select: { ...imageSelect, ingestion: true },
   });
 
   const indexReadyRecords = users.map((userRecord) => {

@@ -20,7 +20,7 @@ import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import { ImageMetadata } from '~/server/schema/media.schema';
-import { ImageModel } from '../selectors/image.selector';
+import { ImageModelWithIngestion } from '../selectors/image.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 
 const READ_BATCH_SIZE = 250; // 10 items per bounty are fetched for images. Careful with this number
@@ -147,7 +147,7 @@ type BountyForSearchIndex = {
     username: string | null;
     deletedAt: Date | null;
     profilePictureId: number | null;
-    profilePicture: ImageModel | null;
+    profilePicture: ImageModelWithIngestion | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;
@@ -343,7 +343,7 @@ const onFetchItemsToIndex = async ({
 
   const profilePictures = await db.image.findMany({
     where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },
-    select: imageSelect,
+    select: { ...imageSelect, ingestion: true },
   });
 
   console.log(

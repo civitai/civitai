@@ -266,7 +266,7 @@ export const getPostsInfinite = async ({
     : undefined;
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
-    select: imageSelect,
+    select: { ...imageSelect, ingestion: true },
   });
 
   return {

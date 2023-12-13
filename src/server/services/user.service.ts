@@ -492,7 +492,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
       referral: { select: { id: true } },
-      profilePicture: { select: imageSelect },
+      profilePicture: { select: { ...imageSelect, ingestion: true } },
     },
   });
   if (!user) return undefined;
