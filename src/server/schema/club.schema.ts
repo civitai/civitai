@@ -50,7 +50,6 @@ export const getClubTiersInput = z.object({
   clubIds: z.array(z.number()).optional(),
   listedOnly: z.boolean().optional(),
   joinableOnly: z.boolean().optional(),
-  include: z.array(z.enum(['membershipsCount'])).optional(),
   tierId: z.number().optional(),
 });
 

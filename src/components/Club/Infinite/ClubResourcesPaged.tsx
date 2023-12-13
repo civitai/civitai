@@ -46,7 +46,6 @@ export function ClubResourcesPaged({ clubId }: Props) {
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery({
     clubId,
-    include: ['membershipsCount'],
   });
 
   //#region [useEffect] cancel debounced filters

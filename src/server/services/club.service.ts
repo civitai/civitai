@@ -369,7 +369,6 @@ export const getClubTiers = async ({
   clubIds,
   listedOnly,
   joinableOnly,
-  include,
   userId,
   isModerator,
   tierId,
@@ -413,13 +412,12 @@ export const getClubTiers = async ({
       clubId: true,
       joinable: true,
       unlisted: true,
-      _count: include?.includes('membershipsCount')
-        ? {
-            select: {
-              memberships: true,
-            },
-          }
-        : undefined,
+      memberLimit: true,
+      _count: {
+        select: {
+          memberships: true,
+        },
+      },
     },
     orderBy: {
       unitAmount: 'asc',

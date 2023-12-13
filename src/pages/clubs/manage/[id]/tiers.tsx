@@ -80,7 +80,6 @@ export const getServerSideProps = createServerSideProps({
       await ssg.club.getById.prefetch({ id });
       await ssg.club.getTiers.prefetch({
         clubId: id,
-        include: ['membershipsCount'],
       });
     }
 
@@ -99,7 +98,6 @@ export default function ManageClubTiers({
     isRefetching,
   } = trpc.club.getTiers.useQuery({
     clubId: id,
-    include: ['membershipsCount'],
   });
 
   const [addNewTier, setAddNewTier] = useState<boolean>(false);

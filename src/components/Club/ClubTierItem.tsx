@@ -62,6 +62,9 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     restoringClubMembership;
 
   const isTierMember = membership?.clubTier?.id === clubTier.id;
+  const remainingSpots = clubTier.memberLimit
+    ? Math.max(0, clubTier.memberLimit - clubTier._count.memberships)
+    : undefined;
 
   const TierCoverImage = () =>
     clubTier.coverImage ? (
@@ -382,12 +385,13 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 color="yellow.7"
                 variant="light"
                 onClick={handleMembershipUpdate}
+                disabled={remainingSpots === 0}
               >
                 Downgrade
               </Button>
             ) : (
               <BuzzTransactionButton
-                disabled={updating}
+                disabled={updating || remainingSpots === 0}
                 loading={updating}
                 buzzAmount={clubTier.unitAmount}
                 radius="md"
@@ -396,6 +400,11 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
               />
             )}
           </LoginPopover>
+        )}
+        {remainingSpots !== undefined && (
+          <Text align="center" size="xs" color="yellow.7">
+            {remainingSpots} spots left
+          </Text>
         )}
       </Stack>
     </Paper>
