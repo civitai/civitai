@@ -217,7 +217,7 @@ const onFetchItemsToIndex = async ({
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image
+        'image', u.image,
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u

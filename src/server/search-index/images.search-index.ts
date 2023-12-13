@@ -272,8 +272,8 @@ const onFetchItemsToIndex = async ({
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image
-        'profilePictureId', u."profilePictureId",
+        'image', u.image,
+        'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u
     WHERE u.id IN (SELECT "userId" FROM target)
