@@ -1,6 +1,8 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const resetToDraftWithoutRequirements = createJob(
   'reset-to-draft-without-requirements',
@@ -33,23 +35,33 @@ export const resetToDraftWithoutRequirements = createJob(
       SELECT
         mv.id "modelVersionId"
       FROM "ModelVersion" mv
-      WHERE NOT EXISTS (SELECT 1 FROM "File" f WHERE f."modelVersionId" = mv.id AND f.exists);
+      WHERE
+        mv.status = 'Published'
+        AND NOT EXISTS (SELECT 1 FROM "ModelFile" f WHERE f."modelVersionId" = mv.id);
     `;
     if (modelVersionsWithoutFiles.length) {
       // Unpublish all model versions that have no files and flag them for notification
       const modelVersionIds = modelVersionsWithoutFiles.map((r) => r.modelVersionId);
-      await dbWrite.$executeRaw`
-        UPDATE "ModelVersion" mv
-        SET status = 'Draft', meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-files"'), '{unpublishedAt}', to_jsonb(now()))
-        WHERE mv.id IN (${Prisma.join(modelVersionIds)})
-      `;
+      const tasks = chunk(modelVersionIds, 500).map((batch, i) => async () => {
+        console.log(`Processing batch ${i + 1}`);
+        await dbWrite.$executeRaw`
+          UPDATE "ModelVersion" mv
+          SET status = 'Draft', meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-files"'), '{unpublishedAt}', to_jsonb(now()))
+          WHERE mv.id IN (${Prisma.join(batch)})
+        `;
+      });
+      await limitConcurrency(tasks, 5);
     }
 
     // Unpublish all models that have no published model versions
     await dbWrite.$executeRaw`
       UPDATE "Model" m
-      SET status = 'Draft', meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now()))
-      WHERE NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published');
+      SET
+        status = 'Draft',
+        meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now()))
+      WHERE
+        m."status" = 'Published'
+        AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published');
     `;
   }
 );
