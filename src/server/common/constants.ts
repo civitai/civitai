@@ -69,6 +69,8 @@ export const constants = {
     'SDXL Turbo',
     'SVD',
     'SVD XT',
+    'Playground v2',
+    'PixArt a',
     'Other',
   ],
   modelFileTypes: [
@@ -279,6 +281,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
     name: 'Stable Video Diffusion Non-Commercial Research Community License',
   },
+  'playground v2': {
+    url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
+    name: 'Playground v2 Community License',
+  },
+  agpl: {
+    url: 'https://github.com/PixArt-alpha/PixArt-alpha/blob/master/LICENSE',
+    name: 'agpl-3.0',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -297,6 +307,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SDXL Turbo': baseLicenses['sdxl turbo'],
   SVD: baseLicenses['svd'],
   'SVD XT': baseLicenses['svd'],
+  'Playground v2': baseLicenses['playground v2'],
+  'PixArt a': baseLicenses['agpl'],
   Other: undefined,
 };
 
