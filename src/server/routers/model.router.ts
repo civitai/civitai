@@ -16,10 +16,12 @@ import {
   getModelsInfiniteHandler,
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
+  getModelTemplateFieldsHandler,
   getModelVersionsHandler,
   getModelWithVersionsHandler,
   getMyDraftModelsHandler,
   getMyTrainingModelsHandler,
+  getSimpleModelsInfiniteHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
   requestReviewHandler,
@@ -52,6 +54,7 @@ import {
   setModelsCategorySchema,
   toggleModelLockSchema,
   unpublishModelSchema,
+  getSimpleModelsInfiniteSchema,
 } from '~/server/schema/model.schema';
 import {
   getAllModelsWithCategories,
@@ -152,12 +155,15 @@ export const modelRouter = router({
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     // .use(applyUserPreferences)
-    .use(edgeCacheIt({ ttl: 60, tags: (input) => ['models'] }))
+    .use(edgeCacheIt({ ttl: 60, tags: () => ['models'] }))
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema)
     .use(cacheIt({ ttl: 60 }))
     .query(getModelsPagedSimpleHandler),
+  getAllInfiniteSimple: guardedProcedure
+    .input(getSimpleModelsInfiniteSchema)
+    .query(getSimpleModelsInfiniteHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .use(applyUserPreferences)
@@ -234,4 +240,5 @@ export const modelRouter = router({
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: publicProcedure.input(modelByHashesInput).mutation(getModelByHashesHandler),
+  getTemplateFields: guardedProcedure.input(getByIdSchema).query(getModelTemplateFieldsHandler),
 });
