@@ -30,6 +30,8 @@ import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMetho
 import { useRouter } from 'next/router';
 import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const router = useRouter();
@@ -339,8 +341,8 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
         <ContentClamp maxHeight={200}>
           <RenderHtml html={clubTier.description} />
         </ContentClamp>
-        {!isOwner && !isLoading && !isLoadingOwnership && (
-          <>
+        {!isOwner && (
+          <LoginPopover>
             {isNextDowngradeTier ? (
               <Button loading={updating} radius="md" color="yellow.7" variant="light">
                 Active on {formatDate(membership.nextBillingAt)}
@@ -393,7 +395,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 label={isUpgrade ? 'Upgrade' : 'Become a member'}
               />
             )}
-          </>
+          </LoginPopover>
         )}
       </Stack>
     </Paper>

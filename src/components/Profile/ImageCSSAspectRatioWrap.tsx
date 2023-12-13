@@ -40,14 +40,16 @@ export const ImageCSSAspectRatioWrap = ({
   children,
   aspectRatio,
   style,
+  className,
 }: {
   style?: CSSProperties;
   children: React.ReactNode;
   aspectRatio: number;
+  className?: string;
 }) => {
-  const { classes } = useStyles({ aspectRatio });
+  const { classes, cx } = useStyles({ aspectRatio });
   return (
-    <div className={classes.wrap} style={style}>
+    <div className={cx(classes.wrap, className)} style={style}>
       <div className={classes.cover}>{children}</div>
     </div>
   );

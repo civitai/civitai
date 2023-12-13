@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FeedLayout } from '~/pages/clubs/[id]/index';
 import { useRouter } from 'next/router';
 import { Group, Stack } from '@mantine/core';
@@ -11,6 +11,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
+import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 
 const ClubArticles = () => {
   const router = useRouter();
@@ -18,16 +19,11 @@ const ClubArticles = () => {
     id: string;
   };
   const id = Number(stringId);
-  const { query, replace } = useArticleQueryParams();
-  const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ArticleSort.Newest;
-
-  const filters = {
-    ...query,
-    sort,
+  const [filters, setFilters] = useState<Partial<GetInfiniteArticlesSchema>>({
+    sort: ArticleSort.Newest,
     period: MetricTimeframe.AllTime,
     clubId: id,
-  };
+  });
 
   return (
     <>
@@ -35,12 +31,15 @@ const ClubArticles = () => {
         <Group position="apart" spacing={0}>
           <SortFilter
             type="articles"
-            value={sort}
-            onChange={(x) => replace({ sort: x as ArticleSort })}
+            value={filters.sort as ArticleSort}
+            onChange={(x) => setFilters((f) => ({ ...f, sort: x as ArticleSort }))}
           />
           <Group spacing="xs">
-            <PeriodFilter type="articles" value={period} onChange={(x) => replace({ period: x })} />
-            <ArticleFiltersDropdown />
+            <ArticleFiltersDropdown
+              query={filters}
+              // @ts-ignore: These are compatible.
+              onChange={(updated) => setFilters((f) => ({ ...f, ...updated }))}
+            />
           </Group>
         </Group>
       </Stack>

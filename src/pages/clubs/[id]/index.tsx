@@ -10,6 +10,7 @@ import {
   Button,
   Center,
   Container,
+  createStyles,
   Divider,
   Grid,
   Group,
@@ -53,6 +54,7 @@ import { ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
 import { ClubMembershipRole } from '@prisma/client';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -141,6 +143,26 @@ const Feed = () => {
   );
 };
 
+const useStyles = createStyles<string, { hasHeaderImage: boolean }>(
+  (theme, { hasHeaderImage }) => ({
+    mainContainer: {
+      position: 'relative',
+      top: hasHeaderImage ? -constants.clubs.avatarDisplayWidth / 2 : undefined,
+
+      [containerQuery.smallerThan('sm')]: {
+        top: hasHeaderImage ? -constants.clubs.avatarDisplayWidth / 4 : undefined,
+      },
+    },
+
+    avatar: {
+      width: constants.clubs.avatarDisplayWidth,
+
+      [containerQuery.smallerThan('sm')]: {
+        margin: 'auto',
+      },
+    },
+  })
+);
 export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
   const { id: stringId } = router.query as {
@@ -158,6 +180,8 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   const isOwner = currentUser && club?.userId === currentUser?.id;
   const isModerator = currentUser?.isModerator;
   const isAdmin = membership?.role === ClubMembershipRole.Admin;
+
+  const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
 
   const canPost = useMemo(() => {
     return isModerator || isOwner || userClubs.some((c) => c.id === id);
@@ -184,7 +208,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <AppLayout>
-      <Container fluid p={0}>
+      <Container fluid p={0} mt={club.headerImage ? '-md' : ''}>
         {club.headerImage && (
           <ImageCSSAspectRatioWrap
             aspectRatio={constants.clubs.headerImageAspectRatio}
@@ -220,18 +244,9 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
             />
           </ImageCSSAspectRatioWrap>
         )}
-        <Container
-          size="xl"
-          style={{
-            position: 'relative',
-            top: club.headerImage ? -constants.clubs.avatarDisplayWidth / 2 : undefined,
-          }}
-        >
+        <Container size="xl" className={classes.mainContainer}>
           {club.avatar && (
-            <ImageCSSAspectRatioWrap
-              aspectRatio={1}
-              style={{ width: constants.clubs.avatarDisplayWidth }}
-            >
+            <ImageCSSAspectRatioWrap aspectRatio={1} className={classes.avatar}>
               <ImageGuard
                 images={[club.avatar]}
                 connect={{ entityId: club.avatar.id, entityType: 'club' }}
@@ -321,7 +336,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                   ) : membership?.nextBillingAt ? (
                     <Alert color="yellow">
                       <Text size="sm">
-                        You have an active membership on this club. Your next billing will be on{' '}
+                        You are a member of this club. Your next billing date is{' '}
                         <Text weight="bold" component="span">
                           {formatDate(membership.nextBillingAt)}
                         </Text>

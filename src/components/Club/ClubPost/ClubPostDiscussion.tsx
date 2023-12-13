@@ -1,27 +1,42 @@
-import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
+import { Stack, Group, Text, Loader, Center, Divider, Alert } from '@mantine/core';
 import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { trpc } from '~/utils/trpc';
 
 type Props = {
+  clubId: number;
   clubPostId: number;
   userId?: number;
 };
 
-export function ClubPostDiscussion({ clubPostId, userId }: Props) {
+export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
+  const { data: membership, isLoading: isLoadingMembership } =
+    trpc.clubMembership.getClubMembershipOnClub.useQuery({
+      clubId,
+    });
+
   return (
     <CommentsProvider
       entityType="clubPost"
       entityId={clubPostId}
-      limit={20}
+      limit={3}
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
-        isLoading ? (
+        isLoading || isLoadingMembership ? (
           <Center>
             <Loader variant="bars" />
           </Center>
         ) : (
           <Stack>
-            <CreateComment />
+            {membership ? (
+              <CreateComment />
+            ) : (
+              <Alert>
+                <Group align="center" position="center" spacing="xs">
+                  <Text size="sm">You must be a member of this club to add a comment</Text>
+                </Group>
+              </Alert>
+            )}
             {(data?.length || created.length) > 0 && (
               <>
                 {data?.map((comment) => (

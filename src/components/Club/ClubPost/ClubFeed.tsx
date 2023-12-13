@@ -216,7 +216,13 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
         </Group>
         <RenderHtml html={clubPost.description} />
         <Divider />
-        {inView && <ClubPostDiscussion clubPostId={clubPost.id} userId={currentUser?.id} />}
+        {inView && (
+          <ClubPostDiscussion
+            clubId={clubPost.clubId}
+            clubPostId={clubPost.id}
+            userId={currentUser?.id}
+          />
+        )}
       </Stack>
     </Paper>
   );

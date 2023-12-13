@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FeedLayout } from '~/pages/clubs/[id]/index';
 import { useRouter } from 'next/router';
 import { Group, Stack } from '@mantine/core';
@@ -6,10 +6,10 @@ import { constants } from '~/server/common/constants';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ModelSort } from '~/server/common/enums';
-import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { useModelQueryParams } from '~/components/Model/model.utils';
+import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
 import { MetricTimeframe } from '@prisma/client';
 
 const ClubModels = () => {
@@ -18,25 +18,30 @@ const ClubModels = () => {
     id: string;
   };
   const id = Number(stringId);
-  const { set, ...query } = useModelQueryParams();
-  const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ModelSort.Newest;
-
-  const filters = {
-    ...query,
-    sort,
+  const [filters, setFilters] = useState<Partial<ModelQueryParams> & { clubId: number }>({
+    sort: ModelSort.Newest,
     period: MetricTimeframe.AllTime,
     clubId: id,
-  };
-
+  });
   return (
     <>
       <Stack mb="sm">
         <Group position="apart" spacing={0}>
-          <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as ModelSort })} />
+          <SortFilter
+            type="models"
+            value={filters.sort as ModelSort}
+            onChange={(x) => setFilters((f) => ({ ...f, sort: x as ModelSort }))}
+          />
           <Group spacing="xs">
-            <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
-            <ModelFiltersDropdown />
+            <PeriodFilter
+              type="models"
+              value={filters.period as MetricTimeframe}
+              onChange={(x) => setFilters((f) => ({ ...f, period: x }))}
+            />
+            <DumbModelFiltersDropdown
+              filters={filters}
+              setFilters={(updated) => setFilters((f) => ({ ...f, ...updated }))}
+            />
           </Group>
         </Group>
       </Stack>
