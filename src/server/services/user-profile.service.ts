@@ -8,7 +8,7 @@ import {
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { CollectionReadConfiguration, ImageIngestionStatus, Prisma } from '@prisma/client';
+import { CollectionReadConfiguration, ImageIngestionStatus, Prisma, User } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
 import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
@@ -132,45 +132,65 @@ export const getUserWithProfile = async ({
 };
 
 export const updateUserProfile = async ({
-  profileImage,
+  // profileImage,
   socialLinks,
   sponsorshipLinks,
-  badgeId,
-  nameplateId,
+  // badgeId,
+  // nameplateId,
   userId,
   coverImage,
-  leaderboardShowcase,
+  // leaderboardShowcase,
+  // profilePicture,
   ...profile
 }: UserProfileUpdateSchema & { userId: number }) => {
   const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
 
   await dbWrite.$transaction(
     async (tx) => {
-      const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
-      const payloadCosmeticIds: number[] = [];
+      // const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
+      // const payloadCosmeticIds: number[] = [];
 
-      if (badgeId) payloadCosmeticIds.push(badgeId);
-      if (nameplateId) payloadCosmeticIds.push(nameplateId);
+      // if (badgeId) payloadCosmeticIds.push(badgeId);
+      // if (nameplateId) payloadCosmeticIds.push(nameplateId);
 
-      const shouldUpdateUser = shouldUpdateCosmetics || profileImage || leaderboardShowcase;
+      // const shouldUpdateUser = shouldUpdateCosmetics || profileImage || leaderboardShowcase;
 
-      if (shouldUpdateUser) {
-        await tx.user.update({
-          where: {
-            id: userId,
-          },
-          data: {
-            image: profileImage,
-            leaderboardShowcase,
-          },
-        });
+      // if (shouldUpdateUser) {
+      //   await tx.user.update({
+      //     where: {
+      //       id: userId,
+      //     },
+      //     data: {
+      //       image: profileImage,
+      //       leaderboardShowcase,
+      //       profilePicture:
+      //         profilePicture === null
+      //           ? { delete: true }
+      //           : profilePicture
+      //           ? {
+      //               delete: true,
+      //               upsert: {
+      //                 where: { id: profilePicture.id },
+      //                 update: {
+      //                   ...profilePicture,
+      //                   userId,
+      //                 },
+      //                 create: {
+      //                   ...profilePicture,
+      //                   userId,
+      //                 },
+      //               },
+      //             }
+      //           : undefined,
+      //     },
+      //   });
 
-        if (shouldUpdateCosmetics) await equipCosmetic({ userId, cosmeticId: payloadCosmeticIds });
+      //   if (shouldUpdateCosmetics) await equipCosmetic({ userId, cosmeticId: payloadCosmeticIds });
 
-        if (leaderboardShowcase !== undefined) {
-          await updateLeaderboardRank({ userIds: userId });
-        }
-      }
+      //   if (leaderboardShowcase !== undefined) {
+      //     await updateLeaderboardRank({ userIds: userId });
+      //   }
+      // }
 
       const links = [...(socialLinks ?? []), ...(sponsorshipLinks ?? [])];
 

@@ -1,13 +1,4 @@
-import {
-  Button,
-  Group,
-  Input,
-  InputWrapperProps,
-  LoadingOverlay,
-  Paper,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Group, Input, InputWrapperProps, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import produce from 'immer';
@@ -17,11 +8,11 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
-import { IconTrash, IconUser } from '@tabler/icons-react';
+import { IconUser } from '@tabler/icons-react';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
-  value?: string;
-  onChange?: (value: string | null) => void;
+  value?: string | { url: string };
+  onChange?: (value: CustomFile) => void;
   previewWidth?: number;
   maxSize?: number;
 };
@@ -34,7 +25,9 @@ export function ProfileImageUpload({
   ...props
 }: SimpleImageUploadProps) {
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
-  const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
+  const [files, filesHandlers] = useListState<CustomFile>(
+    value ? (typeof value === 'string' ? [{ url: value }] : [value]) : []
+  );
   const [error, setError] = useState('');
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
@@ -61,13 +54,23 @@ export function ProfileImageUpload({
   };
 
   useDidUpdate(() => {
-    if (files?.length > 0) onChange?.(files[0].url);
+    const [imageFile] = imageFiles;
+
+    if (!imageFile) {
+      return;
+    }
+
+    if (imageFile.status === 'success') {
+      const { id, url, status, ...file } = imageFile;
+      onChange?.({ ...file, url: id });
+    }
     // don't disable the eslint-disable
-  }, [files]); //eslint-disable-line
+  }, [imageFiles]); // eslint-disable-line
 
   useEffect(() => {
-    if (value && files[0]?.url !== value) {
-      filesHandlers.setState([{ url: value }]);
+    const currentValue = value ? (typeof value === 'string' ? { url: value } : value) : undefined;
+    if (currentValue && files[0]?.url !== currentValue.url) {
+      filesHandlers.setState([currentValue]);
     }
   }, [value]);
   const hasError = !!props.error || !!error;
@@ -104,7 +107,7 @@ export function ProfileImageUpload({
 
             return (
               <div key={index}>
-                <EdgeMedia src={image.previewUrl ?? image.url} width={previewWidth} />
+                <EdgeMedia src={image.previewUrl ?? image.url} width="original" />
               </div>
             );
           })}

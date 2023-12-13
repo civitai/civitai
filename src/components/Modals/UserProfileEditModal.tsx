@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Center,
@@ -14,7 +15,7 @@ import {
   Text,
   useMantineTheme,
 } from '@mantine/core';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
@@ -24,7 +25,6 @@ import {
   InputProfileImageUpload,
   InputShowcaseItemsInput,
   InputSimpleImageUpload,
-  InputSwitch,
   InputText,
   InputTextArea,
   useForm,
@@ -46,6 +46,20 @@ import { formatDate } from '~/utils/date-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { titleCase } from '~/utils/string-helpers';
 import { UserWithProfile } from '~/types/router';
+import { userUpdateSchema } from '~/server/schema/user.schema';
+import { isEqual } from 'lodash-es';
+
+const schema = userProfileUpdateSchema.merge(
+  userUpdateSchema
+    .pick({
+      badgeId: true,
+      profilePicture: true,
+      nameplateId: true,
+      leaderboardShowcase: true,
+    })
+    .extend({ profileImage: z.string().nullish() })
+);
+type FormDataSchema = z.infer<typeof schema>;
 
 const { openModal, Modal } = createContextModal({
   name: 'userProfileEditModal',
@@ -56,6 +70,9 @@ const { openModal, Modal } = createContextModal({
     const utils = trpc.useContext();
     const currentUser = useCurrentUser();
     const theme = useMantineTheme();
+
+    // Keep track of old data to compare and make only the necessary requests
+    const previousData = useRef<FormDataSchema>();
 
     const { data: leaderboards = [], isLoading: loadingLeaderboards } =
       trpc.leaderboard.getLeaderboards.useQuery();
@@ -70,19 +87,27 @@ const { openModal, Modal } = createContextModal({
       },
       onError: async (error) => {
         showErrorNotification({
-          title: 'There was an error awarding the entry',
+          title: 'There was an error updating your profile',
+          error: new Error(error.message),
+        });
+      },
+    });
+    const updateUserMutation = trpc.user.update.useMutation({
+      onSuccess: async () => {
+        await currentUser?.refresh();
+        context.close();
+      },
+      onError: async (error) => {
+        showErrorNotification({
+          title: 'There was an error updating your profile',
           error: new Error(error.message),
         });
       },
     });
 
     const { isLoading: loadingProfile, data: user } = trpc.userProfile.get.useQuery(
-      {
-        username: currentUser ? currentUser.username : '',
-      },
-      {
-        enabled: !!currentUser?.username,
-      }
+      { username: currentUser ? currentUser.username : '' },
+      { enabled: !!currentUser?.username }
     );
 
     const badges = useMemo(
@@ -121,20 +146,29 @@ const { openModal, Modal } = createContextModal({
     );
 
     const form = useForm({
-      schema: userProfileUpdateSchema,
+      schema,
       shouldUnregister: false,
     });
 
-    const [badgeId, nameplateId, message, bio, location, profileImage, profileSectionsSettings] =
-      form.watch([
-        'badgeId',
-        'nameplateId',
-        'message',
-        'bio',
-        'location',
-        'profileImage',
-        'profileSectionsSettings',
-      ]);
+    const [
+      badgeId,
+      nameplateId,
+      message,
+      bio,
+      location,
+      profileImage,
+      profilePicture,
+      profileSectionsSettings,
+    ] = form.watch([
+      'badgeId',
+      'nameplateId',
+      'message',
+      'bio',
+      'location',
+      'profileImage',
+      'profilePicture',
+      'profileSectionsSettings',
+    ]);
     const displayShowcase = useMemo(() => {
       const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
       return !!sections.find((s) => s.key === 'showcase' && s.enabled);
@@ -148,8 +182,7 @@ const { openModal, Modal } = createContextModal({
       if (user && user?.profile) {
         const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
         const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
-
-        form.reset({
+        const formData = {
           ...user.profile,
           // TODO: Fix typing at some point :grimacing:.
           coverImage: user.profile.coverImage as any,
@@ -171,13 +204,45 @@ const { openModal, Modal } = createContextModal({
           badgeId: selectedBadge?.id ?? null,
           nameplateId: selectedNameplate?.id ?? null,
           leaderboardShowcase: user?.leaderboardShowcase ?? null,
-        });
+          profilePicture: user.profilePicture
+            ? (user.profilePicture as FormDataSchema['profilePicture'])
+            : user.image
+            ? { url: user.image, type: 'image' as const }
+            : null,
+        };
+
+        if (!previousData.current) previousData.current = formData;
+
+        form.reset(formData);
       }
-    }, [user?.profile, equippedCosmetics]);
+    }, [equippedCosmetics, user]);
 
     const handleClose = () => context.close();
-    const handleSubmit = (data: z.infer<typeof userProfileUpdateSchema>) => {
-      mutate(data);
+    const handleSubmit = (data: FormDataSchema) => {
+      const {
+        profilePicture: prevProfilePicture,
+        badgeId: prevBadgeId,
+        nameplateId: prevNameplateId,
+        leaderboardShowcase: prevLeaderboardShowcase,
+        ...prevProfileData
+      } = previousData.current ?? {};
+      const { profilePicture, badgeId, nameplateId, leaderboardShowcase, ...profileData } = data;
+      const shouldUpdateUser =
+        prevProfilePicture?.url !== profilePicture?.url ||
+        badgeId !== prevBadgeId ||
+        nameplateId !== prevNameplateId ||
+        leaderboardShowcase !== prevLeaderboardShowcase;
+      const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
+
+      if (shouldUpdateProfile) mutate(profileData);
+      if (user && shouldUpdateUser)
+        updateUserMutation.mutate({
+          id: user.id,
+          profilePicture,
+          badgeId,
+          nameplateId,
+          leaderboardShowcase,
+        });
     };
 
     const isLoading = loadingProfile || loadingLeaderboards;
@@ -206,6 +271,8 @@ const { openModal, Modal } = createContextModal({
       );
     }
 
+    const loading = isUpdating || updateUserMutation.isLoading;
+
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
@@ -215,7 +282,7 @@ const { openModal, Modal } = createContextModal({
             </Text>
 
             <Group>
-              <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
+              <Button radius="xl" size="md" loading={loading} type="submit">
                 Save Changes
               </Button>
               <CloseButton
@@ -224,8 +291,8 @@ const { openModal, Modal } = createContextModal({
                 variant="transparent"
                 ml="auto"
                 iconSize={20}
-                loading={isLoading || isUpdating}
-                onClick={(e) => {
+                loading={loading}
+                onClick={() => {
                   context.close();
                 }}
               />
@@ -237,9 +304,18 @@ const { openModal, Modal } = createContextModal({
               user={user}
               badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
-              profileImage={profileImage}
+              profileImage={profilePicture?.url ?? profileImage}
             />
-            <InputProfileImageUpload name="profileImage" label="Edit profile image" />
+            <Stack spacing={8}>
+              <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+              {currentUser?.profilePicture?.ingestion === 'Pending' && (
+                <Alert color="yellow">
+                  Your profile picture is currently being scanned. You&apos;ll still be able to see
+                  it, but other users won&apos;t see your profile picture until it has finished the
+                  scan process.
+                </Alert>
+              )}
+            </Stack>
             <Stack>
               <InputSelect
                 name="nameplateId"
@@ -454,7 +530,7 @@ const { openModal, Modal } = createContextModal({
             />
           )}
           <Group position="right" align="flex-end">
-            <Button radius="xl" size="md" loading={isLoading || isUpdating} type="submit">
+            <Button radius="xl" size="md" loading={loading} type="submit">
               Save Changes
             </Button>
           </Group>
@@ -480,6 +556,10 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
     image: profileImage || user.image,
     cosmetics: [],
     deletedAt: null,
+    profilePicture: {
+      ...user.profilePicture,
+      url: profileImage || user.image,
+    } as UserWithCosmetics['profilePicture'],
   };
 
   if (badge)

@@ -42,6 +42,7 @@ import {
 } from './../schema/post.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { imageSelect } from '../selectors/image.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -51,6 +52,7 @@ type GetAllPostsRaw = {
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
+  profilePictureId: number | null;
   publishedAt: Date | null;
   cursorId: Date | number | null;
   stats: {
@@ -219,6 +221,7 @@ export const getPostsInfinite = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
+      u."profilePictureId",
       p."publishedAt",
       (
         SELECT jsonb_build_object(
@@ -261,6 +264,10 @@ export const getPostsInfinite = async ({
   const userCosmetics = include?.includes('cosmetics')
     ? await getCosmeticsForUsers(postsRaw.map((i) => i.userId))
     : undefined;
+  const profilePictures = await dbRead.image.findMany({
+    where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
+    select: imageSelect,
+  });
 
   return {
     nextCursor,
@@ -278,6 +285,7 @@ export const getPostsInfinite = async ({
             image: userImage,
             deletedAt,
             cosmetics: userCosmetics?.[creatorId] ?? [],
+            profilePicture: profilePictures.find((i) => i.id === post.profilePictureId) ?? null,
           },
           stats,
           image,

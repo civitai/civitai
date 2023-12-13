@@ -26,8 +26,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useInView } from '~/hooks/useInView';
+import React, { useCallback, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -52,10 +51,8 @@ import Link from 'next/link';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { formatDate } from '~/utils/date-helpers';
-import { CollectionReviewSort, ModelSort } from '~/server/common/enums';
-import { SortFilter } from '~/components/Filters';
+import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 
 type StoreState = {

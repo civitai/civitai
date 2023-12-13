@@ -74,7 +74,7 @@ export function ModerationCard({
     },
     async onSuccess() {
       if (!instantRefresh) return;
-      user?.refresh();
+      await user?.refresh();
     },
   });
 

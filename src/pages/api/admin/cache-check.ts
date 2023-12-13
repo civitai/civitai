@@ -16,7 +16,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const cache = userCache(userId);
   if (reset) {
     await invalidateSession(userId);
-    cache.hidden.all.refresh();
+    await cache.hidden.all.refresh();
   }
   const sessionCache = await redis.get(`session:${userId}`);
 
