@@ -58,7 +58,6 @@ export const getInfiniteClubMembershipsHandler = async ({
       input: { ...input, limit },
       select: {
         id: true,
-        role: true,
         startedAt: true,
         nextBillingAt: true,
         unitAmount: true,
@@ -136,12 +135,12 @@ export const getClubMembershipOnClubHandler = async ({
       },
       select: {
         id: true,
-        role: true,
         startedAt: true,
         nextBillingAt: true,
         unitAmount: true,
         expiresAt: true,
         cancelledAt: true,
+        billingPausedAt: true,
         downgradeClubTierId: true,
         club: {
           select: {

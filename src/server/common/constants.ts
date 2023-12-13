@@ -238,7 +238,7 @@ export const constants = {
     tierImageDisplayWidth: 124,
     tierImageSidebarDisplayWidth: 84,
     avatarDisplayWidth: 124,
-    minMonthlyBuzz: 5000,
+    minMonthlyBuzz: 3000,
     headerImageAspectRatio: 1 / 6,
     postCoverImageAspectRatio: 1 / 4,
     engagementTypes: ['engaged'],

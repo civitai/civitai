@@ -90,15 +90,25 @@ export const createClubMembership = async ({
       unitAmount: true,
       currency: true,
       name: true,
+      memberLimit: true,
       club: {
         select: {
           name: true,
+        },
+      },
+      _count: {
+        select: {
+          memberships: true,
         },
       },
     },
   });
 
   if (!clubTier) throw new Error('Club tier does not exist');
+
+  if (clubTier.memberLimit && clubTier._count.memberships >= clubTier.memberLimit) {
+    throw throwBadRequestError('Club tier is full');
+  }
 
   const clubMembership = await clubMembershipOnClub({
     input: {
@@ -189,6 +199,12 @@ export const updateClubMembership = async ({
           name: true,
         },
       },
+      memberLimit: true,
+      _count: {
+        select: {
+          memberships: true,
+        },
+      },
     },
   });
 
@@ -222,6 +238,13 @@ export const updateClubMembership = async ({
   });
 
   if (!clubMembership) throw new Error('User is not a member of this club');
+  if (
+    clubMembership.clubTier.id !== clubTier.id &&
+    clubTier.memberLimit &&
+    clubTier._count.memberships >= clubTier.memberLimit
+  ) {
+    throw throwBadRequestError('Club tier is full');
+  }
 
   const isSameTier = clubTier.id === clubMembership.clubTier.id;
   const isUpgrade = !isSameTier && clubTier.unitAmount > clubMembership.clubTier.unitAmount;

@@ -1,10 +1,6 @@
 import { z } from 'zod';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { comfylessImageSchema } from '~/server/schema/image.schema';
-import { BountyMode, BountyType, Currency, MetricTimeframe } from '@prisma/client';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { BountySort, BountyStatus, ClubMembershipSort } from '~/server/common/enums';
-import { constants } from '~/server/common/constants';
+import { ClubMembershipSort } from '~/server/common/enums';
 
 export const getInfiniteClubMembershipsSchema = infiniteQuerySchema.merge(
   z.object({

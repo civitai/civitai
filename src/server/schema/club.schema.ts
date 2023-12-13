@@ -4,6 +4,7 @@ import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
 import { infiniteQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { ClubSort } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 
 export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
 export const upsertClubTierInput = z
@@ -13,12 +14,13 @@ export const upsertClubTierInput = z
     description: getSanitizedStringSchema().refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
-    unitAmount: z.number().min(0),
+    unitAmount: z.number().min(constants.clubs.minMonthlyBuzz),
     currency: z.nativeEnum(Currency).default(Currency.BUZZ),
     coverImage: comfylessImageSchema.nullish(),
     unlisted: z.boolean().default(false),
     joinable: z.boolean().default(true),
     clubId: z.number().optional(),
+    memberLimit: z.number().optional(),
   })
   .refine((data) => !!data.clubId || !!data.id, {
     message: 'When creating a new tier, clubId must be provided',

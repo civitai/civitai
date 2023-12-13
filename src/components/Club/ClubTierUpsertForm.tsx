@@ -93,6 +93,13 @@ export function ClubTierUpsertForm({
                   withAsterisk
                   stickyToolbar
                 />
+                <InputNumber
+                  name="memberLimit"
+                  label="Member limit"
+                  description="If you want to make this an exclusive tier, you can set a limit on the number of members that can join it."
+                  clearable
+                  variant="filled"
+                />
                 <Group grow>
                   {coverImage && (
                     <div
