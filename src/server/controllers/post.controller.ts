@@ -234,12 +234,6 @@ export const addPostImageHandler = async ({
 }) => {
   try {
     const result = await addPostImage({ ...input, userId: ctx.user.id });
-    await ctx.track.image({
-      type: 'Create',
-      imageId: result.id,
-      nsfw: NsfwLevel.None,
-      tags: [],
-    });
     return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

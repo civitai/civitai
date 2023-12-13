@@ -539,7 +539,7 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     dbWrite.commentV2.deleteMany({ where: { userId: id } }),
     dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
     dbWrite.post.deleteMany({ where: { userId: id } }),
-    dbWrite.image.deleteMany({ where: { userId: id } }),
+
     dbWrite.article.deleteMany({ where: { userId: id } }),
     dbWrite.userProfile.deleteMany({ where: { userId: id } }),
     dbWrite.userLink.deleteMany({ where: { userId: id } }),
@@ -554,6 +554,10 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     dbWrite.articleReaction.deleteMany({ where: { userId: id } }),
     dbWrite.commentReaction.deleteMany({ where: { userId: id } }),
     dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } }),
+    // TODO - an implementation similar to the following
+    // loop through image
+    // imageService.deleteImageById
+    dbWrite.image.deleteMany({ where: { userId: id } }),
   ]);
 
   await modelsSearchIndex.queueUpdate(

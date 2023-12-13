@@ -11,21 +11,17 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isDefined } from '~/utils/type-guards';
-import JSZip from 'jszip';
 import { fetchBlob } from '~/utils/file-utils';
-import {
-  AbortMultipartUploadCommandOutput,
-  CompleteMultipartUploadCommandOutput,
-  CreateMultipartUploadCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import { S3Client } from '@aws-sdk/client-s3';
 import { env } from '~/env/server.mjs';
-import { completeMultipartUpload, getMultipartPutUrl } from '~/utils/s3-utils';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
 import stream from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
+import { invalidateSession } from '~/server/utils/session-helpers';
+import { cancelSubscription } from '~/server/services/stripe.service';
+import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 
 export const createCsamReport = async ({
   reportedById,
@@ -36,21 +32,47 @@ export const createCsamReport = async ({
   const exists = await dbRead.csamReport.count({ where: { userId } });
   if (exists) return;
 
-  await dbWrite.csamReport.create({
-    data: {
-      userId,
-      reportedById,
-      details: props,
-      images,
-    },
+  const report = await dbRead.csamReport.findFirst({
+    where: { userId },
+    select: { id: true, createdAt: true },
   });
 
-  /*
-    TODO
-    - ban user
-    - cancel subscription
-    - hide/unpublish content
-  */
+  const date = report ? report.createdAt : new Date();
+  if (!report) {
+    await dbWrite.csamReport.create({
+      data: {
+        userId,
+        reportedById,
+        details: props,
+        images,
+        createdAt: date,
+      },
+    });
+  } else {
+    await dbWrite.csamReport.update({
+      where: { id: report.id },
+      data: {
+        reportedById,
+        details: props,
+        images,
+        createdAt: date,
+      },
+    });
+  }
+
+  await dbWrite.user.update({ where: { id: userId }, data: { bannedAt: date } });
+  await invalidateSession(userId);
+  await cancelSubscription({ userId });
+
+  // hide user content
+  await dbWrite.model.updateMany({
+    where: { userId },
+    data: { status: 'UnpublishedViolation' },
+  });
+  await dbWrite.image.updateMany({
+    where: { userId },
+    data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
+  });
 };
 
 type CsamImageProps = { fileId?: string; hash?: string } & CsamFileOutput;
@@ -89,8 +111,14 @@ const getReportedUser = async (id: number) => {
   });
 };
 
-const getReportedImages = async (imageIds: number[]) => {
-  return await dbRead.image.findMany({
+const getReportedEntities = async ({
+  imageIds,
+  modelVersionIds,
+}: {
+  imageIds: number[];
+  modelVersionIds?: number[];
+}) => {
+  const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {
       id: true,
@@ -100,91 +128,46 @@ const getReportedImages = async (imageIds: number[]) => {
       type: true,
       meta: true,
       post: {
-        select: { modelVersionId: true, modelVersion: { select: { modelId: true, name: true } } },
+        select: { modelVersionId: true },
       },
     },
   });
+  const versionIds = modelVersionIds ?? [
+    ...new Set(images.map((x) => x.post?.modelVersionId).filter(isDefined)),
+  ];
+
+  const modelVersions = await dbRead.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: { id: true, name: true, model: { select: { id: true, name: true } } },
+  });
+  const models = modelVersions.map((x) => x.model);
+
+  return { images, modelVersions, models };
 };
 
-export const getImageIpInfo = async ({
-  userId,
-  imageIds,
-}: {
-  userId: number;
-  imageIds: number[];
-}) => {
+export const getUserIpInfo = async ({ userId }: { userId: number }) => {
   if (!clickhouse) return [];
 
-  const results = await clickhouse
+  const ips = await clickhouse
     .query({
       query: `
-        SELECT ip, imageId, time from default.images
-        WHERE userId = ${userId} and type = 'Create'
+      SELECT DISTINCT ip from posts
+      WHERE userId = ${userId} and type = 'Create' AND ip != '::1'
       `,
       format: 'JSONEachRow',
     })
-    .then((x) => x.json<{ ip: string; imageId: number; time: string }[]>());
-
-  return results.filter((result) => imageIds.includes(result.imageId));
+    .then((x) => x.json<{ ip: string }[]>());
+  return ips.map(({ ip }) => ip);
 };
 
-// TODO
-const submitReport = async (
-  data: any
-): Promise<{ responseCode: number; responseDescription: string; reportId: number }> => {
-  return {} as any;
-};
-
-// TODO
-const finishReport = async (reportId: number) => {
-  return {} as any;
-};
-
-// TODO
-const uploadFile = async ({
-  reportId,
-  url,
-}: {
-  reportId: number;
-  url: string;
-}): Promise<{
-  responseCode: number;
-  responseDescription: string;
-  reportId: number;
-  fileId: string;
-  hash: string;
-}> => {
-  return {} as any;
-};
-
-// TODO
-const submitFileDetails = async (
-  data: any
-): Promise<{ responseCode: number; responseDescription: string; reportId: number }> => {
-  return {} as any;
-};
-
-export const processCsamReport = async (report: CsamReportProps) => {
+export async function processCsamReport(report: CsamReportProps) {
   const imageIds = report.images.map((x) => x.id);
   const reportingUser = await getReportingUser(report.reportedById);
   const reportedUser = await getReportedUser(report.userId);
-  const reportedImages = await getReportedImages(imageIds);
-  const imageIpInfo = await getImageIpInfo({ userId: report.userId, imageIds });
-  const modelIds = [
-    ...new Set(
-      reportedImages
-        .filter((x) =>
-          report.modelVersionIds && x.post?.modelVersionId
-            ? report.modelVersionIds.includes(x.post.modelVersionId)
-            : true
-        )
-        .map((x) => x.post?.modelVersion?.modelId)
-        .filter(isDefined)
-    ),
-  ];
-  const models = await dbRead.model.findMany({
-    where: { id: { in: modelIds } },
-    select: { id: true, name: true },
+  const ipAddresses = await getUserIpInfo({ userId: report.userId });
+  const { images, models, modelVersions } = await getReportedEntities({
+    imageIds,
+    modelVersionIds: report.details.modelVersionIds,
   });
 
   const getModelsText = () => {
@@ -194,16 +177,9 @@ export const processCsamReport = async (report: CsamReportProps) => {
       \r\n
       Models used: [modelId:modelName], [modelVersionId:modelVersionName]
       \r\n
-      ${[
-        ...new Set(
-          reportedImages
-            .map((image) => {
-              const model = models.find((x) => x.id === image.post?.modelVersion?.modelId);
-              return `[${model?.id}:${model?.name}], [${image.post?.modelVersionId}:${image.post?.modelVersion?.name}]`;
-            })
-            .filter(isDefined)
-        ),
-      ].join('\r\n')}
+      ${modelVersions
+        .map(({ id, name, model }) => `[${model.id}:${model.name}], [${id}:${name}]`)
+        .join('\r\n')}
     `;
   };
 
@@ -281,6 +257,7 @@ export const processCsamReport = async (report: CsamReportProps) => {
         contactPerson: {
           email: 'report@civitai.com',
         },
+        ipCaptureEvent: ipAddresses.map((ipAddress) => ({ ipAddress })),
       },
       personOrUserReported: {
         espIdentifier: report.userId,
@@ -294,70 +271,58 @@ export const processCsamReport = async (report: CsamReportProps) => {
     },
   };
 
-  const { reportId } = await submitReport(reportPayload);
+  const { reportId } = await ncmecCaller.initializeReport(reportPayload);
 
-  // TODO - post report payload
-  const fileUploadResults = await Promise.all(
-    reportedImages.map(async (image) => {
-      const ipInfo = imageIpInfo.find((x) => x.imageId === image.id);
-      const imageReportInfo = report.images.find((x) => x.id === image.id);
+  try {
+    const fileUploadResults = await Promise.all(
+      images.map(async (image) => {
+        const imageReportInfo = report.images.find((x) => x.id === image.id);
 
-      const imageUrl = getEdgeUrl(image.url, image);
-      const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
-      const modelId = image.post?.modelVersion?.modelId;
-      const modelVersionId = image.post?.modelVersion?.modelId;
-      const additionalInfo: string[] = [];
-      if (modelId) additionalInfo.push(`model id: ${modelId}`);
-      if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-      if (prompt) additionalInfo.push(`prompt: ${prompt}`);
-      if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
+        const imageUrl = getEdgeUrl(image.url, { type: image.type });
+        const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
+        const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
+        const modelId = modelVersion?.model.id;
+        const modelVersionId = modelVersion?.id;
+        const additionalInfo: string[] = [];
+        if (modelId) additionalInfo.push(`model id: ${modelId}`);
+        if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
+        if (prompt) additionalInfo.push(`prompt: ${prompt}`);
+        if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
 
-      const { fileId, hash } = await uploadFile({ reportId, url: imageUrl });
+        const blob = await fetchBlob(imageUrl);
 
-      const filePayload = {
-        fileDetails: {
+        const { fileId, hash } = await ncmecCaller.uploadFile({
           reportId,
-          fileId,
-          originalFileName: image.name,
-          locationOfFile: imageUrl,
-          fileAnnotation: imageReportInfo?.fileAnnotations,
-          ipCaptureEvent: {
-            ipAddress: ipInfo?.ip,
-            dateTime: ipInfo?.time,
+          file: blob,
+          fileDetails: {
+            originalFileName: image.name ?? undefined,
+            locationOfFile: imageUrl,
+            fileAnnotation: imageReportInfo?.fileAnnotations,
+            additionalInfo: additionalInfo.length ? additionalInfo.join('\r\n') : undefined,
           },
-          additionalInfo: additionalInfo.length ? additionalInfo.join('\r\n') : undefined,
-        },
-      };
+        });
 
-      await submitFileDetails(filePayload);
+        return {
+          ...imageReportInfo,
+          fileId,
+          hash,
+        };
+      })
+    );
 
-      return {
-        ...imageReportInfo,
-        fileId,
-        hash,
-      };
-    })
-  );
+    await dbWrite.csamReport.update({
+      where: { id: report.id },
+      data: {
+        images: fileUploadResults,
+        reportSentAt: new Date(),
+      },
+    });
 
-  // TODO - wrap everything in try catch
-  // on catch, cancel the report
-
-  await finishReport(reportId);
-
-  await dbWrite.csamReport.update({
-    where: { id: report.id },
-    data: {
-      images: fileUploadResults,
-      reportSentAt: new Date(),
-    },
-  });
-};
-
-const imagesDir = `${process.cwd()}/csam-images`;
-const zipDir = `${process.cwd()}/csam-zip`;
-const getPath = (filename: string) => {
-  return `${imagesDir}/${filename}`;
-};
+    await ncmecCaller.finishReport(reportId);
+  } catch (e) {
+    await ncmecCaller.retractReport(reportId);
+  }
+}
 
 function zipDirectory(sourceDir: string, outPath: string) {
   const archive = archiver('zip', { zlib: { level: 9 } });
@@ -420,55 +385,116 @@ function uploadStream({
         leavePartsOnError: false,
       });
 
-      parallelUploads3.on('httpUploadProgress', (progress) => {
-        console.log({ progress });
-      });
+      // parallelUploads3.on('httpUploadProgress', (progress) => {
+      //   console.log({ progress });
+      // });
 
       readStream.pipe(passThroughStream);
       await parallelUploads3.done();
-      console.dir('upload finished', { depth: null });
+      // console.dir('upload finished', { depth: null });
       resolve();
     } catch (e) {
-      console.log(e);
+      // console.log(e);
       reject();
     }
   });
 }
 
-export const bundleCsamData = async ({ userId }: { userId: number }) => {
-  const images = await dbRead.image.findMany({
-    where: { userId },
-    select: { id: true, url: true, type: true, name: true },
+async function zipAndUploadCsamImages({ userId }: { userId: number }) {
+  const imagesDir = `${process.cwd()}/csam-images`;
+  const zipDir = `${process.cwd()}/csam-zip`;
+  const images = await dbRead.image.findMany({ where: { userId } });
+
+  for (const dir of [imagesDir, zipDir]) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+  }
+
+  try {
+    // write image files to disk
+    await Promise.all(
+      images.map(async (image) => {
+        const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
+        const arrayBuffer = await blob.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const imageName = image.name
+          ? image.name.substring(0, image.name.lastIndexOf('.'))
+          : image.url;
+        const name = imageName.length ? imageName : image.url;
+        const filename = `${name}.${blob.type.split('/').pop()}`;
+        const path = `${imagesDir}/${filename}`;
+
+        if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
+        await fsAsync.writeFile(path, buffer);
+      })
+    );
+
+    // create zip file and zip images directory
+    const outPath = `${zipDir}/${userId}_csam.zip`;
+    await zipDirectory(imagesDir, outPath);
+
+    // upload zip file to s3 bucket
+    const readableStream = fs.createReadStream(outPath);
+    await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
+    // remove zip and images directory/files
+    for (const dir of [imagesDir, zipDir]) fs.rmSync(dir, { recursive: true });
+  } catch (e) {
+    for (const dir of [imagesDir, zipDir]) fs.rmSync(dir, { recursive: true });
+    throw e;
+  }
+
+  return images;
+}
+
+async function zipAndUploadCsamUserData(
+  userId: number,
+  reportId: number | null = null,
+  imagesArr?: unknown[]
+) {
+  const jsonDir = `${process.cwd()}/csam-json`;
+  const outPath = `${jsonDir}/user_${userId}.json`;
+
+  const images = imagesArr ?? (await dbRead.image.findMany({ where: { userId } }));
+  const user = await getReportedUser(userId);
+  const ipAddresses = await getUserIpInfo({ userId });
+  const models = await dbRead.model.findMany({ where: { userId } });
+  const modelVersions = await dbRead.modelVersion.findMany({
+    where: { modelId: { in: models.map((x) => x.id) } },
   });
 
-  await Promise.all(
-    images.map(async (image) => {
-      const blob = await fetchBlob(getEdgeUrl(image.url, image));
-      const arrayBuffer = await blob.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+  try {
+    await fsAsync.writeFile(
+      outPath,
+      JSON.stringify({
+        user: { userId, ...user },
+        reportId,
+        ipAddresses,
+        models,
+        modelVersions,
+        images,
+      })
+    );
 
-      const imageName = image.name
-        ? image.name.substring(0, image.name.lastIndexOf('.'))
-        : image.url;
-      const name = imageName.length ? imageName : image.url;
-      const filename = `${name}.${blob.type.split('/').pop()}`;
-      const path = getPath(filename);
+    const readableStream = fs.createReadStream(outPath);
+    await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
+    fs.rmSync(jsonDir, { recursive: true });
+  } catch (e) {
+    fs.rmSync(jsonDir, { recursive: true });
+    throw e;
+  }
+}
 
-      if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
-      await fsAsync.writeFile(path, buffer);
-    })
-  );
+export async function archiveCsamDataForReport(report: CsamReportProps) {
+  const { userId, reportId } = report;
 
-  if (!fs.existsSync(zipDir)) fs.mkdirSync(zipDir);
-  const outPath = `${zipDir}/${userId}_csam.zip`;
-  await zipDirectory(imagesDir, outPath);
+  const images = await zipAndUploadCsamImages({ userId });
 
-  const readableStream = fs.createReadStream(outPath);
-  await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
-  readableStream.close();
+  await zipAndUploadCsamUserData(userId, reportId, images);
 
-  fs.rmSync(zipDir, { recursive: true });
-  fs.rmSync(imagesDir, { recursive: true });
-};
-
-// TODO - remove user data
+  await dbWrite.csamReport.update({
+    where: { id: report.id },
+    data: {
+      archivedAt: new Date(),
+    },
+  });
+}

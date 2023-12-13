@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 
 export const csamCapabilitiesDictionary: Record<string, string> = {
   create: 'create novel images/videos from textual inputs, such as describing a scene or an object',
@@ -17,19 +18,10 @@ export const csamContentsDictionary: Record<string, string> = {
 };
 
 // #region [user input]
-const fileAnnotationsSchema = z.object({
-  animeDrawingVirtualHentai: z.boolean().optional(),
-  physicalHarm: z.boolean().optional(),
-  violenceGore: z.boolean().optional(),
-  bestiality: z.boolean().optional(),
-  infant: z.boolean().optional(),
-  generativeAi: z.boolean().default(true),
-});
-
 export type CsamFileOutput = z.output<typeof imageSchema>;
 const imageSchema = z.object({
   id: z.number(),
-  fileAnnotations: fileAnnotationsSchema,
+  fileAnnotations: Ncmec.fileAnnotationsSchema,
 });
 
 const sharedReportSchema = z.object({

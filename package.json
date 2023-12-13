@@ -91,6 +91,7 @@
     "@trpc/react-query": "^10.20.0",
     "@trpc/server": "^10.20.0",
     "@types/archiver": "^6.0.2",
+    "@types/xml2js": "^0.4.14",
     "@vladmandic/human": "^3.0.5",
     "archiver": "^6.0.1",
     "arraybuffer-to-buffer": "^0.0.7",
@@ -166,6 +167,7 @@
     "trie-memoize": "^1.2.0",
     "unified": "^10.1.2",
     "uuid": "^9.0.0",
+    "xml2js": "^0.6.2",
     "zod": "^3.22.3",
     "zustand": "^4.1.2"
   },
