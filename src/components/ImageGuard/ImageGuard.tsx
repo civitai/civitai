@@ -160,13 +160,10 @@ type ImageProps = {
   nsfw: NsfwLevel;
   imageNsfw?: boolean;
   postId?: number | null;
-  width?: number | null;
-  height?: number | null;
   needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
   url?: string | null;
-  name?: string | null;
 };
 
 type ImageGuardProps<T extends ImageProps> = {

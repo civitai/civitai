@@ -81,6 +81,7 @@ const { openModal, Modal } = createContextModal({
       onSuccess: (data) => {
         if (currentUser) {
           utils.userProfile.get.setData({ username: currentUser.username }, data);
+          utils.userProfile.get.invalidate({ username: currentUser ? currentUser.username : '' });
         }
         showSuccessNotification({ message: 'Profile updated successfully' });
         context.close();
@@ -308,7 +309,7 @@ const { openModal, Modal } = createContextModal({
             />
             <Stack spacing={8}>
               <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
-              {currentUser?.profilePicture?.ingestion === 'Pending' && (
+              {user?.profilePicture?.ingestion === 'Pending' && (
                 <Alert color="yellow">
                   Your profile picture is currently being scanned. You&apos;ll still be able to see
                   it, but other users won&apos;t see your profile picture until it has finished the
