@@ -8,14 +8,8 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
     const apiCaller = appRouter.createCaller(authedApiContext(req, res, user));
-    if (req.method === 'GET') {
-      return res.send(await apiCaller.post.get({ id: Number(req.query.id) }));
-    }
-
-    if (req.method === 'POST') {
-      const input = { ...req.body, id: Number(req.query.id) };
-      return res.send(await apiCaller.post.update(input));
-    }
+    const input = { ...req.body, id: Number(req.query.id) };
+    res.send(await apiCaller.post.addTag(input));
   },
-  ['POST', 'GET']
+  ['POST']
 );

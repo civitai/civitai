@@ -15,12 +15,18 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { appRouter } from '~/server/routers';
+import { authedApiContext } from '~/server/createContext';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
 const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'POST') return handleUpsert(req, res);
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: `Invalid id: ${results.error.flatten().fieldErrors.id}` });
@@ -106,4 +112,13 @@ export async function resModelVersionDetails(
   const body = await prepareModelVersionResponse(modelVersion, baseUrl);
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   res.status(200).json(body);
+}
+
+async function handleUpsert(req: NextApiRequest, res: NextApiResponse) {
+  const session = await getServerAuthSession({ req, res });
+  if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const apiCaller = appRouter.createCaller(authedApiContext(req, res, session.user));
+  const input = { ...req.body, id: Number(req.query.id) };
+  return res.send(await apiCaller.modelVersion.upsert(input));
 }

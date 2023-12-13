@@ -1,4 +1,8 @@
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   CreateResourceReviewInput,
   GetRatingTotalsInput,
@@ -186,6 +190,12 @@ export const deleteResourceReview = ({ id }: GetByIdInput) => {
 export const createResourceReview = async (
   data: CreateResourceReviewInput & { userId: number }
 ) => {
+  const modelVersion = await dbRead.modelVersion.findFirst({
+    where: { modelId: data.modelId, id: data.modelVersionId },
+    select: { id: true },
+  });
+  if (!modelVersion) throw throwBadRequestError('That model version does not exist');
+
   return await dbWrite.resourceReview.create({ data, select: resourceReviewSelect });
 };
 
