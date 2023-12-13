@@ -52,10 +52,6 @@ export const ClubRequirementNotice = ({
             <List size="xs" spacing={8}>
               {clubs.map((club) => {
                 const requirement = clubRequirement.clubs.find((c) => c.clubId === club.id);
-                console.log(
-                  clubRequirement.clubs.find((c) => console.log(c, club)),
-                  requirement
-                );
 
                 if (!requirement) {
                   return null;

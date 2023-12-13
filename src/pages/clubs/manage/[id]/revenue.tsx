@@ -1,14 +1,18 @@
-import { Stack, Title } from '@mantine/core';
+import { Button, Group, Stack, Title } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useQueryClub } from '~/components/Club/club.utils';
+import { useClubContributorStatus, useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
+import { useBuzz } from '~/components/Buzz/useBuzz';
+import { ClubAdminPermission } from '@prisma/client';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ClubWithdrawFunds } from '~/components/Club/ClubWithdrawFunds';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -57,13 +61,35 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Revenue({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
+  const { balance } = useBuzz(id, 'Club');
+  const { isOwner, permissions } = useClubContributorStatus({
+    clubId: id,
+  });
+  const hasBalance = (balance ?? 0) > 0;
+  const canWithdraw =
+    hasBalance && (isOwner || permissions.includes(ClubAdminPermission.WithdrawRevenue));
 
   if (loading) return <PageLoader />;
   if (!club) return <NotFound />;
 
   return (
     <Stack spacing="md">
-      <Title order={2}>Club Revenue</Title>
+      <Group position="apart">
+        <Title order={2}>Club Revenue</Title>
+        {canWithdraw && (
+          <Button
+            size="sm"
+            onClick={() => {
+              dialogStore.trigger({
+                component: ClubWithdrawFunds,
+                props: { clubId: id },
+              });
+            }}
+          >
+            Withdraw funds
+          </Button>
+        )}
+      </Group>
       <BuzzDashboardOverview accountId={club.id} accountType="Club" />
     </Stack>
   );

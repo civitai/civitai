@@ -8,6 +8,7 @@ import {
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
+  WithdrawClubFundsSchema,
 } from '~/server/schema/buzz.schema';
 import {
   completeStripeBuzzTransaction,
@@ -15,9 +16,11 @@ import {
   getUserBuzzAccount,
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
-import { throwBadRequestError } from '../utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
 import { dbRead } from '~/server/db/client';
+import { userContributingClubs } from '../services/club.service';
+import { ClubAdminPermission } from '@prisma/client';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -138,6 +141,45 @@ export async function getBuzzAccountTransactionsHandler({
 
     const result = await getUserBuzzTransactions({ ...input });
     return result;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function withdrawClubFundsHandler({
+  input,
+  ctx,
+}: {
+  input: WithdrawClubFundsSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id } = ctx.user;
+
+    const [userClub] = await userContributingClubs({ userId: id, clubIds: [input.clubId] });
+
+    if (!userClub)
+      throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
+
+    if (
+      userClub.userId !== id &&
+      !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.WithdrawRevenue)
+    ) {
+      throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
+    }
+
+    const club = await dbRead.club.findUniqueOrThrow({ where: { id: input.clubId } });
+
+    return createBuzzTransaction({
+      toAccountId: id,
+      toAccountType: 'User',
+      fromAccountId: input.clubId,
+      fromAccountType: 'Club',
+      amount: input.amount,
+      type: TransactionType.ClubWithdrawal,
+      description: `Club withdrawal from ${club.name}`,
+      details: { clubId: club.id, clubName: club.name, createdAt: new Date(), userId: id },
+    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

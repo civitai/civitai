@@ -1135,7 +1135,6 @@ export const updateCollectionItemsStatus = async ({
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
   if (collectionItemIds.length > 0) {
-    console.log(collection.mode);
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem" 
       SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(

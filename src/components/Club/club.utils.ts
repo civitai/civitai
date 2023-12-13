@@ -32,6 +32,7 @@ import {
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { WithdrawClubFundsSchema } from '~/server/schema/buzz.schema';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -332,6 +333,32 @@ export const useMutateClub = () => {
     },
   });
 
+  const withdrawClubFundsMutation = trpc.buzz.withdrawClubFunds.useMutation({
+    async onSuccess(_, { clubId }) {
+      await queryUtils.buzz.getBuzzAccount.invalidate({
+        accountId: clubId,
+        accountType: 'Club',
+      });
+      await queryUtils.buzz.getAccountTransactions.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to withdraw funds from club',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to withdraw funds from club',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -372,6 +399,9 @@ export const useMutateClub = () => {
   const handleDeleteClubPost = (data: GetByIdInput) => {
     return deleteClubPostMutation.mutateAsync(data);
   };
+  const handleWithdrawClubFunds = (data: WithdrawClubFundsSchema) => {
+    return withdrawClubFundsMutation.mutateAsync(data);
+  };
 
   return {
     upsertClub: handleUpsertClub,
@@ -400,6 +430,8 @@ export const useMutateClub = () => {
     deletingClub: deleteClubMutation.isLoading,
     deleteClubPost: handleDeleteClubPost,
     deletingClubPost: deleteClubPostMutation.isLoading,
+    withdrawClubFunds: handleWithdrawClubFunds,
+    withdrawingClubFunds: withdrawClubFundsMutation.isLoading,
   };
 };
 
@@ -568,8 +600,6 @@ export const useQueryClubs = (
   });
   const currentUser = useCurrentUser();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
-
-  console.log(browsingMode);
 
   const {
     images: hiddenImages,

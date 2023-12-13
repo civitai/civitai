@@ -95,8 +95,6 @@ export async function getUserBuzzTransactions({
   // Return early if no transactions
   if (transactions.length === 0) return { cursor, transactions: [] };
 
-  console.log(transactions);
-
   // Remove duplicate user ids
   const toUserIds = new Set(
     transactions.filter((t) => t.toAccountType === 'User').map((t) => t.toAccountId)
