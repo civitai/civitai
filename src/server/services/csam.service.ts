@@ -60,19 +60,20 @@ export const createCsamReport = async ({
     });
   }
 
-  await dbWrite.user.update({ where: { id: userId }, data: { bannedAt: date } });
-  await invalidateSession(userId);
-  await cancelSubscription({ userId });
+  // TODO - uncomment before prod
+  // await dbWrite.user.update({ where: { id: userId }, data: { bannedAt: date } });
+  // await invalidateSession(userId);
+  // await cancelSubscription({ userId });
 
-  // hide user content
-  await dbWrite.model.updateMany({
-    where: { userId },
-    data: { status: 'UnpublishedViolation' },
-  });
-  await dbWrite.image.updateMany({
-    where: { userId },
-    data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
-  });
+  // // hide user content
+  // await dbWrite.model.updateMany({
+  //   where: { userId },
+  //   data: { status: 'UnpublishedViolation' },
+  // });
+  // await dbWrite.image.updateMany({
+  //   where: { userId },
+  //   data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
+  // });
 };
 
 type CsamImageProps = { fileId?: string; hash?: string } & CsamFileOutput;
@@ -243,6 +244,10 @@ export async function processCsamReport(report: CsamReportProps) {
     All evidence in this report should be independently verified.
   `;
 
+  // TODO - remove this before prod
+  ipAddresses.push('test1');
+  ipAddresses.push('test2');
+
   const reportPayload = {
     report: {
       incidentSummary: {
@@ -257,7 +262,6 @@ export async function processCsamReport(report: CsamReportProps) {
         contactPerson: {
           email: 'report@civitai.com',
         },
-        ipCaptureEvent: ipAddresses.map((ipAddress) => ({ ipAddress })),
       },
       personOrUserReported: {
         espIdentifier: report.userId,
@@ -266,62 +270,65 @@ export async function processCsamReport(report: CsamReportProps) {
           firstName: reportedUser?.name,
           email: reportedUser?.email,
         },
+        ipCaptureEvent: ipAddresses.map((ipAddress) => ({ ipAddress })),
       },
-      additionalInfo,
+      additionalInfo: `<![CDATA[${additionalInfo}]]>`,
     },
   };
 
-  const { reportId } = await ncmecCaller.initializeReport(reportPayload);
+  return await ncmecCaller.initializeReport(reportPayload);
 
-  try {
-    const fileUploadResults = await Promise.all(
-      images.map(async (image) => {
-        const imageReportInfo = report.images.find((x) => x.id === image.id);
+  // const { reportId } = await ncmecCaller.initializeReport(reportPayload);
 
-        const imageUrl = getEdgeUrl(image.url, { type: image.type });
-        const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
-        const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
-        const modelId = modelVersion?.model.id;
-        const modelVersionId = modelVersion?.id;
-        const additionalInfo: string[] = [];
-        if (modelId) additionalInfo.push(`model id: ${modelId}`);
-        if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-        if (prompt) additionalInfo.push(`prompt: ${prompt}`);
-        if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
+  // try {
+  //   const fileUploadResults = await Promise.all(
+  //     images.map(async (image) => {
+  //       const imageReportInfo = report.images.find((x) => x.id === image.id);
 
-        const blob = await fetchBlob(imageUrl);
+  //       const imageUrl = getEdgeUrl(image.url, { type: image.type });
+  //       const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
+  //       const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
+  //       const modelId = modelVersion?.model.id;
+  //       const modelVersionId = modelVersion?.id;
+  //       const additionalInfo: string[] = [];
+  //       if (modelId) additionalInfo.push(`model id: ${modelId}`);
+  //       if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
+  //       if (prompt) additionalInfo.push(`prompt: ${prompt}`);
+  //       if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
 
-        const { fileId, hash } = await ncmecCaller.uploadFile({
-          reportId,
-          file: blob,
-          fileDetails: {
-            originalFileName: image.name ?? undefined,
-            locationOfFile: imageUrl,
-            fileAnnotation: imageReportInfo?.fileAnnotations,
-            additionalInfo: additionalInfo.length ? additionalInfo.join('\r\n') : undefined,
-          },
-        });
+  //       const blob = await fetchBlob(imageUrl);
 
-        return {
-          ...imageReportInfo,
-          fileId,
-          hash,
-        };
-      })
-    );
+  //       const { fileId, hash } = await ncmecCaller.uploadFile({
+  //         reportId,
+  //         file: blob,
+  //         fileDetails: {
+  //           originalFileName: image.name ?? undefined,
+  //           locationOfFile: imageUrl,
+  //           fileAnnotation: imageReportInfo?.fileAnnotations,
+  //           additionalInfo: additionalInfo.length ? additionalInfo.join('\r\n') : undefined,
+  //         },
+  //       });
 
-    await dbWrite.csamReport.update({
-      where: { id: report.id },
-      data: {
-        images: fileUploadResults,
-        reportSentAt: new Date(),
-      },
-    });
+  //       return {
+  //         ...imageReportInfo,
+  //         fileId,
+  //         hash,
+  //       };
+  //     })
+  //   );
 
-    await ncmecCaller.finishReport(reportId);
-  } catch (e) {
-    await ncmecCaller.retractReport(reportId);
-  }
+  //   await dbWrite.csamReport.update({
+  //     where: { id: report.id },
+  //     data: {
+  //       images: fileUploadResults,
+  //       reportSentAt: new Date(),
+  //     },
+  //   });
+
+  //   await ncmecCaller.finishReport(reportId);
+  // } catch (e) {
+  //   await ncmecCaller.retractReport(reportId);
+  // }
 }
 
 function zipDirectory(sourceDir: string, outPath: string) {

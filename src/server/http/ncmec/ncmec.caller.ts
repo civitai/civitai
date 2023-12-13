@@ -1,7 +1,7 @@
 import { env } from '~/env/server.mjs';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
-import { parseStringPromise } from 'xml2js';
+import { parseStringPromise, Builder } from 'xml2js';
 
 class NcmecCaller extends HttpCaller {
   private static instance: NcmecCaller;
@@ -32,16 +32,23 @@ class NcmecCaller extends HttpCaller {
     const response = await this.getRaw('/status');
     const xml = await response.text();
     const json = await parseStringPromise(xml);
+    return Ncmec.statusResponseSchema.parse(json);
   }
 
   async getSchema() {
-    return this.get('/xsd');
+    const response = await this.getRaw('/xsd');
+    return await response.text();
   }
 
   async initializeReport(data: any) {
-    const response = await this.postRaw('/submit', { body: JSON.stringify(data) }); // TODO - check if this needs to go as json or XML
-    if (!response.ok) throw new Error('failed to initialize ncmec report');
-    return (await response.json()) as Ncmec.ReportResponse; // TODO - check if this needs to be parsed as json or XML
+    const builder = new Builder();
+    const xmlInput = builder.buildObject(data);
+    return xmlInput;
+    // const response = await this.postRaw('/submit', { body: xmlInput }); // TODO - check if this needs to go as json or XML
+    // if (!response.ok) throw new Error('failed to initialize ncmec report');
+    // const xmlResponse = await response.text();
+    // const json = await parseStringPromise(xmlResponse);
+    // return Ncmec.reportResponseSchema.parse(json).reportResponse;
   }
 
   async uploadFile({
@@ -59,8 +66,9 @@ class NcmecCaller extends HttpCaller {
 
     const uploadResponse = await this.postRaw('/upload', { body: form });
     if (!uploadResponse.ok) throw new Error('ncmec file upload failed');
-    // TODO - check if this needs to be parsed as json or XML
-    const { fileId, hash } = (await uploadResponse.json()) as Ncmec.UploadResponse;
+    const uploadXmlResponse = await uploadResponse.text();
+    const uploadJson = await parseStringPromise(uploadXmlResponse);
+    const { fileId, hash } = Ncmec.uploadResponseSchema.parse(uploadJson).reportResponse;
 
     if (fileDetails) {
       const filePayload = {

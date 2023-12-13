@@ -1,14 +1,36 @@
 import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { getTopContributors } from '~/server/services/buzz.service';
-import {} from '~/server/services/csam.service';
+import {
+  createCsamReport,
+  getCsamsToReport,
+  processCsamReport,
+} from '~/server/services/csam.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
+const userId = 242370;
+
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const status = await ncmecCaller.getStatus();
-  return res.status(200).json(status);
+  // const images = await dbRead.image.findMany({ where: { userId } });
+  // await createCsamReport({
+  //   userId,
+  //   reportedById: 5,
+  //   origin: 'user',
+  //   minorDepiction: 'non-real',
+  //   contents: ['nonRealMinors'],
+  //   images: images.map(({ id }) => ({ id, fileAnnotations: { generativeAi: true } })),
+  // });
+
+  const reports = await getCsamsToReport();
+  const result = await processCsamReport(reports[0]);
+  return res.send(result);
+  return res.status(200).setHeader('Content-Type', 'text/xml').write(result);
+
+  // const status = await ncmecCaller.getStatus();
+  // return res.status(200).json(status);
   // await zipAndUploadCsamImages({ userId: 5 });
   // const ips = await getUserIpInfo({ userId: 5418 });
   // console.log(ips);

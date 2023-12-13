@@ -3,24 +3,28 @@ import { z } from 'zod';
 export namespace Ncmec {
   export const statusResponseSchema = z.object({
     reportResponse: z.object({
-      responseCode: z.coerce.string(),
+      responseCode: z.coerce.number(),
       responseDescription: z.coerce.string(),
     }),
   });
 
-  export type ReportResponse = {
-    responseCode: number;
-    responseDescription: string;
-    reportId: number;
-  };
+  export const reportResponseSchema = z.object({
+    reportResponse: z.object({
+      responseCode: z.coerce.number(),
+      responseDescription: z.coerce.string(),
+      reportId: z.coerce.number(),
+    }),
+  });
 
-  export type UploadResponse = {
-    responseCode: number;
-    responseDescription: string;
-    reportId: number;
-    fileId: string;
-    hash: string;
-  };
+  export const uploadResponseSchema = z.object({
+    reportResponse: z.object({
+      responseCode: z.coerce.number(),
+      responseDescription: z.coerce.string(),
+      reportId: z.coerce.number(),
+      fileId: z.coerce.string(),
+      hash: z.coerce.string(),
+    }),
+  });
 
   export type FileAnnotationsInput = z.infer<typeof fileAnnotationsSchema>;
   export const fileAnnotationsSchema = z.object({

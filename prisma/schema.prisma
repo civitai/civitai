@@ -1,6 +1,12 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
+// Migration steps
+// 1. Add the darkpit env var
+// 2. `npm run db:migrate -- --name dont-drift-me-bro --no-check`
+// 3. review and revise your migration then manually apply it to the DB.
+// 4. `npm run db:applied` to mark the last migration as applied.
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["metrics"]

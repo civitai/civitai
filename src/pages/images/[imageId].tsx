@@ -13,7 +13,6 @@ export default function ImagePage() {
   const filters = imagesQueryParamSchema.parse(router.query);
 
   if (!imageId) return <NotFound />;
-  // TODO - fix civ bot button overlaying content
 
   return (
     <ImageDetailProvider imageId={imageId} filters={filters}>
