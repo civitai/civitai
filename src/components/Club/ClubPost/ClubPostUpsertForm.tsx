@@ -146,11 +146,8 @@ export const ClubPostUpsertFormModal = (props: { clubId: number }) => {
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton>
+    <Modal {...dialog} size="lg" withCloseButton title="Create new club post">
       <Stack>
-        <Text size="lg" weight={700}>
-          Create new club post
-        </Text>
         <Divider mx="-lg" />
         <ClubPostUpsertForm {...props} onCancel={handleClose} onSuccess={handleSuccess} />
       </Stack>

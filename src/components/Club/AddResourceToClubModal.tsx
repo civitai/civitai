@@ -1,6 +1,17 @@
 import React, { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
-import { Box, Button, Center, Loader, Modal, Paper, Select, Stack, Text } from '@mantine/core';
+import {
+  Box,
+  Button,
+  Center,
+  Divider,
+  Loader,
+  Modal,
+  Paper,
+  Select,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { Form, InputClubResourceManagementInput, useForm } from '~/libs/form';
 import { SupportedClubEntities, upsertClubResourceInput } from '~/server/schema/club.schema';
 import { z } from 'zod';
@@ -163,7 +174,8 @@ export const AddResourceToClubModal = () => {
   }, [resourceDetails]);
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton title="Add resource to a club">
+    <Modal {...dialog} size="md" withCloseButton title="Add resource to a club">
+      <Divider mx="-lg" mb="md" />
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           {currentUser?.username && (
@@ -182,7 +194,7 @@ export const AddResourceToClubModal = () => {
                   form.setValue('entityType', item.entityType as SupportedClubEntities);
                 }
               }}
-              filters={`user.username='${currentUser.username}'`}
+              filters={`user.username='${'theally' ?? currentUser.username}'`}
               dropdownItemLimit={25}
             />
           )}

@@ -34,6 +34,7 @@ import {
   IconInfoCircle,
   IconManualGearbox,
   IconPencilMinus,
+  IconPlus,
   IconSettings,
 } from '@tabler/icons-react';
 import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
@@ -55,6 +56,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ClubAdminPermission } from '@prisma/client';
+import { ClubAddContent } from '~/components/Club/ClubAddContent';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -170,26 +172,15 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   };
   const id = Number(stringId);
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
-  const {
-    isOwner,
-    isModerator,
-    isClubAdmin,
-    permissions,
-    isLoading: isLoadingContributorStatus,
-  } = useClubContributorStatus({
+  const { isOwner, isModerator, isClubAdmin } = useClubContributorStatus({
     clubId: id,
   });
-  const { data: membership, isLoading: loadingMembership } =
-    trpc.clubMembership.getClubMembershipOnClub.useQuery({
-      clubId: id,
-    });
-  const currentUser = useCurrentUser();
 
+  const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
+    clubId: id,
+  });
   const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
-
-  const canPost = useMemo(() => {
-    return isModerator || isOwner || permissions.includes(ClubAdminPermission.ManagePosts);
-  }, [isLoadingContributorStatus]);
+  const canPost = isOwner || isModerator || isClubAdmin;
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -297,15 +288,15 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                       <Button
                         onClick={() => {
                           dialogStore.trigger({
-                            component: ClubPostUpsertFormModal,
+                            component: ClubAddContent,
                             props: {
                               clubId: club.id,
                             },
                           });
                         }}
-                        leftIcon={<IconPencilMinus />}
+                        leftIcon={<IconPlus />}
                       >
-                        Post content
+                        Add content
                       </Button>
                     )}
                     {(isOwner || isClubAdmin || isModerator) && (

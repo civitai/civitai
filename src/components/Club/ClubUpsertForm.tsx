@@ -238,6 +238,30 @@ export function ClubUpsertForm({
                   </Stack>
                 }
               />
+              {club?.id && (
+                <InputSwitch
+                  name="billing"
+                  label={
+                    <Stack spacing={4}>
+                      <Group spacing={4}>
+                        <Text inline>Billing</Text>
+                        <Tooltip
+                          label="By disabling billing, people will keep their memberships but won't be charged monthly. This is useful if you're not planning to add content for a while."
+                          {...tooltipProps}
+                        >
+                          <ThemeIcon radius="xl" size="xs" color="gray">
+                            <IconQuestionMark />
+                          </ThemeIcon>
+                        </Tooltip>
+                      </Group>
+                      <Text size="xs" color="dimmed">
+                        Members of your club will be charged a monthly fee to keep access to your
+                        club. Turning this off does not affect the initial membership fee.
+                      </Text>
+                    </Stack>
+                  }
+                />
+              )}
               <List size="xs" spacing={8}>
                 <List.Item>
                   Clubs MUST adhere to the content rules defined in our{' '}

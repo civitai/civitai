@@ -65,6 +65,7 @@ export const getInfiniteClubMembershipsHandler = async ({
         expiresAt: true,
         cancelledAt: true,
         downgradeClubTierId: true,
+        billingPausedAt: true,
         user: {
           select: userWithCosmeticsSelect,
         },
