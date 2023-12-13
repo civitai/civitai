@@ -3,7 +3,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  useSSG: true,
+  resolver: async ({ session, ssg }) => {
     if (!session) {
       return {
         redirect: {
@@ -17,6 +18,10 @@ export const getServerSideProps = createServerSideProps({
       return {
         redirect: { destination: '/', permanent: false },
       };
+
+    if (ssg) {
+      await ssg.model.getMyDraftModels.prefetchInfinite({});
+    }
 
     return { props: { session } };
   },
