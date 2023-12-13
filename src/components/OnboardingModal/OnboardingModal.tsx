@@ -155,11 +155,9 @@ export default function OnboardingModal() {
   const handleSubmit = (values: z.infer<typeof schema>) => {
     if (!user) return;
 
-    // Strip out unnecessary fields
-    const { profilePicture, ...userData } = user;
     mutate(
       // TOS is true here because it was already accepted
-      { ...userData, ...values, tos: true },
+      { ...user, ...values, tos: true },
       {
         async onSuccess() {
           await user?.refresh();
@@ -188,9 +186,8 @@ export default function OnboardingModal() {
           }
 
           if (user) {
-            const { profilePicture, ...userData } = user;
             mutate({
-              ...userData,
+              ...user,
               userReferralCode: showReferral ? userReferral.code : undefined,
               source: showReferral ? userReferral.source : undefined,
             });

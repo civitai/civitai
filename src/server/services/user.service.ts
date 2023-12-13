@@ -492,12 +492,20 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
       referral: { select: { id: true } },
-      profilePicture: { select: { ...imageSelect, ingestion: true } },
+      profilePicture: {
+        select: {
+          id: true,
+          url: true,
+          nsfw: true,
+          hash: true,
+          userId: true,
+        },
+      },
     },
   });
   if (!user) return undefined;
 
-  const { subscription, ...rest } = user;
+  const { subscription, profilePicture, profilePictureId, ...rest } = user;
   const tier: string | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
@@ -515,6 +523,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   return {
     ...rest,
+    image: profilePicture?.url ?? rest.image,
     tier,
     permissions,
     // feedbackToken,
