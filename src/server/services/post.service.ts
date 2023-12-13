@@ -84,6 +84,7 @@ export const getPostsInfinite = async ({
   include,
   draftOnly,
   followed,
+  browsingMode,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND = [Prisma.sql`1 = 1`];
 
@@ -122,6 +123,7 @@ export const getPostsInfinite = async ({
 
   const joins: string[] = [];
   if (!isOwnerRequest) {
+    if (browsingMode === BrowsingMode.SFW) AND.push(Prisma.sql`p."nsfw" = false`);
     AND.push(Prisma.sql`p."publishedAt" < now()`);
     if (period !== 'AllTime' && periodMode !== 'stats') {
       AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
