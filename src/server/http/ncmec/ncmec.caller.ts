@@ -18,6 +18,7 @@ class NcmecCaller extends HttpCaller {
     if (!NcmecCaller.instance) {
       NcmecCaller.instance = new NcmecCaller(env.NCMEC_URL, {
         headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
           Authorization: `Basic ${Buffer.from(
             `${env.NCMEC_USERNAME}:${env.NCMEC_PASSWORD}`
           ).toString('base64')}`,
@@ -43,12 +44,11 @@ class NcmecCaller extends HttpCaller {
   async initializeReport(data: any) {
     const builder = new Builder();
     const xmlInput = builder.buildObject(data);
-    return xmlInput;
-    // const response = await this.postRaw('/submit', { body: xmlInput }); // TODO - check if this needs to go as json or XML
-    // if (!response.ok) throw new Error('failed to initialize ncmec report');
-    // const xmlResponse = await response.text();
-    // const json = await parseStringPromise(xmlResponse);
-    // return Ncmec.reportResponseSchema.parse(json).reportResponse;
+    const response = await this.postRaw('/submit', { body: xmlInput });
+    if (!response.ok) throw new Error('failed to initialize ncmec report');
+    const xmlResponse = await response.text();
+    const json = await parseStringPromise(xmlResponse);
+    return Ncmec.reportResponseSchema.parse(json).reportResponse;
   }
 
   async uploadFile({
@@ -67,8 +67,8 @@ class NcmecCaller extends HttpCaller {
     const uploadResponse = await this.postRaw('/upload', { body: form });
     if (!uploadResponse.ok) throw new Error('ncmec file upload failed');
     const uploadXmlResponse = await uploadResponse.text();
-    const uploadJson = await parseStringPromise(uploadXmlResponse);
-    const { fileId, hash } = Ncmec.uploadResponseSchema.parse(uploadJson).reportResponse;
+    const uploadResponseJson = await parseStringPromise(uploadXmlResponse);
+    const { fileId, hash } = Ncmec.uploadResponseSchema.parse(uploadResponseJson).reportResponse;
 
     if (fileDetails) {
       const filePayload = {
@@ -78,8 +78,9 @@ class NcmecCaller extends HttpCaller {
           ...fileDetails,
         },
       };
-      // TODO - check if this needs to go as json or XML
-      const response = await this.postRaw('/fileinfo', { body: JSON.stringify(filePayload) });
+      const builder = new Builder();
+      const xmlInput = builder.buildObject(filePayload);
+      const response = await this.postRaw('/fileinfo', { body: xmlInput });
       if (!response.ok) throw new Error('failed to upload ncmec fileinfo');
     }
 

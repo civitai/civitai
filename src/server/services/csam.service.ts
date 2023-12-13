@@ -174,13 +174,13 @@ export async function processCsamReport(report: CsamReportProps) {
   const getModelsText = () => {
     if (!models.length) return '';
     return `
-      \r\n
-      \r\n
-      Models used: [modelId:modelName], [modelVersionId:modelVersionName]
-      \r\n
-      ${modelVersions
-        .map(({ id, name, model }) => `[${model.id}:${model.name}], [${id}:${name}]`)
-        .join('\r\n')}
+      <br />
+      <p>Models format: [modelId:modelName]:[modelVersionId:modelVersionName]</p>
+      <ul>
+      ${modelVersions.map(
+        ({ id, name, model }) => `<li>[${model.id}:${model.name}]:[${id}:${name}]</li>`
+      )}
+        </ul>
     `;
   };
 
@@ -190,33 +190,32 @@ export async function processCsamReport(report: CsamReportProps) {
     case 'user':
       const { minorDepiction } = details as CsamUserReportInput;
       if (minorDepiction === 'non-real')
-        additionalInfo = `${reportedUser?.username} (${report.userId}), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.`;
+        additionalInfo = `<p>${reportedUser?.username} (${report.userId}), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.</p>`;
       else
-        additionalInfo = `${reportedUser?.username} (${report.userId}), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.`;
+        additionalInfo = `<p>${reportedUser?.username} (${report.userId}), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.</p>`;
 
       additionalInfo += getModelsText();
       break;
     case 'testing':
       const { capabilities } = details as CsamTestingReportInput;
       additionalInfo = `
-      The images/videos in this report were unintentionally and inadvertently generated or manipulated, during testing that is part of Civitai's trust and safety program, by the following models, one or more artificial intelligence-powered image/video generator.
+      <p>The images/videos in this report were unintentionally and inadvertently generated or manipulated, during testing that is part of Civitai's trust and safety program, by the following models, one or more artificial intelligence-powered image/video generator.</p>
       `;
 
       additionalInfo += getModelsText();
 
       if (capabilities.length) {
         additionalInfo += `
-        \r\n
-        \r\n
-        The aforementioned model(s) can do the following:
-        \r\n
+        <br />
+        <p>The aforementioned model(s) can do the following:</p>
+        <ul>
         ${capabilities
           .map((key) => {
             const capability = csamCapabilitiesDictionary[key];
-            return capability ? `- ${capability}` : undefined;
+            return capability ? `<li>${capability}</li>` : undefined;
           })
-          .filter(isDefined)
-          .join('\r\n')}
+          .filter(isDefined)}
+        </ul>
         `;
       }
       break;
@@ -224,24 +223,22 @@ export async function processCsamReport(report: CsamReportProps) {
 
   if (details.contents.length) {
     additionalInfo += `
-    \r\n
-    \r\n
-    The images/videos in this report may involve:
-    \r\n
+    <br />
+    <p>The images/videos in this report may involve:</p>
+    <ul>
     ${details.contents
       .map((key) => {
         const content = csamContentsDictionary[key];
-        return content ? `- ${content}` : undefined;
+        return content ? `<li>${content}</li>` : undefined;
       })
-      .filter(isDefined)
-      .join('\r\n')}
+      .filter(isDefined)}
+    </ul>
     `;
   }
 
   additionalInfo += `
-    \r\n
-    \r\n
-    All evidence in this report should be independently verified.
+    <br />
+    <p>All evidence in this report should be independently verified.</p>
   `;
 
   // TODO - remove this before prod
@@ -276,59 +273,70 @@ export async function processCsamReport(report: CsamReportProps) {
     },
   };
 
-  return await ncmecCaller.initializeReport(reportPayload);
+  const { reportId } = await ncmecCaller.initializeReport(reportPayload);
+  console.log({ reportId });
 
-  // const { reportId } = await ncmecCaller.initializeReport(reportPayload);
+  try {
+    const fileUploadResults = await Promise.all(
+      images.map(async (image) => {
+        const imageReportInfo = report.images.find((x) => x.id === image.id);
 
-  // try {
-  //   const fileUploadResults = await Promise.all(
-  //     images.map(async (image) => {
-  //       const imageReportInfo = report.images.find((x) => x.id === image.id);
+        const imageUrl = getEdgeUrl(image.url, { type: image.type });
+        const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
+        const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
+        const modelId = modelVersion?.model.id;
+        const modelVersionId = modelVersion?.id;
+        const additionalInfo: string[] = [];
+        if (modelId) additionalInfo.push(`model id: ${modelId}`);
+        if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
+        if (prompt) additionalInfo.push(`prompt: ${prompt}`);
+        if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
 
-  //       const imageUrl = getEdgeUrl(image.url, { type: image.type });
-  //       const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
-  //       const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
-  //       const modelId = modelVersion?.model.id;
-  //       const modelVersionId = modelVersion?.id;
-  //       const additionalInfo: string[] = [];
-  //       if (modelId) additionalInfo.push(`model id: ${modelId}`);
-  //       if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-  //       if (prompt) additionalInfo.push(`prompt: ${prompt}`);
-  //       if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
+        const blob = await fetchBlob(imageUrl);
 
-  //       const blob = await fetchBlob(imageUrl);
+        const { fileId, hash } = await ncmecCaller.uploadFile({
+          reportId,
+          file: blob,
+          fileDetails: {
+            originalFileName: image.name ?? undefined,
+            locationOfFile: imageUrl,
+            fileAnnotation: imageReportInfo?.fileAnnotations,
+            additionalInfo: additionalInfo.length
+              ? `
+              <![CDATA[
+                <ul>
+                ${additionalInfo.map((info) => `<li>${info}</li>`)}
+                </ul>
+              ]]>
+              `
+              : undefined,
+          },
+        });
 
-  //       const { fileId, hash } = await ncmecCaller.uploadFile({
-  //         reportId,
-  //         file: blob,
-  //         fileDetails: {
-  //           originalFileName: image.name ?? undefined,
-  //           locationOfFile: imageUrl,
-  //           fileAnnotation: imageReportInfo?.fileAnnotations,
-  //           additionalInfo: additionalInfo.length ? additionalInfo.join('\r\n') : undefined,
-  //         },
-  //       });
+        console.log({ fileId, hash });
 
-  //       return {
-  //         ...imageReportInfo,
-  //         fileId,
-  //         hash,
-  //       };
-  //     })
-  //   );
+        return {
+          ...imageReportInfo,
+          fileId,
+          hash,
+        };
+      })
+    );
 
-  //   await dbWrite.csamReport.update({
-  //     where: { id: report.id },
-  //     data: {
-  //       images: fileUploadResults,
-  //       reportSentAt: new Date(),
-  //     },
-  //   });
+    await dbWrite.csamReport.update({
+      where: { id: report.id },
+      data: {
+        images: fileUploadResults,
+        reportSentAt: new Date(),
+      },
+    });
 
-  //   await ncmecCaller.finishReport(reportId);
-  // } catch (e) {
-  //   await ncmecCaller.retractReport(reportId);
-  // }
+    await ncmecCaller.finishReport(reportId);
+
+    console.log('finished');
+  } catch (e) {
+    await ncmecCaller.retractReport(reportId);
+  }
 }
 
 function zipDirectory(sourceDir: string, outPath: string) {
