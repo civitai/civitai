@@ -46,13 +46,14 @@ export const ClubWithdrawFunds = ({ clubId }: { clubId: number }) => {
             <Text>You are about to withdraw funds from {club.name}</Text>
             <Text size="sm">Current balance:</Text>
 
-            <CurrencyBadge unitAmount={balance ?? 0} currency={Currency.BUZZ} />
+            <CurrencyBadge size="lg" unitAmount={balance ?? 0} currency={Currency.BUZZ} />
 
             <Form form={form} onSubmit={handleSubmit}>
               <Stack>
                 <InputNumber
                   name="amount"
                   variant="filled"
+                  label="Amount to widthdraw"
                   rightSectionWidth="10%"
                   min={1}
                   max={balance}
