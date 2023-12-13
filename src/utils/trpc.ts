@@ -1,12 +1,20 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import { httpBatchLink, httpLink, loggerLink, splitLink, TRPCLink } from '@trpc/client';
+import {
+  createTRPCProxyClient,
+  httpBatchLink,
+  httpLink,
+  loggerLink,
+  splitLink,
+  TRPCLink,
+} from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
 import { isAuthed } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { env } from '~/env/client.mjs';
+import type { MessageServiceRouter } from '/Users/cmoody/Documents/code/civitai/message-service/dist/src/router/index.d.ts';
 
 const url = '/api/trpc';
 
@@ -27,6 +35,7 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   };
 };
 
+// TODO: Have this take a url and a ServiceRouter
 export const trpc = createTRPCNext<AppRouter>({
   config() {
     return {
@@ -51,4 +60,18 @@ export const trpc = createTRPCNext<AppRouter>({
     };
   },
   ssr: false,
+});
+
+export const serviceClient = createTRPCProxyClient<MessageServiceRouter>({
+  links: [
+    httpLink({
+      url: 'http://localhost:3001/trpc',
+      fetch(url, options) {
+        return fetch(url, {
+          ...options,
+          credentials: 'include',
+        });
+      },
+    }),
+  ],
 });
