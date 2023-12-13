@@ -1,13 +1,6 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import {
-  createTRPCProxyClient,
-  httpBatchLink,
-  httpLink,
-  loggerLink,
-  splitLink,
-  TRPCLink,
-} from '@trpc/client';
+import { createTRPCProxyClient, httpLink, loggerLink, splitLink, TRPCLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
@@ -35,7 +28,6 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   };
 };
 
-// TODO: Have this take a url and a ServiceRouter
 export const trpc = createTRPCNext<AppRouter>({
   config() {
     return {
@@ -62,6 +54,7 @@ export const trpc = createTRPCNext<AppRouter>({
   ssr: false,
 });
 
+// Service router not working with TRPC NEXT
 export const serviceClient = createTRPCProxyClient<MessageServiceRouter>({
   links: [
     httpLink({

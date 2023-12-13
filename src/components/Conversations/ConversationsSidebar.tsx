@@ -1,21 +1,22 @@
 import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
+import Link from 'next/link';
 
 export function ConversationsSidebar() {
   const [conversations, setConversations] = useState<any>([]);
   const [loading, setLoading] = useState(false);
 
-  const fetchConversations = async () => {
-    setLoading(true);
-    const data = await serviceClient.conversations.getConversations.query({ first: 3 });
-    setConversations(data);
-    setLoading(false);
-
-    return data;
-  };
-
   useEffect(() => {
-    (async () => fetchConversations())();
+    const fetchConversations = async () => {
+      setLoading(true);
+      const data = await serviceClient.conversations.getConversations.query({ first: 3 });
+      setConversations(data);
+      setLoading(false);
+
+      return data;
+    };
+
+    fetchConversations();
   }, []);
 
   const handleNewConversation = async () => {
@@ -37,9 +38,9 @@ export function ConversationsSidebar() {
         {loading ? (
           <div>Loading...</div>
         ) : (
-          conversations.map((conversation, i) => (
-            <div key={i}>
-              {conversation.name} {i}
+          conversations?.map((conversation) => (
+            <div key={conversation.id}>
+              <Link href={`/conversations/${conversation.id}`}>{conversation.name}</Link>
             </div>
           ))
         )}

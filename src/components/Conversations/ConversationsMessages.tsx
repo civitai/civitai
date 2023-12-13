@@ -1,37 +1,38 @@
-import { set } from 'lodash';
+import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
 
 export function ConversationMessages() {
+  const router = useRouter();
   const [messages, setMessages] = useState<any>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState<null | string>(null);
 
   // TODO: Instead this should be a messages w/ pagination
-  const fetchConversations = async () => {
-    setLoading(true);
-    // TODO: Replace this id with param from route
-    const data = await serviceClient.messages.getMessagesByConversationId.query({
-      conversationId: '5468a60c-d78f-4021-9726-1f07b003cb9b',
-      first: 10,
-    });
-
-    setMessages(data.reverse());
-    setLoading(false);
-
-    return data;
-  };
-
   useEffect(() => {
-    (async () => fetchConversations())();
-  }, []);
+    const fetchConversations = async () => {
+      setLoading(true);
+      // TODO: Replace this id with param from route
+      const data = await serviceClient.messages.getMessagesByConversationId.query({
+        conversationId: router.query.conversationId || '',
+        first: 10,
+      });
+
+      setMessages(data.reverse());
+      setLoading(false);
+
+      return data;
+    };
+
+    fetchConversations();
+  }, [router.query.conversationId]);
 
   const handleNewMessage = async () => {
     if (!text) return;
 
     const data = await serviceClient.messages.createMessage.mutate({
       text: text,
-      conversationId: '5468a60c-d78f-4021-9726-1f07b003cb9b',
+      conversationId: router.query.conversationId || '',
     });
 
     setMessages((prev: any) => {
