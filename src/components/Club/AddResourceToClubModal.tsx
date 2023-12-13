@@ -1,17 +1,6 @@
 import React, { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
-import {
-  Box,
-  Button,
-  Center,
-  Divider,
-  Loader,
-  Modal,
-  Paper,
-  Select,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Box, Button, Center, Divider, Loader, Modal, Select, Stack } from '@mantine/core';
 import { Form, InputClubResourceManagementInput, useForm } from '~/libs/form';
 import { SupportedClubEntities, upsertClubResourceInput } from '~/server/schema/club.schema';
 import { z } from 'zod';
@@ -20,22 +9,26 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { IconTrash } from '@tabler/icons-react';
-import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
-import { constants } from '~/server/common/constants';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 
 const schema = upsertClubResourceInput;
 
-export const AddResourceToClubModal = () => {
+type Props = {
+  resource?: ModelSearchIndexRecord | ArticleSearchIndexRecord;
+  entityType?: SupportedClubEntities;
+  entityId?: number;
+};
+
+export const AddResourceToClubModal = (props: Props) => {
   const utils = trpc.useContext();
   const { upsertClubResource, upsertingResource } = useMutateClub();
   const [resource, setResource] = React.useState<
     ModelSearchIndexRecord | ArticleSearchIndexRecord | null
-  >(null);
+  >(props?.resource ?? null);
   const currentUser = useCurrentUser();
 
   const dialog = useDialogContext();
@@ -66,63 +59,28 @@ export const AddResourceToClubModal = () => {
       }
     );
 
-  const { data: coverImages = [], isLoading: isLoadingCoverImages } =
-    trpc.image.getEntitiesCoverImage.useQuery(
-      {
-        entities: [{ entityId, entityType }],
-      },
-      {
-        enabled: !!entityId && !!entityType,
-      }
-    );
-  const [coverImage] = coverImages;
-
   const handleSubmit = async (data: z.infer<typeof schema>) => {
     await upsertClubResource({ ...data });
     handleSuccess();
   };
 
   const renderResourceCoverImage = () => {
-    const removeBtn = (
-      <Button
-        onClick={() => {
-          form.reset();
-        }}
-        style={{
-          position: 'absolute',
-          top: '-10px',
-          left: '-10px',
-          width: '30px',
-          height: '30px',
-          borderRadius: '50%',
-          padding: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-        color="red"
-        variant="filled"
-        radius="xl"
-      >
-        <IconTrash size={15} />
-      </Button>
-    );
-
     if (entityType === 'Article') {
       // Attempt to render it:
       return (
-        <Box pos="relative" maw="100%" w={250} m="auto">
+        <Box pos="relative" maw="100%" w={250} m="auto" style={{ pointerEvents: 'none' }}>
           <ArticleCard data={resource as ArticleSearchIndexRecord} />{' '}
         </Box>
       );
     }
 
     if (entityType === 'ModelVersion') {
+      const data = resource as ModelSearchIndexRecord;
       return (
-        <Box pos="relative" maw="100%" w={250} m="auto">
+        <Box pos="relative" maw="100%" w={250} m="auto" style={{ pointerEvents: 'none' }}>
           <ModelCard
-            // @ts-ignore  ModelSearchIndex should be assignable with no issues.
-            data={resource as ModelSearchIndexRecord}
+            // @ts-ignore This works for the search view so no reason it won't work here.
+            data={data}
           />
         </Box>
       );
@@ -137,6 +95,10 @@ export const AddResourceToClubModal = () => {
     switch (entityType) {
       case 'ModelVersion': {
         const model = resource as ModelSearchIndexRecord;
+        if (!entityId) {
+          return null;
+        }
+
         return (
           <Stack spacing="xs">
             <Select
@@ -172,6 +134,13 @@ export const AddResourceToClubModal = () => {
       form.setValue('clubs', resourceDetails.clubs ?? []);
     }
   }, [resourceDetails]);
+
+  useEffect(() => {
+    if (props.entityType && props.entityId) {
+      form.setValue('entityId', props.entityId);
+      form.setValue('entityType', props.entityType);
+    }
+  }, [props]);
 
   return (
     <Modal {...dialog} size="md" withCloseButton title="Add resource to a club">

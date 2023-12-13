@@ -117,6 +117,7 @@ import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -811,6 +812,28 @@ export default function ModelDetailsV2({
                           </Menu.Item>
                         )}
                       </ToggleLockModel>
+                    )}
+                    {isOwner && selectedVersion && (
+                      <AddToClubMenuItem
+                        entityId={selectedVersion.id}
+                        entityType="ModelVersion"
+                        resource={{
+                          ...model,
+                          rank: {
+                            collectedCount: model.rank?.collectedCountAllTime ?? 0,
+                            downloadCount: model.rank?.downloadCountAllTime ?? 0,
+                            favoriteCount: model.rank?.favoriteCountAllTime ?? 0,
+                            rating: model.rank?.ratingAllTime ?? 0,
+                            ratingCount: model.rank?.ratingCountAllTime ?? 0,
+                            tippedAmountCount: model.rank?.tippedAmountCountAllTime ?? 0,
+                            commentCount: model.rank?.commentCountAllTime ?? 0,
+                          },
+                          // @ts-ignore TODO: Fix. Image is appearing properly.
+                          image: versionImages?.[0] ?? null,
+                          version: selectedVersion,
+                          versions: model.modelVersions,
+                        }}
+                      />
                     )}
                   </Menu.Dropdown>
                 </Menu>

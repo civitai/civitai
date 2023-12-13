@@ -20,7 +20,7 @@ export const upsertClubTierInput = z
     unlisted: z.boolean().default(false),
     joinable: z.boolean().default(true),
     clubId: z.number().optional(),
-    memberLimit: z.number().optional(),
+    memberLimit: z.number().nullish(),
   })
   .refine((data) => !!data.clubId || !!data.id, {
     message: 'When creating a new tier, clubId must be provided',
