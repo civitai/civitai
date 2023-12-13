@@ -154,8 +154,9 @@ export default function OnboardingModal() {
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     if (!user) return;
-    // TOS is true here because it was already accepted
+
     mutate(
+      // TOS is true here because it was already accepted
       { ...user, ...values, tos: true },
       {
         async onSuccess() {
@@ -184,12 +185,13 @@ export default function OnboardingModal() {
             return;
           }
 
-          if (user)
+          if (user) {
             mutate({
               ...user,
               userReferralCode: showReferral ? userReferral.code : undefined,
               source: showReferral ? userReferral.source : undefined,
             });
+          }
         },
       }
     );
@@ -344,9 +346,6 @@ export default function OnboardingModal() {
                 title={
                   <Group spacing="xs">
                     <Title order={2}>Content Experience</Title>
-                    <Badge color="yellow" size="xs">
-                      Beta
-                    </Badge>
                   </Group>
                 }
                 description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."

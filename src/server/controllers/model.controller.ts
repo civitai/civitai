@@ -3,12 +3,12 @@ import {
   ModelHashType,
   ModelModifier,
   ModelStatus,
+  ModelUploadType,
   Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
@@ -40,6 +40,7 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UserPreferencesForModelsInput,
+  GetSimpleModelsInfiniteSchema,
 } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -50,6 +51,7 @@ import {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getDownloadFilename } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,
@@ -1204,3 +1206,102 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
 
   return modelsByHashes;
 };
+
+export async function getSimpleModelsInfiniteHandler({
+  input,
+  ctx,
+}: {
+  input: GetSimpleModelsInfiniteSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { limit = 100, query, userId } = input;
+    const { id: sessionUserId } = ctx.user;
+    if (userId !== sessionUserId) throw throwAuthorizationError();
+
+    const models = await dbRead.model.findMany({
+      take: limit,
+      where: {
+        userId,
+        name: query ? { contains: query, mode: 'insensitive' } : undefined,
+        status: { not: ModelStatus.Deleted },
+      },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return models;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}
+
+export async function getModelTemplateFieldsHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId } = ctx.user;
+
+    const model = await getModel({
+      id: input.id,
+      select: {
+        description: true,
+        type: true,
+        checkpointType: true,
+        allowCommercialUse: true,
+        allowDerivatives: true,
+        allowDifferentLicense: true,
+        allowNoCredit: true,
+        nsfw: true,
+        poi: true,
+        tagsOnModels: {
+          select: {
+            tag: { select: { id: true, name: true, isCategory: true, unlisted: true } },
+          },
+        },
+        userId: true,
+        modelVersions: {
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            baseModel: true,
+            baseModelType: true,
+            settings: true,
+            monetization: true,
+            requireAuth: true,
+            clipSkip: true,
+          },
+        },
+      },
+    });
+    if (!model || model.userId !== userId) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    const modelCategories = await getCategoryTags('model');
+    const { modelVersions, ...restModel } = model;
+    const [version] = modelVersions;
+
+    return {
+      ...restModel,
+      status: ModelStatus.Draft,
+      uploadType: ModelUploadType.Created,
+      tagsOnModels: restModel.tagsOnModels
+        .filter(({ tag }) => !tag.unlisted)
+        .map(({ tag }) => ({ ...tag, isCategory: modelCategories.some((c) => c.id === tag.id) })),
+      version: version
+        ? {
+            ...version,
+            baseModel: version.baseModel as BaseModel,
+            baseModelType: version.baseModelType as BaseModelType,
+            settings: version.settings as RecommendedSettingsSchema | undefined,
+          }
+        : undefined,
+    };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}

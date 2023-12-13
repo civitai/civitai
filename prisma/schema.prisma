@@ -105,6 +105,8 @@ model User {
   referral            UserReferral?
   onboardingSteps     OnboardingStep[]      @default([Moderation, Buzz])
   profile             UserProfile?
+  profilePictureId    Int?                  @unique
+  profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
 
   accounts             Account[]
   sessions             Session[]
@@ -1076,6 +1078,7 @@ model Image {
   ingestion         ImageIngestionStatus    @default(Pending)
   blockedFor        String?
   scanJobs          Json?
+  assignedUser      User?                   @relation("profilePicture")
 
   reports            ImageReport[]
   reactions          ImageReaction[]

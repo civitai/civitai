@@ -47,6 +47,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
             deletedAt: null,
             username: currentUser.username ?? '',
             image: currentUser.image ?? '',
+            profilePicture: null,
           },
         };
         const reacted = previousReactions.find(

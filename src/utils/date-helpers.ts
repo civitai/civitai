@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 
-export function formatDate(value: dayjs.ConfigType, format = 'MMM DD, YYYY', utc = false) {
+export function formatDate(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc = false) {
   if (utc) return dayjs.utc(value).format(format);
   return dayjs(value).format(format);
 }

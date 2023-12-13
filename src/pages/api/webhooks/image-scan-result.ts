@@ -9,7 +9,12 @@ import {
   TagTarget,
   TagType,
 } from '@prisma/client';
-import { auditMetaData, includesInappropriate } from '~/utils/metadata/audit';
+import {
+  auditMetaData,
+  getTagsFromPrompt,
+  includesInappropriate,
+  includesPoi,
+} from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
@@ -56,9 +61,10 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success)
-    return res
-      .status(400)
-      .json({ ok: false, error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
+    return res.status(400).json({
+      ok: false,
+      error: bodyResults.error,
+    });
 
   const data = bodyResults.data;
 
@@ -111,9 +117,35 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
   if (!incomingTags) return;
 
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      meta: true,
+      postId: true,
+    },
+  });
+  if (!image) {
+    await logScanResultError({ id, message: 'Image not found' });
+    throw new Error('Image not found');
+  }
+
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
     for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
+  }
+
+  // Add prompt based tags
+  const imageMeta = image.meta as Prisma.JsonObject | undefined;
+  const prompt = imageMeta?.prompt as string | undefined;
+  if (prompt) {
+    // Detect real person in prompt
+    const realPersonName = includesPoi(prompt);
+    if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
+
+    // Detect tags from prompt
+    const promptTags = getTagsFromPrompt(prompt);
+    if (promptTags) incomingTags.push(...promptTags.map((tag) => ({ tag, confidence: 70 })));
   }
 
   // De-dupe incoming tags and keep tag with highest confidence
@@ -171,20 +203,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       const match = tags.find((x) => x.tag === tag.name);
       if (match) match.id = tag.id;
     }
-  }
-
-  const image = await dbWrite.image.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      meta: true,
-      postId: true,
-    },
-  });
-
-  if (!image) {
-    await logScanResultError({ id, message: 'Image not found' });
-    throw new Error('Image not found');
   }
 
   try {

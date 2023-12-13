@@ -1,4 +1,5 @@
 import { ModelType } from '@prisma/client';
+import { BaseModelSetType } from '~/server/common/constants';
 
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
@@ -7,6 +8,7 @@ export namespace Generation {
     maxStrength: number;
   }>;
 
+  export type ImageStatus = 'Success' | 'Started' | 'Error' | 'RemovedForSafety';
   export type Image = {
     id: number;
     hash: string;
@@ -14,12 +16,19 @@ export namespace Generation {
     available: boolean;
     requestId: number;
     seed?: number; // TODO.generation - check if this prop will be set
-    status?: 'Success' | 'Started' | 'Error';
+    status?: ImageStatus;
+    removedForSafety: boolean;
   };
 
   export type Data = {
     params?: Partial<Params>;
     resources: Resource[];
+  };
+
+  export type Status = {
+    message?: string;
+    available?: boolean;
+    fullCoverageModels?: Partial<Record<BaseModelSetType, { id: number; name: string }[]>>;
   };
 
   export type Params = {
@@ -78,6 +87,7 @@ export namespace Generation {
 
   export type Request = {
     id: number;
+    alternativesAvailable?: boolean;
     createdAt: Date;
     estimatedCompletionDate: Date;
     status: GenerationRequestStatus;

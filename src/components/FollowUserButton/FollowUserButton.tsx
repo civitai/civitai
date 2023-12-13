@@ -23,7 +23,10 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
       queryUtils.user.getFollowingUsers.setData(undefined, (old = []) =>
         alreadyFollowing
           ? old.filter((item) => item.id !== userId)
-          : [...old, { id: userId, username: null, image: null, deletedAt: null }]
+          : [
+              ...old,
+              { id: userId, username: null, image: null, deletedAt: null, profilePicture: null },
+            ]
       );
 
       const creatorCacheKey = { id: userId };

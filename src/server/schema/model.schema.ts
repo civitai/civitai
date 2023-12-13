@@ -14,7 +14,12 @@ import { constants } from '~/server/common/constants';
 
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
-import { getByIdSchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
+import {
+  getByIdSchema,
+  infiniteQuerySchema,
+  paginationSchema,
+  periodModeSchema,
+} from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -312,4 +317,10 @@ export const audioModelDetailSchema = z.object({});
 export type ModelByHashesInput = z.infer<typeof modelByHashesInput>;
 export const modelByHashesInput = z.object({
   hashes: z.array(z.string()),
+});
+
+export type GetSimpleModelsInfiniteSchema = z.infer<typeof getSimpleModelsInfiniteSchema>;
+export const getSimpleModelsInfiniteSchema = infiniteQuerySchema.extend({
+  query: z.string().trim().optional(),
+  userId: z.number(),
 });

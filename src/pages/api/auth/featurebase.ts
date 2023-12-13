@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
+import { createFeaturebaseToken } from '~/server/integrations/featurebase';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 

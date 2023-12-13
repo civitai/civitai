@@ -38,15 +38,15 @@ const excludedKeys = [
 export const automaticMetadataProcessor = createMetadataProcessor({
   canParse(exif) {
     let generationDetails = null;
-    if (exif?.userComment) {
+    if (exif?.parameters) {
+      generationDetails = exif.parameters;
+    } else if (exif?.userComment) {
       const p = document.createElement('p');
       generationDetails = decoder.decode(exif.userComment);
       // Any annoying hack to deal with weirdness in the meta
       p.innerHTML = generationDetails;
       p.remove();
       generationDetails = p.innerHTML;
-    } else if (exif?.parameters) {
-      generationDetails = exif.parameters;
     }
 
     if (generationDetails) {

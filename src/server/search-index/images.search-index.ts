@@ -26,6 +26,8 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { chunk } from 'lodash-es';
 import { withRetries } from '~/server/utils/errorHandling';
+import { ImageModelWithIngestion, imageSelect } from '../selectors/image.selector';
+import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -133,6 +135,8 @@ type ImageForSearchIndex = {
     image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    profilePictureId: number | null;
+    profilePicture: ImageModelWithIngestion | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;
@@ -268,7 +272,8 @@ const onFetchItemsToIndex = async ({
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image
+        'image', u.image,
+        'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u
     WHERE u.id IN (SELECT "userId" FROM target)
@@ -318,6 +323,11 @@ const onFetchItemsToIndex = async ({
         },
       });
 
+      const profilePictures = await db.image.findMany({
+        where: { id: { in: images.map((i) => i.user.profilePictureId).filter(isDefined) } },
+        select: { ...imageSelect, ingestion: true },
+      });
+
       console.log(
         `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
         offset,
@@ -330,14 +340,14 @@ const onFetchItemsToIndex = async ({
       if (isIndexUpdate) {
         // Determine if we need to update the model index based on any of these images
         const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
-    SELECT
-      m.id "modelId"
-    FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL
-    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
-    WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
-  `;
+          SELECT
+            m.id "modelId"
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL
+          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
+          WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
+        `;
 
         const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
 
@@ -354,6 +364,7 @@ const onFetchItemsToIndex = async ({
         const tags = rawTags
           .filter((rt) => rt.imageId === imageRecord.id)
           .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
+        const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
         return {
           ...imageRecord,
@@ -375,6 +386,7 @@ const onFetchItemsToIndex = async ({
           user: {
             ...user,
             cosmetics: cosmetics ?? [],
+            profilePicture,
           },
           tags,
           reactions: [],

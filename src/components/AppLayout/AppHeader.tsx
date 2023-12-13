@@ -866,7 +866,7 @@ export function AppHeader({
                     ref={ref}
                   >
                     {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                    <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 269px)'}>
                       <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                       {burgerMenuItems}
                     </ScrollArea.Autosize>

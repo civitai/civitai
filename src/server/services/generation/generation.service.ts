@@ -42,8 +42,8 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis } from '~/server/redis/client';
-import { includesNsfw } from '~/utils/metadata/audit';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -247,6 +247,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       )?.[0] as BaseModelSetType)
     : undefined;
 
+  const alternativesAvailable =
+    ((await redis.hGet('system:features', 'generation:alternatives')) ?? 'false') === 'true';
+
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
 
@@ -265,8 +268,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       assets = assets.filter((x) => x !== `@civitai/${id}`);
     }
 
-    return {
+    const request = {
       id: x.id,
+      alternativesAvailable,
       createdAt: x.createdAt,
       estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
@@ -300,6 +304,10 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       ...job,
       images: x.images,
     };
+
+    if (alternativesAvailable) request.alternativesAvailable = true;
+
+    return request;
   });
 };
 
@@ -377,9 +385,15 @@ async function checkResourcesAccess(
 
 export const createGenerationRequest = async ({
   userId,
+  isModerator,
   resources,
   params: { nsfw, negativePrompt, ...params },
-}: CreateGenerationRequestInput & { userId: number }) => {
+}: CreateGenerationRequestInput & { userId: number; isModerator?: boolean }) => {
+  // Handle generator disabled
+  const status = await getGenerationStatus();
+  if (!status.available && !isModerator)
+    throw throwBadRequestError('Generation is currently disabled');
+
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
@@ -411,6 +425,13 @@ export const createGenerationRequest = async ({
       return acc;
     }, {} as { [key: string]: object });
 
+  // Set nsfw to true if the prompt contains nsfw words
+  const isPromptNsfw = includesNsfw(params.prompt);
+  nsfw ??= isPromptNsfw !== false;
+
+  // Disable nsfw if the prompt contains poi/minor words
+  if (includesPoi(params.prompt) || includesMinor(params.prompt)) nsfw = false;
+
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && !isSDXL) {
     for (const { id, triggerWord } of safeNegatives) {
@@ -423,7 +444,6 @@ export const createGenerationRequest = async ({
   }
 
   // Inject fallback minor safety nets
-  const isPromptNsfw = includesNsfw(params.prompt);
   const positivePrompts = [params.prompt];
   if (isPromptNsfw && env.MINOR_FALLBACK_SYSTEM) {
     for (const { id, triggerWord } of minorPositives) {
@@ -451,6 +471,7 @@ export const createGenerationRequest = async ({
 
   const generationRequest = {
     userId,
+    nsfw,
     job: {
       model: `@civitai/${checkpoint.id}`,
       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
@@ -582,14 +603,13 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   return result?.covered ?? false;
 }
 
-export async function getGenerationStatusMessage() {
-  const { value } =
-    (await dbWrite.keyValue.findUnique({
-      where: { key: 'generationStatusMessage' },
-      select: { value: true },
-    })) ?? {};
+export async function getGenerationStatus() {
+  const status = JSON.parse(
+    (await redis.hGet('system:features', 'generation:status')) ?? '{}'
+  ) as Generation.Status;
+  status.available ??= true;
 
-  return value ? (value as string) : null;
+  return status;
 }
 
 export const getGenerationData = async (

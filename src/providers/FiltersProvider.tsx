@@ -318,7 +318,7 @@ export const FiltersProvider = ({
 
   useEffect(() => {
     storeRef.current?.setState({
-      browsingMode: !showNsfw ? BrowsingMode.SFW : BrowsingMode.NSFW,
+      browsingMode: !showNsfw ? BrowsingMode.SFW : value.browsingMode,
     });
   }, [showNsfw]);
 

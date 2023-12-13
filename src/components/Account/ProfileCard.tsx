@@ -24,7 +24,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
-import { usernameInputSchema } from '~/server/schema/user.schema';
+import { usernameInputSchema, profilePictureSchema } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
@@ -39,6 +39,7 @@ const schema = z.object({
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),
   leaderboardShowcase: z.string().nullable(),
+  profilePicture: profilePictureSchema.nullish(),
 });
 
 export function ProfileCard() {
@@ -53,15 +54,19 @@ export function ProfileCard() {
     { equipped: true },
     { enabled: !!currentUser }
   );
+  const { data: user } = trpc.user.getById.useQuery(
+    { id: currentUser?.id ?? 0 },
+    { enabled: !!currentUser }
+  );
   const { data: leaderboards = [], isLoading: loadingLeaderboards } =
     trpc.leaderboard.getLeaderboards.useQuery();
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
-    async onSuccess(user, { badgeId, nameplateId }) {
+    async onSuccess(user, { badgeId, nameplateId, profilePicture }) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       // await utils.model.getAll.invalidate();
-      await queryUtils.comment.getAll.invalidate();
-      currentUser?.refresh();
+      await queryUtils.user.getById.invalidate({ id: user.id });
+      await currentUser?.refresh();
 
       if (user)
         form.reset({
@@ -70,6 +75,7 @@ export function ProfileCard() {
           username: user.username ?? undefined,
           badgeId: badgeId ?? null,
           nameplateId: nameplateId ?? null,
+          profilePicture,
         });
     },
   });
@@ -77,7 +83,14 @@ export function ProfileCard() {
   const form = useForm({
     schema,
     mode: 'onChange',
-    defaultValues: { ...currentUser },
+    defaultValues: {
+      ...currentUser,
+      profilePicture: user?.profilePicture
+        ? (user.profilePicture as z.infer<typeof schema>['profilePicture'])
+        : user?.image
+        ? { url: user.image, type: 'image' as const }
+        : undefined,
+    },
     shouldUnregister: false,
   });
 
@@ -91,10 +104,15 @@ export function ProfileCard() {
         ...currentUser,
         nameplateId: selectedNameplate?.id ?? null,
         badgeId: selectedBadge?.id ?? null,
+        profilePicture: user?.profilePicture
+          ? (user.profilePicture as z.infer<typeof schema>['profilePicture'])
+          : user?.image
+          ? { url: user.image, type: 'image' as const }
+          : undefined,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [equippedCosmetics]);
+  }, [user, currentUser, equippedCosmetics]);
 
   const formUser = form.watch();
   const { nameplates = [], badges = [] } = cosmetics || {};
@@ -113,12 +131,14 @@ export function ProfileCard() {
       <Form
         form={form}
         onSubmit={(data) => {
-          const { id, username, nameplateId, badgeId, image, leaderboardShowcase } = data;
+          const { id, username, nameplateId, badgeId, image, profilePicture, leaderboardShowcase } =
+            data;
           mutate({
             id,
             username,
             nameplateId,
             image,
+            profilePicture,
             badgeId,
             leaderboardShowcase:
               leaderboardShowcase !== currentUser?.leaderboardShowcase
@@ -141,6 +161,7 @@ export function ProfileCard() {
                   user={{ ...formUser, createdAt: currentUser.createdAt }}
                   badge={selectedBadge}
                   nameplate={selectedNameplate}
+                  profileImage={formUser.profilePicture?.url ?? formUser.image}
                 />
               </Grid.Col>
             )}
@@ -188,7 +209,16 @@ export function ProfileCard() {
               />
             </Grid.Col>
             <Grid.Col span={12}>
-              <InputProfileImageUpload name="image" label="Profile Image" />
+              <Stack spacing={8}>
+                <InputProfileImageUpload name="profilePicture" label="Profile Image" />
+                {user?.profilePicture?.ingestion === 'Pending' && (
+                  <Alert color="yellow">
+                    Your profile picture is currently being scanned. You&apos;ll still be able to
+                    see it, but other users won&apos;t see your profile picture until it has
+                    finished the scan process.
+                  </Alert>
+                )}
+              </Stack>
             </Grid.Col>
             <Grid.Col span={12}>
               <Stack spacing={0}>
@@ -229,7 +259,12 @@ export function ProfileCard() {
                 </Group>
                 <Group spacing="xs" align="stretch" noWrap>
                   {selectedBadge?.data.url ? (
-                    <EdgeMedia src={selectedBadge.data.url} width={96} />
+                    <Box w={96}>
+                      <EdgeMedia
+                        src={selectedBadge.data.url}
+                        width={selectedBadge.data.animated ? 'original' : 96}
+                      />
+                    </Box>
                   ) : (
                     <Paper
                       withBorder
@@ -278,7 +313,10 @@ export function ProfileCard() {
                                 }
                                 sx={{ height: 64, width: 64 }}
                               >
-                                <EdgeMedia src={cosmetic.data.url as string} width={64} />
+                                <EdgeMedia
+                                  src={cosmetic.data.url as string}
+                                  width={cosmetic?.data.animated ? 'original' : 64}
+                                />
                               </Button>
                             </HoverCard.Target>
                             <HoverCard.Dropdown>
@@ -339,11 +377,15 @@ export function ProfileCard() {
   );
 }
 
-function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
+function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
     cosmetics: [],
     deletedAt: null,
+    profilePicture: {
+      ...user.profilePicture,
+      url: profileImage || user.image,
+    } as UserWithCosmetics['profilePicture'],
   };
   if (badge)
     userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
@@ -369,4 +411,5 @@ type ProfilePreviewProps = {
   user: z.infer<typeof schema> & { createdAt?: Date };
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
+  profileImage?: string | null;
 };

@@ -32,6 +32,7 @@ import {
   toggleFavoriteModelHandler,
   updateUserHandler,
 } from '~/server/controllers/user.controller';
+import { createToken } from '~/server/integrations/integration-token';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   getAllUsersInput,
@@ -107,6 +108,7 @@ export const userRouter = router({
   // batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
+  getToken: protectedProcedure.query(({ ctx }) => ({ token: createToken(ctx.user.id) })),
   removeAllContent: moderatorProcedure.input(getByIdSchema).mutation(async ({ input, ctx }) => {
     await removeAllContent(input);
     ctx.track.userActivity({

@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { getDownloadFilename } from '~/server/services/file.service';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -43,6 +43,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       },
       tags: tagsOnModels.map((tag) => tag.tag.name),
       modelVersions: modelVersions
+        .filter((x) => x.status === 'Published')
         .map(({ images, files, ...version }) => {
           const castedFiles = files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }

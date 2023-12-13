@@ -1,24 +1,13 @@
-import {
-  ModelFileVisibility,
-  ModelModifier,
-  ModelStatus,
-  ModelType,
-  ModelVersionMonetizationType,
-  Prisma,
-} from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
 
-import { env } from '~/env/server.mjs';
 import { Tracker } from '~/server/clickhouse/client';
-import { ModelFileType, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
-import { getVaeFiles } from '~/server/services/model.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
+import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getJoinLink } from '~/utils/join-helpers';
@@ -27,6 +16,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { hasEntityAccess } from '~/server/services/common.service';
+
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -52,6 +42,7 @@ export default RateLimitedEndpoint(
     ).split(',');
     if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
+    // Check if user is blacklisted
     const session = await getServerAuthSession({ req, res });
     if (!!session?.user) {
       const userBlacklist = (
@@ -62,48 +53,17 @@ export default RateLimitedEndpoint(
         return errorResponse(403, 'Forbidden');
     }
 
+    // Validate query params
     const queryResults = schema.safeParse(req.query);
     if (!queryResults.success)
       return res
         .status(400)
         .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
-
-    const { type, modelVersionId, format, size, fp } = queryResults.data;
+    const input = queryResults.data;
+    const modelVersionId = input.modelVersionId;
     if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
+    const isJsonRequest = req.headers['content-type'] === 'application/json';
 
-    const modelVersion = await dbRead.modelVersion.findFirst({
-      where: { id: modelVersionId },
-      select: {
-        id: true,
-        status: true,
-        model: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            publishedAt: true,
-            status: true,
-            userId: true,
-            mode: true,
-            nsfw: true,
-          },
-        },
-        name: true,
-        trainedWords: true,
-        earlyAccessTimeFrame: true,
-        createdAt: true,
-        vaeId: true,
-        requireAuth: true,
-      },
-    });
-
-    if (!modelVersion) return errorResponse(404, 'Model not found');
-
-    // Handle non-published models
-    const isMod = session?.user?.isModerator;
-    const userId = session?.user?.id;
-    const isOwner = !!userId && modelVersion.model.userId === userId;
-    const archived = modelVersion.model.mode === ModelModifier.Archived;
     const [entityAccess] = await hasEntityAccess({
       entities: [
         {
@@ -118,78 +78,33 @@ export default RateLimitedEndpoint(
     if (!(entityAccess?.hasAccess ?? true)) {
       return errorResponse(401, 'You do not have access to download this model.');
     }
-
-    if (archived) return errorResponse(410, 'Model archived, not available for download');
-
-    const canDownload =
-      isMod ||
-      isOwner ||
-      (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
-
-    if (!canDownload) return errorResponse(404, 'Model not found');
-
-    // Handle unauthenticated downloads
-    const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
-    if (requireAuth && !userId) {
-      if (req.headers['content-type'] === 'application/json')
-        return errorResponse(
-          401,
-          'Unauthorized - The creator of this asset requires authentication'
-        );
+    // Get file
+    const fileResult = await getFileForModelVersion({
+      ...input,
+      user: session?.user,
+    });
+ 
+    if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
+    if (fileResult.status === 'archived')
+      return errorResponse(410, 'Model archived, not available for download');
+    if (fileResult.status === 'early-access') {
+      if (isJsonRequest)
+        return res
+          .status(403)
+          .json({ error: 'Early Access', deadline: fileResult.details.deadline });
       else
         return res.redirect(
-          getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}` })
+          getJoinLink({ reason: 'early-access', returnUrl: `/model-versions/${modelVersionId}` })
         );
     }
-
-    // Handle early access
-    if (!session?.user?.tier && !session?.user?.isModerator) {
-      const earlyAccessDeadline = getEarlyAccessDeadline({
-        versionCreatedAt: modelVersion.createdAt,
-        publishedAt: modelVersion.model.publishedAt,
-        earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
-      });
-      const inEarlyAccess = earlyAccessDeadline && new Date() < earlyAccessDeadline;
-      if (inEarlyAccess) {
-        if (req.headers['content-type'] === 'application/json')
-          return res.status(403).json({ error: 'Early Access', deadline: earlyAccessDeadline });
-        else
-          return res.redirect(
-            getJoinLink({ reason: 'early-access', returnUrl: `/models/${modelVersion.model.id}` })
-          );
-      }
+    if (fileResult.status === 'unauthorized') {
+      if (isJsonRequest) return res.status(401).json({ error: 'Unauthorized' });
+      else
+        return res.redirect(
+          getLoginLink({ reason: 'download-auth', returnUrl: `/model-versions/${modelVersionId}` })
+        );
     }
-
-    // Get the correct file
-    let file: FileResult | null = null;
-    if (type === 'VAE') {
-      if (!modelVersion.vaeId) return errorResponse(404, 'VAE not found');
-      const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
-      if (!vae.length) return errorResponse(404, 'VAE not found');
-      file = vae[0];
-    } else {
-      const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
-      if (type) fileWhere.type = type;
-      if (!isOwner || !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-      const files = await dbRead.modelFile.findMany({
-        where: fileWhere,
-        select: {
-          id: true,
-          url: true,
-          name: true,
-          type: true,
-          metadata: true,
-          hashes: { select: { hash: true }, where: { type: 'SHA256' } },
-        },
-      });
-      const metadata: FileMetadata = {
-        ...session?.user?.filePreferences,
-        ...removeEmpty({ format, size, fp }),
-      };
-      const castedFiles = files as Array<Omit<FileResult, 'metadata'> & { metadata: FileMetadata }>;
-      file = getPrimaryFile(castedFiles, { metadata });
-    }
-    if (!file) return errorResponse(404, 'Model file not found');
+    if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
 
     // Track download
     try {
@@ -198,23 +113,24 @@ export default RateLimitedEndpoint(
       const tracker = new Tracker(req, res);
       await tracker.modelVersionEvent({
         type: 'Download',
-        modelId: modelVersion.model.id,
-        modelVersionId: modelVersion.id,
-        nsfw: modelVersion.model.nsfw,
+        modelId: fileResult.modelId,
+        modelVersionId,
+        nsfw: fileResult.nsfw,
         time: now,
       });
 
+      const userId = session?.user?.id;
       if (userId) {
         await dbWrite.downloadHistory.upsert({
           where: {
             userId_modelVersionId: {
-              userId: userId,
-              modelVersionId: modelVersion.id,
+              userId,
+              modelVersionId,
             },
           },
           create: {
             userId,
-            modelVersionId: modelVersion.id,
+            modelVersionId,
             downloadAt: now,
             hidden: false,
           },
@@ -225,82 +141,18 @@ export default RateLimitedEndpoint(
 
         await playfab.trackEvent(userId, {
           eventName: 'user_download_model',
-          modelId: modelVersion.model.id,
-          modelVersionId: modelVersion.id,
+          modelId: fileResult.modelId,
+          modelVersionId,
         });
       }
     } catch (error) {
+      // Don't return error to user
       console.error(error);
-      return errorResponse(500, 'Invalid database operation');
     }
 
-    const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
-    try {
-      const { url } = await getDownloadUrl(file.url, fileName);
-      res.redirect(url);
-    } catch (err: unknown) {
-      const error = err as Error;
-      console.error(`Error downloading file: ${file.url} - ${error.message}`);
-      return errorResponse(500, 'Error downloading file');
-    }
+    // Redirect to download url
+    res.redirect(fileResult.url);
   },
   ['GET'],
   'download'
 );
-
-export function getDownloadFilename({
-  model,
-  modelVersion,
-  file,
-}: {
-  model: { name: string; type: ModelType };
-  modelVersion: { name: string; trainedWords: string[] };
-  file: { name: string; type: ModelFileType | string };
-}) {
-  let fileName = file.name;
-  const modelName = filenamize(model.name);
-  let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
-
-  // If the model name is empty (due to unsupported characters), we should keep the filename as is
-  // OR if the type is LORA or LoCon
-  const shouldKeepFilename =
-    modelName.length === 0 || model.type === ModelType.LORA || model.type === ModelType.LoCon;
-  if (shouldKeepFilename) return fileName;
-
-  const ext = file.name.split('.').pop();
-  if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
-  const fileType = file.type as ModelFileType;
-
-  if (fileType === 'Training Data') {
-    fileName = `${modelName}_${versionName}_trainingData.zip`;
-  } else if (model.type === ModelType.TextualInversion) {
-    const trainedWord = modelVersion.trainedWords[0];
-    let fileSuffix = '';
-    if (fileType === 'Negative') fileSuffix = '-neg';
-
-    if (trainedWord) fileName = `${trainedWord}${fileSuffix}.${ext}`;
-  } else if (fileType !== 'VAE') {
-    let fileSuffix = '';
-    if (fileName.toLowerCase().includes('-inpainting')) {
-      versionName = versionName.replace(/_?inpainting/i, '');
-      fileSuffix = '-inpainting';
-    } else if (fileName.toLowerCase().includes('.instruct-pix2pix')) {
-      versionName = versionName.replace(/_?instruct|-?pix2pix/gi, '');
-      fileSuffix = '.instruct-pix2pix';
-    } else if (fileType === 'Text Encoder') fileSuffix = '_txt';
-
-    fileName = `${modelName}_${versionName}${fileSuffix}.${ext}`;
-  }
-  return fileName;
-}
-
-type FileResult = {
-  type: string;
-  id: number;
-  name: string;
-  metadata: Prisma.JsonValue;
-  hashes: {
-    hash: string;
-  }[];
-  url: string;
-};

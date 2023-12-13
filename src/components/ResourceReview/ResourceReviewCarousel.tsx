@@ -33,7 +33,7 @@ export function ResourceReviewCarousel({
   modelVersionId: number;
   reviewId: number;
 }) {
-  const { classes, theme } = useStyles();
+  const { classes } = useStyles();
   const mobile = useContainerSmallerThan('sm');
 
   const filters = {
@@ -105,7 +105,6 @@ export function ResourceReviewCarousel({
                             )}
                           </AspectRatio>
                         </RoutedDialogLink>
-
                         <Reactions
                           entityId={image.id}
                           entityType="image"

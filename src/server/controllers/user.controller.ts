@@ -85,6 +85,7 @@ import {
   getCustomerPaymentMethods,
 } from '~/server/services/stripe.service';
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import { ingestImage } from '../services/image.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -143,10 +144,7 @@ export const getUsernameAvailableHandler = async ({
 export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const user = await getUserById({ ...input, select: simpleUserSelect });
-
-    if (!user) {
-      throw throwNotFoundError(`No user with id ${input.id}`);
-    }
+    if (!user) throw throwNotFoundError(`No user with id ${input.id}`);
 
     return user;
   } catch (error) {
@@ -277,6 +275,7 @@ export const updateUserHandler = async ({
     source,
     landingPage,
     userReferralCode,
+    profilePicture,
     ...data
   } = input;
   const currentUser = ctx.user;
@@ -294,15 +293,38 @@ export const updateUserHandler = async ({
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
+
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
         username,
         showNsfw,
+        profilePicture: profilePicture
+          ? {
+              connectOrCreate: {
+                where: { id: profilePicture.id ?? -1 },
+                create: {
+                  ...profilePicture,
+                  userId: id,
+                },
+              },
+            }
+          : undefined,
       },
     });
+    if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
 
+    if (profilePicture && updatedUser.profilePictureId)
+      await ingestImage({
+        image: {
+          id: updatedUser.profilePictureId,
+          url: profilePicture.url,
+          type: profilePicture.type,
+          height: profilePicture.height,
+          width: profilePicture.width,
+        },
+      });
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
@@ -315,7 +337,6 @@ export const updateUserHandler = async ({
         ip: ctx.ip,
       });
     }
-    if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
@@ -907,7 +928,7 @@ export const reportProhibitedRequestHandler = async ({
   input: ReportProhibitedRequestInput;
   ctx: DeepNonNullable<Context>;
 }) => {
-  await ctx.track.prohibitedRequest(input);
+  await ctx.track.prohibitedRequest({ prompt: input.prompt ?? '{error capturing prompt}' });
   if (ctx.user.isModerator) return false;
 
   try {

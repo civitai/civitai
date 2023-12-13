@@ -5,6 +5,7 @@ import blocked from './lists/blocklist.json';
 import nsfwWords from './lists/words-nsfw.json';
 import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
+import promptTags from './lists/prompt-tags.json';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -24,7 +25,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 
   // Add minor check
   if (nsfw) {
-    const { found, age } = includesMinor(meta.prompt);
+    const { found, age } = includesMinorAge(meta.prompt);
     if (found) return { blockedFor: [`${age} year old`], success: false };
   }
 
@@ -36,7 +37,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 };
 
 export const auditPrompt = (prompt: string) => {
-  const { found, age } = includesMinor(prompt);
+  const { found, age } = includesMinorAge(prompt);
   if (found) return { blockedFor: [`${age} year old`], success: false };
 
   const inappropriate = includesInappropriate(prompt);
@@ -150,7 +151,7 @@ const ageRegexes = templates.map((template) => {
 // --------------------------------------
 // Age Check Function
 // --------------------------------------
-export function includesMinor(prompt: string | undefined) {
+export function includesMinorAge(prompt: string | undefined) {
   if (!prompt) return { found: false, age: undefined };
 
   let found = false;
@@ -172,7 +173,9 @@ export function includesMinor(prompt: string | undefined) {
 // #endregion
 
 // #region [inappropriate]
-export function checkable(words: string[], options?: { pluralize?: boolean }) {
+type Checkable = { regex: RegExp; word: string };
+type MatcherFn = (prompt: string, checkable: Checkable) => string | false;
+export function checkable(words: string[], options?: { pluralize?: boolean; matcher?: MatcherFn }) {
   const regexes = words.map((word) => {
     let regexStr = word;
     regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
@@ -185,18 +188,23 @@ export function checkable(words: string[], options?: { pluralize?: boolean }) {
     }
     if (options?.pluralize) regexStr += '[s|z]*';
     regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
-    return new RegExp(regexStr, 'i');
+    const regex = new RegExp(regexStr, 'i');
+    return { regex, word } as Checkable;
   });
-  function inPrompt(prompt: string) {
+  function inPrompt(prompt: string, matcher?: MatcherFn) {
     prompt = prompt.trim();
-    for (const regex of regexes) {
-      if (regex.test(prompt)) return true;
+    for (const { regex, word } of regexes) {
+      if (options?.matcher) {
+        const result = (matcher ?? options.matcher)(prompt, { regex, word });
+        if (result !== false) return result;
+      }
+      if (regex.test(prompt)) return word;
     }
     return false;
   }
   function highlight(prompt: string, replaceFn: (word: string) => string) {
     prompt = prompt.trim();
-    for (const regex of regexes) {
+    for (const { regex } of regexes) {
       if (regex.test(prompt)) {
         const match = regex.exec(prompt);
         const word = trimNonAlphanumeric(match?.[0]);
@@ -210,6 +218,33 @@ export function checkable(words: string[], options?: { pluralize?: boolean }) {
   return { inPrompt, highlight };
 }
 
+function inPromptEdit(prompt: string, { regex }: Checkable) {
+  const match = prompt.match(regex);
+  if (!match) return false;
+
+  // see if the word is wrapped in `[` and `]` and also has a `|` or `:` between the braces
+  const wrapped = match.some((m) => {
+    const start = prompt.lastIndexOf('[', prompt.indexOf(m));
+    const end = prompt.indexOf(']', prompt.indexOf(m));
+    const insideBlock = start !== -1 && end !== -1 && start < end;
+    if (!insideBlock) return false;
+
+    // Also has a `|` or `:` between the braces
+    const hasPipe =
+      prompt
+        .slice(start, end)
+        .split('|')
+        .filter((x) => x.trim().length > 0).length > 1;
+    const hasColon =
+      prompt
+        .slice(start, end)
+        .split(':')
+        .filter((x) => x.trim().length > 0).length > 2;
+    return hasPipe || hasColon;
+  });
+  return wrapped;
+}
+
 const composedNouns = youngWords.partialNouns.flatMap((word) => {
   return youngWords.adjectives.map((adj) => adj + '([\\s|\\w]*|[^\\w]+)' + word);
 });
@@ -221,7 +256,19 @@ const words = {
     }),
   },
   poi: checkable(poiWords),
+  tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
+
+export function getTagsFromPrompt(prompt: string | undefined) {
+  if (!prompt) return false;
+
+  const tags = new Set<string>();
+  for (const lookup of words.tags) {
+    if (lookup.words.inPrompt(prompt)) tags.add(lookup.tag);
+  }
+
+  return [...tags];
+}
 
 export function includesNsfw(prompt: string | undefined) {
   if (!prompt) return false;
@@ -229,17 +276,27 @@ export function includesNsfw(prompt: string | undefined) {
   return words.nsfw.inPrompt(prompt);
 }
 
-export function includesPoi(prompt: string | undefined) {
+export function includesPoi(prompt: string | undefined, includeEdit = false) {
+  if (!prompt) return false;
+  let matcher = undefined;
+  if (!includeEdit)
+    matcher = (prompt: string, checkable: Checkable) =>
+      !inPromptEdit(prompt, checkable) ? checkable.word : false;
+
+  return words.poi.inPrompt(prompt, matcher);
+}
+
+export function includesMinor(prompt: string | undefined) {
   if (!prompt) return false;
 
-  return words.poi.inPrompt(prompt);
+  return includesMinorAge(prompt).found || words.young.nouns.inPrompt(prompt);
 }
 
 export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
-  prompt = removeAccents(prompt);
+  prompt = removeAccents(prompt).replace(/'|\.|\-/g, '');
   if (!nsfw && !includesNsfw(prompt)) return false;
-  if (includesMinor(prompt).found || words.young.nouns.inPrompt(prompt)) return 'minor';
+  if (includesMinor(prompt)) return 'minor';
   if (includesPoi(prompt)) return 'poi';
   return false;
 }

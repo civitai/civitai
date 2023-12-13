@@ -3,9 +3,8 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
-
+import { getDownloadFilename } from '~/server/services/file.service';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { BrowsingMode } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
@@ -56,6 +55,7 @@ export default MixedAuthEndpoint(async function handler(
         },
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
+          .filter((x) => x.status === 'Published')
           .map(({ images, files, ...version }) => {
             let castedFiles = files as Array<
               Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }

@@ -8,10 +8,10 @@ import {
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { usernameSchema } from '~/server/schema/user.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { BrowsingMode, ImageSort } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
+import { zc } from '~/utils/schema-helpers';
 
 const stringToNumber = z.preprocess(
   (value) => (value ? Number(value) : undefined),
@@ -24,6 +24,7 @@ const undefinedString = z.preprocess((value) => (value ? value : undefined), z.s
 export const ImageEntityType = {
   Bounty: 'Bounty',
   BountyEntry: 'BountyEntry',
+  User: 'User',
 } as const;
 export type ImageEntityType = (typeof ImageEntityType)[keyof typeof ImageEntityType];
 
@@ -204,7 +205,7 @@ export const getInfiniteImagesSchema = z
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),
     reviewId: z.number().optional(),
-    username: usernameSchema.optional(),
+    username: zc.usernameValidationSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
     prioritizedUserIds: z.array(z.number()).optional(),

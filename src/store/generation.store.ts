@@ -1,13 +1,9 @@
-import { ModelType } from '@prisma/client';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { generation, getGenerationConfig } from '~/server/common/constants';
-import { GenerateFormModel, GetGenerationDataInput } from '~/server/schema/generation.schema';
+import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { showErrorNotification } from '~/utils/notifications';
-import { findClosest } from '~/utils/number-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'random' | 'params';
@@ -15,14 +11,14 @@ type View = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: View;
-  data?: { type: RunType; data: Partial<GenerateFormModel> };
+  data?: { type: RunType; data: Partial<Generation.Data> };
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: View) => void;
   randomize: (includeResources?: boolean) => Promise<void>;
   setParams: (data: Generation.Data['params']) => void;
-  setData: (args: { data: Generation.Data; type: RunType }) => void;
+  setData: (args: { data: Partial<Generation.Data>; type: RunType }) => void;
   clearData: () => void;
 };
 
@@ -56,19 +52,17 @@ export const useGenerationStore = create<GenerationState>()(
           state.view = view;
         }),
       setParams: (params) => {
-        const data = formatGenerationData('params', { resources: [], params });
-
         set((state) => {
           state.data = {
             type: 'params',
-            data: { ...data },
+            data: { params },
           };
         });
       },
       setData: ({ data, type }) =>
         set((state) => {
           state.view = 'generate';
-          state.data = { type, data: formatGenerationData(type, data) };
+          state.data = { type, data };
         }),
       randomize: async (includeResources) => {
         const data = await getGenerationData({ type: 'random', includeResources });
@@ -112,59 +106,4 @@ const getGenerationData = async (input: GetGenerationDataInput) => {
   } catch (error: any) {
     showErrorNotification({ error });
   }
-};
-
-const formatGenerationData = (
-  type: RunType,
-  { resources, params }: Generation.Data
-): Partial<GenerateFormModel> => {
-  const aspectRatio =
-    params?.width && params.height
-      ? getClosestAspectRatio(params?.width, params?.height, params?.baseModel)
-      : undefined;
-
-  if (params?.sampler)
-    params.sampler = generation.samplers.includes(params.sampler as any)
-      ? params.sampler
-      : undefined;
-
-  const additionalResourceTypes = getGenerationConfig(
-    params?.baseModel
-  ).additionalResourceTypes.map((x) => x.type);
-
-  const additionalResources = resources.filter((x) =>
-    additionalResourceTypes.includes(x.modelType as any)
-  );
-
-  const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
-
-  const formData: Partial<GenerateFormModel> =
-    type !== 'remix' ? removeEmpty({ ...params, aspectRatio }) : { ...params, aspectRatio };
-  if (type === 'params') return formData;
-  else if (type === 'run') {
-    return {
-      ...formData,
-      model,
-      resources: additionalResources,
-    };
-  } else {
-    const vae = resources.find((x) => x.modelType === ModelType.VAE);
-
-    return {
-      ...formData,
-      model,
-      vae,
-      resources: !!additionalResources.length ? additionalResources : undefined,
-    };
-  }
-};
-
-export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
-  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const ratios = aspectRatios.map((x) => x.width / x.height);
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  return `${index ?? 0}`;
 };

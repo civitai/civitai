@@ -3,12 +3,15 @@ import {
   ArticleEngagementType,
   BountyEngagementType,
   OnboardingStep,
+  NsfwLevel,
+  MediaType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { numericString } from '~/utils/zod-helpers';
 
@@ -24,16 +27,12 @@ export const userPageQuerySchema = z
     return removeEmpty({ ...props, username });
   });
 
-const usernameValidationSchema = z
-  .string()
-  .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.');
-
-export const usernameInputSchema = usernameValidationSchema
+export const usernameInputSchema = zc.usernameValidationSchema
   .min(3, 'Your username must be at least 3 characters long')
   .max(25, 'Your username must be at most 25 characters long')
   .transform((v) => v.trim());
 
-export const usernameSchema = usernameValidationSchema.transform((v) => v.trim());
+export const usernameSchema = zc.usernameValidationSchema.transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
   username: usernameSchema.optional(),
@@ -48,6 +47,21 @@ export const getAllUsersInput = getAllQuerySchema
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
+export type ProfilePictureSchema = z.infer<typeof profilePictureSchema>;
+export const profilePictureSchema = z.object({
+  id: z.number().optional(),
+  name: z.string().nullish(),
+  url: z.string().url().or(z.string().uuid()),
+  hash: z.string().nullish(),
+  height: z.number().nullish(),
+  width: z.number().nullish(),
+  sizeKB: z.number().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
+  mimeType: z.string().optional(),
+  metadata: z.object({}).passthrough().optional(),
+  type: z.nativeEnum(MediaType).default(MediaType.image),
+});
+
 export const userUpdateSchema = z.object({
   id: z.number(),
   username: usernameInputSchema.optional(),
@@ -57,6 +71,7 @@ export const userUpdateSchema = z.object({
   onboardingStep: z.nativeEnum(OnboardingStep).array().optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
+  profilePicture: profilePictureSchema.nullish(),
   badgeId: z.number().nullish(),
   nameplateId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
@@ -130,7 +145,7 @@ export const toggleUserBountyEngagementSchema = getUserBountyEngagementsSchema.e
 
 export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
 export const reportProhibitedRequestSchema = z.object({
-  prompt: z.string(),
+  prompt: z.string().optional(),
 });
 
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });

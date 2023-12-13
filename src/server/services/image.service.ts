@@ -1,4 +1,5 @@
 import {
+  Image,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -55,9 +56,8 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
-import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
-import { BaseFileSchema } from '~/server/schema/file.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -420,6 +420,7 @@ type GetAllImagesRaw = {
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
+  profilePictureId: number | null;
   cryCount: number;
   laughCount: number;
   likeCount: number;
@@ -517,12 +518,14 @@ export const getAllImages = async ({
   const optionalRank = !!(modelId || modelVersionId || reviewId || username || collectionId);
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
-    if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
-    if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
     if (reviewId) irhAnd.push(Prisma.sql`re."id" = ${reviewId}`);
+    else if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+    else if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ImageResource" irr
-      ${Prisma.raw(modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : '')}
+      ${Prisma.raw(
+        !modelVersionId && modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : ''
+      )}
       ${Prisma.raw(
         reviewId ? 'JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"' : ''
       )}
@@ -756,6 +759,7 @@ export const getAllImages = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
+      u."profilePictureId",
       ${Prisma.raw(
         includeBaseModel
           ? `(
@@ -849,6 +853,10 @@ export const getAllImages = async ({
   const userCosmetics = include?.includes('cosmetics')
     ? await getCosmeticsForUsers(rawImages.map((i) => i.userId))
     : undefined;
+  const profilePictures = await dbRead.image.findMany({
+    where: { id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) } },
+    select: { ...imageSelect, ingestion: true },
+  });
 
   const images: Array<
     ImageV2Model & {
@@ -872,6 +880,7 @@ export const getAllImages = async ({
       heartCount,
       commentCount,
       tippedAmountCount,
+      profilePictureId,
       viewCount,
       ...i
     }) => ({
@@ -882,6 +891,7 @@ export const getAllImages = async ({
         image: userImage,
         deletedAt,
         cosmetics: userCosmetics?.[creatorId] ?? [],
+        profilePicture: profilePictures.find((x) => x.id === profilePictureId) ?? null,
       },
       stats: {
         cryCountAllTime: cryCount,
@@ -956,6 +966,7 @@ export const getImage = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
+      u."profilePictureId",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -993,11 +1004,18 @@ export const getImage = async ({
       commentCount,
       tippedAmountCount,
       viewCount,
+      profilePictureId,
       ...firstRawImage
     },
   ] = rawImages;
 
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
+  const profilePicture = profilePictureId
+    ? await dbRead.image.findUnique({
+        where: { id: profilePictureId },
+        select: { ...imageSelect, ingestion: true },
+      })
+    : null;
 
   const image = {
     ...firstRawImage,
@@ -1007,6 +1025,7 @@ export const getImage = async ({
       image: userImage,
       deletedAt,
       cosmetics: userCosmetics?.[creatorId] ?? [],
+      profilePicture,
     },
     stats: {
       cryCountAllTime: cryCount,
@@ -2148,7 +2167,7 @@ export const getImageModerationReviewQueue = async ({
     report.status as "reportStatus",
     report.details as "reportDetails",
     ur.username as "reportUsername",
-    ur.id as "reportUserId", 
+    ur.id as "reportUserId",
   `;
 
   const queryFrom = Prisma.sql`
@@ -2283,6 +2302,8 @@ export const getImageModerationReviewQueue = async ({
         image: userImage,
         deletedAt,
         cosmetics: [],
+        // TODO.manuel: properly get profilePicture
+        profilePicture: null,
       },
       reactions: [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),

@@ -174,12 +174,12 @@ export const useDeleteGenerationRequestImages = (
   });
 };
 
-const unmatchedSignals: Record<string, 'Success' | 'Started' | 'Error'> = {};
+const unmatchedSignals: Record<string, Generation.ImageStatus> = {};
 
 export const useImageGenStatusUpdate = () => {
   const update = useUpdateGenerationRequests();
   const onStatusUpdate = useCallback(
-    ({ status, imageHash }: { status: 'Success' | 'Started' | 'Error'; imageHash: string }) => {
+    ({ status, imageHash }: { status: Generation.ImageStatus; imageHash: string }) => {
       let matched = false;
       update((old) => {
         if (!old) return;
@@ -190,6 +190,7 @@ export const useImageGenStatusUpdate = () => {
               matched = true;
               image.status = status;
               if (image.status === 'Success') image.available = true;
+              if (image.status === 'RemovedForSafety') image.removedForSafety = true;
               break pages;
             }
           }
