@@ -40,6 +40,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
 import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 type ArticleRaw = {
   id: number;
@@ -72,6 +73,7 @@ type ArticleRaw = {
     username: string | null;
     deletedAt: Date | null;
     image: string | null;
+    profilePictureId?: number | null;
   };
   userCosmetics: {
     data: Prisma.JsonValue;
@@ -330,6 +332,7 @@ export const getArticles = async ({
           'username', u."username",
           'deletedAt', u."deletedAt",
           'image', u."image"
+          "profilePictureId", u."profilePictureId"
         ) as "user",
         (
           SELECT
@@ -372,10 +375,17 @@ export const getArticles = async ({
       })),
     });
 
+    const profilePictures = await dbRead.image.findMany({
+      where: { id: { in: articles.map((a) => a.user.profilePictureId).filter(isDefined) } },
+      select: { ...imageSelect, ingestion: true },
+    });
+
     const articleCategories = await getCategoryTags('article');
     const items = articles.map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
       const requiresClub =
-        clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? false;
+        clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? undefined;
+      const { profilePictureId, ...u } = user;
+      const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
 
       return {
         ...article,
@@ -386,7 +396,8 @@ export const getArticles = async ({
         })),
         stats,
         user: {
-          ...user,
+          ...u,
+          profilePicture,
           cosmetics: userCosmetics,
         },
       };

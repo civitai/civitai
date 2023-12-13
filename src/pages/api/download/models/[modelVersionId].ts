@@ -9,14 +9,8 @@ import { playfab } from '~/server/playfab/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
-import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
-import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { hasEntityAccess } from '~/server/services/common.service';
-
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -64,26 +58,12 @@ export default RateLimitedEndpoint(
     if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
     const isJsonRequest = req.headers['content-type'] === 'application/json';
 
-    const [entityAccess] = await hasEntityAccess({
-      entities: [
-        {
-          entityType: 'ModelVersion',
-          entityId: modelVersion?.id,
-        },
-      ],
-      userId,
-      isModerator: isMod,
-    });
-
-    if (!(entityAccess?.hasAccess ?? true)) {
-      return errorResponse(401, 'You do not have access to download this model.');
-    }
     // Get file
     const fileResult = await getFileForModelVersion({
       ...input,
       user: session?.user,
     });
- 
+
     if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
     if (fileResult.status === 'archived')
       return errorResponse(410, 'Model archived, not available for download');
