@@ -1,6 +1,7 @@
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { isDefined } from '~/utils/type-guards';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
+import { BrowsingMode } from '~/server/common/enums';
 
 export const applyUserPreferencesModels = <
   T extends {
@@ -355,12 +356,14 @@ export const applyUserPreferencesClub = <
   hiddenImages,
   hiddenUsers,
   hiddenTags,
+  browsingMode,
 }: {
   items: T[];
   hiddenImages: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   currentUserId?: number | null;
+  browsingMode: BrowsingMode;
 }) => {
   const filtered = items
     .filter((x) => {
@@ -380,6 +383,8 @@ export const applyUserPreferencesClub = <
           if (hiddenTags.get(tag.id)) return false;
         }
       }
+
+      if (browsingMode === BrowsingMode.SFW && x.nsfw) return false;
 
       return true;
     })

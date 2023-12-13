@@ -79,6 +79,7 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
   },
   clubs: ['public'],
+  createClubs: ['granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

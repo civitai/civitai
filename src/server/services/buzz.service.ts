@@ -95,9 +95,15 @@ export async function getUserBuzzTransactions({
   // Return early if no transactions
   if (transactions.length === 0) return { cursor, transactions: [] };
 
+  console.log(transactions);
+
   // Remove duplicate user ids
-  const toUserIds = new Set(transactions.map((t) => t.toAccountId));
-  const fromUserIds = new Set(transactions.map((t) => t.fromAccountId));
+  const toUserIds = new Set(
+    transactions.filter((t) => t.toAccountType === 'User').map((t) => t.toAccountId)
+  );
+  const fromUserIds = new Set(
+    transactions.filter((t) => t.fromAccountType === 'User').map((t) => t.fromAccountId)
+  );
   // Remove account 0 (central bank)
   toUserIds.delete(0);
   fromUserIds.delete(0);

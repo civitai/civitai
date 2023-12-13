@@ -72,6 +72,8 @@ export const getUserBuzzTransactionsResponse = z.object({
         ),
       fromAccountId: z.coerce.number(),
       toAccountId: z.coerce.number(),
+      fromAccountType: z.enum(buzzAccountTypes),
+      toAccountType: z.enum(buzzAccountTypes),
       amount: z.coerce.number(),
       description: z.coerce.string().nullish(),
       details: buzzTransactionDetails.nullish(),

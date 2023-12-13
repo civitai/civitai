@@ -220,12 +220,14 @@ export const BuzzDashboardOverview = ({
         >
           <Stack spacing={0}>
             <Title order={3}>Recent Transactions</Title>
-            <Text component="a" variant="link" href={`/user/transactions`} size="xs">
-              <Group spacing={2}>
-                <IconArrowRight size={18} />
-                <span>View all</span>
-              </Group>
-            </Text>
+            {accountType === 'User' && (
+              <Text component="a" variant="link" href={`/user/transactions`} size="xs">
+                <Group spacing={2}>
+                  <IconArrowRight size={18} />
+                  <span>View all</span>
+                </Group>
+              </Text>
+            )}
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={400} mt="md">
                 <Stack spacing={8}>

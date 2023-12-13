@@ -13,7 +13,7 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx }) => {
     const features = getFeatureFlags({ user: session?.user });
-    if (!features.clubs) return { notFound: true };
+    if (!features.createClubs) return { notFound: true };
 
     if (!session)
       return {

@@ -813,7 +813,7 @@ export default function ModelDetailsV2({
                         )}
                       </ToggleLockModel>
                     )}
-                    {isOwner && selectedVersion && (
+                    {isCreator && selectedVersion && (
                       <AddToClubMenuItem
                         entityId={selectedVersion.id}
                         entityType="ModelVersion"
@@ -829,7 +829,7 @@ export default function ModelDetailsV2({
                             commentCount: model.rank?.commentCountAllTime ?? 0,
                           },
                           // @ts-ignore TODO: Fix. Image is appearing properly.
-                          image: versionImages?.[0] ?? null,
+                          image: versionImages[0] ?? null,
                           version: selectedVersion,
                           versions: model.modelVersions,
                         }}

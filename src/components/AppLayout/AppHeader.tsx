@@ -340,7 +340,7 @@ export function AppHeader({
       },
       {
         href: '/clubs/create',
-        visible: !isMuted && features.clubs,
+        visible: !isMuted && features.createClubs,
         redirectReason: 'create-club',
         label: (
           <Group align="center" spacing="xs">

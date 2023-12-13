@@ -36,7 +36,7 @@ export const clubRouter = router({
     .query(userContributingClubsHandler),
   upsert: protectedProcedure
     .input(upsertClubInput)
-    .use(isFlagProtected('clubs'))
+    .use(isFlagProtected('createClubs'))
     .mutation(upsertClubHandler),
   getTiers: publicProcedure
     .input(getClubTiersInput)
@@ -68,6 +68,6 @@ export const clubRouter = router({
     .query(getPaginatedClubResourcesHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
-    .use(isFlagProtected('clubs'))
+    .use(isFlagProtected('createClubs'))
     .mutation(deleteClubHandler),
 });

@@ -567,6 +567,10 @@ export const useQueryClubs = (
     ...options,
   });
   const currentUser = useCurrentUser();
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+
+  console.log(browsingMode);
+
   const {
     images: hiddenImages,
     tags: hiddenTags,
@@ -583,8 +587,17 @@ export const useQueryClubs = (
       hiddenImages,
       hiddenTags,
       hiddenUsers,
+      browsingMode,
     });
-  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
+  }, [
+    data?.pages,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    currentUser,
+    isLoadingHidden,
+    browsingMode,
+  ]);
 
   return { data, clubs, ...rest };
 };
