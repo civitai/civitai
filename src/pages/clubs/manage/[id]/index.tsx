@@ -47,7 +47,6 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';
 import { openConfirmModal } from '@mantine/modals';
-import { ClubMembershipRole } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -76,13 +75,13 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
-    const membership = await dbRead.clubMembership.findFirst({
+    const clubAdmin = await dbRead.clubAdmin.findFirst({
       where: { clubId: id, userId: session.user?.id },
     });
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    const isAdmin = membership?.role === ClubMembershipRole.Admin;
+    const isAdmin = !!clubAdmin;
 
     if (!isOwner && !isModerator && !isAdmin)
       return {

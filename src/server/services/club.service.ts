@@ -10,7 +10,7 @@ import {
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
-import { Availability, ClubMembershipRole, Prisma } from '@prisma/client';
+import { Availability, ClubAdminPermission, Prisma } from '@prisma/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { createEntityImages } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
@@ -38,16 +38,13 @@ export const userContributingClubs = async ({
       id: true,
       name: true,
       userId: true,
-      memberships: {
+      admins: {
         where: {
           userId,
         },
         select: {
-          role: true,
-          userId: true,
           clubId: true,
-          unitAmount: true,
-          clubTierId: true,
+          permissions: true,
         },
       },
     },
@@ -58,13 +55,8 @@ export const userContributingClubs = async ({
           userId,
         },
         {
-          memberships: {
-            some: {
-              userId,
-              role: {
-                in: [ClubMembershipRole.Admin, ClubMembershipRole.Contributor],
-              },
-            },
+          admins: {
+            some: { userId },
           },
         },
       ],
@@ -73,7 +65,7 @@ export const userContributingClubs = async ({
 
   return clubs.map((club) => ({
     ...club,
-    membership: club.memberships[0],
+    admin: club.admins[0],
   }));
 };
 export const getClub = async ({
@@ -145,9 +137,10 @@ export async function upsertClub({
     }
 
     const isOwner = club.userId === userId;
-    const isAdmin = club.memberships.some((m) => m.role === ClubMembershipRole.Admin);
+    const canManageClub =
+      club.admin && club.admin.permissions.includes(ClubAdminPermission.ManageClub);
 
-    if (!isOwner && !isAdmin && !isModerator) {
+    if (!isOwner && !canManageClub && !isModerator) {
       throw throwAuthorizationError('You do not have permission to edit this club');
     }
 

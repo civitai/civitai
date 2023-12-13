@@ -39,12 +39,12 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { isDefined } from '~/utils/type-guards';
-import { ClubMembershipRole } from '@prisma/client';
 import { NextLink } from '@mantine/next';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
 import { useInView } from '~/hooks/useInView';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ClubAdminPermission } from '@prisma/client';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -72,17 +72,14 @@ export function ClubPostContextMenu({
   const queryUtils = trpc.useContext();
   const { deleteClubPost, deletingClubPost } = useMutateClub();
 
-  const { isOwner, role } = useClubContributorStatus({
+  const { isOwner, permissions } = useClubContributorStatus({
     clubId: clubPost.clubId,
   });
 
   const canUpdatePost =
-    isModerator ||
-    isOwner ||
-    (clubPost.createdBy?.id === currentUser?.id && role === ClubMembershipRole.Contributor) ||
-    role === ClubMembershipRole.Admin;
-
-  const canDeletePost = isModerator || isOwner || role === ClubMembershipRole.Admin;
+    isModerator || isOwner || permissions.includes(ClubAdminPermission.ManagePosts);
+  const canDeletePost =
+    isModerator || isOwner || permissions.includes(ClubAdminPermission.ManagePosts);
 
   const handleDeletePost = () => {
     const onDelete = async () => {

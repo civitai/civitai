@@ -4,14 +4,12 @@ import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useQueryClub, useQueryClubMembership } from '~/components/Club/club.utils';
+import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
-import { trpc } from '~/utils/trpc';
-import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembershipInfinite';
-import { ClubMembershipRole } from '@prisma/client';
+import { ClubAdminPermission } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -40,15 +38,16 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
-    const membership = await dbRead.clubMembership.findFirst({
+    const clubAdmin = await dbRead.clubAdmin.findFirst({
       where: { clubId: id, userId: session.user?.id },
     });
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    const isAdmin = membership?.role === ClubMembershipRole.Admin;
+    const canManageMemberships =
+      clubAdmin?.permissions.includes(ClubAdminPermission.ManageMemberships) ?? false;
 
-    if (!isOwner && !isModerator && !isAdmin)
+    if (!isOwner && !isModerator && !canManageMemberships)
       return {
         redirect: {
           destination: `/clubs/${id}`,

@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { ClubMembershipRole, Prisma } from '@prisma/client';
+import { ClubAdminPermission, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ToggleClubMembershipStatusInput,
@@ -22,7 +22,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { userContributingClubs } from '~/server/services/club.service';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
-  input: { cursor, limit: take, clubId, clubTierId, roles, userId, sort },
+  input: { cursor, limit: take, clubId, clubTierId, userId, sort },
   select,
 }: {
   input: GetInfiniteClubMembershipsSchema;
@@ -41,7 +41,6 @@ export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSe
       clubId,
       clubTierId,
       userId,
-      role: (roles?.length ?? 0) > 0 ? { in: roles } : undefined,
     },
     orderBy,
   });
@@ -129,9 +128,6 @@ export const createClubMembership = async ({
             clubId: clubTier.clubId,
             clubTierId,
             userId,
-            role: ClubMembershipRole.Member,
-            // Memberships are always created as members.
-            // They can be updated by moderators, club admins and owners later on.
             unitAmount: clubTier.unitAmount,
             currency: clubTier.currency,
           },
@@ -146,7 +142,6 @@ export const createClubMembership = async ({
             clubId: clubTier.clubId,
             clubTierId,
             userId,
-            role: ClubMembershipRole.Member,
             // Memberships are always created as members.
             // They can be updated by moderators, club admins and owners later on.
             unitAmount: clubTier.unitAmount,
@@ -178,13 +173,8 @@ export const createClubMembership = async ({
 export const updateClubMembership = async ({
   clubTierId,
   userId,
-  role,
-  unitAmount,
-  isForcedUpdate,
 }: UpdateClubMembershipInput & {
-  isForcedUpdate?: boolean;
   userId: number;
-  unitAmount?: number;
 }) => {
   const clubTier = await dbRead.clubTier.findUnique({
     where: { id: clubTierId },
@@ -208,7 +198,6 @@ export const updateClubMembership = async ({
     where: { clubId: clubTier.clubId, userId },
     select: {
       id: true,
-      role: true,
       startedAt: true,
       nextBillingAt: true,
       unitAmount: true,
@@ -253,18 +242,13 @@ export const updateClubMembership = async ({
         clubTierId: isUpgrade ? clubTier.id : undefined,
         // Memberships are always created as members.
         // They can be updated by moderators, club admins and owners later on.
-        role: role ?? ClubMembershipRole.Member,
-        unitAmount: isDowngrade
-          ? // When downgrading, we'll want to keep the lowest amount possible.
-            Math.min(clubTier.unitAmount, unitAmount ?? Infinity)
-          : // When upgrading, if this was a forced up
-            unitAmount ?? clubTier.unitAmount,
+        unitAmount: clubTier.unitAmount,
         currency: clubTier.currency,
         downgradeClubTierId: isSameTier || isUpgrade ? null : isDowngrade ? clubTier.id : undefined,
       },
     });
 
-    if (!isForcedUpdate && isUpgrade) {
+    if (isUpgrade) {
       await createBuzzTransaction({
         toAccountType: 'Club',
         toAccountId: clubTier.clubId,
@@ -388,11 +372,13 @@ export const clubOwnerRemoveMember = async ({
   const isClubOwner = userClubs.find(
     (c) => c.id === membership.clubId && c.userId === sessionUserId
   );
-  const isClubAdmin = userClubs.find(
-    (c) => c.id === membership.clubId && c.membership?.role === ClubMembershipRole.Admin
+  const canManageMemberships = userClubs.find(
+    (c) =>
+      c.id === membership.clubId &&
+      c.admin.permissions.includes(ClubAdminPermission.ManageMemberships)
   );
 
-  if (!(isModerator || isClubOwner || isClubAdmin)) {
+  if (!(isModerator || isClubOwner || canManageMemberships)) {
     throw throwAuthorizationError("You are not authorized to remove a user's membership");
   }
 

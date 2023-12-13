@@ -18,7 +18,7 @@ import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembersh
 import { ClubResourcesPaged } from '~/components/Club/Infinite/ClubResourcesPaged';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { AddResourceToClubModal } from '~/components/Club/AddResourceToClubModal';
-import { ClubMembershipRole } from '@prisma/client';
+import { ClubAdminPermission } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -47,15 +47,16 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
-    const membership = await dbRead.clubMembership.findFirst({
+    const clubAdmin = await dbRead.clubAdmin.findFirst({
       where: { clubId: id, userId: session.user?.id },
     });
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    const isAdmin = membership?.role === ClubMembershipRole.Admin;
+    const canManageResources =
+      clubAdmin?.permissions.includes(ClubAdminPermission.ManageResources) ?? false;
 
-    if (!isOwner && !isModerator && !isAdmin)
+    if (!isOwner && !isModerator && !canManageResources)
       return {
         redirect: {
           destination: `/clubs/${id}`,
@@ -79,7 +80,7 @@ export default function ManageClubMembers({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
-  const { membership, isOwner } = useClubContributorStatus({ clubId: id });
+  const { isClubAdmin, isOwner } = useClubContributorStatus({ clubId: id });
 
   if (!loading && !club) return <NotFound />;
   if (loading) return <PageLoader />;
@@ -92,7 +93,7 @@ export default function ManageClubMembers({
         resources. To add new resources, you should go to the resource and use the context menu to{' '}
         <code>Add to club</code> or use the resource&rsquo;s edit form.
       </Text>
-      {(isOwner || !!membership) && (
+      {(isOwner || isClubAdmin) && (
         <Button
           onClick={() => {
             dialogStore.trigger({

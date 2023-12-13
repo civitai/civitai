@@ -97,19 +97,23 @@ export const hasEntityAccess = async ({
     SELECT 
       ea."accessToId" "entityId",
 	    ea."accessToType" "entityType",
-      COALESCE(c.id, cct.id, cmc."clubId", cmt."clubId", u.id) IS NOT NULL as "hasAccess"
+      COALESCE(c.id, cct.id, ca."clubId", cact."clubId", cmc."clubId", cmt."clubId", u.id) IS NOT NULL as "hasAccess"
     FROM entities e
     LEFT JOIN "EntityAccess" ea ON ea."accessToId" = e."entityId" AND ea."accessToType" = e."entityType"
+    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id"
     -- User is the owner of the club and the resource is tied to the club as a whole
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id AND c."userId" = ${userId} 
     -- User is the owner of the club and the resource is tied to a club tier
-    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id"
     LEFT JOIN "Club" cct ON ct."clubId" = cct.id AND cct."userId" = ${userId}
+    -- User is an admin of the club and resource is tied to the club as a whole:
+    LEFT JOIN "ClubAdmin" ca ON ea."accessorType" = 'Club' AND ea."accessorId" = ca."clubId" AND ca."userId" = ${userId}
+    -- User is an admin of the club and resource is tied a club tier:
+    LEFT JOIN "ClubAdmin" cact  ON ct."clubId" = cact."clubId" AND cact."userId" = ${userId}
     -- User is a member
     LEFT JOIN "ClubMembership" cmc ON ea."accessorType" = 'Club' AND ea."accessorId" = cmc."clubId" AND cmc."userId" = ${userId}
     LEFT JOIN "ClubMembership" cmt ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = cmt."clubTierId" AND cmt."userId" = ${userId}
     -- User access was granted
-    LEFT JOIN "User" u ON ea."accessorType" = 'User' AND ea."accessorId" = u.id AND u.id = ${userId} 
+    LEFT JOIN "User" u ON ea."accessorType" = 'User' AND ea."accessorId" = u.id AND u.id = ${userId}
   `;
 
   // Complex scenario - we have mixed entities with public/private access.

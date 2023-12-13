@@ -480,42 +480,25 @@ export const useQueryClubPosts = (
   return { data, clubPosts, ...rest };
 };
 
-export const getUserClubRole = ({ userId, userClub }: { userId: number; userClub?: UserClub }) => {
-  if (!userClub) return null;
-
-  const membership = userClub.membership;
-  return membership?.role;
-};
-
 export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
   const { data: userClubs = [], ...rest } = trpc.club.userContributingClubs.useQuery(undefined, {
     enabled: !!clubId,
   });
   const currentUser = useCurrentUser();
 
-  const { userClub, role, membership } = useMemo(() => {
-    if (!userClubs || !currentUser)
-      return {
-        userClub: null,
-        role: null,
-        membership: null,
-      };
+  const userClub = useMemo(() => {
+    if (!userClubs || !currentUser) return null;
 
     const userClub = userClubs.find((x) => x.id === clubId);
 
-    return {
-      userClub,
-      role: getUserClubRole({ userId: currentUser.id, userClub }),
-      membership: userClub?.membership,
-    };
+    return userClub ?? null;
   }, [userClubs, currentUser, clubId]);
 
   return {
-    role,
-    userClub,
-    membership,
+    isClubAdmin: !!userClub?.admin,
     isOwner: currentUser && userClub?.userId === currentUser?.id,
     isModerator: currentUser?.isModerator,
+    permissions: userClub?.admin?.permissions ?? [],
     ...rest,
   };
 };

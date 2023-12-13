@@ -1,4 +1,4 @@
-import { ClubMembershipRole, Prisma } from '@prisma/client';
+import { ClubAdminPermission, Prisma } from '@prisma/client';
 import { GetInfiniteClubPostsSchema, UpsertClubPostInput } from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -134,12 +134,9 @@ export const upsertClubPost = async ({
       },
     });
 
-    if (
-      post.createdById !== userId &&
-      !isModerator &&
-      !isOwner &&
-      userClub.memberships.find((m) => m.role === ClubMembershipRole.Admin)
-    ) {
+    const canUpdatePost = userClub.admin?.permissions.includes(ClubAdminPermission.ManagePosts);
+
+    if (post.createdById !== userId && !isModerator && !isOwner && !canUpdatePost) {
       throw throwAuthorizationError('You do not have permission to edit this post.');
     }
   }
@@ -198,12 +195,9 @@ export const deleteClubPost = async ({
   }
 
   const isClubOwner = userClub.userId === userId;
+  const canDeletePost = userClub.admin?.permissions.includes(ClubAdminPermission.ManagePosts);
 
-  if (
-    !isClubOwner &&
-    !isModerator &&
-    !userClub.memberships.find((m) => m.role === ClubMembershipRole.Admin)
-  ) {
+  if (!isClubOwner && !isModerator && !canDeletePost) {
     throw throwAuthorizationError('You do not have permission to delete this post.');
   }
 

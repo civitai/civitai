@@ -25,7 +25,7 @@ import {
 } from '~/server/services/clubMembership.service';
 import { userContributingClubs } from '~/server/services/club.service';
 import { dbRead } from '~/server/db/client';
-import { ClubMembershipRole } from '@prisma/client';
+import { ClubAdminPermission } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const getInfiniteClubMembershipsHandler = async ({
@@ -40,11 +40,12 @@ export const getInfiniteClubMembershipsHandler = async ({
 
   const userClubs = await userContributingClubs({ userId: user.id });
   const isClubOwner = userClubs.find((c) => c.id === input.clubId && c.userId === user.id);
-  const isClubAdmin = userClubs.find(
-    (c) => c.id === input.clubId && c.membership?.role === ClubMembershipRole.Admin
+  const canViewMemberships = userClubs.find(
+    (c) =>
+      c.id === input.clubId && c.admin?.permissions.includes(ClubAdminPermission.ManageMemberships)
   );
 
-  if (!(user.isModerator || isClubOwner || isClubAdmin)) {
+  if (!(user.isModerator || isClubOwner || canViewMemberships)) {
     throw throwAuthorizationError("You are not authorized to view this club's memberships");
   }
 
@@ -203,42 +204,9 @@ export async function updateClubMembershipHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    const targetUserIsNotCurrentUser = !!(input.userId && input.userId !== ctx.user.id);
-    const targetUserId = input.userId ?? ctx.user.id;
-    const clubTier = await dbRead.clubTier.findUniqueOrThrow({
-      where: { id: input.clubTierId },
-      select: {
-        id: true,
-        club: {
-          select: {
-            id: true,
-            userId: true,
-          },
-        },
-      },
-    });
-
-    const userClubs = await userContributingClubs({ userId: ctx.user.id });
-    const membership = await dbRead.clubMembership.findFirst({
-      where: { clubId: clubTier.id, userId: targetUserId },
-    });
-
-    const isClubOwner = clubTier.club.userId === ctx.user.id;
-    const isClubAdmin = userClubs.find(
-      (c) => c.id === clubTier.club.id && c.membership?.role === ClubMembershipRole.Admin
-    );
-
-    if (targetUserIsNotCurrentUser && !(ctx.user.isModerator || isClubOwner || isClubAdmin)) {
-      throw throwAuthorizationError('You are not authorized to update this membership');
-    }
-
     return updateClubMembership({
       ...input,
-      userId: input.userId ?? ctx.user.id,
-      // This is important. If the user assigning this new memberships is not itself, we want to
-      // keep the unitAmount of the previous membership
-      unitAmount: targetUserIsNotCurrentUser ? membership?.unitAmount : undefined,
-      isForcedUpdate: targetUserIsNotCurrentUser,
+      userId: ctx.user.id,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

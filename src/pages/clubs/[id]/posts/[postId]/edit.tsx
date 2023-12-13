@@ -9,9 +9,9 @@ import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersion
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
-import { ClubMembershipRole } from '@prisma/client';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
+import { ClubAdminPermission } from '@prisma/client';
 
 export default function ClubPostEdit() {
   const router = useRouter();
@@ -21,7 +21,7 @@ export default function ClubPostEdit() {
     id: postId,
   });
 
-  const { isOwner, role } = useClubContributorStatus({
+  const { isOwner, permissions } = useClubContributorStatus({
     clubId: clubPost?.clubId,
   });
   const { classes } = useClubFeedStyles();
@@ -29,10 +29,7 @@ export default function ClubPostEdit() {
   const isModerator = currentUser?.isModerator ?? false;
 
   const canUpdatePost =
-    isModerator ||
-    isOwner ||
-    (clubPost?.createdBy?.id === currentUser?.id && role === ClubMembershipRole.Contributor) ||
-    role === ClubMembershipRole.Admin;
+    isModerator || isOwner || permissions.includes(ClubAdminPermission.ManagePosts);
 
   if (isLoading) return <PageLoader />;
   if (!canUpdatePost || !clubPost) return <NotFound />;

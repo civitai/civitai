@@ -53,8 +53,8 @@ import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/Club
 import { ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
-import { ClubMembershipRole } from '@prisma/client';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ClubAdminPermission } from '@prisma/client';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -170,22 +170,26 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   };
   const id = Number(stringId);
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
-  const { data: userClubs = [], isLoading: isLoadingUserClubs } =
-    trpc.club.userContributingClubs.useQuery();
+  const {
+    isOwner,
+    isModerator,
+    isClubAdmin,
+    permissions,
+    isLoading: isLoadingContributorStatus,
+  } = useClubContributorStatus({
+    clubId: id,
+  });
   const { data: membership, isLoading: loadingMembership } =
     trpc.clubMembership.getClubMembershipOnClub.useQuery({
       clubId: id,
     });
   const currentUser = useCurrentUser();
-  const isOwner = currentUser && club?.userId === currentUser?.id;
-  const isModerator = currentUser?.isModerator;
-  const isAdmin = membership?.role === ClubMembershipRole.Admin;
 
   const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
 
   const canPost = useMemo(() => {
-    return isModerator || isOwner || userClubs.some((c) => c.id === id);
-  }, [membership, userClubs, isLoadingUserClubs]);
+    return isModerator || isOwner || permissions.includes(ClubAdminPermission.ManagePosts);
+  }, [isLoadingContributorStatus]);
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -304,7 +308,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                         Post content
                       </Button>
                     )}
-                    {(isOwner || isAdmin || isModerator) && (
+                    {(isOwner || isClubAdmin || isModerator) && (
                       <Button
                         component={'a'}
                         href={`/clubs/manage/${club.id}`}

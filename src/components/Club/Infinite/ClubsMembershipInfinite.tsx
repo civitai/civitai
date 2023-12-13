@@ -29,7 +29,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { IconClock, IconTrash, IconX } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { ClubMembershipRole, Currency } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { constants } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -49,12 +49,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
 
   const { isModerator, isOwner } = useClubContributorStatus({ clubId });
 
-  const {
-    removeAndRefundMember,
-    removingAndRefundingMember,
-    updateClubMembership,
-    updatingClubMembership,
-  } = useMutateClub();
+  const { removeAndRefundMember, removingAndRefundingMember } = useMutateClub();
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -101,89 +96,6 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
     });
   };
 
-  const onUpdateMembershipRole = async (
-    membership: (typeof memberships)[number],
-    role: ClubMembershipRole
-  ) => {
-    if (role === membership.role) return;
-
-    if (
-      (role === ClubMembershipRole.Admin || membership.role === ClubMembershipRole.Admin) &&
-      !(isOwner || isModerator)
-    ) {
-      showErrorNotification({
-        title: 'Unauthorized',
-        error: new Error('You are not authorized to perform this action.'),
-      });
-
-      return;
-    }
-
-    const isRoleUpgrade =
-      constants.clubs.clubMembershipRoleHiearchy.indexOf(role) <
-      constants.clubs.clubMembershipRoleHiearchy.indexOf(membership.role);
-
-    const featureBase = isRoleUpgrade ? role : membership.role;
-
-    const features =
-      featureBase === ClubMembershipRole.Admin
-        ? constants.clubs.adminMembershipFeatures
-        : featureBase === ClubMembershipRole.Contributor
-        ? constants.clubs.contributorMembershipFeatures
-        : [];
-
-    const featureList = (
-      <List spacing="xs" size="sm">
-        {features.map((feature) => (
-          <List.Item key={feature}>{feature}</List.Item>
-        ))}
-      </List>
-    );
-
-    openConfirmModal({
-      title: 'Update membership role',
-      children: (
-        <Stack>
-          <Text size="sm">Are you sure you want to update this member role?</Text>
-          {isRoleUpgrade ? (
-            <Text size="sm">
-              The user{' '}
-              <Text weight="bold" component="span">
-                {membership.user.username}
-              </Text>{' '}
-              will be upgraded to {getDisplayName(role)} and gain access to the following features:
-            </Text>
-          ) : (
-            <Text size="sm">
-              The user{' '}
-              <Text weight="bold" component="span">
-                {membership.user.username}
-              </Text>{' '}
-              will be downgraded to {getDisplayName(role)} and lose access to the following
-              features:
-            </Text>
-          )}
-          {featureList}
-        </Stack>
-      ),
-      centered: true,
-      labels: { confirm: 'Update membership', cancel: 'Cancel' },
-      confirmProps: { loading: updatingClubMembership },
-      onConfirm: async () => {
-        await updateClubMembership({
-          clubTierId: membership.clubTier.id,
-          userId: membership.user.id,
-          role,
-        });
-
-        showSuccessNotification({
-          title: 'Membership updated',
-          message: `User ${membership.user.username} has been assigned a new role.`,
-        });
-      },
-    });
-  };
-
   //#endregion
 
   return (
@@ -200,7 +112,6 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
               <tr>
                 <th>User</th>
                 <th>Tier</th>
-                <th>Role</th>
                 <th>Member since</th>
                 <th>Next billing date</th>
                 <th>&nbsp;</th>
@@ -213,19 +124,6 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                     <UserAvatar user={membership.user} withUsername />
                   </td>
                   <td>{membership.clubTier.name}</td>
-                  <td>
-                    <Select
-                      aria-label="Membership role"
-                      data={Object.values(ClubMembershipRole).map((role) => ({
-                        label: role,
-                        value: role,
-                      }))}
-                      value={membership.role}
-                      onChange={(value: ClubMembershipRole) =>
-                        onUpdateMembershipRole(membership, value)
-                      }
-                    />
-                  </td>
                   <td>{formatDate(membership.startedAt)}</td>
                   <td>{formatDate(membership.nextBillingAt)}</td>
                   <td>
