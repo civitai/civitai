@@ -14,9 +14,9 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
     trpc.clubMembership.getClubMembershipOnClub.useQuery({
       clubId,
     });
-  const { isOwner, isAdmin, isModerator } = useClubContributorStatus({ clubId });
+  const { isOwner, isClubAdmin, isModerator } = useClubContributorStatus({ clubId });
 
-  const canComment = membership || isAdmin || isOwner || isModerator;
+  const canComment = membership || isClubAdmin || isOwner || isModerator;
 
   return (
     <CommentsProvider
