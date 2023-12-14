@@ -15,7 +15,8 @@ export enum TransactionType {
   ChargeBack = 11,
   Donation = 12,
   ClubMembership = 13,
-  ClubWithdrawal = 14,
+  ClubMembershipRefund = 14,
+  ClubWithdrawal = 15,
 }
 
 const buzzAccountTypes = ['User', 'Club', 'Other'] as const;

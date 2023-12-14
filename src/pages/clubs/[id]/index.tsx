@@ -51,7 +51,7 @@ import {
   ClubPostUpsertFormModal,
 } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import { ClubTierItem } from '~/components/Club/ClubTierItem';
+import { ClubTierItem, useToggleClubMembershipCancelStatus } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -181,6 +181,9 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   });
   const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
   const canPost = isOwner || isModerator || isClubAdmin;
+  const { isCancelled, isToggling, toggleCancelStatus } = useToggleClubMembershipCancelStatus({
+    clubId: id,
+  });
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -319,24 +322,46 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                   <Title order={3}>Membership Tiers</Title>
                   {membership?.cancelledAt ? (
                     <Alert color="yellow">
-                      <Text size="sm">
-                        Your membership was cancelled on {formatDate(membership.cancelledAt)} and
-                        will be active until{' '}
-                        <Text weight="bold" component="span">
-                          {formatDate(membership.expiresAt)}
+                      <Stack>
+                        <Text size="sm">
+                          Your membership was cancelled on {formatDate(membership.cancelledAt)} and
+                          will be active until{' '}
+                          <Text weight="bold" component="span">
+                            {formatDate(membership.expiresAt)}
+                          </Text>
+                          .
                         </Text>
-                        .
-                      </Text>
+                        <Button
+                          size="xs"
+                          onClick={toggleCancelStatus}
+                          loading={isToggling}
+                          variant="subtle"
+                          color="yellow"
+                        >
+                          {isCancelled ? 'Restore membership' : 'Cancel membership'}
+                        </Button>
+                      </Stack>
                     </Alert>
                   ) : membership?.nextBillingAt ? (
                     <Alert color="yellow">
-                      <Text size="sm">
-                        You are a member of this club. Your next billing date is{' '}
-                        <Text weight="bold" component="span">
-                          {formatDate(membership.nextBillingAt)}
+                      <Stack>
+                        <Text size="sm">
+                          You are a member of this club. Your next billing date is{' '}
+                          <Text weight="bold" component="span">
+                            {formatDate(membership.nextBillingAt)}
+                          </Text>
+                          .
                         </Text>
-                        .
-                      </Text>
+                        <Button
+                          size="xs"
+                          onClick={toggleCancelStatus}
+                          loading={isToggling}
+                          variant="subtle"
+                          color="yellow"
+                        >
+                          {isCancelled ? 'Restore membership' : 'Cancel membership'}
+                        </Button>
+                      </Stack>
                     </Alert>
                   ) : null}
                   {tiers.length > 0 ? (

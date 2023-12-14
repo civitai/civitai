@@ -1,6 +1,6 @@
 import React from 'react';
 import { Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
-import { ClubTier } from '~/types/router';
+import { ClubMembershipOnClub, ClubTier } from '~/types/router';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -28,7 +28,7 @@ import { Currency } from '@prisma/client';
 export const TierCoverImage = ({
   clubTier,
 }: {
-  clubTier: Pick<ClubTier, 'coverImage' | 'clubId'>;
+  clubTier: ClubTier | NonNullable<ClubMembershipOnClub>['clubTier'];
 }) =>
   clubTier.coverImage ? (
     <Center>

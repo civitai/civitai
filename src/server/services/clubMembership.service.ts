@@ -429,7 +429,7 @@ export const clubOwnerRemoveMember = async ({
       toAccountId: membership.userId,
       toAccountType: 'User',
       amount: membership.unitAmount,
-      type: TransactionType.Refund,
+      type: TransactionType.ClubMembershipRefund,
       details: {
         userId: membership.userId,
         clubTierId: membership.clubTierId,

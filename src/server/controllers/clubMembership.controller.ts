@@ -25,9 +25,9 @@ import {
   updateClubMembership,
 } from '~/server/services/clubMembership.service';
 import { userContributingClubs } from '~/server/services/club.service';
-import { dbRead } from '~/server/db/client';
 import { ClubAdminPermission } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { ImageMetaProps } from '../schema/image.schema';
 
 export const getInfiniteClubMembershipsHandler = async ({
   input,
@@ -130,7 +130,7 @@ export const getClubMembershipOnClubHandler = async ({
   }
 
   try {
-    return clubMembershipOnClub({
+    const membership = await clubMembershipOnClub({
       input: {
         clubId,
         userId: user.id,
@@ -175,6 +175,22 @@ export const getClubMembershipOnClubHandler = async ({
         },
       },
     });
+
+    return membership
+      ? {
+          ...membership,
+          clubTier: {
+            ...membership.clubTier,
+            coverImage: membership?.clubTier.coverImage
+              ? {
+                  ...membership?.clubTier.coverImage,
+                  meta: membership?.clubTier.coverImage.meta as ImageMetaProps,
+                  metadata: membership?.clubTier.coverImage.metadata as MixedObject,
+                }
+              : null,
+          },
+        }
+      : null;
   } catch (error) {
     throw throwDbError(error);
   }
