@@ -1,6 +1,7 @@
 import { Stack, Group, Text, Loader, Center, Divider, Alert } from '@mantine/core';
 import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { trpc } from '~/utils/trpc';
+import { useClubContributorStatus } from '../club.utils';
 
 type Props = {
   clubId: number;
@@ -13,6 +14,9 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
     trpc.clubMembership.getClubMembershipOnClub.useQuery({
       clubId,
     });
+  const { isOwner, isAdmin, isModerator } = useClubContributorStatus({ clubId });
+
+  const canComment = membership || isAdmin || isOwner || isModerator;
 
   return (
     <CommentsProvider
@@ -28,7 +32,7 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
           </Center>
         ) : (
           <Stack>
-            {membership ? (
+            {canComment ? (
               <CreateComment />
             ) : (
               <Alert>
