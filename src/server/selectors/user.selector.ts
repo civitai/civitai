@@ -1,12 +1,12 @@
 import { Prisma } from '@prisma/client';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 
 export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
   username: true,
   deletedAt: true,
   image: true,
-  profilePicture: { select: { ...imageSelect, ingestion: true } },
+  profilePicture: { select: profileImageSelect },
 });
 
 const simpleUser = Prisma.validator<Prisma.UserDefaultArgs>()({

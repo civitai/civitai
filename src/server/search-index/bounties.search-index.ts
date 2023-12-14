@@ -20,7 +20,7 @@ import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import { ImageMetadata } from '~/server/schema/media.schema';
-import { ImageModelWithIngestion } from '../selectors/image.selector';
+import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 
 const READ_BATCH_SIZE = 250; // 10 items per bounty are fetched for images. Careful with this number
@@ -227,7 +227,7 @@ const onFetchItemsToIndex = async ({
     SELECT
       uc."userId",
       jsonb_agg(
-        jsonb_build_object( 
+        jsonb_build_object(
           'data', uc.data,
           'cosmetic', jsonb_build_object(
             'id', c.id,
@@ -343,7 +343,7 @@ const onFetchItemsToIndex = async ({
 
   const profilePictures = await db.image.findMany({
     where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },
-    select: { ...imageSelect, ingestion: true },
+    select: profileImageSelect,
   });
 
   console.log(
