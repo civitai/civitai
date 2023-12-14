@@ -147,6 +147,7 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   settings: recommendedSettingsSchema.nullish(),
   recommendedResources: z.array(recommendedResourceSchema).optional(),
+  templateId: z.number().optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
