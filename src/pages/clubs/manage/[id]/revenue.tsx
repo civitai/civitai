@@ -43,6 +43,7 @@ export const getServerSideProps = createServerSideProps({
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
+
     if (!isOwner && !isModerator)
       return {
         redirect: {

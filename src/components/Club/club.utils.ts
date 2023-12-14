@@ -33,6 +33,10 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { WithdrawClubFundsSchema } from '~/server/schema/buzz.schema';
+import {
+  GetPagedClubAdminInviteSchema,
+  UpsertClubAdminInviteInput,
+} from '~/server/schema/clubAdmin.schema';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -657,4 +661,64 @@ export const useQueryClubs = (
   ]);
 
   return { data, clubs, ...rest };
+};
+
+export const useQueryClubAdminInvites = (
+  clubId: number,
+  filters?: Partial<GetPagedClubAdminInviteSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.clubAdmin.getInvitesPaged.useQuery(
+    {
+      ...filters,
+      clubId,
+    },
+    {
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
+
+  if (data) {
+    const { items: invites = [], ...pagination } = data;
+    return { invites, pagination, ...rest };
+  }
+
+  return { invites: [], pagination: null, ...rest };
+};
+
+export const useMutateClubAdmin = () => {
+  const queryUtils = trpc.useContext();
+
+  const upsertClubAdminInvite = trpc.clubAdmin.upsertInvite.useMutation({
+    async onSuccess(result, payload) {
+      await queryUtils.clubAdmin.getInvitesPaged.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to save invite',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to save invite',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const handleUpsertClubAdminInvite = (data: UpsertClubAdminInviteInput) => {
+    return upsertClubAdminInvite.mutateAsync(data);
+  };
+
+  return {
+    upsertInvite: handleUpsertClubAdminInvite,
+    upsertingInvite: upsertClubAdminInvite.isLoading,
+  };
 };

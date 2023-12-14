@@ -107,3 +107,5 @@ export type ClubResourceGetPaginatedItem =
   RouterOutput['club']['getPaginatedClubResources']['items'][number];
 
 export type UserPaymentMethod = RouterOutput['user']['getPaymentMethods'][number];
+
+export type ClubAdminInvite = RouterOutput['clubAdmin']['getInvitesPaged']['items'][number];

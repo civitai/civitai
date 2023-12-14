@@ -1,4 +1,4 @@
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
+import { isFlagProtected, protectedProcedure, router } from '../trpc';
 import {
   toggleClubMembershipStatusInput,
   clubMembershipOnClubInput,
@@ -19,7 +19,7 @@ import {
 } from '~/server/controllers/clubMembership.controller';
 
 export const clubMembershipRouter = router({
-  getInfinite: publicProcedure
+  getInfinite: protectedProcedure
     .input(getInfiniteClubMembershipsSchema)
     .use(isFlagProtected('clubs'))
     .query(getInfiniteClubMembershipsHandler),

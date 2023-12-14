@@ -1,14 +1,10 @@
-import { Anchor, Badge, createStyles, Group, Tabs, Text } from '@mantine/core';
 import React from 'react';
 import {
   IconAssembly,
   IconBolt,
   IconCategory,
   IconFiles,
-  IconLayoutList,
-  IconMoneybag,
-  IconPencilMinus,
-  IconPhoto,
+  IconUserBolt,
   IconUsers,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -42,6 +38,11 @@ export const ClubManagementNavigation = ({ id }: { id: number }) => {
     tiers: {
       url: `${baseUrl}/tiers`,
       icon: <IconCategory />,
+      disabled: !isOwner && !isModerator,
+    },
+    admins: {
+      url: `${baseUrl}/admins`,
+      icon: <IconUserBolt />,
       disabled: !isOwner && !isModerator,
     },
     resources: {
