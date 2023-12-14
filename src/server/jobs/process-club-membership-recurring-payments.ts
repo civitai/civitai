@@ -32,6 +32,10 @@ export const processClubMembershipRecurringPayments = createJob(
         },
         cancelledAt: null,
         expiresAt: null,
+        billingPausedAt: null,
+        club: {
+          billing: true,
+        },
       },
     });
 
