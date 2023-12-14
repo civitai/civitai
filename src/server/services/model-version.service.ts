@@ -107,18 +107,18 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
 };
 
 export const upsertModelVersion = async ({
+  id,
   monetization,
   settings,
   recommendedResources,
   clubs,
+  templateId,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
-  const model = await dbRead.model.findUniqueOrThrow({ where: { id: data.modelId } });
-
-  if (!data.id) {
+  if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: { id: true },
@@ -178,7 +178,7 @@ export const upsertModelVersion = async ({
     return version;
   } else {
     const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
-      where: { id: data.id },
+      where: { id },
       select: {
         id: true,
         monetization: {
@@ -197,7 +197,7 @@ export const upsertModelVersion = async ({
     });
 
     const version = await dbWrite.modelVersion.update({
-      where: { id: data.id },
+      where: { id },
       data: {
         ...data,
         settings: settings !== null ? settings : Prisma.JsonNull,

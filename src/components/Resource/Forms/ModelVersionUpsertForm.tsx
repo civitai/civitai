@@ -40,6 +40,8 @@ import {
   generationResourceSchema,
 } from '~/server/schema/generation.schema';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
+import { parseNumericString } from '~/utils/query-string-helpers';
+import { useRouter } from 'next/router';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -79,9 +81,11 @@ const schema = modelVersionUpsertSchema2
 type Schema = z.infer<typeof schema>;
 
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
+const querySchema = z.object({ templateId: z.coerce.number().optional() });
 
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
+  const router = useRouter();
   const queryUtils = trpc.useContext();
 
   const acceptsTrainedWords = [
@@ -162,7 +166,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     recommendedResources: rawRecommendedResources,
     ...data
   }: Schema) => {
-    if (isDirty || !version?.id) {
+    const schemaResult = querySchema.safeParse(router.query);
+    const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
+
+    if (isDirty || !version?.id || templateId) {
       const recommendedResources =
         rawRecommendedResources?.map(({ id, strength }) => ({
           resourceId: id,
@@ -180,6 +187,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         vaeId: hasVAE ? data.vaeId : undefined,
         monetization: data.monetization,
         recommendedResources,
+        templateId,
       });
 
       await queryUtils.modelVersion.getById.invalidate();

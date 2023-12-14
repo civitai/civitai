@@ -1268,7 +1268,6 @@ export async function getModelTemplateFieldsHandler({
           take: 1,
           orderBy: { createdAt: 'desc' },
           select: {
-            id: true,
             baseModel: true,
             baseModelType: true,
             settings: true,

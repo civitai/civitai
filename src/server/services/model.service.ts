@@ -1149,13 +1149,11 @@ export const upsertModel = async ({
   id,
   tagsOnModels,
   userId,
+  templateId,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-ModelUpsertInput & {
-  userId: number;
-  meta?: Prisma.ModelCreateInput['meta'];
-}) => {
-  if (!id)
+ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
+  if (!id || templateId)
     return dbWrite.model.create({
       select: { id: true, nsfw: true },
       data: {

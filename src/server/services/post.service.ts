@@ -42,7 +42,7 @@ import {
 } from './../schema/post.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { imageSelect } from '../selectors/image.selector';
+import { profileImageSelect } from '../selectors/image.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -268,7 +268,7 @@ export const getPostsInfinite = async ({
     : undefined;
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
-    select: { ...imageSelect, ingestion: true },
+    select: profileImageSelect,
   });
 
   return {
