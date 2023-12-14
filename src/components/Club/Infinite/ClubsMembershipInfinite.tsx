@@ -3,10 +3,8 @@ import {
   Center,
   Divider,
   Group,
-  List,
   Loader,
   LoadingOverlay,
-  Select,
   Stack,
   Table,
   Text,
@@ -26,13 +24,11 @@ import { GetInfiniteClubMembershipsSchema } from '~/server/schema/clubMembership
 import { ClubMembershipSort } from '~/server/common/enums';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
-import { IconClock, IconTrash, IconX } from '@tabler/icons-react';
+import { IconClock, IconPlayerPause, IconPlayerPlay, IconTrash } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { constants } from '~/server/common/constants';
-import { getDisplayName } from '~/utils/string-helpers';
+import { ClubAdminPermission, Currency } from '@prisma/client';
+import { showSuccessNotification } from '~/utils/notifications';
 
 export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
   // TODO.clubs: Add some custom filters for members.
@@ -47,14 +43,35 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
   const { memberships, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     useQueryClubMembership(clubId, debouncedFilters);
 
-  const { isModerator, isOwner } = useClubContributorStatus({ clubId });
+  const { isModerator, isOwner, permissions } = useClubContributorStatus({ clubId });
+  const canManageMemberships =
+    isModerator || isOwner || permissions?.includes(ClubAdminPermission.ManageMemberships);
 
-  const { removeAndRefundMember, removingAndRefundingMember } = useMutateClub();
+  const {
+    removeAndRefundMember,
+    removingAndRefundingMember,
+    togglePauseBilling,
+    togglingPauseBilling,
+  } = useMutateClub();
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
     if (isEqual(filters, debouncedFilters)) cancel();
   }, [cancel, debouncedFilters, filters]);
+
+  const onTogglePauseBilling = async (membership: (typeof memberships)[number]) => {
+    await togglePauseBilling({
+      userId: membership.user.id,
+      clubId,
+    });
+
+    showSuccessNotification({
+      title: 'Billing paused',
+      message: `${membership.user.username}'s billing has been ${
+        membership.billingPausedAt ? 'resumed' : 'paused'
+      }.`,
+    });
+  };
 
   const onRemoveAndRefundMember = async (membership: (typeof memberships)[number]) => {
     openConfirmModal({
@@ -113,9 +130,9 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                 <th>User</th>
                 <th>Tier</th>
                 <th>Member since</th>
-                <th>Next billing date</th>
-                <th>Cancel date</th>
-                <th>Billing date paused from </th>
+                <th>Next billing</th>
+                <th>Cancel on</th>
+                <th>Billing paused from </th>
                 <th>&nbsp;</th>
               </tr>
             </thead>
@@ -133,8 +150,23 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                     {membership.billingPausedAt ? formatDate(membership.billingPausedAt) : '-'}
                   </td>
                   <td>
-                    {isOwner || isModerator ? (
+                    {canManageMemberships ? (
                       <Group>
+                        <Tooltip
+                          label={`${
+                            membership.billingPausedAt ? 'Resume' : 'Pause'
+                          } billing for this user`}
+                        >
+                          <ActionIcon
+                            size="sm"
+                            color="red"
+                            variant="transparent"
+                            onClick={() => onTogglePauseBilling(membership)}
+                            loading={togglingPauseBilling}
+                          >
+                            {membership.billingPausedAt ? <IconPlayerPlay /> : <IconPlayerPause />}
+                          </ActionIcon>
+                        </Tooltip>
                         <Tooltip label="Remove and refund last payment">
                           <ActionIcon
                             size="sm"

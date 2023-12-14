@@ -442,6 +442,63 @@ export const clubOwnerRemoveMember = async ({
   });
 };
 
+export const clubOwnerTogglePauseBilling = async ({
+  clubId,
+  userId,
+  sessionUserId,
+  isModerator,
+}: OwnerRemoveClubMembershipInput & {
+  sessionUserId: number;
+  isModerator: boolean;
+}) => {
+  const membership = await dbRead.clubMembership.findFirst({
+    where: { clubId, userId },
+    include: {
+      clubTier: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      club: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  if (!membership) throw throwBadRequestError('Club membership not found');
+  if (membership.userId === sessionUserId)
+    throw throwBadRequestError('You cannot pause your own billing from a club');
+
+  const [userClub] = await userContributingClubs({
+    userId: sessionUserId,
+    clubIds: [clubId],
+  });
+
+  if (!userClub) {
+    throw throwAuthorizationError("You are not authorized to pause a user's membership");
+  }
+
+  const isClubOwner = userClub.userId === sessionUserId;
+  const canManageMemberships = (userClub.admin?.permissions ?? []).includes(
+    ClubAdminPermission.ManageMemberships
+  );
+
+  if (!(isModerator || isClubOwner || canManageMemberships)) {
+    throw throwAuthorizationError("You are not authorized to pause a user's membership");
+  }
+
+  return dbWrite.clubMembership.update({
+    data: {
+      billingPausedAt: membership.billingPausedAt ? null : new Date(),
+    },
+    where: { id: membership.id },
+  });
+};
+
 export const cancelClubMembership = async ({ userId, clubId }: ToggleClubMembershipStatusInput) => {
   const membership = await dbRead.clubMembership.findFirst({
     where: { clubId, userId },

@@ -359,6 +359,28 @@ export const useMutateClub = () => {
     },
   });
 
+  const togglePauseBillingMutation = trpc.clubMembership.togglePauseBilling.useMutation({
+    async onSuccess() {
+      await queryUtils.clubMembership.getInfinite.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to pause billing for user',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to pause billing for user',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
@@ -402,6 +424,9 @@ export const useMutateClub = () => {
   const handleWithdrawClubFunds = (data: WithdrawClubFundsSchema) => {
     return withdrawClubFundsMutation.mutateAsync(data);
   };
+  const handleTogglePauseBillingMutation = (data: OwnerRemoveClubMembershipInput) => {
+    return togglePauseBillingMutation.mutateAsync(data);
+  };
 
   return {
     upsertClub: handleUpsertClub,
@@ -432,6 +457,8 @@ export const useMutateClub = () => {
     deletingClubPost: deleteClubPostMutation.isLoading,
     withdrawClubFunds: handleWithdrawClubFunds,
     withdrawingClubFunds: withdrawClubFundsMutation.isLoading,
+    togglePauseBilling: handleTogglePauseBillingMutation,
+    togglingPauseBilling: togglePauseBillingMutation.isLoading,
   };
 };
 

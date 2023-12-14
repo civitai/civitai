@@ -18,6 +18,7 @@ import {
   cancelClubMembership,
   clubMembershipOnClub,
   clubOwnerRemoveMember,
+  clubOwnerTogglePauseBilling,
   createClubMembership,
   getClubMemberships,
   restoreClubMembership,
@@ -225,6 +226,26 @@ export const removeAndRefundMemberHandler = async ({
 
   try {
     return clubOwnerRemoveMember({
+      ...input,
+      sessionUserId: user.id,
+      isModerator: !!user.isModerator,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const clubOwnerTogglePauseBillingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: OwnerRemoveClubMembershipInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+
+  try {
+    return clubOwnerTogglePauseBilling({
       ...input,
       sessionUserId: user.id,
       isModerator: !!user.isModerator,
