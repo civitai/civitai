@@ -1,6 +1,13 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import { createTRPCProxyClient, httpLink, loggerLink, splitLink, TRPCLink } from '@trpc/client';
+import {
+  createTRPCProxyClient,
+  httpLink,
+  loggerLink,
+  splitLink,
+  TRPCLink,
+  httpBatchLink,
+} from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
@@ -54,8 +61,9 @@ export const trpc = createTRPCNext<AppRouter>({
   ssr: false,
 });
 
-// Service router not working with TRPC NEXT
-export const serviceClient = createTRPCProxyClient<MessageServiceRouter>({
+// Config w/ Next gives error - maybe try using react-query https://trpc.io/docs/client/react/setup
+type ServiceClientRouters = MessageServiceRouter; // | OtherRouter | AnotherRouter
+export const serviceClient = createTRPCProxyClient<ServiceClientRouters>({
   links: [
     httpLink({
       url: 'http://localhost:3001/trpc',

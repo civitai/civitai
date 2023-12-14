@@ -1,5 +1,4 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { ConversationMessages } from '~/components/Conversations/ConversationsMessages';
 import ConversationsLayout from '~/components/Conversations/ConversationsLayout';
 
 // export const getServerSideProps = createServerSideProps({
@@ -14,7 +13,7 @@ import ConversationsLayout from '~/components/Conversations/ConversationsLayout'
 export default function ConversationsPage() {
   return (
     <ConversationsLayout>
-      <ConversationMessages />
+      <h1>Default Convo copy</h1>
     </ConversationsLayout>
   );
 }

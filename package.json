@@ -34,6 +34,7 @@
     "@aws-sdk/lib-storage": "^3.188.0",
     "@aws-sdk/s3-request-presigner": "^3.188.0",
     "@axiomhq/axiom-node": "^0.12.0",
+    "@civitai/message-service": "^1.0.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",
     "@dnd-kit/core": "^6.1.0",

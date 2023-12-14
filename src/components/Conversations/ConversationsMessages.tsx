@@ -1,6 +1,8 @@
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
+import { TextInput, Group, Button } from '@mantine/core';
+import { IconSend } from '@tabler/icons-react';
 
 export function ConversationMessages() {
   const router = useRouter();
@@ -54,12 +56,20 @@ export function ConversationMessages() {
           ))}
         </div>
       )}
-      <div>
-        <input placeholder="Type a message..." onChange={(event) => setText(event.target.value)} />
-        <button onClick={handleNewMessage} disabled={!text}>
-          Submit
-        </button>
-      </div>
+      <Group>
+        <TextInput
+          placeholder="Type a message..."
+          onChange={(event) => setText(event.target.value)}
+        />
+        <Button
+          rightIcon={<IconSend size={14} />}
+          variant="default"
+          onClick={handleNewMessage}
+          disabled={!text}
+        >
+          Send
+        </Button>
+      </Group>
     </div>
   );
 }

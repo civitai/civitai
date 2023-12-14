@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 export function ConversationsSidebar() {
+  const router = useRouter();
   const [conversations, setConversations] = useState<any>([]);
   const [loading, setLoading] = useState(false);
 
@@ -38,6 +40,7 @@ export function ConversationsSidebar() {
         {loading ? (
           <div>Loading...</div>
         ) : (
+          // router.query.conversationId
           conversations?.map((conversation) => (
             <div key={conversation.id}>
               <Link href={`/conversations/${conversation.id}`}>{conversation.name}</Link>
