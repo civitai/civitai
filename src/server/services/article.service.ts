@@ -1,6 +1,9 @@
 import {
   ArticleEngagementType,
+  CosmeticSource,
+  CosmeticType,
   MetricTimeframe,
+  ModelType,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -22,7 +25,6 @@ import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -36,6 +38,54 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
+import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
+import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
+import { profileImageSelect } from '~/server/selectors/image.selector';
+
+type ArticleRaw = {
+  id: number;
+  cover: string;
+  title: string;
+  publishedAt: Date | null;
+  nsfw: boolean;
+  stats:
+    | {
+        favoriteCount: number;
+        commentCount: number;
+        likeCount: number;
+        dislikeCount: number;
+        heartCount: number;
+        laughCount: number;
+        cryCount: number;
+        viewCount: number;
+        tippedAmountCount: number;
+      }
+    | undefined;
+  tags: {
+    tag: {
+      id: number;
+      name: string;
+      isCategory: boolean;
+    };
+  }[];
+  user: {
+    id: number;
+    username: string | null;
+    deletedAt: Date | null;
+    image: string | null;
+    profilePictureId?: number | null;
+  };
+  userCosmetics: {
+    data: Prisma.JsonValue;
+    cosmetic: {
+      data: Prisma.JsonValue;
+      type: CosmeticType;
+      id: number;
+      name: string;
+      source: CosmeticSource;
+    };
+  }[];
+};
 
 export const getArticles = async ({
   limit,
@@ -58,6 +108,7 @@ export const getArticles = async ({
   collectionId,
   browsingMode,
   followed,
+  clubId,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -67,13 +118,35 @@ export const getArticles = async ({
       !!username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
 
-    const AND: Prisma.Enumerable<Prisma.ArticleWhereInput> = [];
-    if (query) AND.push({ title: { contains: query } });
-    if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-    if (!!userIds?.length) AND.push({ userId: { in: userIds } });
-    if (!!ids?.length) AND.push({ id: { in: ids } });
-    if (browsingMode === BrowsingMode.SFW) AND.push({ nsfw: false });
-    if (username) AND.push({ user: { username } });
+    const AND: Prisma.Sql[] = [];
+    const WITH: Prisma.Sql[] = [];
+
+    if (query) {
+      AND.push(Prisma.sql`a."title" LIKE '%${query}%'`);
+    }
+    if (!!tags?.length) {
+      AND.push(
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM "TagsOnArticle" tao WHERE tao."articleId" = a.id AND at."tagId" IN (${Prisma.join(
+            tags,
+            ','
+          )})
+        )`
+      );
+    }
+    if (!!userIds?.length) {
+      AND.push(Prisma.sql`a."userId" IN (${Prisma.join(userIds, ',')})`);
+    }
+    if (!!ids?.length) {
+      AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
+    }
+    if (browsingMode === BrowsingMode.SFW) {
+      AND.push(Prisma.sql`a."nsfw" = false`);
+    }
+    if (username) {
+      AND.push(Prisma.sql`u."username" = ${username}`);
+    }
+
     if (collectionId) {
       const permissions = await getUserCollectionPermissionsById({
         userId: sessionUser?.id,
@@ -84,34 +157,52 @@ export const getArticles = async ({
         return { items: [] };
       }
 
-      const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-        getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
-
-      AND.push({
-        collectionItems: {
-          some: {
-            collectionId,
-            AND: collectionItemModelsAND,
-          },
-        },
+      const { rawAND: collectionItemModelsRawAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: sessionUser?.id,
       });
+
+      AND.push(
+        Prisma.sql`EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."articleId" = a."id"
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')})`
+      );
     }
 
     if (!isOwnerRequest) {
-      if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
-      if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
-      if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+      if (!!excludedUserIds?.length) {
+        AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+      }
+      if (!!excludedIds?.length) {
+        AND.push(Prisma.sql`a.id NOT IN (${Prisma.join(excludedIds, ',')})`);
+      }
+      if (!!excludedTagIds?.length) {
+        AND.push(
+          Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "TagsOnArticle" tao WHERE tao."articleId" = a.id AND at."tagId" IN (${Prisma.join(
+              excludedTagIds,
+              ','
+            )})
+          )`
+        );
+      }
     }
 
     if (sessionUser) {
       if (favorites) {
-        AND.push({
-          engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Favorite } },
-        });
+        AND.push(
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "ArticleEngagement" ae WHERE ae."articleId" = a.id AND ae."userId" = ${sessionUser?.id} AND ae."type" = ${ArticleEngagementType.Favorite}::"ArticleEngagementType"
+          )`
+        );
       } else if (hidden) {
-        AND.push({
-          engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Hide } },
-        });
+        AND.push(
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "ArticleEngagement" ae WHERE ae."articleId" = a.id AND ae."userId" = ${sessionUser?.id} AND ae."type" = ${ArticleEngagementType.Hide}::"ArticleEngagementType"
+          )`
+        );
       }
     }
 
@@ -128,89 +219,189 @@ export const getArticles = async ({
       });
       const followedUsersIds =
         followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
-      AND.push({ userId: { in: followedUsersIds } });
+
+      AND.push(Prisma.sql`a."userId" IN (${Prisma.join(followedUsersIds, ',')})`);
     }
 
-    const where: Prisma.ArticleFindManyArgs['where'] = {
-      publishedAt:
-        isMod && includeDrafts
-          ? undefined
-          : period !== MetricTimeframe.AllTime && periodMode !== 'stats'
-          ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
-          : { not: null },
-      AND: AND.length ? AND : undefined,
-    };
+    const publishedAtFilter: Prisma.Sql | undefined =
+      isMod && includeDrafts
+        ? undefined
+        : period !== MetricTimeframe.AllTime && periodMode !== 'stats'
+        ? Prisma.sql`a."publishedAt" >= ${decreaseDate(
+            new Date(),
+            1,
+            period.toLowerCase() as ManipulateType
+          )}`
+        : Prisma.sql`a."publishedAt" IS NOT NULL`;
 
-    const orderBy: Prisma.ArticleFindManyArgs['orderBy'] = [
-      { publishedAt: { sort: 'desc', nulls: 'last' } },
-    ];
+    if (publishedAtFilter) {
+      AND.push(publishedAtFilter);
+    }
+
+    let orderBy = `a."publishedAt" DESC NULLS LAST`;
     if (sort === ArticleSort.MostBookmarks)
-      orderBy.unshift({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
+      orderBy = `rank."favoriteCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostComments)
-      orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+      orderBy = `rank."commentCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostReactions)
-      orderBy.unshift({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+      orderBy = `rank."reactionCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostCollected)
-      orderBy.unshift({ rank: { [`collectedCount${period}Rank`]: 'asc' } });
+      orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostTipped)
-      orderBy.unshift({ rank: { [`tippedAmountCount${period}Rank`]: 'asc' } });
+      orderBy = `rank."tippedAmountCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
 
-    const articles = await dbRead.article.findMany({
-      take,
-      cursor: cursor ? { id: cursor } : undefined,
-      where,
-      select: {
-        id: true,
-        cover: true,
-        title: true,
-        publishedAt: true,
-        nsfw: true,
-        user: { select: userWithCosmeticsSelect },
-        tags: { select: { tag: { select: simpleTagSelect } } },
-        stats: {
-          select: {
-            [`favoriteCount${period}`]: true,
-            [`commentCount${period}`]: true,
-            [`likeCount${period}`]: true,
-            [`dislikeCount${period}`]: true,
-            [`heartCount${period}`]: true,
-            [`laughCount${period}`]: true,
-            [`cryCount${period}`]: true,
-            [`viewCount${period}`]: true,
-            [`tippedAmountCount${period}`]: true,
-          },
-        },
-      },
-      orderBy,
-    });
+    let [cursorProp, cursorDirection] = orderBy?.split(' ');
+
+    if (cursorProp === 'a."publishedAt"') {
+      // treats a date as a number of seconds since epoch
+      cursorProp = `extract(epoch from ${cursorProp})`;
+    }
+
+    if (cursor) {
+      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    }
+
+    if (clubId) {
+      WITH.push(Prisma.sql`
+      "clubArticles" AS (
+        SELECT DISTINCT ON (a."id") a."id" as "articleId"
+        FROM "EntityAccess" ea
+        JOIN "Article" a ON a."id" = ea."accessToId"
+        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
+        WHERE (
+            (
+             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
+            )
+            OR (
+              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
+            )
+          )
+          AND ea."accessToType" = 'Article'
+      )
+    `);
+    }
+    const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+    const queryFrom = Prisma.sql`
+      FROM "Article" a
+      LEFT JOIN "User" u ON a."userId" = u.id
+      LEFT JOIN "ArticleStat" stats ON stats."articleId" = a.id
+      LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
+      WHERE ${Prisma.join(AND, ' AND ')}
+    `;
+    const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorId: number })[]>`
+      ${queryWith}
+      SELECT 
+        a.id,
+        a.cover,
+        a.title,
+        a."publishedAt",
+        a.nsfw,
+        a."userId",
+        a."createdAt",
+        a."updatedAt",
+        ${Prisma.raw(`
+        jsonb_build_object(
+          'favoriteCount', stats."favoriteCount${period}",
+          'commentCount', stats."commentCount${period}",
+          'likeCount', stats."likeCount${period}",
+          'dislikeCount', stats."dislikeCount${period}",
+          'heartCount', stats."heartCount${period}",
+          'cryCount', stats."cryCount${period}",
+          'viewCount', stats."viewCount${period}",
+          'tippedAmountCount', stats."tippedAmountCount${period}"
+        ) as "stats",
+        `)}
+        (
+          SELECT COALESCE(
+            jsonb_agg(
+                jsonb_build_object('tag', jsonb_build_object(
+                  'id', t.id,
+                  'name', t.name,
+                  'isCategory', t."isCategory"
+                ))
+            ), '[]'::jsonb
+          ) FROM "TagsOnArticle" at
+            JOIN "Tag" t ON t.id = at."tagId"
+            WHERE at."articleId" = a."id"
+            AND "tagId" IS NOT NULL
+        ) as "tags", 
+        jsonb_build_object(
+          'id', u."id",
+          'username', u."username",
+          'deletedAt', u."deletedAt",
+          'image', u."image",
+          'profilePictureId', u."profilePictureId"
+        ) as "user",
+        (
+          SELECT
+            jsonb_agg(
+              jsonb_build_object( 
+                'data', uc.data,
+                'cosmetic', jsonb_build_object(
+                  'id', c.id,
+                  'data', c.data,
+                  'type', c.type,
+                  'source', c.source,
+                  'name', c.name,
+                  'leaderboardId', c."leaderboardId",
+                  'leaderboardPosition', c."leaderboardPosition"
+                )
+              )
+            ) 
+          FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+              AND "equippedAt" IS NOT NULL
+          WHERE uc."userId" = a."userId"
+          GROUP BY uc."userId"
+        ) as "userCosmetics", 
+        ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
+      ${queryFrom}
+      ORDER BY ${Prisma.raw(orderBy)}
+      LIMIT ${take}
+    `;
 
     let nextCursor: number | undefined;
     if (articles.length > limit) {
       const nextItem = articles.pop();
-      nextCursor = nextItem?.id;
+      nextCursor = nextItem?.cursorId || undefined;
     }
 
-    const articleCategories = await getCategoryTags('article');
-    const items = articles.map(({ tags, stats, ...article }) => ({
-      ...article,
-      tags: tags.map(({ tag }) => ({
-        ...tag,
-        isCategory: articleCategories.some((c) => c.id === tag.id),
+    const clubRequirement = await entityRequiresClub({
+      entities: articles.map((article) => ({
+        entityId: article.id,
+        entityType: 'Article',
       })),
-      stats: stats
-        ? {
-            favoriteCount: stats[`favoriteCount${period}`] as number,
-            commentCount: stats[`commentCount${period}`] as number,
-            likeCount: stats[`likeCount${period}`] as number,
-            dislikeCount: stats[`dislikeCount${period}`] as number,
-            heartCount: stats[`heartCount${period}`] as number,
-            laughCount: stats[`laughCount${period}`] as number,
-            cryCount: stats[`cryCount${period}`] as number,
-            viewCount: stats[`viewCount${period}`] as number,
-            tippedAmountCount: stats[`tippedAmountCount${period}`] as number,
-          }
-        : undefined,
-    }));
+    });
+
+    const profilePictures = await dbRead.image.findMany({
+      where: { id: { in: articles.map((a) => a.user.profilePictureId).filter(isDefined) } },
+      select: { ...profileImageSelect, ingestion: true },
+    });
+
+    const articleCategories = await getCategoryTags('article');
+    const items = articles.map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
+      const requiresClub =
+        clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? undefined;
+      const { profilePictureId, ...u } = user;
+      const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
+
+      return {
+        ...article,
+        requiresClub,
+        tags: tags.map(({ tag }) => ({
+          ...tag,
+          isCategory: articleCategories.some((c) => c.id === tag.id),
+        })),
+        stats,
+        user: {
+          ...u,
+          profilePicture,
+          cosmetics: userCosmetics,
+        },
+      };
+    });
 
     return { nextCursor, items };
   } catch (error) {
@@ -288,6 +479,17 @@ export const getCivitaiNews = async () => {
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   try {
     const isMod = user?.isModerator ?? false;
+    const [access] = await hasEntityAccess({
+      userId: user?.id,
+      isModerator: isMod,
+      entities: [
+        {
+          entityType: 'Article',
+          entityId: id,
+        },
+      ],
+    });
+
     const article = await dbRead.article.findFirst({
       where: {
         id,
@@ -295,18 +497,35 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
       },
       select: articleDetailSelect,
     });
+
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
+    const [entityClubDetails] = await getClubDetailsForResource({
+      entities: [
+        {
+          entityType: 'Article',
+          entityId: article.id,
+        },
+      ],
+    });
+
     const articleCategories = await getCategoryTags('article');
-    const attachments = await getFilesByEntity({ id, type: 'Article' });
+    const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = !access.hasAccess
+      ? []
+      : await getFilesByEntity({
+          id,
+          type: 'Article',
+        });
 
     return {
       ...article,
+      content: access.hasAccess ? article.content : null,
       attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
+      clubs: entityClubDetails?.clubs ?? [],
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -355,6 +574,7 @@ export const upsertArticle = async ({
   userId,
   tags,
   attachments,
+  clubs,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
@@ -394,6 +614,15 @@ export const upsertArticle = async ({
 
         return article;
       });
+
+      if (clubs) {
+        await upsertClubResource({
+          entityType: 'Article',
+          entityId: result.id,
+          clubs,
+          userId: result.userId,
+        });
+      }
 
       return result;
     }
@@ -455,6 +684,7 @@ export const upsertArticle = async ({
 
       return article;
     });
+
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
     // If it was unpublished, need to remove it from the queue.
@@ -474,6 +704,15 @@ export const upsertArticle = async ({
         type: 'published',
         entityType: 'article',
         entityId: result.id,
+      });
+    }
+
+    if (clubs) {
+      await upsertClubResource({
+        entityType: 'Article',
+        entityId: result.id,
+        clubs,
+        userId: result.userId,
       });
     }
 

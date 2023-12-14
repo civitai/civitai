@@ -568,7 +568,6 @@ export const upsertCollection = async ({
             WHERE ci."collectionId" = ${updated.id}
         `;
       }
-
       return updated;
     });
 
@@ -1070,23 +1069,41 @@ export const getAvailableCollectionItemsFilterForUser = ({
   permissions: CollectionContributorPermissionFlags;
   userId?: number;
 }) => {
+  const rawAND: Prisma.Sql[] = [];
+  const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = [];
+
   // A user with relevant permissions can filter & manage these permissions
   if ((permissions.manage || permissions.isOwner) && statuses) {
-    return [{ status: { in: statuses } }];
+    AND.push({ status: { in: statuses } });
+    rawAND.push(
+      Prisma.sql`ci."status" IN (${Prisma.raw(
+        statuses.map((s) => `'${s}'::"CollectionItemStatus"`).join(', ')
+      )})`
+    );
+
+    return {
+      AND,
+      rawAND,
+    };
   }
 
-  const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = userId
-    ? [
-        {
-          OR: [
-            { status: CollectionItemStatus.ACCEPTED },
-            { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: userId }] },
-          ],
-        },
-      ]
-    : [{ status: CollectionItemStatus.ACCEPTED }];
+  if (userId) {
+    AND.push({
+      OR: [
+        { status: CollectionItemStatus.ACCEPTED },
+        { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: userId }] },
+      ],
+    });
 
-  return AND;
+    rawAND.push(
+      Prisma.sql`(ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus" OR (ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus" AND ci."addedById" = ${userId}))`
+    );
+  } else {
+    AND.push({ status: CollectionItemStatus.ACCEPTED });
+    rawAND.push(Prisma.sql`ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"`);
+  }
+
+  return { AND, rawAND };
 };
 
 export const updateCollectionItemsStatus = async ({
@@ -1118,7 +1135,6 @@ export const updateCollectionItemsStatus = async ({
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
   if (collectionItemIds.length > 0) {
-    console.log(collection.mode);
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem" 
       SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(

@@ -128,6 +128,10 @@ export const imageSchema = z.object({
   metadata: z.object({}).passthrough().optional(),
 });
 
+export const comfylessImageSchema = imageSchema.extend({
+  meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+});
+
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
 
@@ -276,7 +280,7 @@ export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
   entities: z.array(
     z.object({
-      entityType: z.nativeEnum(SearchIndexEntityTypes),
+      entityType: z.union([z.nativeEnum(SearchIndexEntityTypes), z.enum(['ModelVersion'])]),
       entityId: z.number(),
     })
   ),

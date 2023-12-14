@@ -27,6 +27,8 @@ export const loginRedirectReasons = {
   'purchase-buzz': 'You need to be logged in to purchase Buzz',
   'image-gen': 'You need to be logged in to generate images',
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
+  'create-club': 'You need to be logged in to create a club',
+  'join-club': 'You need to be logged in to join a club',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

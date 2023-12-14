@@ -32,6 +32,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 import { ModelById } from '~/types/router';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -300,6 +301,13 @@ export function ModelVersionList({
                     >
                       Manage images
                     </Menu.Item>
+                  )}
+                  {features.clubs && (
+                    <AddToClubMenuItem
+                      key="add-to-club"
+                      entityType="ModelVersion"
+                      entityId={version.id}
+                    />
                   )}
                 </Menu.Dropdown>
               </Menu>

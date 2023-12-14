@@ -13,6 +13,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { clubResourceSchema } from '~/server/schema/club.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -147,6 +148,7 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   settings: recommendedSettingsSchema.nullish(),
   recommendedResources: z.array(recommendedResourceSchema).optional(),
+  clubs: z.array(clubResourceSchema).optional(),
   templateId: z.number().optional(),
 });
 

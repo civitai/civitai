@@ -717,6 +717,7 @@ export const getAllImages = async ({
     (excludedImageIds?.length ?? 0) +
     (excludedTagIds?.length ?? 0) +
     (excludedUserIds?.length ?? 0);
+
   const queryHeader = Object.entries({
     exclusions,
     cursor,
@@ -977,7 +978,11 @@ export const getImage = async ({
     ${Prisma.raw(
       withoutPost
         ? ''
-        : `JOIN "Post" p ON p.id = i."postId" ${!isModerator ? 'AND p."publishedAt" < now()' : ''}`
+        : // Now that moderators can review images without post, we need to make this optional
+          // in case they land in an image-specific review flow
+          `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
+            !isModerator ? 'AND p."publishedAt" < now()' : ''
+          }`
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1789,13 +1794,19 @@ export const createEntityImages = async ({
   images,
   userId,
 }: {
-  tx: Prisma.TransactionClient;
-  entityId: number;
-  entityType: string;
+  tx?: Prisma.TransactionClient;
+  entityId?: number;
+  entityType?: string;
   images: ImageUploadProps[];
   userId: number;
 }) => {
-  await tx.image.createMany({
+  const dbClient = tx ?? dbWrite;
+
+  if (images.length === 0) {
+    return [];
+  }
+
+  await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
       meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -1804,7 +1815,7 @@ export const createEntityImages = async ({
     })),
   });
 
-  const imageRecords = await tx.image.findMany({
+  const imageRecords = await dbClient.image.findMany({
     select: { id: true, url: true, type: true, width: true, height: true },
     where: {
       url: { in: images.map((i) => i.url) },
@@ -1815,16 +1826,18 @@ export const createEntityImages = async ({
 
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
-    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+    await Promise.all(batch.map((image) => ingestImage({ image, tx: dbClient })));
   }
 
-  await tx.imageConnection.createMany({
-    data: imageRecords.map((image) => ({
-      imageId: image.id,
-      entityId,
-      entityType,
-    })),
-  });
+  if (entityType && entityId) {
+    await dbClient.imageConnection.createMany({
+      data: imageRecords.map((image) => ({
+        imageId: image.id,
+        entityId,
+        entityType,
+      })),
+    });
+  }
 
   return imageRecords;
 };
@@ -1891,6 +1904,22 @@ export const getEntityCoverImage = async ({
                       AND i."needsReview" IS NULL
                   ) mi
                   WHERE mi.rn = 1
+                )
+        WHEN e."entityType" = 'ModelVersion'
+            THEN  (
+                SELECT mi."imageId" FROM (
+                  SELECT
+                    mv.id,
+                    i.id as "imageId"
+                  FROM "Image" i
+                  JOIN "Post" p ON p.id = i."postId"
+                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+                  WHERE mv."id" = e."entityId"
+                      AND i."ingestion" = 'Scanned'
+                      AND i."needsReview" IS NULL
+                  ORDER BY mv.index, i."postId", i.index
+                  ) mi
+                  LIMIT 1
                 )
         WHEN e."entityType" = 'Image'
             THEN e."entityId"

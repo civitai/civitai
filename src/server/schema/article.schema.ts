@@ -8,6 +8,7 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { clubResourceSchema } from '~/server/schema/club.schema';
 
 export const userPreferencesForArticlesSchema = z.object({
   excludedIds: z.array(z.number()).optional(),
@@ -31,6 +32,7 @@ export const articleWhereSchema = z.object({
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   collectionId: z.number().optional(),
   followed: z.boolean().optional(),
+  clubId: z.number().optional(),
 });
 
 // export const articleSortSchema = z.object({
@@ -73,6 +75,7 @@ export const upsertArticleInput = z.object({
   attachments: z.array(baseFileSchema).optional(),
   // TODO.articles: check what's going to be stored on metadata
   // metadata: z.object({}).nullish(),
+  clubs: z.array(clubResourceSchema).optional(),
 });
 
 export type GetArticlesByCategorySchema = z.infer<typeof getArticlesByCategorySchema>;

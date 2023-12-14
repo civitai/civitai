@@ -11,6 +11,7 @@ import {
 import { useLocalStorage } from '@mantine/hooks';
 import {
   IconCategory,
+  IconClubs,
   IconFileText,
   IconHome,
   IconLayoutList,
@@ -52,6 +53,10 @@ const homeOptions = {
     url: '/bounties',
     icon: <IconMoneybag />,
   },
+  clubs: {
+    url: '/clubs',
+    icon: <IconClubs />,
+  },
 } as const;
 type HomeOptions = keyof typeof homeOptions;
 
@@ -81,10 +86,10 @@ export function useHomeSelection() {
     defaultValue: features.alternateHome ? 'home' : 'models',
   });
 
-  const url = homeOptions[home].url;
+  const url = homeOptions[home]?.url;
   const set = (value: HomeOptions) => {
     setHome(value);
-    return homeOptions[value].url;
+    return homeOptions[value]?.url;
   };
 
   return { home, url, set };
@@ -117,7 +122,9 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
       </Link>
     ),
     value: key,
-    disabled: key === 'bounties' && !features.bounties,
+    disabled: [key === 'bounties' && !features.bounties, key === 'clubs' && !features.clubs].some(
+      (b) => b
+    ),
   }));
 
   return (
