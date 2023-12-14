@@ -2,11 +2,15 @@ import dayjs from 'dayjs';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  AcceptClubAdminInviteInput,
+  DeleteClubAdminInviteInput,
   GetPagedClubAdminInviteSchema,
   GetPagedClubAdminSchema,
   UpsertClubAdminInviteInput,
 } from '../schema/clubAdmin.schema';
 import { getPagination, getPagingData } from '../utils/pagination-helpers';
+import { throwBadRequestError } from '../utils/errorHandling';
+import { userContributingClubs } from './club.service';
 
 export const getClubAdminInvites = async <TSelect extends Prisma.ClubAdminInviteSelect>({
   input: { page, limit, clubId },
@@ -78,5 +82,48 @@ export const upsertClubAdminInvite = async ({ input }: { input: UpsertClubAdminI
       expiresAt: input.expiresAt,
       permissions: input.permissions,
     },
+  });
+};
+
+export const deleteClubAdminInvite = async ({ input }: { input: DeleteClubAdminInviteInput }) => {
+  return dbWrite.clubAdminInvite.delete({ where: { id: input.id } });
+};
+
+export const acceptClubAdminInvite = async ({
+  input: { id, userId },
+}: {
+  input: AcceptClubAdminInviteInput & { userId: number };
+}) => {
+  const clubAdminInvite = await dbRead.clubAdminInvite.findUniqueOrThrow({
+    where: { id: id },
+    select: { clubId: true, expiresAt: true, permissions: true },
+  });
+
+  if (clubAdminInvite.expiresAt && dayjs(clubAdminInvite.expiresAt).isBefore(dayjs())) {
+    throw throwBadRequestError('Invite has expired');
+  }
+
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubAdminInvite.clubId] });
+
+  if (userClub) {
+    throw throwBadRequestError('You are already a club admin or owner for this club');
+  }
+
+  await dbWrite.$transaction(async (tx) => {
+    // Accept invite
+    await tx.clubAdmin.create({
+      data: {
+        clubId: clubAdminInvite.clubId,
+        userId,
+        permissions: clubAdminInvite.permissions,
+      },
+    });
+
+    // Delete invite
+    await tx.clubAdminInvite.delete({ where: { id } });
+  });
+
+  return dbWrite.clubAdmin.findUnique({
+    where: { clubId_userId: { clubId: clubAdminInvite.clubId, userId } },
   });
 };

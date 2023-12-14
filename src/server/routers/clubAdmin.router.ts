@@ -1,10 +1,14 @@
 import { isFlagProtected, protectedProcedure, router, middleware } from '~/server/trpc';
 import {
+  acceptClubAdminInviteInput,
+  deleteClubAdminInviteInput,
   getPagedClubAdminInviteSchema,
   getPagedClubAdminSchema,
   upsertClubAdminInviteInput,
 } from '../schema/clubAdmin.schema';
 import {
+  acceptClubAdminInviteHandler,
+  deleteClubAdminInviteHandler,
   getPagedClubAdminInvitesHandler,
   getPagedClubAdminsHandler,
   upsertClubAdminInviteHandler,
@@ -18,7 +22,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 
   const { id: userId } = ctx.user;
   const { id: inputId, clubId } = input as { id?: number; clubId?: number };
-  const id = inputId ?? clubId;
+  const id = clubId ?? inputId;
 
   if (!id) throw throwBadRequestError();
 
@@ -50,4 +54,13 @@ export const clubAdminRouter = router({
     .use(isFlagProtected('clubs'))
     .use(isOwnerOrModerator)
     .mutation(upsertClubAdminInviteHandler),
+  deleteInvite: protectedProcedure
+    .input(deleteClubAdminInviteInput)
+    .use(isFlagProtected('clubs'))
+    .use(isOwnerOrModerator)
+    .mutation(deleteClubAdminInviteHandler),
+  acceptInvite: protectedProcedure
+    .input(acceptClubAdminInviteInput)
+    .use(isFlagProtected('clubs'))
+    .mutation(acceptClubAdminInviteHandler),
 });

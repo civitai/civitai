@@ -1,11 +1,11 @@
 import { ClubResourceGetPaginatedItem, ClubTier } from '~/types/router';
-import { SupportedClubEntitiesLabels, updateClubResourceInput } from '~/server/schema/club.schema';
-import { z } from 'zod';
+import { updateClubResourceInput } from '~/server/schema/club.schema';
 import { ActionIcon, Anchor, Button, Checkbox, Group, Tooltip } from '@mantine/core';
 import React from 'react';
 import { IconCheck, IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useMutateClub } from '~/components/Club/club.utils';
+import { getDisplayName } from '../../utils/string-helpers';
 
 type Props = {
   resource: ClubResourceGetPaginatedItem;
@@ -67,7 +67,7 @@ export const ClubResourcePagedUpdateForm = ({
 
   return (
     <tr>
-      <td>{SupportedClubEntitiesLabels[resource.entityType]}</td>
+      <td>{getDisplayName(resource.entityType)}</td>
       <td>
         <Anchor href={url} target="_blank">
           {label}

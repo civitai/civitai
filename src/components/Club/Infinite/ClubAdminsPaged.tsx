@@ -16,8 +16,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
-import { useMutateClubAdmin, useQueryClubAdminInvites } from '~/components/Club/club.utils';
-import { trpc } from '~/utils/trpc';
+import { useMutateClubAdmin, useQueryClubAdmins } from '~/components/Club/club.utils';
 import { GetPagedClubAdminInviteSchema } from '~/server/schema/clubAdmin.schema';
 import { IconTrash } from '@tabler/icons-react';
 import { formatDate } from '../../../utils/date-helpers';
@@ -27,19 +26,18 @@ import { dialogStore } from '../../Dialog/dialogStore';
 import { ClubAdminInviteUpsertModal } from '../ClubAdminInviteUpsertForm';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '../../../utils/notifications';
-import { IconClipboard } from '@tabler/icons-react';
-import { IconCheck } from '@tabler/icons-react';
-import { env } from '../../../env/client.mjs';
+import { UserAvatar } from '../../UserAvatar/UserAvatar';
+import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
 
-export function ClubAdminInvitesPaged({ clubId }: Props) {
-  // TODO.clubs: Add some custom filters for invites (?)
+export function ClubAdminsPaged({ clubId }: Props) {
+  // TODO.clubs: Add some custom filters for admins
   const [filters, setFilters] = useState<Omit<GetPagedClubAdminInviteSchema, 'limit' | 'clubId'>>({
     page: 1,
   });
 
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { invites, pagination, isLoading, isRefetching } = useQueryClubAdminInvites(
+  const { admins, pagination, isLoading, isRefetching } = useQueryClubAdmins(
     clubId,
     debouncedFilters
   );
@@ -52,7 +50,7 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
-  const onDeleteInvite = (id: string) => {
+  const onRemoveAdmin = (id: string) => {
     openConfirmModal({
       title: 'Delete Club Admin Invite',
       children: <Text size="sm">Are you sure you want to delete this invite?</Text>,
@@ -75,49 +73,39 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
         <Center p="xl">
           <Loader size="xl" />
         </Center>
-      ) : !!invites.length ? (
+      ) : !!admins.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <Table>
             <thead>
               <tr>
-                <th>Created At</th>
-                <th>Expires At</th>
+                <th>User</th>
+                <th>Admin since</th>
                 <th>Permissions</th>
                 <th>&nbsp;</th>
               </tr>
             </thead>
             <tbody>
-              {invites.map((invite) => {
+              {admins.map((admin) => {
                 return (
-                  <tr key={invite.id}>
-                    <td>{formatDate(invite.createdAt)}</td>
-                    <td>{invite.expiresAt ? formatDate(invite.expiresAt) : '-'}</td>
+                  <tr key={admin.user.id}>
+                    <td>
+                      <UserAvatar withUsername user={admin.user} />
+                    </td>
+                    <td>{formatDate(admin.createdAt)}</td>
                     <td style={{ maxWidth: 300 }}>
-                      <Text>{invite.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
+                      <Text>{admin.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
                     </td>
                     <td>
                       <Group position="right">
-                        <CopyButton
-                          value={`${env.NEXT_PUBLIC_BASE_URL}/clubs/invites/${invite.id}`}
-                        >
-                          {({ copied, copy }) => (
-                            <Tooltip label="Copy invite link">
-                              <ActionIcon onClick={copy}>
-                                {copied ? <IconCheck /> : <IconClipboard />}
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                        </CopyButton>
                         <ActionIcon
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
                             dialogStore.trigger({
-                              component: ClubAdminInviteUpsertModal,
+                              component: ClubAdminUpdateModal,
                               props: {
-                                clubId,
-                                clubAdminInvite: invite,
+                                clubAdmin: admin,
                               },
                             });
                           }}
@@ -129,7 +117,7 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                           aria-label="Delete invite"
                           loading={deletingInvite}
                           onClick={() => {
-                            onDeleteInvite(invite.id);
+                            onRemoveAdmin(admin.id);
                           }}
                         >
                           <IconTrash />
@@ -153,8 +141,8 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
           </Table>
         </div>
       ) : (
-        <Alert title="No admin invites" color="gray">
-          There are no admin invites for this club.
+        <Alert title="No admin admins" color="gray">
+          There are no admin admins for this club.
         </Alert>
       )}
     </>

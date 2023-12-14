@@ -1,9 +1,11 @@
-import { SupportedClubEntities, SupportedClubEntitiesLabels } from '~/server/schema/club.schema';
+import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { Alert, Anchor, List, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconClubs } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '../../providers/FeatureFlagsProvider';
+import { getDisplayName } from '../../utils/string-helpers';
 
 export const ClubRequirementNotice = ({
   entityId,
@@ -12,6 +14,7 @@ export const ClubRequirementNotice = ({
   entityId: number;
   entityType: SupportedClubEntities;
 }) => {
+  const features = useFeatureFlags();
   const { hasAccess, requiresClub, clubRequirement, isLoadingAccess } = useEntityAccessRequirement({
     entityType,
     entityId,
@@ -23,13 +26,35 @@ export const ClubRequirementNotice = ({
       include: ['tiers'],
     },
     {
-      enabled: requiresClub && (clubRequirement?.clubs?.length ?? 0) > 0,
+      enabled: requiresClub && (clubRequirement?.clubs?.length ?? 0) > 0 && features.clubs,
     }
   );
 
   const clubs = data?.items;
 
-  if (isLoadingAccess || isLoadingClubs) {
+  if (isLoadingAccess) {
+    return null;
+  }
+
+  if (!features.clubs && !hasAccess) {
+    // This is a user that can't see clubs yet, so we don't want to show them the club requirement notice
+    return (
+      <Alert color="blue">
+        <Stack spacing={4}>
+          <ThemeIcon radius="xl">
+            <IconClubs />
+          </ThemeIcon>
+          <Text size="sm">This {getDisplayName(entityType)} is private.</Text>
+          <Text size="sm">
+            The creator has decided to make this resource private and only available specific
+            people. You can request access by contacting the creator.
+          </Text>
+        </Stack>
+      </Alert>
+    );
+  }
+
+  if (isLoadingClubs) {
     return null;
   }
 
@@ -44,7 +69,7 @@ export const ClubRequirementNotice = ({
           <IconClubs />
         </ThemeIcon>
         <Text size="sm">
-          This {SupportedClubEntitiesLabels[entityType]} requires a club membership to access.
+          This {getDisplayName(entityType)} requires a club membership to access.
         </Text>
         {clubs.length > 0 && (
           <Stack>

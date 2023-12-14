@@ -34,7 +34,12 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { WithdrawClubFundsSchema } from '~/server/schema/buzz.schema';
 import {
+  AcceptClubAdminInviteInput,
+  DeleteClubAdminInput,
+  DeleteClubAdminInviteInput,
   GetPagedClubAdminInviteSchema,
+  GetPagedClubAdminSchema,
+  UpdateClubAdminInput,
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
 
@@ -692,7 +697,7 @@ export const useMutateClubAdmin = () => {
   const queryUtils = trpc.useContext();
 
   const upsertClubAdminInvite = trpc.clubAdmin.upsertInvite.useMutation({
-    async onSuccess(result, payload) {
+    async onSuccess() {
       await queryUtils.clubAdmin.getInvitesPaged.invalidate();
     },
     onError(error) {
@@ -713,12 +718,148 @@ export const useMutateClubAdmin = () => {
     },
   });
 
+  const deleteClubAdminInvite = trpc.clubAdmin.deleteInvite.useMutation({
+    async onSuccess() {
+      await queryUtils.clubAdmin.getInvitesPaged.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to delete invite',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to delete invite',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const acceptClubAdminInvite = trpc.clubAdmin.acceptInvite.useMutation({
+    async onSuccess() {
+      await queryUtils.clubAdmin.getInvitesPaged.invalidate();
+      await queryUtils.clubAdmin.getAdminsPaged.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to accept invite',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to accept invite',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const updateClubAdmin = trpc.clubAdmin.update.useMutation({
+    async onSuccess() {
+      await queryUtils.clubAdmin.getAdminsPaged.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to update admin',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to update admin',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const deleteClubAdmin = trpc.clubAdmin.delete.useMutation({
+    async onSuccess() {
+      await queryUtils.clubAdmin.getAdminsPaged.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to delete admin',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to delete admin',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const handleUpsertClubAdminInvite = (data: UpsertClubAdminInviteInput) => {
     return upsertClubAdminInvite.mutateAsync(data);
   };
+  const handleDeleteClubAdminInvite = (data: DeleteClubAdminInviteInput) => {
+    return deleteClubAdminInvite.mutateAsync(data);
+  };
+  const handleAcceptClubAdminInvite = (data: AcceptClubAdminInviteInput) => {
+    return acceptClubAdminInvite.mutateAsync(data);
+  };
+  const handleUpdateClubAdmin = (data: UpdateClubAdminInput) => {
+    return updateClubAdmin.mutateAsync(data);
+  };
+  const handleDeleteClubAdmin = (data: DeleteClubAdminInput) => {
+    return deleteClubAdmin.mutateAsync(data);
+  };
 
   return {
+    // Invites
     upsertInvite: handleUpsertClubAdminInvite,
     upsertingInvite: upsertClubAdminInvite.isLoading,
+    deleteInvite: handleDeleteClubAdminInvite,
+    deletingInvite: deleteClubAdminInvite.isLoading,
+    acceptInvite: handleAcceptClubAdminInvite,
+    acceptingInvite: acceptClubAdminInvite.isLoading,
+    // Admins
+    upsert: handleUpdateClubAdmin,
+    upserting: updateClubAdmin.isLoading,
+    delete: handleDeleteClubAdmin,
+    deleting: deleteClubAdminInvite.isLoading,
   };
+};
+
+export const useQueryClubAdmins = (
+  clubId: number,
+  filters?: Partial<GetPagedClubAdminSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.clubAdmin.getAdminsPaged.useQuery(
+    {
+      ...filters,
+      clubId,
+    },
+    {
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
+
+  if (data) {
+    const { items: admins = [], ...pagination } = data;
+    return { admins, pagination, ...rest };
+  }
+
+  return { admins: [], pagination: null, ...rest };
 };

@@ -55,10 +55,6 @@ export const getClubTiersInput = z.object({
 
 export const supportedClubEntities = ['ModelVersion', 'Article'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
-export const SupportedClubEntitiesLabels: Record<SupportedClubEntities, string> = {
-  ModelVersion: 'Model Version',
-  Article: 'Article',
-};
 
 export const clubResourceSchema = z.object({
   clubId: z.number(),

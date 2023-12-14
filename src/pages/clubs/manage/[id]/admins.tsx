@@ -12,6 +12,7 @@ import { ClubAdminPermission } from '@prisma/client';
 import { ClubAdminInvitesPaged } from '../../../../components/Club/Infinite/ClubAdminInvitesPaged';
 import { dialogStore } from '../../../../components/Dialog/dialogStore';
 import { ClubAdminInviteUpsertModal } from '../../../../components/Club/ClubAdminInviteUpsertForm';
+import { ClubAdminsPaged } from '../../../../components/Club/Infinite/ClubAdminsPaged';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -109,6 +110,7 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
         <Tabs.Panel value="admins" pt="md">
           <Stack spacing="md">
             <Title order={4}>Active admins</Title>
+            <ClubAdminsPaged clubId={club.id} />
           </Stack>
         </Tabs.Panel>
       </Tabs>
