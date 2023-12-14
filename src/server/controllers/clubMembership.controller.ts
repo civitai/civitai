@@ -156,6 +156,7 @@ export const getClubMembershipOnClubHandler = async ({
             name: true,
             unitAmount: true,
             currency: true,
+            clubId: true,
             coverImage: {
               select: imageSelect,
             },

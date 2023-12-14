@@ -38,6 +38,8 @@ export function BuzzTransactionButton({
     e?.preventDefault();
     e?.stopPropagation();
 
+    console.log('trigger');
+
     if (!onPerformTransaction) {
       return;
     }

@@ -12,7 +12,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { closeModal, openConfirmModal } from '@mantine/modals';
+import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { formatDate } from '~/utils/date-helpers';
 import dayjs from 'dayjs';
@@ -23,6 +23,50 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useRouter } from 'next/router';
 import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
+import { Currency } from '@prisma/client';
+
+export const TierCoverImage = ({
+  clubTier,
+}: {
+  clubTier: Pick<ClubTier, 'coverImage' | 'clubId'>;
+}) =>
+  clubTier.coverImage ? (
+    <Center>
+      <ImageCSSAspectRatioWrap
+        aspectRatio={1}
+        style={{ width: constants.clubs.tierImageSidebarDisplayWidth }}
+      >
+        <ImageGuard
+          images={[clubTier.coverImage]}
+          connect={{ entityId: clubTier.clubId, entityType: 'club' }}
+          render={(image) => {
+            return (
+              <ImageGuard.Content>
+                {({ safe }) => (
+                  <>
+                    {!safe ? (
+                      <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 450 }}
+                        radius="md"
+                        style={{ width: '100%', height: '100%' }}
+                        aspectRatio={0}
+                      />
+                    )}
+                    <div style={{ width: '100%', height: '100%' }}>
+                      <ImageGuard.ToggleConnect position="top-left" />
+                    </div>
+                  </>
+                )}
+              </ImageGuard.Content>
+            );
+          }}
+        />
+      </ImageCSSAspectRatioWrap>
+    </Center>
+  ) : null;
 
 export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const router = useRouter();
@@ -34,70 +78,25 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     clubId: clubTier.clubId,
   });
   const { userPaymentMethods } = useUserPaymentMethods();
+  const { isToggling, toggleCancelStatus } = useToggleClubMembershipCancelStatus({
+    clubId: clubTier.clubId,
+  });
 
   const {
     creatingClubMembership,
     createClubMembership,
     updateClubMembership,
     updatingClubMembership,
-    cancelClubMembership,
-    cancelingClubMembership,
-    restoreClubMembership,
-    restoringClubMembership,
   } = useMutateClub();
 
-  const updating =
-    updatingClubMembership ||
-    creatingClubMembership ||
-    cancelingClubMembership ||
-    restoringClubMembership;
+  const updating = updatingClubMembership || creatingClubMembership || isToggling;
 
   const isTierMember = membership?.clubTier?.id === clubTier.id;
   const remainingSpots = clubTier.memberLimit
     ? Math.max(0, clubTier.memberLimit - clubTier._count.memberships)
     : undefined;
 
-  const TierCoverImage = () =>
-    clubTier.coverImage ? (
-      <Center>
-        <ImageCSSAspectRatioWrap
-          aspectRatio={1}
-          style={{ width: constants.clubs.tierImageSidebarDisplayWidth }}
-        >
-          <ImageGuard
-            images={[clubTier.coverImage]}
-            connect={{ entityId: clubTier.clubId, entityType: 'club' }}
-            render={(image) => {
-              return (
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <>
-                      {!safe ? (
-                        <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                      ) : (
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 450 }}
-                          radius="md"
-                          style={{ width: '100%', height: '100%' }}
-                          aspectRatio={0}
-                        />
-                      )}
-                      <div style={{ width: '100%', height: '100%' }}>
-                        <ImageGuard.ToggleConnect position="top-left" />
-                      </div>
-                    </>
-                  )}
-                </ImageGuard.Content>
-              );
-            }}
-          />
-        </ImageCSSAspectRatioWrap>
-      </Center>
-    ) : null;
-
   const handleMembershipJoin = async () => {
-    closeModal('stripe-transaction-modal');
     openConfirmModal({
       modalId: 'club-membership-create',
       centered: true,
@@ -105,7 +104,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
       children: (
         <Center>
           <Stack>
-            <TierCoverImage />
+            <TierCoverImage clubTier={clubTier} />
             <Text align="center" weight={800}>
               {clubTier.name}
             </Text>
@@ -138,21 +137,29 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
               component: StripePaymentMethodSetupModal,
               props: {
                 redirectUrl: router.asPath,
+                title: (
+                  <Text size="lg" weight={700}>
+                    You are now a member of this club! Enjoy your stay
+                  </Text>
+                ),
                 message: (
                   <Stack>
-                    <Text>You are now a member of this club! Enjoy your stay.</Text>
                     <Text>
-                      Adding a payment method will ensure that your membership will be renewed by
-                      the end of the month each day. It is the ideal way to keep supporting your
-                      favorite creators. We will only charge you when your membership is renewed and
-                      if your buzz amount does not meet the required amount.
+                      Your membership to this club is a subscription, meaning{' '}
+                      <CurrencyBadge unitAmount={clubTier.unitAmount} currency={Currency.BUZZ} />{' '}
+                      will be debited from your account on the specified billing date. To ensure you
+                      have enough buzz on your next renewal, its recommended that you add a payment
+                      method. Doing so is the ideal way to keep supporting the creators you care
+                      about.
+                    </Text>
+                    <Text weight="bold">
+                      Your card will only be charged if you do not have the amount of buzz at the
+                      time of renewal to continue your membership
                     </Text>
                     <Text>
                       You can always add a payment method later in your{' '}
                       <Anchor href="/user/account#payment-methods">account settings.</Anchor>
                     </Text>
-
-                    <Text weight="bold">Your card will not be charged at this time.</Text>
                   </Stack>
                 ),
               },
@@ -170,7 +177,6 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const isNextDowngradeTier = membership && membership.downgradeClubTierId === clubTier.id;
 
   const handleMembershipUpdate = async () => {
-    closeModal('stripe-transaction-modal');
     const onUpdateMembership = async () => {
       try {
         updateClubMembership({
@@ -199,7 +205,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
         children: (
           <Center>
             <Stack>
-              <TierCoverImage />
+              <TierCoverImage clubTier={clubTier} />
               <Text align="center" weight={800}>
                 {clubTier.name}
               </Text>
@@ -239,7 +245,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
         children: (
           <Center>
             <Stack>
-              <TierCoverImage />
+              <TierCoverImage clubTier={clubTier} />
               <Text align="center" weight={800}>
                 {clubTier.name}
               </Text>
@@ -257,71 +263,10 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
     }
   };
 
-  const handleMembershipRestore = async () => {
-    try {
-      await restoreClubMembership({
-        clubId: clubTier.clubId,
-      });
-
-      showSuccessNotification({
-        title: 'Success',
-        message: `Your membership has been restored. Your next billing date is ${formatDate(
-          membership?.nextBillingAt
-        )}.`,
-      });
-    } catch {
-      // Do nothing. Handled in the hook.
-    }
-  };
-
-  const handleMembershipCancel = async () => {
-    const onCancelMembership = async () => {
-      try {
-        await cancelClubMembership({
-          clubId: clubTier.clubId,
-        });
-
-        showSuccessNotification({
-          title: 'Success',
-          message: `Your membership has been canceled. You will have access to this club's resources until ${formatDate(
-            membership?.nextBillingAt
-          )}.`,
-        });
-      } catch {
-        // Do nothing. Handled in the hook.
-      }
-    };
-
-    openConfirmModal({
-      modalId: 'club-membership-cancel',
-      centered: true,
-      title: 'You are about to cancel your current membership',
-      children: (
-        <Center>
-          <Stack>
-            <TierCoverImage />
-            <Text align="center" weight={800}>
-              {clubTier.name}
-            </Text>
-            <Text align="center">
-              {' '}
-              Your membership will be canceled at the end of your current billing period on{' '}
-              {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
-              made.
-            </Text>
-          </Stack>
-        </Center>
-      ),
-      labels: { cancel: `Cancel`, confirm: `Confirm` },
-      closeOnConfirm: true,
-      onConfirm: onCancelMembership,
-    });
-  };
-
   return (
     <Paper className={classes.feedContainer}>
       <Stack style={{ flex: 1 }}>
-        <TierCoverImage />
+        <TierCoverImage clubTier={clubTier} />
 
         <Stack align="center" spacing={4}>
           <Title order={4}>{clubTier.name}</Title>
@@ -349,11 +294,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                   color="yellow.7"
                   variant="light"
                   onClick={
-                    membership.downgradeClubTierId
-                      ? handleMembershipUpdate
-                      : membership.cancelledAt
-                      ? handleMembershipRestore
-                      : handleMembershipCancel
+                    membership.downgradeClubTierId ? handleMembershipUpdate : toggleCancelStatus
                   }
                 >
                   Active{' '}
@@ -400,4 +341,96 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
       </Stack>
     </Paper>
   );
+};
+
+export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number }) => {
+  const {
+    cancelClubMembership,
+    cancelingClubMembership,
+    restoreClubMembership,
+    restoringClubMembership,
+  } = useMutateClub();
+
+  const { data: membership, isLoading } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
+    clubId,
+  });
+
+  const clubTier = membership?.clubTier;
+
+  const handleMembershipRestore = async () => {
+    try {
+      await restoreClubMembership({
+        clubId,
+      });
+
+      showSuccessNotification({
+        title: 'Success',
+        message: `Your membership has been restored. Your next billing date is ${formatDate(
+          membership?.nextBillingAt
+        )}.`,
+      });
+    } catch {
+      // Do nothing. Handled in the hook.
+    }
+  };
+
+  const handleMembershipCancel = async () => {
+    if (!clubTier) {
+      return;
+    }
+
+    const onCancelMembership = async () => {
+      try {
+        await cancelClubMembership({
+          clubId,
+        });
+
+        showSuccessNotification({
+          title: 'Success',
+          message: `Your membership has been canceled. You will have access to this club's resources until ${formatDate(
+            membership?.nextBillingAt
+          )}.`,
+        });
+      } catch {
+        // Do nothing. Handled in the hook.
+      }
+    };
+
+    openConfirmModal({
+      modalId: 'club-membership-cancel',
+      centered: true,
+      title: 'You are about to cancel your current membership',
+      children: (
+        <Center>
+          <Stack>
+            <TierCoverImage clubTier={clubTier} />
+            <Text align="center" weight={800}>
+              {clubTier.name}
+            </Text>
+            <Text align="center">
+              {' '}
+              Your membership will be canceled at the end of your current billing period on{' '}
+              {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
+              made.
+            </Text>
+          </Stack>
+        </Center>
+      ),
+      labels: { cancel: `Cancel`, confirm: `Confirm` },
+      closeOnConfirm: true,
+      onConfirm: onCancelMembership,
+    });
+  };
+
+  const toggleCancelStatus = membership?.cancelledAt
+    ? handleMembershipRestore
+    : handleMembershipCancel;
+
+  return {
+    membership,
+    isLoadingMembership: isLoading,
+    isCancelled: membership?.cancelledAt,
+    isToggling: cancelingClubMembership || restoringClubMembership,
+    toggleCancelStatus,
+  };
 };

@@ -1,7 +1,7 @@
 import { Stack, Text, Divider, Modal } from '@mantine/core';
 import React from 'react';
 
-export const StripePaymentMethodSetupModal = ({ message, ...props }: Props) => {
+export const StripePaymentMethodSetupModal = ({ message, title, ...props }: Props) => {
   const dialog = useDialogContext();
 
   const handleClose = dialog.onClose;
@@ -9,9 +9,11 @@ export const StripePaymentMethodSetupModal = ({ message, ...props }: Props) => {
   return (
     <Modal {...dialog} size="lg" withCloseButton={false}>
       <Stack>
-        <Text size="lg" weight={700}>
-          Add new payment method
-        </Text>
+        {title ?? (
+          <Text size="lg" weight={700}>
+            Add new payment method
+          </Text>
+        )}
         <Divider mx="-lg" />
         {message && <>{message}</>}
         <StripePaymentMethodSetup
@@ -30,5 +32,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 type Props = {
   redirectUrl?: string;
   message?: React.ReactNode;
+  title?: React.ReactNode;
+
   paymentMethodTypes?: string[];
 };

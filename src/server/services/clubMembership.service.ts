@@ -391,14 +391,14 @@ export const clubOwnerRemoveMember = async ({
   if (membership.userId === sessionUserId)
     throw throwBadRequestError('You cannot remove and refund yourself from a club');
 
-  const userClubs = await userContributingClubs({ userId: sessionUserId });
-  const isClubOwner = userClubs.find(
-    (c) => c.id === membership.clubId && c.userId === sessionUserId
-  );
-  const canManageMemberships = userClubs.find(
-    (c) =>
-      c.id === membership.clubId &&
-      c.admin.permissions.includes(ClubAdminPermission.ManageMemberships)
+  const [userClub] = await userContributingClubs({ userId: sessionUserId, clubIds: [clubId] });
+  if (!userClub) {
+    throw throwAuthorizationError("You are not authorized to remove a user's membership");
+  }
+
+  const isClubOwner = userClub.userId === sessionUserId;
+  const canManageMemberships = userClub.admin?.permissions.includes(
+    ClubAdminPermission.ManageMemberships
   );
 
   if (!(isModerator || isClubOwner || canManageMemberships)) {

@@ -21,7 +21,7 @@ import {
   applyUserPreferencesClub,
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
-import { ClubGetAll, ClubPostGetAll, UserClub } from '~/types/router';
+import { ClubGetAll, ClubPostGetAll, ClubTier, UserClub } from '~/types/router';
 import {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
