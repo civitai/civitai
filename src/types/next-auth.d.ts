@@ -25,8 +25,6 @@ interface ExtendedUser {
   referral?: {
     id: number;
   };
-  profilePictureId?: number;
-  profilePicture?: import('~/server/selectors/image.selector').ImageModelWithIngestion;
 }
 
 declare module 'next-auth' {

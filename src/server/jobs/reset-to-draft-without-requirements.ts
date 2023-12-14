@@ -17,7 +17,8 @@ export const resetToDraftWithoutRequirements = createJob(
       WHERE
         mv.status = 'Published'
         AND m.status = 'Published'
-        AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId");
+        AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId")
+        AND m."deletedAt" IS NULL;
     `;
 
     if (modelVersionsWithoutPosts.length) {
@@ -35,8 +36,10 @@ export const resetToDraftWithoutRequirements = createJob(
       SELECT
         mv.id "modelVersionId"
       FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
       WHERE
         mv.status = 'Published'
+        AND m."deleteAt" IS NULL
         AND NOT EXISTS (SELECT 1 FROM "ModelFile" f WHERE f."modelVersionId" = mv.id);
     `;
     if (modelVersionsWithoutFiles.length) {
@@ -61,6 +64,7 @@ export const resetToDraftWithoutRequirements = createJob(
         meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now()))
       WHERE
         m."status" = 'Published'
+        AND m."deletedAt" IS NULL
         AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published');
     `;
   }

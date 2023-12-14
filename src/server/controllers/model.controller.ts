@@ -1224,6 +1224,7 @@ export async function getSimpleModelsInfiniteHandler({
       where: {
         userId,
         name: query ? { contains: query, mode: 'insensitive' } : undefined,
+        status: { not: ModelStatus.Deleted },
       },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },

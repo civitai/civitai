@@ -56,7 +56,7 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
-import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
+import { ImageResourceHelperModel, profileImageSelect } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
@@ -854,7 +854,7 @@ export const getAllImages = async ({
     : undefined;
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) } },
-    select: { ...imageSelect, ingestion: true },
+    select: profileImageSelect,
   });
 
   const images: Array<
@@ -1008,7 +1008,7 @@ export const getImage = async ({
   const profilePicture = profilePictureId
     ? await dbRead.image.findUnique({
         where: { id: profilePictureId },
-        select: { ...imageSelect, ingestion: true },
+        select: profileImageSelect,
       })
     : null;
 
