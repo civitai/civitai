@@ -67,6 +67,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   publishedAt: true,
   locked: true,
   meta: true,
+  gallerySettings: true,
   earlyAccessDeadline: true,
   mode: true,
   reportStats: {

@@ -138,6 +138,13 @@ export const getDownloadSchema = z.object({
 });
 export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
 
+export type ModelGallerySettingsSchema = z.infer<typeof modelGallerySettingsSchema>;
+export const modelGallerySettingsSchema = z.object({
+  users: z.number().array().optional(),
+  tags: z.number().array().optional(),
+  images: z.number().array().optional(),
+});
+
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const modelUpsertSchema = licensingSchema.extend({
   id: z.number().optional(),
@@ -151,6 +158,12 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
+});
+
+export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
+export const updateGallerySettingsSchema = z.object({
+  id: z.number(),
+  gallerySettings: modelGallerySettingsSchema.nullable(),
 });
 
 export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;

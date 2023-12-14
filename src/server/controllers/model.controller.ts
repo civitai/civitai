@@ -33,6 +33,7 @@ import {
   GetDownloadSchema,
   GetModelVersionsSchema,
   ModelByHashesInput,
+  ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
@@ -41,6 +42,7 @@ import {
   UnpublishModelSchema,
   UserPreferencesForModelsInput,
   GetSimpleModelsInfiniteSchema,
+  UpdateGallerySettingsInput,
 } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -129,6 +131,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       canGenerate: filteredVersions.some((version) => !!version.generationCoverage?.covered),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
+      gallerySettings: model.gallerySettings as ModelGallerySettingsSchema | null,
       tagsOnModels: model.tagsOnModels
         .filter(({ tag }) => !tag.unlisted)
         .map(({ tag }) => ({
@@ -1304,3 +1307,29 @@ export async function getModelTemplateFieldsHandler({
     throw throwDbError(error);
   }
 }
+
+export const updateGallerySettingsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateGallerySettingsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id, gallerySettings } = input;
+    const { user: sessionUser } = ctx;
+
+    const model = await getModel({ id, select: { id: true, userId: true } });
+    if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
+      throw throwNotFoundError(`No model with id ${id}`);
+
+    const updatedModel = await updateModelById({
+      id,
+      data: { gallerySettings: gallerySettings !== null ? gallerySettings : Prisma.JsonNull },
+    });
+
+    return updatedModel;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};

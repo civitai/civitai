@@ -35,13 +35,14 @@ import { isDefined } from '~/utils/type-guards';
 import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
-type ModelVersionsProps = { id: number; name: string };
+type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
   modelVersions?: ModelVersionsProps[];
   filters: {
     modelId?: number;
     username?: string;
   } & Record<string, unknown>;
+  showModerationOptions?: boolean;
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {
@@ -56,6 +57,7 @@ type ImagesAsPostsInfiniteProps = {
   username?: string;
   modelVersions?: ModelVersionsProps[];
   generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
+  showModerationOptions?: boolean;
 };
 
 const LIMIT = 50;
@@ -65,6 +67,7 @@ export default function ImagesAsPostsInfinite({
   modelVersions,
   selectedVersionId,
   generationOptions,
+  showModerationOptions,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -138,7 +141,9 @@ export default function ImagesAsPostsInfinite({
   const { excludeCrossPosts } = imageFilters;
 
   return (
-    <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
+    <ImagesAsPostsInfiniteContext.Provider
+      value={{ filters, modelVersions, showModerationOptions }}
+    >
       <MasonryProvider columnWidth={310} maxColumnCount={6} maxSingleColumnWidth={450}>
         <MasonryContainer
           fluid

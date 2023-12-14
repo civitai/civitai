@@ -410,6 +410,7 @@ model Model {
   underAttack         Boolean         @default(false)
   earlyAccessDeadline DateTime?
   mode                ModelModifier?
+  gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
 
   // Licensing
   allowNoCredit         Boolean       @default(true)

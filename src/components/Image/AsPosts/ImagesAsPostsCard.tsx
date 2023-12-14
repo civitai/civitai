@@ -1,24 +1,25 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import { ActionIcon, createStyles, Group, Paper, Center, Tooltip, Text } from '@mantine/core';
+import { ActionIcon, Center, Group, Menu, Paper, Text, Tooltip, createStyles } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ImagesAsPostModel } from '~/server/controllers/image.controller';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StarRating } from '~/components/StartRating/StarRating';
-import Link from 'next/link';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
+import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export function ImagesAsPostsCard({
   data,
@@ -30,10 +31,13 @@ export function ImagesAsPostsCard({
   height: number;
 }) {
   const { ref, inView } = useInView({ rootMargin: '200%' });
-  const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
-  const { filters, modelVersions } = useImagesAsPostsInfiniteContext();
-  const modelVersionName = modelVersions?.find((x) => x.id === data.modelVersionId)?.name;
+  const { classes } = useStyles();
+  const queryUtils = trpc.useContext();
+
+  const { modelVersions, showModerationOptions } = useImagesAsPostsInfiniteContext();
+  const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
+  const modelVersionName = targetModelVersion?.name;
+  const modelId = targetModelVersion?.modelId;
   const postId = data.postId ?? undefined;
 
   const cover = data.images[0];
@@ -41,6 +45,37 @@ export function ImagesAsPostsCard({
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   const [slidesInView, setSlidesInView] = useState<number[]>([]);
+
+  const { data: model } = trpc.model.getById.useQuery(
+    { id: modelId as number },
+    { enabled: !!modelId }
+  );
+  const updateGallerySettingsMutation = trpc.model.updateGallerySettings.useMutation({
+    onSuccess: async (result) => {
+      // TODO.manuel: Do optimistic update instead
+      await queryUtils.model.getById.invalidate({ id: result.id });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Unable to hide image', error: new Error(error.message) });
+    },
+  });
+  const handleUpdateGallerySettings = (imageId: number) => {
+    if (showModerationOptions && model && model.gallerySettings) {
+      const updatedSettings = {
+        ...model.gallerySettings,
+        images: model.gallerySettings.images
+          ? model.gallerySettings.images.includes(imageId)
+            ? model.gallerySettings.images.filter((x) => x !== imageId)
+            : [...model.gallerySettings.images, imageId]
+          : [],
+      };
+
+      updateGallerySettingsMutation.mutate({
+        id: model.id,
+        gallerySettings: updatedSettings,
+      });
+    }
+  };
 
   useEffect(() => {
     if (!embla) return;
@@ -54,6 +89,15 @@ export function ImagesAsPostsCard({
 
   const imageIdsString = data.images.map((x) => x.id).join('_');
   const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
+
+  const moderationOptions = (imageId: number) => [
+    <Menu.Divider key="menu-divider" />,
+    <Menu.Label key="menu-label">Moderation zone</Menu.Label>,
+    // TODo.manuel: move this to its own component
+    <Menu.Item key="hide-image-gallery" onClick={() => handleUpdateGallerySettings(imageId)}>
+      Hide image from gallery
+    </Menu.Item>,
+  ];
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} className={classes.card}>
@@ -111,8 +155,6 @@ export function ImagesAsPostsCard({
                       )}
                     </IconBadge>
                   </RoutedDialogLink>
-                ) : currentUser?.id === data.user.id ? (
-                  <>{/* <Button compact>Add Review</Button> */}</>
                 ) : null}
               </Group>
             </Group>
@@ -127,7 +169,7 @@ export function ImagesAsPostsCard({
                       {image.meta && 'civitaiResources' in (image.meta as object) && (
                         <OnsiteIndicator />
                       )}
-                      <ImageGuard.Report />
+                      <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
                       <ImageGuard.ToggleImage position="top-left" />
                       <RoutedDialogLink
                         name="imageDetail"
@@ -227,7 +269,7 @@ export function ImagesAsPostsCard({
                             {image.meta && 'civitaiResources' in (image.meta as object) && (
                               <OnsiteIndicator />
                             )}
-                            <ImageGuard.Report />
+                            <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
                             <ImageGuard.ToggleConnect position="top-left" />
                             <RoutedDialogLink
                               name="imageDetail"

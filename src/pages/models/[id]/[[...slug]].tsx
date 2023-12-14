@@ -1003,6 +1003,7 @@ export default function ModelDetailsV2({
             modelId={model.id}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
+            showModerationOptions={isOwner || isModerator}
             generationOptions={{
               generationModelId: selectedVersion?.meta.picFinderModelId,
               includeEditingActions: isOwner,
