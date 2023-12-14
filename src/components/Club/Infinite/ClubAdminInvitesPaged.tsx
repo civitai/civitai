@@ -18,6 +18,9 @@ import { GetPagedClubAdminInviteSchema } from '~/server/schema/clubAdmin.schema'
 import { IconTrash } from '@tabler/icons-react';
 import { formatDate } from '../../../utils/date-helpers';
 import { getDisplayName } from '../../../utils/string-helpers';
+import { IconPencil } from '@tabler/icons-react';
+import { dialogStore } from '../../Dialog/dialogStore';
+import { ClubAdminInviteUpsertModal } from '../ClubAdminInviteUpsertForm';
 
 export function ClubAdminInvitesPaged({ clubId }: Props) {
   const utils = trpc.useContext();
@@ -66,15 +69,32 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                     <td>{invite.expiresAt ? formatDate(invite.expiresAt) : '-'}</td>
                     <td>{invite.permissions.map((p) => getDisplayName(p)).join(', ')}</td>
                     <td>
-                      <ActionIcon
-                        variant="transparent"
-                        aria-label="Delete invite"
-                        onClick={() => {
-                          console.log('todo');
-                        }}
-                      >
-                        <IconTrash />
-                      </ActionIcon>
+                      <Group>
+                        <ActionIcon
+                          variant="transparent"
+                          aria-label="Update invite"
+                          onClick={() => {
+                            dialogStore.trigger({
+                              component: ClubAdminInviteUpsertModal,
+                              props: {
+                                clubId,
+                                clubAdminInvite: invite,
+                              },
+                            });
+                          }}
+                        >
+                          <IconPencil />
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="transparent"
+                          aria-label="Delete invite"
+                          onClick={() => {
+                            console.log('todo');
+                          }}
+                        >
+                          <IconTrash />
+                        </ActionIcon>
+                      </Group>
                     </td>
                   </tr>
                 );
