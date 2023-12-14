@@ -118,6 +118,8 @@ export const upsertModelVersion = async ({
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
+  const model = await dbRead.model.findUniqueOrThrow({ where: { id: data.modelId } });
+
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },

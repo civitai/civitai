@@ -40,7 +40,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
 import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 
 type ArticleRaw = {
   id: number;
@@ -377,7 +377,7 @@ export const getArticles = async ({
 
     const profilePictures = await dbRead.image.findMany({
       where: { id: { in: articles.map((a) => a.user.profilePictureId).filter(isDefined) } },
-      select: { ...imageSelect, ingestion: true },
+      select: { ...profileImageSelect, ingestion: true },
     });
 
     const articleCategories = await getCategoryTags('article');

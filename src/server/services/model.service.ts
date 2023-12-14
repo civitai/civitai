@@ -70,7 +70,7 @@ import {
 } from './../schema/model.schema';
 import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
 import { entityRequiresClub } from '~/server/services/common.service';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -572,7 +572,7 @@ export const getModelsRaw = async ({
 
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
-    select: { ...imageSelect, ingestion: true },
+    select: { ...profileImageSelect, ingestion: true },
   });
 
   let nextCursor: string | bigint | undefined;
