@@ -29,11 +29,14 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 export const userContributingClubs = async ({
   userId,
   clubIds,
+  tx,
 }: {
   userId: number;
   clubIds?: number[];
+  tx?: Prisma.TransactionClient;
 }) => {
-  const clubs = await dbRead.club.findMany({
+  const dbClient = tx ?? dbRead;
+  const clubs = await dbClient.club.findMany({
     select: {
       id: true,
       name: true,
@@ -68,6 +71,7 @@ export const userContributingClubs = async ({
     admin: club.admins[0],
   }));
 };
+
 export const getClub = async ({
   id,
   tx,
@@ -281,7 +285,7 @@ export const upsertClubTiers = async ({
 }) => {
   const dbClient = tx ?? dbWrite;
 
-  const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubId], tx: dbClient });
 
   if (
     userId !== userClub?.userId &&
