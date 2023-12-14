@@ -854,7 +854,6 @@ export const getAllImages = async ({
   const profilePictures = await dbRead.image.findMany({
     where: {
       id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) },
-      ingestion: { not: 'Blocked' },
     },
     select: profileImageSelect,
   });
@@ -1009,7 +1008,7 @@ export const getImage = async ({
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
   const profilePicture = profilePictureId
     ? await dbRead.image.findUnique({
-        where: { id: profilePictureId, ingestion: { not: 'Blocked' } },
+        where: { id: profilePictureId },
         select: profileImageSelect,
       })
     : null;

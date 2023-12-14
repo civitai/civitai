@@ -85,7 +85,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       rank: { select: { leaderboardRank: true } },
       profilePicture: {
         select: profileImageSelect,
-        where: { ingestion: { not: 'Blocked' } },
       },
       cosmetics: {
         where: { equippedAt: { not: null } },

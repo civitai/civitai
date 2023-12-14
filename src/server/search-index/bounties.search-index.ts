@@ -342,10 +342,7 @@ const onFetchItemsToIndex = async ({
   });
 
   const profilePictures = await db.image.findMany({
-    where: {
-      id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) },
-      ingestion: { not: 'Blocked' },
-    },
+    where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },
     select: profileImageSelect,
   });
 
