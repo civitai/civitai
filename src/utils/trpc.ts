@@ -1,19 +1,12 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import {
-  createTRPCProxyClient,
-  httpLink,
-  loggerLink,
-  splitLink,
-  TRPCLink,
-  httpBatchLink,
-} from '@trpc/client';
+import { TRPCLink, createTRPCProxyClient, httpLink, loggerLink, splitLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
-import type { AppRouter } from '~/server/routers';
-import { isDev } from '~/env/other';
 import { isAuthed } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { env } from '~/env/client.mjs';
+import { isDev } from '~/env/other';
+import type { AppRouter } from '~/server/routers';
 import type { MessageServiceRouter } from '/Users/cmoody/Documents/code/civitai/message-service/dist/src/router/index.d.ts';
 
 const url = '/api/trpc';

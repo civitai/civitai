@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { Button, Group, Loader, NavLink, Text, createStyles } from '@mantine/core';
 
 export function ConversationsSidebar() {
   const router = useRouter();
+  const { classes } = useStyles();
   const [conversations, setConversations] = useState<any>([]);
   const [loading, setLoading] = useState(false);
 
@@ -31,23 +33,40 @@ export function ConversationsSidebar() {
 
   // TODO: State: loading, conversations, empty
   return (
-    <div>
-      <div>
-        <button onClick={handleNewConversation}>New Conversation</button>
-      </div>
+    <>
+      <Link href="/conversations/new">
+        <Button>New Conversation</Button>
+      </Link>
       {/* TODO: Scrollable container */}
       <div>
         {loading ? (
-          <div>Loading...</div>
+          <Loader size="sm" />
         ) : (
           // router.query.conversationId
           conversations?.map((conversation) => (
-            <div key={conversation.id}>
-              <Link href={`/conversations/${conversation.id}`}>{conversation.name}</Link>
-            </div>
+            <Link href={`/conversations/${conversation.id}`} key={conversation.id}>
+              <NavLink
+                className={classes.navItem}
+                active={router.query.conversationId === conversation.id}
+                label={
+                  <Group position="apart">
+                    <Text weight={500}>{conversation.name}</Text>
+                  </Group>
+                }
+              />
+            </Link>
           ))
         )}
       </div>
-    </div>
+    </>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  navItem: {
+    borderRight: `1px solid ${theme.colors.gray[theme.colorScheme === 'dark' ? 9 : 2]}`,
+    '&[data-active="true"]': {
+      borderRightColor: theme.colors.blue[theme.colorScheme === 'dark' ? 9 : 2],
+    },
+  },
+}));
