@@ -42,8 +42,17 @@ export async function getBuzzAccountHandler({
 
     switch (accountType) {
       case 'Club':
-        const club = await dbRead.club.findUniqueOrThrow({ where: { id: accountId } });
-        if (club.userId !== ctx.user.id && !ctx.user.isModerator)
+        const [userClub] = await userContributingClubs({
+          userId: ctx.user.id,
+          clubIds: [accountId],
+        });
+        if (!userClub) throw throwBadRequestError("You cannot view this club's transactions");
+
+        if (
+          userClub.userId !== ctx.user.id &&
+          !ctx.user.isModerator &&
+          !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.ViewRevenue)
+        )
           throw throwBadRequestError("You cannot view this club's transactions");
         break;
       case 'User':
@@ -128,8 +137,18 @@ export async function getBuzzAccountTransactionsHandler({
 
     switch (accountType) {
       case 'Club':
-        const club = await dbRead.club.findUniqueOrThrow({ where: { id: accountId } });
-        if (club.userId !== ctx.user.id && !ctx.user.isModerator)
+        const [userClub] = await userContributingClubs({
+          userId: ctx.user.id,
+          clubIds: [accountId],
+        });
+
+        if (!userClub) throw throwBadRequestError("You cannot view this club's transactions");
+
+        if (
+          userClub.userId !== ctx.user.id &&
+          !ctx.user.isModerator &&
+          !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.ViewRevenue)
+        )
           throw throwBadRequestError("You cannot view this club's transactions");
         break;
       case 'User':

@@ -41,10 +41,16 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
+    const clubAdmin = await dbRead.clubAdmin.findFirst({
+      where: { clubId: id, userId: session.user?.id },
+    });
+
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
+    const canViewRevenue =
+      clubAdmin?.permissions.includes(ClubAdminPermission.ViewRevenue) ?? false;
 
-    if (!isOwner && !isModerator)
+    if (!isOwner && !isModerator && !canViewRevenue)
       return {
         redirect: {
           destination: `/clubs/${id}`,

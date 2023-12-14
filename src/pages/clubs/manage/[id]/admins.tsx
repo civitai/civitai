@@ -47,17 +47,14 @@ export const getServerSideProps = createServerSideProps({
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    const canViewRevenue =
-      clubAdmin?.permissions.includes(ClubAdminPermission.ViewRevenue) ?? false;
 
-    if (!isOwner && !isModerator && !canViewRevenue)
-      if (!isOwner && !isModerator)
-        return {
-          redirect: {
-            destination: `/clubs/${id}`,
-            permanent: false,
-          },
-        };
+    if (!isOwner && !isModerator && !clubAdmin)
+      return {
+        redirect: {
+          destination: `/clubs/${id}`,
+          permanent: false,
+        },
+      };
 
     if (ssg) {
       await ssg.club.getById.prefetch({ id });

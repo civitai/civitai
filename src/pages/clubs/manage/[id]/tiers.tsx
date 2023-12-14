@@ -38,6 +38,7 @@ import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
+import { ClubAdminPermission } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -66,9 +67,16 @@ export const getServerSideProps = createServerSideProps({
 
     if (!club) return { notFound: true };
 
+    const clubAdmin = await dbRead.clubAdmin.findFirst({
+      where: { clubId: id, userId: session.user?.id },
+    });
+
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    if (!isOwner && !isModerator)
+    const canViewTiers =
+      (clubAdmin?.permissions ?? []).includes(ClubAdminPermission.ManageTiers) ?? false;
+
+    if (!isOwner && !isModerator && !canViewTiers)
       return {
         redirect: {
           destination: `/clubs/${id}`,

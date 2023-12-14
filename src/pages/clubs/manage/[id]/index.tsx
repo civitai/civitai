@@ -1,4 +1,5 @@
 import {
+  Alert,
   Anchor,
   Box,
   Button,
@@ -47,6 +48,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';
 import { openConfirmModal } from '@mantine/modals';
+import { ClubAdminPermission } from '@prisma/client';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -102,7 +104,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
   const { club, loading } = useQueryClub({ id });
   const { classes } = useClubFeedStyles();
   const { deleteClub, deletingClub } = useMutateClub();
-  const { isOwner, isModerator } = useClubContributorStatus({ clubId: id });
+  const { isOwner, isModerator, permissions } = useClubContributorStatus({ clubId: id });
 
   if (!loading && !club) return <NotFound />;
   if (loading || deletingClub) return <PageLoader />;
@@ -138,19 +140,29 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
     });
   };
 
+  const canUpdateClub =
+    isOwner || isModerator || permissions.includes(ClubAdminPermission.ManageClub);
+
   return (
     <Stack>
       <Title order={2}>General Settings</Title>
       <Paper className={classes.feedContainer}>
-        <ClubUpsertForm
-          club={club}
-          onSave={() => {
-            showSuccessNotification({
-              title: 'Club updated',
-              message: 'Your club has been updated successfully',
-            });
-          }}
-        />
+        {canUpdateClub ? (
+          <ClubUpsertForm
+            club={club}
+            onSave={() => {
+              showSuccessNotification({
+                title: 'Club updated',
+                message: 'Your club has been updated successfully',
+              });
+            }}
+          />
+        ) : (
+          <Alert title="You cannot update club settings" color="transparent">
+            You have permission to manage some aspects of this club, but club description and
+            general settings are not among those.
+          </Alert>
+        )}
       </Paper>
       {(isOwner || isModerator) && (
         <>

@@ -280,9 +280,14 @@ export const upsertClubTiers = async ({
   tx?: Prisma.TransactionClient;
 }) => {
   const dbClient = tx ?? dbWrite;
-  const club = await getClub({ id: clubId, tx: dbClient });
 
-  if (userId !== club?.userId && !isModerator) {
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
+
+  if (
+    userId !== userClub?.userId &&
+    !isModerator &&
+    !userClub?.admin?.permissions?.includes(ClubAdminPermission.ManageTiers)
+  ) {
     throw throwBadRequestError('Only club owners can edit club tiers');
   }
 
@@ -859,9 +864,15 @@ export const removeClubResource = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
-  const contributingClubs = await userContributingClubs({ userId, clubIds: [clubId] });
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
+  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const canRemoveResource =
+    isModerator ||
+    ownership.isOwner ||
+    userClub?.userId === userId ||
+    userClub.admin?.permissions.includes(ClubAdminPermission.ManageResources);
 
-  if (!isModerator && !contributingClubs.find((cc) => cc.id === clubId)) {
+  if (!canRemoveResource) {
     throw throwAuthorizationError(
       'You do not have permission to remove this resource from this club'
     );
