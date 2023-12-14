@@ -39,7 +39,7 @@ export const resetToDraftWithoutRequirements = createJob(
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE
         mv.status = 'Published'
-        AND m."deleteAt" IS NULL
+        AND m."deletedAt" IS NULL
         AND NOT EXISTS (SELECT 1 FROM "ModelFile" f WHERE f."modelVersionId" = mv.id);
     `;
     if (modelVersionsWithoutFiles.length) {
