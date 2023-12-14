@@ -18,7 +18,6 @@ class NcmecCaller extends HttpCaller {
     if (!NcmecCaller.instance) {
       NcmecCaller.instance = new NcmecCaller(env.NCMEC_URL, {
         headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
           Authorization: `Basic ${Buffer.from(
             `${env.NCMEC_USERNAME}:${env.NCMEC_PASSWORD}`
           ).toString('base64')}`,
@@ -44,10 +43,16 @@ class NcmecCaller extends HttpCaller {
   async initializeReport(data: any) {
     const builder = new Builder();
     const xmlInput = builder.buildObject(data);
-    const response = await this.postRaw('/submit', { body: xmlInput });
-    if (!response.ok) throw new Error('failed to initialize ncmec report');
+    const response = await this.postRaw('/submit', {
+      body: xmlInput,
+      headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+    });
     const xmlResponse = await response.text();
     const json = await parseStringPromise(xmlResponse);
+    if (!response.ok) {
+      console.dir({ json, xmlInput, data }, { depth: null });
+      throw new Error('failed to initialize ncmec report');
+    }
     return Ncmec.reportResponseSchema.parse(json).reportResponse;
   }
 
@@ -62,12 +67,17 @@ class NcmecCaller extends HttpCaller {
   }) {
     const form = new FormData();
     form.append('id', String(reportId));
-    form.append('file', file);
-
-    const uploadResponse = await this.postRaw('/upload', { body: form });
-    if (!uploadResponse.ok) throw new Error('ncmec file upload failed');
+    form.append('file', file, file.name);
+    const uploadResponse = await this.postRaw('/upload', {
+      body: form,
+    });
     const uploadXmlResponse = await uploadResponse.text();
     const uploadResponseJson = await parseStringPromise(uploadXmlResponse);
+    if (!uploadResponse.ok) {
+      console.log('ncmec file upload failed'.toUpperCase());
+      console.log({ xmlResponse: uploadXmlResponse });
+      throw new Error('ncmec file upload failed');
+    }
     const { fileId, hash } = Ncmec.uploadResponseSchema.parse(uploadResponseJson).reportResponse;
 
     if (fileDetails) {
@@ -80,8 +90,15 @@ class NcmecCaller extends HttpCaller {
       };
       const builder = new Builder();
       const xmlInput = builder.buildObject(filePayload);
-      const response = await this.postRaw('/fileinfo', { body: xmlInput });
-      if (!response.ok) throw new Error('failed to upload ncmec fileinfo');
+      const response = await this.postRaw('/fileinfo', {
+        body: xmlInput,
+        headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+      });
+      if (!response.ok) {
+        console.log('failed to upload ncmec fileinfo'.toUpperCase());
+        console.log({ xmlResponse: await response.text() });
+        throw new Error('failed to upload ncmec fileinfo');
+      }
     }
 
     return { fileId, hash };
@@ -90,13 +107,27 @@ class NcmecCaller extends HttpCaller {
   async finishReport(reportId: number) {
     const form = new FormData();
     form.append('id', String(reportId));
-    await this.postRaw('/finish', { body: form });
+    const response = await this.postRaw('/finish', {
+      body: form,
+    });
+    if (!response.ok) {
+      console.log('failed to finish ncmec report'.toUpperCase());
+      console.log({ xmlResponse: response.text() });
+      throw new Error('failed to finish ncmec report');
+    }
   }
 
   async retractReport(reportId: number) {
     const form = new FormData();
     form.append('id', String(reportId));
-    await this.postRaw('/retract', { body: form });
+    const response = await this.postRaw('/retract', {
+      body: form,
+    });
+    if (!response.ok) {
+      console.log('failed to retract ncmec report'.toUpperCase());
+      console.log({ xmlResponse: response.text() });
+      throw new Error('failed to retract ncmec report');
+    }
   }
 }
 

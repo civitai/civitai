@@ -39,7 +39,7 @@ export namespace Ncmec {
   export type FileDetails = {
     originalFileName?: string;
     locationOfFile?: string;
-    fileAnnotation?: FileAnnotationsInput;
+    fileAnnotations?: FileAnnotationsInput;
     additionalInfo?: string;
   };
 }

@@ -241,15 +241,17 @@ export async function processCsamReport(report: CsamReportProps) {
     <p>All evidence in this report should be independently verified.</p>
   `;
 
-  // TODO - remove this before prod
-  ipAddresses.push('test1');
-  ipAddresses.push('test2');
+  additionalInfo = additionalInfo.replace(/\n/g, '').replace(/\s+/g, ' ').trim();
+
+  // // TODO - remove this before prod
+  // ipAddresses.push('test1');
+  // ipAddresses.push('test2');
 
   const reportPayload = {
     report: {
       incidentSummary: {
         incidentType: 'Child Pornography (possession, manufacture, and distribution)',
-        incidentDateTime: new Date().toISOString(),
+        incidentDateTime: images[0].createdAt.toISOString(),
       },
       reporter: {
         reportingPerson: {
@@ -263,10 +265,11 @@ export async function processCsamReport(report: CsamReportProps) {
       personOrUserReported: {
         espIdentifier: report.userId,
         screenName: reportedUser?.username,
-        personOrUserReportedPerson: {
-          firstName: reportedUser?.name,
-          email: reportedUser?.email,
-        },
+        // personOrUserReportedPerson: {
+        //   firstName: reportedUser?.name,
+        //   email: reportedUser?.email,
+        //   displayName: reportedUser?.username,
+        // },
         ipCaptureEvent: ipAddresses.map((ipAddress) => ({ ipAddress })),
       },
       additionalInfo: `<![CDATA[${additionalInfo}]]>`,
@@ -274,7 +277,6 @@ export async function processCsamReport(report: CsamReportProps) {
   };
 
   const { reportId } = await ncmecCaller.initializeReport(reportPayload);
-  console.log({ reportId });
 
   try {
     const fileUploadResults = await Promise.all(
@@ -282,7 +284,7 @@ export async function processCsamReport(report: CsamReportProps) {
         const imageReportInfo = report.images.find((x) => x.id === image.id);
 
         const imageUrl = getEdgeUrl(image.url, { type: image.type });
-        const { prompt, negativePrompt } = image.meta as Record<string, unknown>;
+        const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
         const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
         const modelId = modelVersion?.model.id;
         const modelVersionId = modelVersion?.id;
@@ -300,7 +302,7 @@ export async function processCsamReport(report: CsamReportProps) {
           fileDetails: {
             originalFileName: image.name ?? undefined,
             locationOfFile: imageUrl,
-            fileAnnotation: imageReportInfo?.fileAnnotations,
+            fileAnnotations: imageReportInfo?.fileAnnotations,
             additionalInfo: additionalInfo.length
               ? `
               <![CDATA[
@@ -312,8 +314,6 @@ export async function processCsamReport(report: CsamReportProps) {
               : undefined,
           },
         });
-
-        console.log({ fileId, hash });
 
         return {
           ...imageReportInfo,
@@ -332,9 +332,9 @@ export async function processCsamReport(report: CsamReportProps) {
     });
 
     await ncmecCaller.finishReport(reportId);
-
-    console.log('finished');
   } catch (e) {
+    console.log('ERROR');
+    console.log(e);
     await ncmecCaller.retractReport(reportId);
   }
 }

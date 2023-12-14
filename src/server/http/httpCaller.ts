@@ -1,10 +1,6 @@
 import { QS } from '~/utils/qs';
 import { handleLogError } from '../utils/errorHandling';
 
-type PostOptions<T> =
-  | { body: BodyInit | null | undefined; payload?: never }
-  | { body?: never; payload?: T };
-
 export abstract class HttpCaller {
   private baseUrl: string;
   private baseHeaders: MixedObject;

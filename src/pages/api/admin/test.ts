@@ -24,8 +24,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   //   images: images.map(({ id }) => ({ id, fileAnnotations: { generativeAi: true } })),
   // });
 
-  // const reports = await getCsamsToReport();
-  // const result = await processCsamReport(reports[0]);
+  const reports = await getCsamsToReport();
+
+  if (reports.length) await processCsamReport(reports[0]);
   // return res.send(result);
 
   // const status = await ncmecCaller.getStatus();
