@@ -22,6 +22,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
+import { z } from 'zod';
 
 export const createCsamReport = async ({
   reportedById,
@@ -158,7 +159,13 @@ export const getUserIpInfo = async ({ userId }: { userId: number }) => {
       format: 'JSONEachRow',
     })
     .then((x) => x.json<{ ip: string }[]>());
-  return ips.map(({ ip }) => ip);
+
+  return ips
+    .map(({ ip }) => {
+      const res = z.string().ip().safeParse(ip);
+      return res.success ? res.data : undefined;
+    })
+    .filter(isDefined);
 };
 
 export async function processCsamReport(report: CsamReportProps) {
