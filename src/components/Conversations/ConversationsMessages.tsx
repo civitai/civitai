@@ -1,11 +1,13 @@
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
-import { TextInput, Group, Button, Loader, Center } from '@mantine/core';
+import { TextInput, Group, Button, Loader, Center, createStyles } from '@mantine/core';
 import { IconSend } from '@tabler/icons-react';
+import { ConversationsMessage } from './ConversationsMessage';
 
 export function ConversationMessages() {
   const router = useRouter();
+  const { classes } = useStyles();
   const [messages, setMessages] = useState<any>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState<null | string>(null);
@@ -52,7 +54,7 @@ export function ConversationMessages() {
       ) : (
         <div>
           {messages?.map((message, i) => (
-            <div key={i}>{message.text}</div>
+            <ConversationsMessage key={i} {...message} />
           ))}
         </div>
       )}
@@ -75,3 +77,7 @@ export function ConversationMessages() {
     </div>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  messageInput: {},
+}));

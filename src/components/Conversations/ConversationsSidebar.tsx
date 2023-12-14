@@ -34,17 +34,15 @@ export function ConversationsSidebar() {
 
   return (
     <Navbar p="md" hiddenBreakpoint="sm" width={{ sm: 200, lg: 300 }}>
-      <Navbar.Section mt="xs">
+      <Navbar.Section my="xs">
         <Link href="/conversations/new">
           <Button>New Conversation</Button>
         </Link>
       </Navbar.Section>
-      {/* TODO: Scrollable container */}
       <Navbar.Section grow component={ScrollArea} mx="-xs" px="xs">
         {loading ? (
           <Loader size="sm" />
         ) : (
-          // router.query.conversationId
           conversations?.map((conversation) => (
             <Link href={`/conversations/${conversation.id}`} key={conversation.id}>
               <NavLink
