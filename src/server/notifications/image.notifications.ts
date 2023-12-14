@@ -13,7 +13,7 @@ export const reportNotifications = createNotificationProcessor({
           i.id "imageId",
           u.id "userId"
         FROM "Image" i 
-        JOIN "User" u ON i.id = u."profileImageId"
+        JOIN "User" u ON i.id = u."profilePictureId"
         WHERE i."updatedAt" > ${lastSent} AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")

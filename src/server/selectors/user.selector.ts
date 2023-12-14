@@ -8,7 +8,6 @@ export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   image: true,
   profilePicture: {
     select: profileImageSelect,
-    where: { ingestion: { not: 'Blocked' } },
   },
 });
 
