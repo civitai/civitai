@@ -37,7 +37,7 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
   const { mutateAsync: completeStripeBuzzPurchaseMutation } =
     trpc.buzz.completeStripeBuzzPurchase.useMutation({
       async onSuccess() {
-        await queryUtils.buzz.getUserAccount.invalidate();
+        await queryUtils.buzz.getBuzzAccount.invalidate();
         setProcessing(false);
         showSuccessNotification({
           title: 'Transaction completed successfully!',

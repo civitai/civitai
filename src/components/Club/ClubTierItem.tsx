@@ -10,27 +10,18 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import {
-  useClubContributorStatus,
-  useMutateClub,
-  useQueryClubMembership,
-} from '~/components/Club/club.utils';
+import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { closeModal, openConfirmModal } from '@mantine/modals';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { showSuccessNotification } from '~/utils/notifications';
 import { formatDate } from '~/utils/date-helpers';
 import dayjs from 'dayjs';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 import { useRouter } from 'next/router';
 import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
