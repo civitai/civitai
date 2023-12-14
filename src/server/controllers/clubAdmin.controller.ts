@@ -4,19 +4,22 @@ import { userContributingClubs } from '~/server/services/club.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   AcceptClubAdminInviteInput,
+  DeleteClubAdminInput,
   DeleteClubAdminInviteInput,
   GetPagedClubAdminInviteSchema,
   GetPagedClubAdminSchema,
+  UpdateClubAdminInput,
   UpsertClubAdminInviteInput,
 } from '../schema/clubAdmin.schema';
 import {
   acceptClubAdminInvite,
+  deleteClubAdmin,
   deleteClubAdminInvite,
   getClubAdminInvites,
   getClubAdmins,
+  updateClubAdmin,
   upsertClubAdminInvite,
 } from '~/server/services/clubAdmin.service';
-import { GetByIdStringInput } from '../schema/base.schema';
 
 export const getPagedClubAdminInvitesHandler = async ({
   input,
@@ -34,7 +37,7 @@ export const getPagedClubAdminInvitesHandler = async ({
   const isModerator = user.isModerator;
 
   if (!isClubOwner && !isModerator) {
-    throw throwAuthorizationError('You are not authorized to view this page');
+    throw throwAuthorizationError('You are not authorized to view club invites for this club');
   }
 
   try {
@@ -68,7 +71,7 @@ export const getPagedClubAdminsHandler = async ({
   const isModerator = user.isModerator;
 
   if (!isClubOwner && !isModerator) {
-    throw throwAuthorizationError('You are not authorized to view this page');
+    throw throwAuthorizationError('You are not authorized to view club admins for this club');
   }
 
   try {
@@ -77,6 +80,8 @@ export const getPagedClubAdminsHandler = async ({
       select: {
         createdAt: true,
         permissions: true,
+        clubId: true,
+        userId: true,
         user: {
           select: userWithCosmeticsSelect,
         },
@@ -102,7 +107,7 @@ export const upsertClubAdminInviteHandler = async ({
   const isModerator = user.isModerator;
 
   if (!isClubOwner && !isModerator) {
-    throw throwAuthorizationError('You are not authorized to view this page');
+    throw throwAuthorizationError('You are not authorized to create or update club invites');
   }
 
   try {
@@ -127,7 +132,7 @@ export const deleteClubAdminInviteHandler = async ({
   const isModerator = user.isModerator;
 
   if (!isClubOwner && !isModerator) {
-    throw throwAuthorizationError('You are not authorized to view this page');
+    throw throwAuthorizationError('You are not authorized to delete club invites');
   }
 
   try {
@@ -151,6 +156,56 @@ export const acceptClubAdminInviteHandler = async ({
         userId: ctx.user.id,
       },
     });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const updateClubAdminHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateClubAdminInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  const clubId = input.clubId;
+
+  const [userClub] = await userContributingClubs({ userId: user.id, clubIds: [clubId] });
+  const isClubOwner = userClub.userId === user.id;
+  const isModerator = user.isModerator;
+
+  if (!isClubOwner && !isModerator) {
+    throw throwAuthorizationError('You are not authorized to update this club admin');
+  }
+
+  try {
+    return updateClubAdmin({ input });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const deleteClubAdminHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DeleteClubAdminInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  const clubId = input.clubId;
+
+  const [userClub] = await userContributingClubs({ userId: user.id, clubIds: [clubId] });
+  const isClubOwner = userClub.userId === user.id;
+  const isModerator = user.isModerator;
+
+  if (!isClubOwner && !isModerator) {
+    throw throwAuthorizationError('You are not authorized remove a club admin');
+  }
+
+  try {
+    return deleteClubAdmin({ input });
   } catch (error) {
     throw throwDbError(error);
   }

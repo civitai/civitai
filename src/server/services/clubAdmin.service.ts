@@ -3,9 +3,11 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   AcceptClubAdminInviteInput,
+  DeleteClubAdminInput,
   DeleteClubAdminInviteInput,
   GetPagedClubAdminInviteSchema,
   GetPagedClubAdminSchema,
+  UpdateClubAdminInput,
   UpsertClubAdminInviteInput,
 } from '../schema/clubAdmin.schema';
 import { getPagination, getPagingData } from '../utils/pagination-helpers';
@@ -125,5 +127,30 @@ export const acceptClubAdminInvite = async ({
 
   return dbWrite.clubAdmin.findUnique({
     where: { clubId_userId: { clubId: clubAdminInvite.clubId, userId } },
+  });
+};
+
+export const updateClubAdmin = async ({ input }: { input: UpdateClubAdminInput }) => {
+  return dbWrite.clubAdmin.update({
+    where: {
+      clubId_userId: {
+        clubId: input.clubId,
+        userId: input.userId,
+      },
+    },
+    data: {
+      permissions: input.permissions,
+    },
+  });
+};
+
+export const deleteClubAdmin = async ({ input }: { input: DeleteClubAdminInput }) => {
+  return dbWrite.clubAdmin.delete({
+    where: {
+      clubId_userId: {
+        clubId: input.clubId,
+        userId: input.userId,
+      },
+    },
   });
 };

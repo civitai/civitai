@@ -23,11 +23,11 @@ import { formatDate } from '../../../utils/date-helpers';
 import { getDisplayName } from '../../../utils/string-helpers';
 import { IconPencil } from '@tabler/icons-react';
 import { dialogStore } from '../../Dialog/dialogStore';
-import { ClubAdminInviteUpsertModal } from '../ClubAdminInviteUpsertForm';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '../../../utils/notifications';
 import { UserAvatar } from '../../UserAvatar/UserAvatar';
 import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
+import { ClubAdmin } from '../../../types/router';
 
 export function ClubAdminsPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for admins
@@ -42,7 +42,7 @@ export function ClubAdminsPaged({ clubId }: Props) {
     debouncedFilters
   );
 
-  const { deleteInvite, deletingInvite } = useMutateClubAdmin();
+  const { deleteAdmin, deletingAdmin } = useMutateClubAdmin();
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -50,18 +50,18 @@ export function ClubAdminsPaged({ clubId }: Props) {
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
-  const onRemoveAdmin = (id: string) => {
+  const onRemoveAdmin = (clubAdmin: ClubAdmin) => {
     openConfirmModal({
-      title: 'Delete Club Admin Invite',
-      children: <Text size="sm">Are you sure you want to delete this invite?</Text>,
+      title: 'Remove Club Admin',
+      children: <Text size="sm">Are you sure you want to remove this admin?</Text>,
       centered: true,
-      labels: { confirm: 'Delete Invite', cancel: "No, don't delete it" },
+      labels: { confirm: 'Remove', cancel: "No, don't remove it" },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
-        await deleteInvite({ id, clubId });
+        await deleteAdmin({ userId: clubAdmin.user.id, clubId });
         showSuccessNotification({
-          title: 'Invite deleted',
-          message: 'The invite has been deleted.',
+          title: 'Admin removed',
+          message: 'The admin has been removed.',
         });
       },
     });
@@ -115,9 +115,9 @@ export function ClubAdminsPaged({ clubId }: Props) {
                         <ActionIcon
                           variant="transparent"
                           aria-label="Delete invite"
-                          loading={deletingInvite}
+                          loading={deletingAdmin}
                           onClick={() => {
-                            onRemoveAdmin(admin.id);
+                            onRemoveAdmin(admin);
                           }}
                         >
                           <IconTrash />

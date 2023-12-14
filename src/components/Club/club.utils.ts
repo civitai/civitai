@@ -832,10 +832,10 @@ export const useMutateClubAdmin = () => {
     acceptInvite: handleAcceptClubAdminInvite,
     acceptingInvite: acceptClubAdminInvite.isLoading,
     // Admins
-    upsert: handleUpdateClubAdmin,
-    upserting: updateClubAdmin.isLoading,
-    delete: handleDeleteClubAdmin,
-    deleting: deleteClubAdminInvite.isLoading,
+    update: handleUpdateClubAdmin,
+    updating: updateClubAdmin.isLoading,
+    deleteAdmin: handleDeleteClubAdmin,
+    deletingAdmin: deleteClubAdminInvite.isLoading,
   };
 };
 

@@ -1,16 +1,20 @@
 import { isFlagProtected, protectedProcedure, router, middleware } from '~/server/trpc';
 import {
   acceptClubAdminInviteInput,
+  deleteClubAdminInput,
   deleteClubAdminInviteInput,
   getPagedClubAdminInviteSchema,
   getPagedClubAdminSchema,
+  updateClubAdminInput,
   upsertClubAdminInviteInput,
 } from '../schema/clubAdmin.schema';
 import {
   acceptClubAdminInviteHandler,
+  deleteClubAdminHandler,
   deleteClubAdminInviteHandler,
   getPagedClubAdminInvitesHandler,
   getPagedClubAdminsHandler,
+  updateClubAdminHandler,
   upsertClubAdminInviteHandler,
 } from '~/server/controllers/clubAdmin.controller';
 import { throwAuthorizationError, throwBadRequestError } from '../utils/errorHandling';
@@ -63,4 +67,14 @@ export const clubAdminRouter = router({
     .input(acceptClubAdminInviteInput)
     .use(isFlagProtected('clubs'))
     .mutation(acceptClubAdminInviteHandler),
+  update: protectedProcedure
+    .input(updateClubAdminInput)
+    .use(isFlagProtected('clubs'))
+    .use(isOwnerOrModerator)
+    .mutation(updateClubAdminHandler),
+  delete: protectedProcedure
+    .input(deleteClubAdminInput)
+    .use(isFlagProtected('clubs'))
+    .use(isOwnerOrModerator)
+    .mutation(deleteClubAdminHandler),
 });
