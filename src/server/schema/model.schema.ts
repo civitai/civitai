@@ -151,6 +151,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
+  templateId: z.number().optional(),
 });
 
 export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;

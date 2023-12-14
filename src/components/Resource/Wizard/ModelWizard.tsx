@@ -376,7 +376,7 @@ export function ModelWizard() {
               <Title mb="sm" order={2}>
                 Publish a Model
               </Title>
-              {/* {isNew && !showTraining && currentUser && (
+              {isNew && !showTraining && currentUser && (
                 <Popover
                   opened={opened}
                   width={400}
@@ -393,7 +393,7 @@ export function ModelWizard() {
                     <TemplateSelect userId={currentUser.id} onSelect={() => setOpened(false)} />
                   </Popover.Dropdown>
                 </Popover>
-              )} */}
+              )}
             </Group>
 
             {showTraining ? (
