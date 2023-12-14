@@ -46,7 +46,7 @@ export const ClubRequirementNotice = ({
           </ThemeIcon>
           <Text size="sm">This {getDisplayName(entityType)} is private.</Text>
           <Text size="sm">
-            The creator has decided to make this resource private and only available specific
+            The creator has decided to make this resource private and only available to specific
             people. You can request access by contacting the creator.
           </Text>
         </Stack>
