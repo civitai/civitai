@@ -46,6 +46,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel }: Pr
   const form = useForm({
     schema: formSchema,
     defaultValues: {
+      membersOnly: true,
       ...clubPost,
       clubId,
     },
