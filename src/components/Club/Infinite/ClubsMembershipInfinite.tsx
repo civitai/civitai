@@ -131,7 +131,8 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                 <th>Tier</th>
                 <th>Member since</th>
                 <th>Next billing</th>
-                <th>Cancel on</th>
+                <th>Cancelled on</th>
+                <th>Expires on</th>
                 <th>Billing paused from </th>
                 <th>&nbsp;</th>
               </tr>
@@ -146,6 +147,11 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                   <td>{formatDate(membership.startedAt)}</td>
                   <td>{membership.cancelledAt ? '-' : formatDate(membership.nextBillingAt)}</td>
                   <td>{membership.cancelledAt ? formatDate(membership.cancelledAt) : '-'}</td>
+                  <td>
+                    {membership.cancelledAt && membership.expiresAt
+                      ? formatDate(membership.expiresAt)
+                      : '-'}
+                  </td>
                   <td>
                     {membership.billingPausedAt ? formatDate(membership.billingPausedAt) : '-'}
                   </td>
