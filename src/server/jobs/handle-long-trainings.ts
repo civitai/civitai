@@ -136,9 +136,14 @@ const handleJob = async (
     }
 
     log(`Refunding transaction`);
-    await withRetries(async () =>
-      refundTransaction(transactionId, 'Refund due to a long-running/failed training job.')
-    );
+    try {
+      await withRetries(async () =>
+        refundTransaction(transactionId, 'Refund due to a long-running/failed training job.')
+      );
+    } catch (e) {
+      log(`Error refunding transaction - need to manually refund.`);
+      return;
+    }
     log(`Refunded transaction`);
 
     return true;
