@@ -329,7 +329,7 @@ export const entityOwnership = async ({
       )
     )`;
 
-  const entitiesOwnership = await dbRead.$queryRaw<
+  const entitiesOwnership = await dbWrite.$queryRaw<
     {
       entityId: number;
       entityType: SupportedClubEntities;
