@@ -17,7 +17,7 @@ export function ProfilePictureAlert({ ingestion }: Props) {
         that it was rejected by our automated scanning process. Please provide a different picture
         which comply with our{' '}
         <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
-          TOS
+          Content Policies
         </Anchor>
         .
       </Alert>
