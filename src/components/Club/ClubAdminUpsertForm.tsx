@@ -50,7 +50,7 @@ export function ClubAdminUpdateForm({ clubAdmin, onSuccess, onCancel }: Props) {
                 <InputCheckboxGroup
                   name="permissions"
                   orientation="vertical"
-                  label="Invite Permissions"
+                  label="Permissions"
                   spacing={8}
                 >
                   {Object.keys(ClubAdminPermission).map((permission) => {
