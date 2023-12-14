@@ -91,6 +91,7 @@ export const createClubMembership = async ({
       currency: true,
       name: true,
       memberLimit: true,
+      joinable: true,
       club: {
         select: {
           name: true,
@@ -108,6 +109,10 @@ export const createClubMembership = async ({
 
   if (clubTier.memberLimit && clubTier._count.memberships >= clubTier.memberLimit) {
     throw throwBadRequestError('Club tier is full');
+  }
+
+  if (!clubTier.joinable) {
+    throw throwBadRequestError('Club tier is not joinable');
   }
 
   const clubMembership = await clubMembershipOnClub({
