@@ -267,7 +267,10 @@ export const getPostsInfinite = async ({
     ? await getCosmeticsForUsers(postsRaw.map((i) => i.userId))
     : undefined;
   const profilePictures = await dbRead.image.findMany({
-    where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
+    where: {
+      id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) },
+      ingestion: { not: 'Blocked' },
+    },
     select: profileImageSelect,
   });
 

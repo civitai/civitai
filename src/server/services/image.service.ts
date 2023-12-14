@@ -1,5 +1,4 @@
 import {
-  Image,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -853,7 +852,10 @@ export const getAllImages = async ({
     ? await getCosmeticsForUsers(rawImages.map((i) => i.userId))
     : undefined;
   const profilePictures = await dbRead.image.findMany({
-    where: { id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) } },
+    where: {
+      id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) },
+      ingestion: { not: 'Blocked' },
+    },
     select: profileImageSelect,
   });
 
@@ -1007,7 +1009,7 @@ export const getImage = async ({
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
   const profilePicture = profilePictureId
     ? await dbRead.image.findUnique({
-        where: { id: profilePictureId },
+        where: { id: profilePictureId, ingestion: { not: 'Blocked' } },
         select: profileImageSelect,
       })
     : null;
@@ -2236,7 +2238,7 @@ export const getImageModerationReviewQueue = async ({
   }
 
   const images: Array<
-    Omit<ImageV2Model, 'stats'> & {
+    Omit<ImageV2Model, 'stats' | 'metadata'> & {
       tags?: VotableTagModel[] | undefined;
       report?:
         | {
@@ -2251,6 +2253,7 @@ export const getImageModerationReviewQueue = async ({
       modelVersionId?: number | null;
       entityType?: string | null;
       entityId?: number | null;
+      metadata?: MixedObject | null;
     }
   > = rawImages.map(
     ({
@@ -2267,13 +2270,14 @@ export const getImageModerationReviewQueue = async ({
       ...i
     }) => ({
       ...i,
+      metadata: i.metadata as MixedObject,
       user: {
         id: creatorId,
         username,
         image: userImage,
         deletedAt,
         cosmetics: [],
-        // TODO.manuel: properly get profilePicture
+        // No need for profile picture
         profilePicture: null,
       },
       reactions: [],

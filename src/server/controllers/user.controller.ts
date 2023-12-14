@@ -79,7 +79,7 @@ import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { ingestImage } from '../services/image.service';
+import { deleteImageById, ingestImage } from '../services/image.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -288,6 +288,9 @@ export const updateUserHandler = async ({
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
 
+    const user = await getUserById({ id, select: { profilePictureId: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
     const updatedUser = await updateUserById({
       id,
       data: {
@@ -300,6 +303,12 @@ export const updateUserHandler = async ({
                 where: { id: profilePicture.id ?? -1 },
                 create: {
                   ...profilePicture,
+                  metadata: {
+                    ...profilePicture.metadata,
+                    profilePicture: true,
+                    userId: id,
+                    username,
+                  },
                   userId: id,
                 },
               },
@@ -307,9 +316,17 @@ export const updateUserHandler = async ({
           : undefined,
       },
     });
-    if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
 
-    if (profilePicture && updatedUser.profilePictureId)
+    // Delete old profilePic and ingest new one
+    if (user.profilePictureId && user.profilePictureId !== profilePicture?.id) {
+      await deleteImageById({ id: user.profilePictureId });
+    }
+
+    if (
+      profilePicture &&
+      updatedUser.profilePictureId &&
+      user.profilePictureId !== profilePicture?.id
+    )
       await ingestImage({
         image: {
           id: updatedUser.profilePictureId,

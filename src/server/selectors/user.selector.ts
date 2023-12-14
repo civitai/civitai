@@ -6,7 +6,10 @@ export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   username: true,
   deletedAt: true,
   image: true,
-  profilePicture: { select: profileImageSelect },
+  profilePicture: {
+    select: profileImageSelect,
+    where: { ingestion: { not: 'Blocked' } },
+  },
 });
 
 const simpleUser = Prisma.validator<Prisma.UserDefaultArgs>()({
