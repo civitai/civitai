@@ -2,7 +2,16 @@ import { useState, useEffect } from 'react';
 import { serviceClient } from '~/utils/trpc';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Button, Group, Loader, NavLink, Text, createStyles } from '@mantine/core';
+import {
+  Button,
+  Group,
+  Loader,
+  NavLink,
+  Navbar,
+  ScrollArea,
+  Text,
+  createStyles,
+} from '@mantine/core';
 
 export function ConversationsSidebar() {
   const router = useRouter();
@@ -23,22 +32,15 @@ export function ConversationsSidebar() {
     fetchConversations();
   }, []);
 
-  const handleNewConversation = async () => {
-    const data = await serviceClient.conversations.createConversation.mutate({
-      name: 'New convo',
-      users: [],
-    });
-    setConversations((prev: any) => [...prev, data]);
-  };
-
-  // TODO: State: loading, conversations, empty
   return (
-    <>
-      <Link href="/conversations/new">
-        <Button>New Conversation</Button>
-      </Link>
+    <Navbar p="md" hiddenBreakpoint="sm" width={{ sm: 200, lg: 300 }}>
+      <Navbar.Section mt="xs">
+        <Link href="/conversations/new">
+          <Button>New Conversation</Button>
+        </Link>
+      </Navbar.Section>
       {/* TODO: Scrollable container */}
-      <div>
+      <Navbar.Section grow component={ScrollArea} mx="-xs" px="xs">
         {loading ? (
           <Loader size="sm" />
         ) : (
@@ -57,8 +59,8 @@ export function ConversationsSidebar() {
             </Link>
           ))
         )}
-      </div>
-    </>
+      </Navbar.Section>
+    </Navbar>
   );
 }
 
