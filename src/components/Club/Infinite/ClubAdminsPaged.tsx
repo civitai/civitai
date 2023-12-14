@@ -141,8 +141,8 @@ export function ClubAdminsPaged({ clubId }: Props) {
           </Table>
         </div>
       ) : (
-        <Alert title="No admin admins" color="gray">
-          There are no admin admins for this club.
+        <Alert title="No admins" color="gray">
+          There are no active admins on this club.
         </Alert>
       )}
     </>
