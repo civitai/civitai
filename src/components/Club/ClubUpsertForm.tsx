@@ -262,15 +262,13 @@ export function ClubUpsertForm({
                   }
                 />
               )}
-              <List size="xs" spacing={8}>
-                <List.Item>
-                  Clubs MUST adhere to the content rules defined in our{' '}
-                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
-                    TOS
-                  </Anchor>
-                  .
-                </List.Item>
-              </List>
+              <Text size="xs">
+                Clubs MUST adhere to the content rules defined in our{' '}
+                <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                  Terms of service
+                </Anchor>
+                .
+              </Text>
             </Stack>
           </Grid.Col>
         </Grid>
