@@ -10,14 +10,6 @@ type Props = {
 };
 
 export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
-  const { data: membership, isLoading: isLoadingMembership } =
-    trpc.clubMembership.getClubMembershipOnClub.useQuery({
-      clubId,
-    });
-  const { isOwner, isClubAdmin, isModerator } = useClubContributorStatus({ clubId });
-
-  const canComment = membership || isClubAdmin || isOwner || isModerator;
-
   return (
     <CommentsProvider
       entityType="clubPost"
@@ -26,21 +18,13 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
-        isLoading || isLoadingMembership ? (
+        isLoading ? (
           <Center>
             <Loader variant="bars" />
           </Center>
         ) : (
           <Stack>
-            {canComment ? (
-              <CreateComment />
-            ) : (
-              <Alert>
-                <Group align="center" position="center" spacing="xs">
-                  <Text size="sm">You must be a member of this club to add a comment</Text>
-                </Group>
-              </Alert>
-            )}
+            <CreateComment />
             {(data?.length || created.length) > 0 && (
               <>
                 {data?.map((comment) => (

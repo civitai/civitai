@@ -21,6 +21,11 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
         where: { id: clubId },
         select: {
           userId: true,
+          admins: {
+            where: {
+              userId,
+            },
+          },
           memberships: {
             where: {
               userId,
@@ -33,7 +38,9 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   const includeMembersOnlyContent =
     isModerator ||
     (clubWithMembership &&
-      (userId === clubWithMembership.userId || clubWithMembership.memberships.length > 0))
+      (userId === clubWithMembership.userId ||
+        clubWithMembership.memberships.length > 0 ||
+        clubWithMembership.admins.length > 0))
       ? undefined
       : false;
 
