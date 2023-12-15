@@ -472,7 +472,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                     </ActionIcon>
                   </Link>
                 )}
-                {image.meta && (
+                {image.meta ? (
                   <ImageMetaPopover
                     meta={image.meta as ImageMetaProps}
                     generationProcess={image.generationProcess ?? 'txt2img'}
@@ -491,7 +491,14 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                       />
                     </ActionIcon>
                   </ImageMetaPopover>
-                )}
+                ) : image.metadata?.profilePicture ? (
+                  <Badge
+                    variant="filled"
+                    style={{ position: 'absolute', bottom: '10px', right: '5px' }}
+                  >
+                    Profile Picture
+                  </Badge>
+                ) : null}
               </ImageGuard.Safe>
             </Box>
           )}
