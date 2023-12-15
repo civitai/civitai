@@ -43,6 +43,7 @@ export const profileImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   type: true,
   width: true,
   height: true,
+  metadata: true,
 });
 
 const { name, ...imageSelectWithoutName } = imageSelect;

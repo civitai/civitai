@@ -31,6 +31,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ProfilePictureAlert } from '~/components/User/ProfilePictureAlert';
 
 const schema = z.object({
   id: z.number(),
@@ -211,13 +212,7 @@ export function ProfileCard() {
             <Grid.Col span={12}>
               <Stack spacing={8}>
                 <InputProfileImageUpload name="profilePicture" label="Profile Image" />
-                {user?.profilePicture?.ingestion === 'Pending' && (
-                  <Alert color="yellow">
-                    Your profile picture is currently being scanned. You&apos;ll still be able to
-                    see it, but other users won&apos;t see your profile picture until it has
-                    finished the scan process.
-                  </Alert>
-                )}
+                <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
               </Stack>
             </Grid.Col>
             <Grid.Col span={12}>
