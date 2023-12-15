@@ -434,6 +434,9 @@ export const clubOwnerRemoveMember = async ({
       where: { id: membership.id },
     });
 
+    // Nothing to refund :shrug:
+    if (membership.unitAmount === 0) return;
+
     // Refund the user:
     await createBuzzTransaction({
       fromAccountType: 'Club',
