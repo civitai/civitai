@@ -88,6 +88,7 @@ export function GeneratedImage({
 
   const imageRef = useRef<HTMLImageElement>(null);
   const isLandscape = request.params.width > request.params.height;
+  const removedForSafety = image.removedForSafety && image.available;
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -127,73 +128,16 @@ export function GeneratedImage({
               />
               {!image.available ? (
                 <Center
-                  sx={(theme) => ({
+                  sx={{
                     position: 'absolute',
                     top: 0,
                     left: 0,
                     right: 0,
                     bottom: 0,
-                  })}
+                  }}
                   p="xs"
                 >
-                  {image.removedForSafety ? (
-                    <Stack align="center" spacing={0}>
-                      <Box
-                        className={classes.blockedMessage}
-                        sx={{
-                          flexDirection: isLandscape ? 'row' : 'column',
-                        }}
-                      >
-                        <ThemeIcon
-                          color="red"
-                          size={isLandscape ? 36 : 48}
-                          className={classes.iconBlocked}
-                          radius="xl"
-                          variant="light"
-                          sx={(theme) => ({
-                            marginBottom: isLandscape ? 0 : theme.spacing.sm,
-                            marginRight: isLandscape ? theme.spacing.sm : 0,
-                          })}
-                        >
-                          <IconBan size={isLandscape ? 24 : 36} />
-                        </ThemeIcon>
-                        <Stack spacing={0} align={isLandscape ? undefined : 'center'}>
-                          <Text
-                            color="red.5"
-                            weight={500}
-                            size="sm"
-                            align="center"
-                            sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
-                          >
-                            Blocked by OctoML
-                          </Text>
-                          <Text
-                            size="xs"
-                            component="a"
-                            td="underline"
-                            color="dimmed"
-                            href="/blocked-by-octoml"
-                            target="_blank"
-                          >
-                            Why?
-                          </Text>
-                        </Stack>
-                      </Box>
-                      <Text size="xs" color="dimmed" className={classes.mistake}>
-                        Is this a mistake?
-                      </Text>
-                      <Text
-                        size="xs"
-                        component="a"
-                        td="underline"
-                        color="dimmed"
-                        href="https://octoml.ai/contact-us/"
-                        target="_blank"
-                      >
-                        Contact OctoML
-                      </Text>
-                    </Stack>
-                  ) : image.status === 'Started' ? (
+                  {image.status === 'Started' ? (
                     <Stack align="center">
                       <Loader size={24} />
                       <Text color="dimmed" size="xs" align="center">
@@ -212,6 +156,74 @@ export function GeneratedImage({
                       </Text>
                     </Stack>
                   )}
+                </Center>
+              ) : removedForSafety ? (
+                <Center
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                  }}
+                  p="xs"
+                >
+                  <Stack align="center" spacing={0}>
+                    <Box
+                      className={classes.blockedMessage}
+                      sx={{
+                        flexDirection: isLandscape ? 'row' : 'column',
+                      }}
+                    >
+                      <ThemeIcon
+                        color="red"
+                        size={isLandscape ? 36 : 48}
+                        className={classes.iconBlocked}
+                        radius="xl"
+                        variant="light"
+                        sx={(theme) => ({
+                          marginBottom: isLandscape ? 0 : theme.spacing.sm,
+                          marginRight: isLandscape ? theme.spacing.sm : 0,
+                        })}
+                      >
+                        <IconBan size={isLandscape ? 24 : 36} />
+                      </ThemeIcon>
+                      <Stack spacing={0} align={isLandscape ? undefined : 'center'}>
+                        <Text
+                          color="red.5"
+                          weight={500}
+                          size="sm"
+                          align="center"
+                          sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
+                        >
+                          Blocked by OctoML
+                        </Text>
+                        <Text
+                          size="xs"
+                          component="a"
+                          td="underline"
+                          color="dimmed"
+                          href="/blocked-by-octoml"
+                          target="_blank"
+                        >
+                          Why?
+                        </Text>
+                      </Stack>
+                    </Box>
+                    <Text size="xs" color="dimmed" className={classes.mistake}>
+                      Is this a mistake?
+                    </Text>
+                    <Text
+                      size="xs"
+                      component="a"
+                      td="underline"
+                      color="dimmed"
+                      href="https://octoml.ai/contact-us/"
+                      target="_blank"
+                    >
+                      Contact OctoML
+                    </Text>
+                  </Stack>
                 </Center>
               ) : (
                 // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element

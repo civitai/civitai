@@ -100,7 +100,7 @@ export function QueueItem({ request }: Props) {
   const { prompt, ...details } = request.params;
   const baseModelSetKey = getBaseModelSetKey(details.baseModel ?? 'SD1');
 
-  const removedForSafety = request.images?.some((x) => x.removedForSafety);
+  const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
   let fullCoverageModels =
     baseModelSetKey && generationStatus.fullCoverageModels
       ? generationStatus.fullCoverageModels[baseModelSetKey]
