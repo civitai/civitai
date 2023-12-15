@@ -127,7 +127,7 @@ export const getArticles = async ({
     if (!!tags?.length) {
       AND.push(
         Prisma.sql`EXISTS (
-          SELECT 1 FROM "TagsOnArticle" tao WHERE tao."articleId" = a.id AND at."tagId" IN (${Prisma.join(
+          SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
             tags,
             ','
           )})
@@ -181,7 +181,7 @@ export const getArticles = async ({
       if (!!excludedTagIds?.length) {
         AND.push(
           Prisma.sql`NOT EXISTS (
-            SELECT 1 FROM "TagsOnArticle" tao WHERE tao."articleId" = a.id AND at."tagId" IN (${Prisma.join(
+            SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
               excludedTagIds,
               ','
             )})

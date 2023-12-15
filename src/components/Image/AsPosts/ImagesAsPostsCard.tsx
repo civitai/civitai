@@ -1,6 +1,7 @@
 import { Carousel, Embla } from '@mantine/carousel';
 import { ActionIcon, Center, Group, Menu, Paper, Text, Tooltip, createStyles } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
+import produce from 'immer';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -18,6 +19,7 @@ import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -51,22 +53,34 @@ export function ImagesAsPostsCard({
     { enabled: !!modelId }
   );
   const updateGallerySettingsMutation = trpc.model.updateGallerySettings.useMutation({
-    onSuccess: async (result) => {
-      // TODO.manuel: Do optimistic update instead
-      await queryUtils.model.getById.invalidate({ id: result.id });
+    onMutate: async ({ id, gallerySettings }) => {
+      await queryUtils.model.getById.cancel({ id });
+      const previousModel = queryUtils.model.getById.getData({ id });
+      queryUtils.model.getById.setData(
+        { id },
+        produce((draft) => (draft ? { ...draft, gallerySettings } : draft))
+      );
+
+      return { previousModel };
     },
-    onError: (error) => {
-      showErrorNotification({ title: 'Unable to hide image', error: new Error(error.message) });
+    onError: (error, { id }, context) => {
+      showErrorNotification({ title: 'Unable to toggle image', error: new Error(error.message) });
+      queryUtils.model.getById.setData({ id }, context?.previousModel);
     },
   });
   const handleUpdateGallerySettings = (imageId: number) => {
-    if (showModerationOptions && model && model.gallerySettings) {
+    if (showModerationOptions && model) {
+      const gallerySettings: ModelGallerySettingsSchema = model.gallerySettings ?? {
+        images: [],
+        users: [],
+        tags: [],
+      };
       const updatedSettings = {
-        ...model.gallerySettings,
-        images: model.gallerySettings.images
-          ? model.gallerySettings.images.includes(imageId)
-            ? model.gallerySettings.images.filter((x) => x !== imageId)
-            : [...model.gallerySettings.images, imageId]
+        ...gallerySettings,
+        images: gallerySettings.images
+          ? gallerySettings.images.includes(imageId)
+            ? gallerySettings.images.filter((x) => x !== imageId)
+            : [...gallerySettings.images, imageId]
           : [],
       };
 
@@ -90,14 +104,18 @@ export function ImagesAsPostsCard({
   const imageIdsString = data.images.map((x) => x.id).join('_');
   const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
 
-  const moderationOptions = (imageId: number) => [
-    <Menu.Divider key="menu-divider" />,
-    <Menu.Label key="menu-label">Moderation zone</Menu.Label>,
-    // TODo.manuel: move this to its own component
-    <Menu.Item key="hide-image-gallery" onClick={() => handleUpdateGallerySettings(imageId)}>
-      Hide image from gallery
-    </Menu.Item>,
-  ];
+  const moderationOptions = (imageId: number) => {
+    const alreadyHidden = model?.gallerySettings?.images?.includes(imageId);
+
+    return [
+      <Menu.Divider key="menu-divider" />,
+      <Menu.Label key="menu-label">Moderation zone</Menu.Label>,
+      // TODO.manuel: move this to its own component
+      <Menu.Item key="hide-image-gallery" onClick={() => handleUpdateGallerySettings(imageId)}>
+        {alreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
+      </Menu.Item>,
+    ];
+  };
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} className={classes.card}>

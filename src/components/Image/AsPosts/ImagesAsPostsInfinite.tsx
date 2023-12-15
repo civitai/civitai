@@ -34,6 +34,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { IconSettings } from '@tabler/icons-react';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -155,7 +156,7 @@ export default function ImagesAsPostsInfinite({
           })}
         >
           <Stack spacing="md">
-            <Group spacing="xs" align="flex-end">
+            <Group spacing="xs">
               <Title order={2}>Gallery</Title>
               {!isMuted && (
                 <Group>
@@ -174,6 +175,11 @@ export default function ImagesAsPostsInfinite({
                     </Link>
                   </LoginRedirect>
                 </Group>
+              )}
+              {showModerationOptions && (
+                <ActionIcon variant="outline" ml="auto">
+                  <IconSettings size={16} />
+                </ActionIcon>
               )}
             </Group>
             {/* IMAGES */}
