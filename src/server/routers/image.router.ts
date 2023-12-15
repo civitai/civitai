@@ -38,6 +38,7 @@ import {
   getImagesByCategory,
   ingestImageById,
   removeImageResource,
+  getModeratorPOITags,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 
@@ -113,4 +114,5 @@ export const imageRouter = router({
   getModeratorReviewQueue: moderatorProcedure
     .input(imageReviewQueueInputSchema)
     .query(getModeratorReviewQueueHandler),
+  getModeratorPOITags: moderatorProcedure.query(() => getModeratorPOITags()),
 });

@@ -26,6 +26,7 @@ import {
   IconSquareCheck,
   IconSquareOff,
   IconTrash,
+  IconUserMinus,
 } from '@tabler/icons-react';
 import produce from 'immer';
 import Link from 'next/link';
@@ -49,6 +50,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
+import { Collection } from '~/components/Collection/Collection';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -115,6 +117,7 @@ export default function Images() {
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ImageReviewType | 'reported'>('minor');
+  const [activeTag, setActiveNameTag] = useState<number | null>(null);
 
   const viewingReported = type === 'reported';
 
@@ -122,9 +125,13 @@ export default function Images() {
     () => ({
       needsReview: !viewingReported ? type : undefined,
       reportReview: viewingReported ? true : undefined,
+      tagIds: activeTag ? [activeTag] : undefined,
     }),
-    [type, viewingReported]
+    [type, viewingReported, activeTag]
   );
+  const { data: nameTags } = trpc.image.getModeratorPOITags.useQuery(undefined, {
+    enabled: type === 'poi',
+  });
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getModeratorReviewQueue.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -155,7 +162,7 @@ export default function Images() {
             alignSelf: 'flex-end',
             marginRight: 6,
             position: 'sticky',
-            top: 'calc(var(--mantine-header-height,0) + 16px)',
+            top: 0,
             marginBottom: -80,
             zIndex: 10,
           }}
@@ -174,6 +181,37 @@ export default function Images() {
             attention from the mods
           </Text>
         </Stack>
+
+        {type === 'poi' && nameTags && (
+          <Collection
+            items={nameTags}
+            limit={20}
+            badgeProps={{ radius: 'xs', size: 'sm' }}
+            renderItem={(tag) => {
+              const isActive = activeTag === tag.id;
+
+              return (
+                <Badge
+                  component="a"
+                  color={isActive ? 'blue' : 'gray'}
+                  radius="xs"
+                  size="sm"
+                  px={8}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setActiveNameTag(isActive ? null : tag.id)}
+                >
+                  <Text component="span" size="xs" weight={500}>
+                    {tag.name}
+                  </Text>{' '}
+                  <Text component="span" size="xs" color="dimmed" weight={500}>
+                    {tag.count}
+                  </Text>
+                </Badge>
+              );
+            }}
+            grouped
+          />
+        )}
 
         {isLoading ? (
           <Center py="xl">
@@ -220,7 +258,7 @@ function ModerationControls({
   };
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
-    async onMutate({ ids, needsReview, delete: deleted }) {
+    async onMutate({ ids, needsReview, reviewAction }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();
       queryUtils.image.getModeratorReviewQueue.setInfiniteData(
         filters,
@@ -231,7 +269,7 @@ function ModerationControls({
             for (const item of page.items) {
               if (ids.includes(item.id)) {
                 item.needsReview =
-                  deleted === true || needsReview === null ? null : item.needsReview;
+                  reviewAction !== null || needsReview === null ? null : item.needsReview;
               }
             }
         })
@@ -239,7 +277,8 @@ function ModerationControls({
     },
     onSuccess(_, input) {
       const actions: string[] = [];
-      if (input.delete) actions.push('deleted');
+      if (input.reviewAction === 'delete') actions.push('deleted');
+      else if (input.reviewAction === 'removeName') actions.push('name removed');
       else if (!input.needsReview) actions.push('approved');
       else if (input.nsfw) actions.push('marked as NSFW');
 
@@ -276,12 +315,21 @@ function ModerationControls({
     },
   });
 
+  const handleRemoveNames = () => {
+    deselectAll();
+    moderateImagesMutation.mutate({
+      ids: selected,
+      reviewAction: 'removeName',
+      reviewType: view,
+    });
+  };
+
   const handleDeleteSelected = () => {
     deselectAll();
     moderateImagesMutation.mutate(
       {
         ids: selected,
-        delete: true,
+        reviewAction: 'delete',
         reviewType: view,
       },
       {
@@ -328,6 +376,7 @@ function ModerationControls({
   const handleRefresh = () => {
     handleClearAll();
     queryUtils.image.getModeratorReviewQueue.invalidate(filters);
+    queryUtils.image.getModeratorPOITags.invalidate();
     showNotification({
       id: 'refreshing',
       title: 'Refreshing',
@@ -364,6 +413,20 @@ function ModerationControls({
           </ActionIcon>
         </ButtonTooltip>
       </PopConfirm>
+      {view === 'poi' && (
+        <PopConfirm
+          message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
+          position="bottom-end"
+          onConfirm={handleRemoveNames}
+          withArrow
+        >
+          <ButtonTooltip label="Remove Name" {...tooltipProps}>
+            <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
+              <IconUserMinus size="1.25rem" />
+            </ActionIcon>
+          </ButtonTooltip>
+        </PopConfirm>
+      )}
       <PopConfirm
         message={`Are you sure you want to delete ${selected.length} image(s)?`}
         position="bottom-end"
@@ -543,6 +606,17 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
             )
           }
         </PromptHighlight>
+      )}
+      {image.needsReview === 'poi' && !!image.names?.length && (
+        <Card.Section p="xs">
+          <Group spacing={4}>
+            {image.names.map((name) => (
+              <Badge key={name} size="sm">
+                {name}
+              </Badge>
+            ))}
+          </Group>
+        </Card.Section>
       )}
     </Card>
   );

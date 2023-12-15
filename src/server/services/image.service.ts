@@ -58,6 +58,8 @@ import {
 } from './../schema/image.schema';
 import { ImageResourceHelperModel, profileImageSelect } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { promptWordReplace } from '~/utils/metadata/audit';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -115,10 +117,10 @@ export const moderateImages = async ({
   ids,
   nsfw,
   needsReview,
-  delete: deleteImages,
   reviewType,
+  reviewAction,
 }: ImageModerationSchema) => {
-  if (deleteImages) {
+  if (reviewAction === 'delete') {
     if (reviewType !== 'reported') {
       await dbWrite.image.updateMany({
         where: { id: { in: ids }, needsReview: { not: null } },
@@ -137,6 +139,8 @@ export const moderateImages = async ({
     await imagesSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
+  } else if (reviewAction === 'removeName') {
+    removeNameReference(ids);
   } else {
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
@@ -2116,6 +2120,7 @@ export const getImageModerationReviewQueue = async ({
   needsReview,
   tagReview,
   reportReview,
+  tagIds,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
   const WITH: Prisma.Sql[] = [];
@@ -2129,6 +2134,13 @@ export const getImageModerationReviewQueue = async ({
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
+    )`);
+  }
+
+  if (tagIds?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tagIds)})
     )`);
   }
 
@@ -2264,9 +2276,29 @@ export const getImageModerationReviewQueue = async ({
     }));
   }
 
+  let namesMap: Map<number, string[]> | undefined;
+  if (needsReview === 'poi') {
+    namesMap = new Map();
+    const names = await dbRead.$queryRaw<{ imageId: number; name: string }[]>`
+      SELECT
+        toi."imageId",
+        t.name
+      FROM "TagsOnImage" toi
+      JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
+      JOIN "Tag" t ON t.id = tot."toTagId"
+      JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
+      WHERE toi."imageId" IN (${Prisma.join(imageIds)});
+    `;
+    for (const x of names) {
+      if (!namesMap.has(x.imageId)) namesMap.set(x.imageId, []);
+      namesMap.get(x.imageId)?.push(x.name);
+    }
+  }
+
   const images: Array<
     Omit<ImageV2Model, 'stats'> & {
       tags?: VotableTagModel[] | undefined;
+      names?: string[];
       report?:
         | {
             id: number;
@@ -2307,6 +2339,7 @@ export const getImageModerationReviewQueue = async ({
       },
       reactions: [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
+      names: namesMap?.get(i.id) ?? undefined,
       report: reportId
         ? {
             id: reportId,
@@ -2324,3 +2357,99 @@ export const getImageModerationReviewQueue = async ({
     items: images,
   };
 };
+
+type POITag = {
+  id: number;
+  name: string;
+  count: number;
+};
+export async function getModeratorPOITags() {
+  const tags = await dbRead.$queryRaw<POITag[]>`
+    WITH real_person_tags AS MATERIALIZED (
+      SELECT t.id, t.name
+      FROM "TagsOnTags" tot
+      JOIN "Tag" t ON t.id = tot."toTagId"
+      JOIN "Tag" f ON f.id = tot."fromTagId"
+      WHERE f.name = 'real person'
+    )
+    SELECT
+      rpt.id,
+      rpt.name,
+      CAST(COUNT(i.id) as int) as count
+    FROM "Image" i
+    JOIN "TagsOnImage" toi ON toi."imageId" = i.id
+    JOIN real_person_tags rpt ON rpt.id = toi."tagId"
+    WHERE i."needsReview" = 'poi'
+    GROUP BY rpt.id, rpt.name
+    ORDER BY 3 DESC;
+  `;
+
+  return tags;
+}
+
+type NameReference = {
+  imageId: number;
+  tagId: number;
+  name: string;
+};
+async function removeNameReference(images: number[]) {
+  const tasks = chunk(images, 500).map((images) => async () => {
+    // Get images to de-reference
+    const [targets, prompts] = await Promise.all([
+      await dbRead.$queryRaw<NameReference[]>`
+        SELECT
+          toi."imageId",
+          t.id "tagId",
+          t.name
+        FROM "TagsOnImage" toi
+        JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
+        JOIN "Tag" t ON t.id = tot."toTagId"
+        JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
+        WHERE toi."imageId" IN (${Prisma.join(images)});
+      `,
+      // Update prompts
+      await dbRead.$queryRaw<{ imageId: number; prompt: string }[]>`
+        SELECT
+          i.id as "imageId",
+          meta->>'prompt' as prompt
+        FROM "Image" i
+        WHERE id IN (${Prisma.join(images)});
+      `,
+    ]);
+    const targetMap = new Map(targets.map((x) => [x.imageId, x]));
+
+    // Update prompts
+    for (const x of prompts) {
+      const { name } = targetMap.get(x.imageId) ?? {};
+      if (!name) continue;
+
+      x.prompt = promptWordReplace(x.prompt, name, 'person');
+    }
+
+    const promptsJson = JSON.stringify(prompts);
+    await dbWrite.$executeRaw`
+      WITH updates AS (
+        SELECT
+          CAST(t->>'imageId' as int) as id,
+          t->>'prompt' as prompt
+        FROM json_array_elements(${promptsJson}::json) t
+      )
+      UPDATE "Image" i
+        SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
+          "needsReview" = null
+      FROM updates t
+      WHERE t.id = i.id;
+    `;
+
+    // Remove tags
+    await dbWrite.$executeRaw`
+      DELETE FROM "TagsOnImage" toi
+      USING "TagsOnTags" tot
+      WHERE toi."imageId" IN (${Prisma.join(images)})
+        AND toi."tagId" = tot."toTagId"
+        AND tot."fromTagId" IN (SELECT id FROM "Tag" WHERE name = 'real person');
+    `;
+  });
+
+  await limitConcurrency(tasks, 3);
+}
