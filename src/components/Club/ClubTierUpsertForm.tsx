@@ -80,6 +80,7 @@ export function ClubTierUpsertForm({
                   name="unitAmount"
                   placeholder={`Min. ${constants.clubs.minMonthlyBuzz} BUZZ. 0 for free tier`}
                   label="Monthly buzz"
+                  description="The amount of BUZZ that will be charged to users every month. Updating this value will not affect existing members, and they will keep paying the same amount they were paying when they joined the tier."
                   variant="filled"
                   icon={<CurrencyIcon currency="BUZZ" size={16} />}
                   withAsterisk

@@ -28,7 +28,7 @@ import {
   updateClubResource,
   upsertClub,
   upsertClubResource,
-  upsertClubTiers,
+  upsertClubTier,
   userContributingClubs,
 } from '~/server/services/club.service';
 import { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
@@ -104,12 +104,11 @@ export async function upsertClubTierHandler({
 }) {
   const { clubId, ...tier } = input;
   try {
-    await upsertClubTiers({
+    await upsertClubTier({
       clubId: clubId as number,
-      tiers: [tier],
+      tier,
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
-      deleteTierIds: [],
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
