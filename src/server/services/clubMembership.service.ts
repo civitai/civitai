@@ -367,7 +367,7 @@ export const completeClubMembershipCharge = async ({
         clubMembershipChargeId: clubMembershipCharge.id,
         stripePaymentIntentId: clubMembershipCharge.invoiceId,
       },
-      externalTransactionId: `club-membership-charge-${clubMembershipCharge.id}`,
+      externalTransactionId: `club-membership-chrge-${clubMembershipCharge.id}`,
     });
   });
 };
@@ -518,16 +518,20 @@ export const cancelClubMembership = async ({ userId, clubId }: ToggleClubMembers
 
   if (!membership) throw throwBadRequestError('Club membership not found');
 
-  const updatedMembership = await dbWrite.$transaction(async (tx) => {
-    const updatedMembership = await tx.clubMembership.update({
+  if (membership.unitAmount === 0) {
+    await dbWrite.clubMembership.delete({
       where: { id: membership.id },
-      data: {
-        cancelledAt: new Date(),
-        expiresAt: membership?.nextBillingAt,
-      },
     });
 
-    return updatedMembership;
+    return;
+  }
+
+  const updatedMembership = await dbWrite.clubMembership.update({
+    where: { id: membership.id },
+    data: {
+      cancelledAt: new Date(),
+      expiresAt: membership?.nextBillingAt,
+    },
   });
 
   return updatedMembership;

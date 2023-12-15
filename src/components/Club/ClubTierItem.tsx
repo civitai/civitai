@@ -399,9 +399,7 @@ export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number
 
         showSuccessNotification({
           title: 'Success',
-          message: `Your membership has been canceled. You will have access to this club's resources until ${formatDate(
-            membership?.nextBillingAt
-          )}.`,
+          message: `Your membership has been canceled.`,
         });
       } catch {
         // Do nothing. Handled in the hook.
@@ -419,12 +417,18 @@ export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number
             <Text align="center" weight={800}>
               {clubTier.name}
             </Text>
-            <Text align="center">
-              {' '}
-              Your membership will be canceled at the end of your current billing period on{' '}
-              {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
-              made.
-            </Text>
+            {clubTier.unitAmount > 0 ? (
+              <Text align="center">
+                Your membership will be canceled at the end of your current billing period on{' '}
+                {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
+                made.
+              </Text>
+            ) : (
+              <Text align="center">
+                Your membership will be canceled right away and you will lose access to this
+                club&rsquo;s resources
+              </Text>
+            )}
           </Stack>
         </Center>
       ),
