@@ -23,6 +23,7 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
+import { upsertClubResource } from '~/server/services/club.service';
 import { modelsSearchIndex } from '~/server/search-index';
 
 export const getModelVersionRunStrategies = async ({
@@ -106,15 +107,20 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
 };
 
 export const upsertModelVersion = async ({
+  id,
   monetization,
   settings,
   recommendedResources,
+  clubs,
+  templateId,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
-  if (!data.id) {
+  const model = await dbRead.model.findUniqueOrThrow({ where: { id: data.modelId } });
+
+  if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: { id: true },
@@ -162,10 +168,19 @@ export const upsertModelVersion = async ({
         dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
+
+    if (clubs) {
+      await upsertClubResource({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        clubs,
+        userId: model.userId,
+      });
+    }
     return version;
   } else {
     const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
-      where: { id: data.id },
+      where: { id },
       select: {
         id: true,
         monetization: {
@@ -184,7 +199,7 @@ export const upsertModelVersion = async ({
     });
 
     const version = await dbWrite.modelVersion.update({
-      where: { id: data.id },
+      where: { id },
       data: {
         ...data,
         settings: settings !== null ? settings : Prisma.JsonNull,
@@ -263,6 +278,15 @@ export const upsertModelVersion = async ({
           : undefined,
       },
     });
+
+    if (clubs) {
+      await upsertClubResource({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        clubs,
+        userId: model.userId,
+      });
+    }
 
     return version;
   }

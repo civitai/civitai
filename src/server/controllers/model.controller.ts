@@ -1227,6 +1227,7 @@ export async function getSimpleModelsInfiniteHandler({
       where: {
         userId,
         name: query ? { contains: query, mode: 'insensitive' } : undefined,
+        status: { not: ModelStatus.Deleted },
       },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
@@ -1270,7 +1271,6 @@ export async function getModelTemplateFieldsHandler({
           take: 1,
           orderBy: { createdAt: 'desc' },
           select: {
-            id: true,
             baseModel: true,
             baseModelType: true,
             settings: true,

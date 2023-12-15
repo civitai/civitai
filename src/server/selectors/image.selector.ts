@@ -32,6 +32,20 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   },
 });
 
+export const profileImageSelect = Prisma.validator<Prisma.ImageSelect>()({
+  id: true,
+  name: true,
+  url: true,
+  nsfw: true,
+  hash: true,
+  userId: true,
+  ingestion: true,
+  type: true,
+  width: true,
+  height: true,
+  metadata: true,
+});
+
 const { name, ...imageSelectWithoutName } = imageSelect;
 export { imageSelectWithoutName };
 

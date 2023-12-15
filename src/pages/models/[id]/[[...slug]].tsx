@@ -17,6 +17,8 @@ import {
   Center,
   Box,
   Loader,
+  List,
+  Anchor,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -47,6 +49,7 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
+  IconClubs,
   IconBrush,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -110,23 +113,34 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
   resolver: async ({ ssg, ctx, session = null }) => {
-    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
-    const query = ctx.query as { modelVersionId: string };
+    const params = (ctx.params ?? {}) as {
+      id: string;
+      slug: string[];
+    };
+    const query = ctx.query as {
+      modelVersionId: string;
+    };
     const id = Number(params.id);
-    if (ssg) {
-      const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
-      if (!isNumber(id)) return { notFound: true };
+    const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
+    if (!isNumber(id)) return { notFound: true };
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
+    const modelVersionIdParsed = modelVersionId ?? version?.id;
 
-      const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
-        () => null
-      );
+    if (!modelVersionIdParsed) {
+      return { notFound: true };
+    }
+
+    if (ssg) {
       if (version)
         await ssg.image.getInfinite.prefetchInfinite({
           modelVersionId: version.id,
@@ -137,6 +151,16 @@ export const getServerSideProps = createServerSideProps({
           browsingMode: parseBrowsingMode(ctx.req.cookies, session),
         });
 
+      if (modelVersionIdParsed) {
+        await ssg.common.getEntityAccess.prefetch({
+          entityId: modelVersionIdParsed as number,
+          entityType: 'ModelVersion',
+        });
+        await ssg.common.getEntityClubRequirement.prefetch({
+          entityId: modelVersionIdParsed as number,
+          entityType: 'ModelVersion',
+        });
+      }
       await ssg.model.getById.prefetch({ id });
     }
 
@@ -197,6 +221,10 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+  const { hasAccess, requiresClub, isLoadingAccess } = useEntityAccessRequirement({
+    entityType: 'ModelVersion',
+    entityId: modelVersionId,
+  });
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
@@ -408,7 +436,11 @@ export default function ModelDetailsV2({
     }
   }, [publishedVersions, selectedVersion, modelVersionId]);
 
-  if (loadingModel) return <PageLoader />;
+  if (loadingModel || isLoadingAccess) return <PageLoader />;
+
+  if (!hasAccess && model?.unlisted) {
+    return <NotFound />;
+  }
 
   // Handle missing and deleted models
   const modelDoesntExist = !model;
@@ -781,6 +813,28 @@ export default function ModelDetailsV2({
                         )}
                       </ToggleLockModel>
                     )}
+                    {isCreator && selectedVersion && (
+                      <AddToClubMenuItem
+                        entityId={selectedVersion.id}
+                        entityType="ModelVersion"
+                        resource={{
+                          ...model,
+                          rank: {
+                            collectedCount: model.rank?.collectedCountAllTime ?? 0,
+                            downloadCount: model.rank?.downloadCountAllTime ?? 0,
+                            favoriteCount: model.rank?.favoriteCountAllTime ?? 0,
+                            rating: model.rank?.ratingAllTime ?? 0,
+                            ratingCount: model.rank?.ratingCountAllTime ?? 0,
+                            tippedAmountCount: model.rank?.tippedAmountCountAllTime ?? 0,
+                            commentCount: model.rank?.commentCountAllTime ?? 0,
+                          },
+                          // @ts-ignore TODO: Fix. Image is appearing properly.
+                          image: versionImages[0] ?? null,
+                          version: selectedVersion,
+                          versions: model.modelVersions,
+                        }}
+                      />
+                    )}
                   </Menu.Dropdown>
                 </Menu>
               </Group>
@@ -883,6 +937,7 @@ export default function ModelDetailsV2({
                   : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
               </AlertWithIcon>
             )}
+            <ClubRequirementNotice entityType="ModelVersion" entityId={modelVersionId} />
           </Stack>
           <Group spacing={4} noWrap>
             {isOwner ? (
@@ -929,6 +984,7 @@ export default function ModelDetailsV2({
               onBrowseClick={() => {
                 gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
+              hasAccess={hasAccess}
             />
           )}
         </Stack>
@@ -984,7 +1040,7 @@ export default function ModelDetailsV2({
             </Stack>
           </Container>
         ) : (
-          <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+          <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>
             <Center>
               <Group spacing="xs">
                 <ThemeIcon color="gray" size="xl" radius="xl">

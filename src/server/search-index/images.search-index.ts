@@ -26,7 +26,11 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { chunk } from 'lodash-es';
 import { withRetries } from '~/server/utils/errorHandling';
-import { ImageModelWithIngestion, imageSelect } from '../selectors/image.selector';
+import {
+  ImageModelWithIngestion,
+  imageSelect,
+  profileImageSelect,
+} from '../selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
@@ -272,8 +276,8 @@ const onFetchItemsToIndex = async ({
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image
-        'profilePictureId', u."profilePictureId",
+        'image', u.image,
+        'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u
     WHERE u.id IN (SELECT "userId" FROM target)
@@ -282,7 +286,7 @@ const onFetchItemsToIndex = async ({
     SELECT
       uc."userId",
       jsonb_agg(
-        jsonb_build_object( 
+        jsonb_build_object(
           'data', uc.data,
           'cosmetic', jsonb_build_object(
             'id', c.id,
@@ -325,7 +329,7 @@ const onFetchItemsToIndex = async ({
 
       const profilePictures = await db.image.findMany({
         where: { id: { in: images.map((i) => i.user.profilePictureId).filter(isDefined) } },
-        select: { ...imageSelect, ingestion: true },
+        select: profileImageSelect,
       });
 
       console.log(

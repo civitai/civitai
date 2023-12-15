@@ -16,7 +16,6 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { CollectionType, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
@@ -25,11 +24,12 @@ import {
   IconEye,
   IconEyeOff,
   IconFlag,
-  IconHeart,
   IconLock,
   IconPencil,
   IconPlus,
-  IconX,
+  IconTrash,
+  IconUser,
+  IconUserMinus,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import Router, { useRouter } from 'next/router';
@@ -52,9 +52,8 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
-import { showSuccessNotification } from '~/utils/notifications';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 export type ImageGuardConnect = {
   entityType:
@@ -66,7 +65,8 @@ export type ImageGuardConnect = {
     | 'collectionItem'
     | 'collection'
     | 'bounty'
-    | 'bountyEntry';
+    | 'bountyEntry'
+    | 'club';
   entityId: string | number;
 };
 // #region [store]
@@ -163,13 +163,10 @@ type ImageProps = {
   nsfw: NsfwLevel;
   imageNsfw?: boolean;
   postId?: number | null;
-  width?: number | null;
-  height?: number | null;
   needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
   url?: string | null;
-  name?: string | null;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -322,12 +319,17 @@ ImageGuard.Report = function ReportImage({
   const [needsReview, setNeedsReview] = useState(image.needsReview);
 
   const moderateImagesMutation = trpc.image.moderate.useMutation();
-  const handleModerate = async (accept: boolean) => {
+  const handleModerate = async (
+    e: React.SyntheticEvent,
+    action: 'accept' | 'delete' | 'removeName'
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!isModerator) return;
     moderateImagesMutation.mutate({
       ids: [image.id],
-      needsReview: accept ? null : undefined,
-      delete: !accept ? true : undefined,
+      needsReview: action === 'accept' ? null : undefined,
+      reviewAction: action !== 'accept' ? action : undefined,
       reviewType: 'minor',
     });
     setNeedsReview(null);
@@ -349,7 +351,11 @@ ImageGuard.Report = function ReportImage({
 
   let NeedsReviewBadge = needsReview && (
     <ThemeIcon size="lg" color="yellow">
-      <IconAlertTriangle strokeWidth={2.5} size={26} />
+      {needsReview === 'poi' ? (
+        <IconUser strokeWidth={2.5} size={26} />
+      ) : (
+        <IconAlertTriangle strokeWidth={2.5} size={26} />
+      )}
     </ThemeIcon>
   );
 
@@ -357,16 +363,35 @@ ImageGuard.Report = function ReportImage({
     NeedsReviewBadge = (
       <Menu position="bottom">
         <Menu.Target>
-          <Box>{NeedsReviewBadge}</Box>
+          <Box
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            {NeedsReviewBadge}
+          </Box>
         </Menu.Target>
         <Menu.Dropdown>
           <Menu.Item
-            onClick={() => handleModerate(true)}
+            onClick={(e) => handleModerate(e, 'accept')}
             icon={<IconCheck size={14} stroke={1.5} />}
           >
             Approve
           </Menu.Item>
-          <Menu.Item onClick={() => handleModerate(false)} icon={<IconX size={14} stroke={1.5} />}>
+          {needsReview === 'poi' && (
+            <Menu.Item
+              onClick={(e) => handleModerate(e, 'removeName')}
+              icon={<IconUserMinus size={14} stroke={1.5} />}
+            >
+              Remove Name
+            </Menu.Item>
+          )}
+          <Menu.Item
+            onClick={(e) => handleModerate(e, 'delete')}
+            icon={<IconTrash size={14} stroke={1.5} />}
+          >
             Reject
           </Menu.Item>
         </Menu.Dropdown>

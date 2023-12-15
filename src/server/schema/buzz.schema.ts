@@ -14,12 +14,19 @@ export enum TransactionType {
   Training = 10,
   ChargeBack = 11,
   Donation = 12,
+  ClubMembership = 13,
+  ClubMembershipRefund = 14,
+  ClubWithdrawal = 15,
 }
+
+const buzzAccountTypes = ['User', 'Club', 'Other'] as const;
+export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
 export const getUserBuzzAccountSchema = z.object({
   // This is the user id
   accountId: z.number().min(0),
+  accountType: z.enum(buzzAccountTypes).optional(),
 });
 
 export type GetUserBuzzAccountResponse = z.infer<typeof getUserBuzzAccountResponse>;
@@ -67,6 +74,8 @@ export const getUserBuzzTransactionsResponse = z.object({
         ),
       fromAccountId: z.coerce.number(),
       toAccountId: z.coerce.number(),
+      fromAccountType: z.enum(buzzAccountTypes),
+      toAccountType: z.enum(buzzAccountTypes),
       amount: z.coerce.number(),
       description: z.coerce.string().nullish(),
       details: buzzTransactionDetails.nullish(),
@@ -76,6 +85,7 @@ export const getUserBuzzTransactionsResponse = z.object({
 
 export const buzzTransactionSchema = z.object({
   // To user id (0 is central bank)
+  toAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountId: z.number().optional(),
   type: z.nativeEnum(TransactionType),
   amount: z.number().min(1),
@@ -119,3 +129,21 @@ export type UserBuzzTransactionInputSchema = z.infer<typeof userBuzzTransactionI
 export const userBuzzTransactionInputSchema = buzzTransactionSchema.omit({
   type: true,
 });
+
+export const getBuzzAccountSchema = z.object({
+  accountId: z.number(),
+  accountType: z.enum(buzzAccountTypes).default('User'),
+});
+
+export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
+
+export const getBuzzAccountTransactionsSchema =
+  getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
+export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
+
+export const withdrawClubFundsSchema = z.object({
+  clubId: z.number(),
+  amount: z.number(),
+});
+
+export type WithdrawClubFundsSchema = z.infer<typeof withdrawClubFundsSchema>;

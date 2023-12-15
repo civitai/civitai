@@ -1,86 +1,21 @@
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Card,
-  Center,
-  Chip,
-  Container,
-  Group,
-  Loader,
-  Menu,
-  SegmentedControl,
-  SegmentedControlItem,
-  SegmentedControlProps,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-  createStyles,
-  ThemeIcon,
-} from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
-import { MetricTimeframe, ReviewReactions } from '@prisma/client';
-import {
-  IconArrowBackUp,
-  IconBan,
-  IconCategory,
-  IconCloudOff,
-  IconDotsVertical,
-  IconFileText,
-  IconFlag,
-  IconFolder,
-  IconInfoCircle,
-  IconLayoutList,
-  IconMicrophone,
-  IconMicrophoneOff,
-  IconPhoto,
-  IconTrash,
-} from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-import React, { useEffect, useMemo } from 'react';
+import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AppLayout, setPageOptions } from '~/components/AppLayout/AppLayout';
+import { IconCloudOff } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import React, { useMemo } from 'react';
+
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { SortFilter } from '~/components/Filters';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { useImageQueryParams } from '~/components/Image/image.utils';
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { Meta } from '~/components/Meta/Meta';
-import { TrackView } from '~/components/TrackView/TrackView';
-import { Username } from '~/components/User/Username';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
+
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
-import { ImageSort } from '~/server/common/enums';
-import { ReportEntity } from '~/server/schema/report.schema';
+
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { showErrorNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
+
 import { removeEmpty } from '~/utils/object-helpers';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
-import { postgresSlugify } from '~/utils/string-helpers';
+
 import { trpc } from '~/utils/trpc';
-import { formatDate } from '~/utils/date-helpers';
-import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
-import { env } from '~/env/client.mjs';
-import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
-import ProfileLayout from '~/components/Profile/ProfileLayout';
-import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,

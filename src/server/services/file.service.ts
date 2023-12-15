@@ -11,6 +11,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
+import { hasEntityAccess } from './common.service';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -167,6 +168,21 @@ export const getFileForModelVersion = async ({
     },
   });
   if (!modelVersion) return { status: 'not-found' };
+
+  const [entityAccess] = await hasEntityAccess({
+    entities: [
+      {
+        entityType: 'ModelVersion',
+        entityId: modelVersion?.id,
+      },
+    ],
+    userId: user?.id,
+    isModerator: user?.isModerator,
+  });
+
+  if (!(entityAccess?.hasAccess ?? true)) {
+    return { status: 'unauthorized' };
+  }
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;
   if (!noAuth && archived) return { status: 'archived' };

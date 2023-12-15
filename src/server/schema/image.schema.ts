@@ -128,6 +128,10 @@ export const imageSchema = z.object({
   metadata: z.object({}).passthrough().optional(),
 });
 
+export const comfylessImageSchema = imageSchema.extend({
+  meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+});
+
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
 
@@ -148,7 +152,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   nsfw: z.nativeEnum(NsfwLevel).optional(),
   needsReview: z.string().nullish(),
-  delete: z.boolean().optional(),
+  reviewAction: z.enum(['delete', 'removeName']).optional(),
   reviewType: z.enum(['minor', 'poi', 'reported']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
@@ -276,18 +280,18 @@ export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
   entities: z.array(
     z.object({
-      entityType: z.nativeEnum(SearchIndexEntityTypes),
+      entityType: z.union([z.nativeEnum(SearchIndexEntityTypes), z.enum(['ModelVersion'])]),
       entityId: z.number(),
     })
   ),
 });
 
 export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
-
 export const imageReviewQueueInputSchema = z.object({
   limit: z.number().min(0).max(200).default(100),
   cursor: z.union([z.bigint(), z.number()]).optional(),
   needsReview: z.string().nullish(),
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
+  tagIds: z.array(z.number()).optional(),
 });

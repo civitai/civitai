@@ -1,4 +1,4 @@
-import { Badge, Group, MantineNumberSize } from '@mantine/core';
+import { Badge, BadgeProps, Group, MantineNumberSize } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
 
@@ -8,8 +8,9 @@ export function Collection<T>({
   limit = 5,
   spacing = 4,
   grouped = false,
+  badgeProps,
 }: Props<T>) {
-  const [opened, { open }] = useDisclosure();
+  const [opened, { open, close }] = useDisclosure();
 
   if (!items.length) return null;
 
@@ -26,11 +27,30 @@ export function Collection<T>({
             <Fragment key={index}>{renderItem(item, index)}</Fragment>
           ))
         : null}
-      {collapsedItems.length > 0 && !opened ? (
-        <Badge component="button" color="gray" size="sm" onClick={open} sx={{ cursor: 'pointer' }}>
-          + {collapsedItems.length}
-        </Badge>
-      ) : null}
+      {collapsedItems.length > 0 &&
+        (!opened ? (
+          <Badge
+            component="button"
+            color="gray"
+            size="sm"
+            {...badgeProps}
+            onClick={open}
+            sx={{ cursor: 'pointer' }}
+          >
+            + {collapsedItems.length}
+          </Badge>
+        ) : (
+          <Badge
+            component="button"
+            color="gray"
+            size="sm"
+            {...badgeProps}
+            onClick={close}
+            sx={{ cursor: 'pointer' }}
+          >
+            - Hide
+          </Badge>
+        ))}
     </>
   );
 
@@ -43,4 +63,5 @@ type Props<T> = {
   limit?: number;
   spacing?: MantineNumberSize;
   grouped?: boolean;
+  badgeProps?: Omit<BadgeProps, 'children'>;
 };

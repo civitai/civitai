@@ -9,10 +9,10 @@ export const unpublishNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => ({
       message:
         details.reason !== 'other'
-          ? `Your ${details.modelVersionName} model has been unpublished: ${
+          ? `Your ${details.modelName} - ${details.modelVersionName} model has been unpublished: ${
               unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
             }`
-          : `Your ${details.modelVersionName} model has been unpublished: ${
+          : `Your ${details.modelName} - ${details.modelVersionName} model has been unpublished: ${
               details.customMessage ?? ''
             }`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${

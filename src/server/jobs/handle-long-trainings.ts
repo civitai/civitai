@@ -59,15 +59,22 @@ const handleJob = async (
   }
 
   const job = await getJobStatus(jobId, log);
+  if (job.status === 'Succeeded') {
+    // Ensure we have our epochs...
+    const ready = await hasEpochs();
+    if (ready) {
+      await updateStatus('InReview');
+      return true;
+    }
+
+    // If we don't have epochs, we need to fail...
+    log(`No epochs`);
+    (job as JobStatus).status = 'Failed';
+  }
+
   if (['Failed', 'Deleted', 'Expired'].includes(job.status)) {
     await updateStatus('Failed');
     return await refund();
-  }
-
-  // nb: we should really be updating the history too, but...it's annoying
-  if (job.status === 'Succeeded') {
-    await updateStatus('InReview');
-    return true;
   }
 
   // Otherwise we're still processing
@@ -129,12 +136,27 @@ const handleJob = async (
     }
 
     log(`Refunding transaction`);
-    await withRetries(async () =>
-      refundTransaction(transactionId, 'Refund due to a long-running/failed training job.')
-    );
+    try {
+      await withRetries(async () =>
+        refundTransaction(transactionId, 'Refund due to a long-running/failed training job.')
+      );
+    } catch (e) {
+      log(`Error refunding transaction - need to manually refund.`);
+      return;
+    }
     log(`Refunded transaction`);
 
     return true;
+  }
+
+  async function hasEpochs() {
+    const [{ epochs }] = await dbWrite.$queryRaw<{ epochs: number | null }[]>`
+      SELECT
+        jsonb_array_length(metadata -> 'trainingResults' -> 'epochs') epochs
+      FROM "ModelFile"
+      WHERE id = ${modelFileId};
+    `;
+    return epochs !== null;
   }
 
   async function updateStatus(status: TrainingStatus) {

@@ -1,11 +1,17 @@
-import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
-import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconBookmark,
+  IconClubs,
+  IconEye,
+  IconMessageCircle2,
+} from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
@@ -72,7 +78,21 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
                 <Text color="white">{category.name}</Text>
               </Badge>
             )}
-            <ArticleContextMenu article={data} ml="auto" />
+
+            <Stack ml="auto">
+              <ArticleContextMenu article={data} />
+              {data.requiresClub && (
+                <Tooltip
+                  label="This article requires joining a club to read its contents."
+                  withinPortal
+                  maw={350}
+                >
+                  <ThemeIcon size={30} radius="xl" color="blue">
+                    <IconClubs stroke={2.5} size={16} />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
+            </Stack>
           </Group>
           {cover && (
             <EdgeMedia

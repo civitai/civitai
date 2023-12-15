@@ -691,7 +691,9 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
 
 // #region [ranks]
 async function refreshModelRank({ db }: MetricProcessorRunContext) {
-  await db.$executeRawUnsafe(`CALL update_model_rank(10000);`);
+  // Disabling this for now since Prisma doesn't run it correctly.
+  // Instead this runs in a cron job every hour.
+  // await db.$executeRawUnsafe(`CALL update_model_rank(10000);`);
 }
 
 async function refreshModelVersionRank({ db }: MetricProcessorRunContext) {

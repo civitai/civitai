@@ -77,7 +77,7 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
         onReconnected: () => {
           console.debug('signal service reconnected'); // eslint-disable-line no-console
           if (session.data?.user?.id) {
-            queryUtils.buzz.getUserAccount.invalidate();
+            queryUtils.buzz.getBuzzAccount.invalidate();
           }
         },
         onClosed: (message) => {

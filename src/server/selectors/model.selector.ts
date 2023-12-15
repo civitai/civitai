@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { modelFileSelect } from './modelFile.selector';
-import { imageSelect } from './image.selector';
+import { profileImageSelect } from './image.selector';
 
 export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -70,6 +70,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   gallerySettings: true,
   earlyAccessDeadline: true,
   mode: true,
+  unlisted: true,
   reportStats: {
     select: {
       ownershipProcessing: true,
@@ -84,7 +85,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       // TODO.leaderboard: uncomment when migration is done
       // leaderboardShowcase: true,
       rank: { select: { leaderboardRank: true } },
-      profilePicture: { select: { ...imageSelect, ingestion: true } },
+      profilePicture: {
+        select: profileImageSelect,
+      },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
@@ -165,6 +168,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       collectedCountAllTime: true,
       tippedAmountCountAllTime: true,
       generationCountAllTime: true,
+      commentCountAllTime: true,
     },
   },
   tagsOnModels: {

@@ -30,6 +30,7 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   maxSize?: number;
   aspectRatio?: number;
   children?: React.ReactNode;
+  previewDisabled?: boolean;
 };
 
 export function SimpleImageUpload({
@@ -39,6 +40,7 @@ export function SimpleImageUpload({
   previewWidth = 450,
   aspectRatio,
   children,
+  previewDisabled,
   ...props
 }: SimpleImageUploadProps) {
   const theme = useMantineTheme();
@@ -51,6 +53,7 @@ export function SimpleImageUpload({
     const hasLargeFile = droppedFiles.some((file) => file.size > maxSize);
     if (hasLargeFile) return setError(`Files should not exceed ${formatBytes(maxSize)}`);
 
+    handleRemove();
     setError('');
     const [file] = droppedFiles;
     const toUpload = { url: URL.createObjectURL(file), file };
@@ -106,7 +109,7 @@ export function SimpleImageUpload({
         >
           <LoadingOverlay visible />
         </Paper>
-      ) : image && (image.previewUrl || image.url) ? (
+      ) : !previewDisabled && image && (image.previewUrl || image.url) ? (
         <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
           <Tooltip label="Remove image">
             <ActionIcon

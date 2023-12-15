@@ -29,6 +29,7 @@ import {
   IconBarbell,
   IconBookmark,
   IconCircleDashed,
+  IconClubs,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -337,6 +338,18 @@ export function AppHeader({
         ),
         rel: 'nofollow',
       },
+      {
+        href: '/clubs/create',
+        visible: !isMuted && features.createClubs,
+        redirectReason: 'create-club',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <Text>Create a club</Text>
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
     ],
     [features.bounties, features.imageTraining, isMuted, theme]
   );
@@ -400,6 +413,17 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             My bounties
+          </Group>
+        ),
+      },
+      {
+        href: '/clubs?engagement=engaged',
+        as: '/clubs',
+        visible: !!currentUser && features.clubs,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My clubs
           </Group>
         ),
       },

@@ -97,6 +97,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
+  clubId: z.number().optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
@@ -158,6 +159,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
+  templateId: z.number().optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;

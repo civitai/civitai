@@ -9,6 +9,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import {
   Form,
+  InputClubResourceManagementInput,
   InputMultiSelect,
   InputNumber,
   InputRTE,
@@ -38,6 +39,9 @@ import {
   GenerationResourceSchema,
   generationResourceSchema,
 } from '~/server/schema/generation.schema';
+import { ClubResourceSchema } from '~/server/schema/club.schema';
+import { parseNumericString } from '~/utils/query-string-helpers';
+import { useRouter } from 'next/router';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -77,9 +81,11 @@ const schema = modelVersionUpsertSchema2
 type Schema = z.infer<typeof schema>;
 
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
+const querySchema = z.object({ templateId: z.coerce.number().optional() });
 
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
+  const router = useRouter();
   const queryUtils = trpc.useContext();
 
   const acceptsTrainedWords = [
@@ -131,6 +137,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? false,
     recommendedResources: version?.recommendedResources ?? [],
+    clubs: version?.clubs ?? [],
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -159,7 +166,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     recommendedResources: rawRecommendedResources,
     ...data
   }: Schema) => {
-    if (isDirty || !version?.id) {
+    const schemaResult = querySchema.safeParse(router.query);
+    const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
+
+    if (isDirty || !version?.id || templateId) {
       const recommendedResources =
         rawRecommendedResources?.map(({ id, strength }) => ({
           resourceId: id,
@@ -177,6 +187,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         vaeId: hasVAE ? data.vaeId : undefined,
         monetization: data.monetization,
         recommendedResources,
+        templateId,
       });
 
       await queryUtils.modelVersion.getById.invalidate();
@@ -554,6 +565,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           )}
           <Stack spacing={4}>
             <Divider label="Additional options" />
+
             <InputSwitch
               name="requireAuth"
               label="Require users to be logged in to download this asset"
@@ -567,6 +579,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               }
             />
           </Stack>
+          {features.clubs && (
+            <>
+              <Divider label="Club options" />
+              <InputClubResourceManagementInput
+                label="Make this resource part of a club"
+                description="This will make this resource available to club members only. People will still see this resource in the public list, but will be required to join the club to use it."
+                name="clubs"
+              />
+            </>
+          )}
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading })}
       </Form>
@@ -577,6 +599,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
   createdAt: Date | null;
   recommendedResources?: GenerationResourceSchema[];
+  clubs?: ClubResourceSchema[];
 };
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;

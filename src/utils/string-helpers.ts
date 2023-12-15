@@ -26,7 +26,10 @@ const nameOverrides: Record<string, string> = {
   TextualInversion: 'Embedding',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
+  ModelVersion: 'Model Version',
+  ClubMembership: 'Club Memebership',
 };
+
 export function getDisplayName(value: string) {
   return nameOverrides[value] ?? splitUppercase(value);
 }

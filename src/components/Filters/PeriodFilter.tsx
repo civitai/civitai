@@ -107,7 +107,10 @@ function StatefulPeriodFilter({ type, disabled, hideMode, variant }: StatefulPro
   const { query, pathname, replace } = useRouter();
 
   const globalPeriod = useFiltersContext(
-    useCallback((state) => (type !== 'collections' ? state[type].period : undefined), [type])
+    useCallback(
+      (state) => (type !== 'collections' && type !== 'clubs' ? state[type].period : undefined),
+      [type]
+    )
   );
   const queryPeriod = query.period as typeof globalPeriod | undefined;
 

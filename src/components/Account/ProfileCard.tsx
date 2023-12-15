@@ -31,6 +31,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ProfilePictureAlert } from '~/components/User/ProfilePictureAlert';
 
 const schema = z.object({
   id: z.number(),
@@ -44,7 +45,7 @@ const schema = z.object({
 
 export function ProfileCard() {
   const currentUser = useCurrentUser();
-  // const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useContext();
 
   const { data: cosmetics, isLoading: loadingCosmetics } = trpc.user.getCosmetics.useQuery(
     undefined,
@@ -54,6 +55,10 @@ export function ProfileCard() {
     { equipped: true },
     { enabled: !!currentUser }
   );
+  const { data: user } = trpc.user.getById.useQuery(
+    { id: currentUser?.id ?? 0 },
+    { enabled: !!currentUser }
+  );
   const { data: leaderboards = [], isLoading: loadingLeaderboards } =
     trpc.leaderboard.getLeaderboards.useQuery();
 
@@ -61,7 +66,7 @@ export function ProfileCard() {
     async onSuccess(user, { badgeId, nameplateId, profilePicture }) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       // await utils.model.getAll.invalidate();
-      // await queryUtils.comment.getAll.invalidate();
+      await queryUtils.user.getById.invalidate({ id: user.id });
       await currentUser?.refresh();
 
       if (user)
@@ -81,10 +86,10 @@ export function ProfileCard() {
     mode: 'onChange',
     defaultValues: {
       ...currentUser,
-      profilePicture: currentUser?.profilePicture
-        ? (currentUser.profilePicture as z.infer<typeof schema>['profilePicture'])
-        : currentUser?.image
-        ? { url: currentUser.image, type: 'image' as const }
+      profilePicture: user?.profilePicture
+        ? (user.profilePicture as z.infer<typeof schema>['profilePicture'])
+        : user?.image
+        ? { url: user.image, type: 'image' as const }
         : undefined,
     },
     shouldUnregister: false,
@@ -100,15 +105,15 @@ export function ProfileCard() {
         ...currentUser,
         nameplateId: selectedNameplate?.id ?? null,
         badgeId: selectedBadge?.id ?? null,
-        profilePicture: currentUser?.profilePicture
-          ? (currentUser.profilePicture as z.infer<typeof schema>['profilePicture'])
-          : currentUser.image
-          ? { url: currentUser.image, type: 'image' as const }
+        profilePicture: user?.profilePicture
+          ? (user.profilePicture as z.infer<typeof schema>['profilePicture'])
+          : user?.image
+          ? { url: user.image, type: 'image' as const }
           : undefined,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser, equippedCosmetics]);
+  }, [user, currentUser, equippedCosmetics]);
 
   const formUser = form.watch();
   const { nameplates = [], badges = [] } = cosmetics || {};
@@ -207,13 +212,7 @@ export function ProfileCard() {
             <Grid.Col span={12}>
               <Stack spacing={8}>
                 <InputProfileImageUpload name="profilePicture" label="Profile Image" />
-                {currentUser?.profilePicture?.ingestion === 'Pending' && (
-                  <Alert color="yellow">
-                    Your profile picture is currently being scanned. You&apos;ll still be able to
-                    see it, but other users won&apos;t see your profile picture until it has
-                    finished the scan process.
-                  </Alert>
-                )}
+                <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
               </Stack>
             </Grid.Col>
             <Grid.Col span={12}>
