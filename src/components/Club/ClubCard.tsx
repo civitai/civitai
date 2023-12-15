@@ -10,7 +10,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { IconAlertCircle } from '@tabler/icons-react';
 
-const IMAGE_CARD_WIDTH = 332;
+const IMAGE_CARD_WIDTH = 450;
 
 export function ClubCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });

@@ -129,6 +129,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
               <tr>
                 <th>User</th>
                 <th>Tier</th>
+                <th>Membership fee</th>
                 <th>Member since</th>
                 <th>Next billing</th>
                 <th>Cancelled on</th>
@@ -144,8 +145,18 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                     <UserAvatar user={membership.user} withUsername />
                   </td>
                   <td>{membership.clubTier.name}</td>
+                  <td>
+                    <CurrencyBadge
+                      unitAmount={membership.unitAmount}
+                      currency={membership.currency ?? Currency.BUZZ}
+                    />
+                  </td>
                   <td>{formatDate(membership.startedAt)}</td>
-                  <td>{membership.cancelledAt ? '-' : formatDate(membership.nextBillingAt)}</td>
+                  <td>
+                    {membership.cancelledAt || membership.unitAmount === 0
+                      ? '-'
+                      : formatDate(membership.nextBillingAt)}
+                  </td>
                   <td>{membership.cancelledAt ? formatDate(membership.cancelledAt) : '-'}</td>
                   <td>
                     {membership.cancelledAt && membership.expiresAt
@@ -158,21 +169,27 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                   <td>
                     {canManageMemberships ? (
                       <Group>
-                        <Tooltip
-                          label={`${
-                            membership.billingPausedAt ? 'Resume' : 'Pause'
-                          } billing for this user`}
-                        >
-                          <ActionIcon
-                            size="sm"
-                            color="red"
-                            variant="transparent"
-                            onClick={() => onTogglePauseBilling(membership)}
-                            loading={togglingPauseBilling}
+                        {membership.unitAmount > 0 && (
+                          <Tooltip
+                            label={`${
+                              membership.billingPausedAt ? 'Resume' : 'Pause'
+                            } billing for this user`}
                           >
-                            {membership.billingPausedAt ? <IconPlayerPlay /> : <IconPlayerPause />}
-                          </ActionIcon>
-                        </Tooltip>
+                            <ActionIcon
+                              size="sm"
+                              color="red"
+                              variant="transparent"
+                              onClick={() => onTogglePauseBilling(membership)}
+                              loading={togglingPauseBilling}
+                            >
+                              {membership.billingPausedAt ? (
+                                <IconPlayerPlay />
+                              ) : (
+                                <IconPlayerPause />
+                              )}
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
                         <Tooltip label="Remove and refund last payment">
                           <ActionIcon
                             size="sm"

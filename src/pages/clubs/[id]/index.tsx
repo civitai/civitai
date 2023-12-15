@@ -55,8 +55,9 @@ import { ClubTierItem, useToggleClubMembershipCancelStatus } from '~/components/
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission, Currency } from '@prisma/client';
 import { ClubAddContent } from '~/components/Club/ClubAddContent';
+import { CurrencyBadge } from '../../../components/Currency/CurrencyBadge';
 
 const Feed = () => {
   const utils = trpc.useContext();
@@ -344,20 +345,34 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                     </Alert>
                   ) : membership?.nextBillingAt ? (
                     <Alert color="yellow">
-                      <Stack>
-                        <Text size="sm">
-                          You are a member of this club. Your next billing date is{' '}
-                          <Text weight="bold" component="span">
-                            {formatDate(membership.nextBillingAt)}
-                          </Text>
-                          .
-                        </Text>
+                      <Stack spacing={4}>
+                        <Text size="sm">You are a member of this club.</Text>
+                        {membership?.unitAmount > 0 && (
+                          <>
+                            <Text size="sm">
+                              Your next billing date is{' '}
+                              <Text weight="bold" component="span">
+                                {formatDate(membership.nextBillingAt)}
+                              </Text>
+                              .
+                            </Text>
+                            <Text>
+                              Your monthly fee is{' '}
+                              <CurrencyBadge
+                                unitAmount={membership.unitAmount}
+                                currency={Currency.BUZZ}
+                              />
+                              .
+                            </Text>
+                          </>
+                        )}
                         <Button
                           size="xs"
                           onClick={toggleCancelStatus}
                           loading={isToggling}
                           variant="subtle"
                           color="yellow"
+                          mt="md"
                         >
                           {isCancelled ? 'Restore membership' : 'Cancel membership'}
                         </Button>

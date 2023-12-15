@@ -166,17 +166,19 @@ export const createClubMembership = async ({
           },
         });
 
-    await createBuzzTransaction({
-      toAccountType: 'Club',
-      toAccountId: clubTier.clubId,
-      fromAccountId: userId,
-      type: TransactionType.ClubMembership,
-      amount: clubTier.unitAmount,
-      description: `Membership fee for ${clubTier.club.name} - ${clubTier.name}`,
-      details: {
-        clubMembershipId: membership.id,
-      },
-    });
+    if (clubTier.unitAmount > 0) {
+      await createBuzzTransaction({
+        toAccountType: 'Club',
+        toAccountId: clubTier.clubId,
+        fromAccountId: userId,
+        type: TransactionType.ClubMembership,
+        amount: clubTier.unitAmount,
+        description: `Membership fee for ${clubTier.club.name} - ${clubTier.name}`,
+        details: {
+          clubMembershipId: membership.id,
+        },
+      });
+    }
     // Attempt to pay the membership fee
 
     return membership;
@@ -322,6 +324,9 @@ export const completeClubMembershipCharge = async ({
       where: {
         userId_clubId: { userId: clubMembershipCharge.userId, clubId: clubMembershipCharge.clubId },
       },
+      include: {
+        downgradeClubTier: true,
+      },
     });
 
     if (!clubMembership) throw throwBadRequestError('Club membership not found');
@@ -336,6 +341,8 @@ export const completeClubMembershipCharge = async ({
       },
       data: {
         nextBillingAt: dayjs(clubMembership.nextBillingAt).add(1, 'month').toDate(),
+        clubTierId: clubMembership.downgradeClubTier?.id ?? undefined, // Won't do anything if the user doesn't have it.
+        downgradeClubTierId: null,
       },
     });
 
@@ -427,6 +434,9 @@ export const clubOwnerRemoveMember = async ({
       where: { id: membership.id },
     });
 
+    // Nothing to refund :shrug:
+    if (membership.unitAmount === 0) return;
+
     // Refund the user:
     await createBuzzTransaction({
       fromAccountType: 'Club',
@@ -511,16 +521,20 @@ export const cancelClubMembership = async ({ userId, clubId }: ToggleClubMembers
 
   if (!membership) throw throwBadRequestError('Club membership not found');
 
-  const updatedMembership = await dbWrite.$transaction(async (tx) => {
-    const updatedMembership = await tx.clubMembership.update({
+  if (membership.unitAmount === 0) {
+    await dbWrite.clubMembership.delete({
       where: { id: membership.id },
-      data: {
-        cancelledAt: new Date(),
-        expiresAt: membership?.nextBillingAt,
-      },
     });
 
-    return updatedMembership;
+    return;
+  }
+
+  const updatedMembership = await dbWrite.clubMembership.update({
+    where: { id: membership.id },
+    data: {
+      cancelledAt: new Date(),
+      expiresAt: membership?.nextBillingAt,
+    },
   });
 
   return updatedMembership;

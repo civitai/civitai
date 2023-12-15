@@ -236,6 +236,7 @@ export const constants = {
     locationMaxLength: 30,
   },
   clubs: {
+    tierMaxMemberLimit: 9999,
     tierImageAspectRatio: 1 / 1,
     tierImageDisplayWidth: 124,
     tierImageSidebarDisplayWidth: 84,

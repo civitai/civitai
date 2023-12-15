@@ -25,6 +25,7 @@ import {
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { TierCoverImage } from '../../components/Club/ClubTierItem';
 
 export const userContributingClubs = async ({
   userId,
@@ -251,15 +252,6 @@ export const createClub = async ({
         },
       });
 
-      // Create tiers:
-      await upsertClubTiers({
-        clubId: club.id,
-        tiers,
-        deleteTierIds,
-        userId,
-        tx,
-      });
-
       return club;
     },
     { maxWait: 10000, timeout: 30000 }
@@ -371,6 +363,233 @@ export const upsertClubTiers = async ({
       );
     }
   }
+};
+
+export const upsertClubTier = async ({
+  clubId,
+  tier,
+  userId,
+  isModerator,
+}: {
+  clubId: number;
+  userId: number;
+  isModerator?: boolean;
+  tier: UpsertClubTierInput;
+}) => {
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
+
+  // Check that the user can actually add tiers to this club
+
+  if (
+    userId !== userClub?.userId &&
+    !isModerator &&
+    !userClub?.admin?.permissions?.includes(ClubAdminPermission.ManageTiers)
+  ) {
+    throw throwBadRequestError('Only club owners can edit club tiers');
+  }
+
+  const { coverImage, ...data } = tier;
+
+  const shouldCreateImage = coverImage && !coverImage.id;
+
+  const [imageRecord] = shouldCreateImage
+    ? await createEntityImages({
+        userId,
+        images: [coverImage],
+      })
+    : [];
+
+  if (data.id) {
+    const existingClubTier = await dbRead.clubTier.findUnique({
+      where: {
+        id: data.id,
+      },
+    });
+
+    if (!existingClubTier) {
+      throw throwBadRequestError('Club tier not found');
+    }
+
+    if (existingClubTier.unitAmount > data.unitAmount) {
+      // Check that there are no members in this tier:
+      const hasMembers = await dbRead.clubTier.findFirst({
+        where: {
+          id: data.id,
+          memberships: {
+            some: {},
+          },
+        },
+      });
+
+      if (hasMembers) {
+        throw throwBadRequestError(
+          'Cannot downgrade tier with members. Please move the members out of this tier before downgrading it.'
+        );
+      }
+    }
+
+    return await dbWrite.clubTier.update({
+      where: {
+        id: data.id,
+      },
+      data: {
+        ...data,
+        coverImageId:
+          coverImage === null
+            ? null
+            : coverImage === undefined
+            ? undefined
+            : coverImage?.id ?? imageRecord?.id,
+      },
+    });
+  } else {
+    return dbWrite.clubTier.create({
+      data: {
+        ...data,
+        clubId,
+        coverImageId: coverImage?.id ?? imageRecord?.id,
+      },
+    });
+  }
+};
+
+export const deleteClubTier = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & {
+  userId: number;
+  isModerator?: boolean;
+}) => {
+  const clubTier = await dbRead.clubTier.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      clubId: true,
+      _count: {
+        select: {
+          memberships: {
+            where: {
+              OR: [
+                {
+                  expiresAt: null,
+                },
+                {
+                  expiresAt: {
+                    gt: new Date(),
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubTier.clubId] });
+
+  if (
+    userId !== userClub?.userId &&
+    !isModerator &&
+    !userClub?.admin?.permissions?.includes(ClubAdminPermission.ManageTiers)
+  ) {
+    throw throwBadRequestError(
+      'Only club owners and admins with manage tier access can delete club tiers'
+    );
+  }
+
+  if (clubTier._count.memberships > 0) {
+    throw throwBadRequestError(
+      'Cannot delete tier with members. Please remove the members out of this tier before deleting it.'
+    );
+  }
+
+  await dbWrite.clubTier.delete({
+    where: {
+      id,
+    },
+  });
+
+  // Check resources that require this tier:
+  const clubTierResources = await dbRead.entityAccess.findMany({
+    where: {
+      accessorId: id,
+      accessorType: 'ClubTier',
+    },
+    select: {
+      accessToId: true,
+      accessToType: true,
+    },
+  });
+
+  if (clubTierResources.length === 0) {
+    // No resources require this tier.
+    return;
+  }
+
+  // Remove this tier requirement.
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessorId: id,
+      accessorType: 'ClubTier',
+    },
+  });
+
+  // Group by type:
+  const resourcesByType = clubTierResources.reduce((acc, curr) => {
+    if (!acc[curr.accessToType]) {
+      acc[curr.accessToType] = [];
+    }
+
+    acc[curr.accessToType].push(curr.accessToId);
+
+    return acc;
+  }, {} as any);
+
+  // Check some of the tier resources it still require some special access:
+  const entitiesWithAccessAfterDelete = await dbWrite.entityAccess.findMany({
+    where: {
+      OR: Object.keys(resourcesByType).map((type) => ({
+        accessToId: {
+          in: resourcesByType[type],
+        },
+        accessToType: type as SupportedClubEntities,
+      })),
+    },
+  });
+
+  const entitiesWithoutAccess = clubTierResources.filter(
+    (r) =>
+      !entitiesWithAccessAfterDelete.find(
+        (e) => e.accessToType === r.accessToType && e.accessToId === r.accessToId
+      )
+  );
+
+  if (entitiesWithoutAccess.length === 0) {
+    // All resources still require access to some clubs / other
+    return;
+  }
+
+  const entitiesWithoutAccessByType = entitiesWithoutAccess.reduce((acc, curr) => {
+    if (!acc[curr.accessToType]) {
+      acc[curr.accessToType] = [];
+    }
+
+    acc[curr.accessToType].push(curr.accessToId);
+
+    return acc;
+  }, {} as any);
+
+  await Promise.all(
+    Object.keys(entitiesWithoutAccessByType).map((type) => {
+      return entityAvailabilityUpdate({
+        entityType: type as SupportedClubEntities,
+        entityIds: entitiesWithoutAccessByType[type],
+        availability: Availability.Public,
+      });
+    })
+  );
 };
 
 export const getClubTiers = async ({

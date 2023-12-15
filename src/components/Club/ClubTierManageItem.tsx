@@ -13,10 +13,40 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
+import { useMutateClub } from './club.utils';
+import { showSuccessNotification } from '../../utils/notifications';
+import { openConfirmModal } from '@mantine/modals';
 
 export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const { classes } = useClubFeedStyles();
+  const { deleteClubTier, deletingTier } = useMutateClub();
+
+  const onDeleteClubTier = async () => {
+    openConfirmModal({
+      title: 'Delete club tier',
+      children: (
+        <Stack>
+          <Text size="sm">
+            Are you sure you want to delete this club tier? This action is destructive and cannot be
+            reverted. all resources tied to this club tier will be made public unless they belong in
+            other clubs or tiers.
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      labels: { confirm: 'Delete club tier', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: deletingTier },
+      onConfirm: async () => {
+        await deleteClubTier({ id: clubTier.id });
+
+        showSuccessNotification({
+          title: 'Club tier removed',
+          message: `Club tier has been removed from this club and all resources have been updated.`,
+        });
+      },
+    });
+  };
 
   if (isEditing) {
     return (
@@ -99,10 +129,16 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 setIsEditing(true);
               }}
               leftIcon={<IconPencilMinus />}
+              disabled={deletingTier}
             >
               Edit
             </Button>
-            <Button color="red" onClick={() => {}} leftIcon={<IconTrash />}>
+            <Button
+              color="red"
+              onClick={onDeleteClubTier}
+              loading={deletingTier}
+              leftIcon={<IconTrash />}
+            >
               Delete
             </Button>
           </Group>

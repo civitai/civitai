@@ -134,6 +134,7 @@ export const getArticles = async ({
         )`
       );
     }
+
     if (!!userIds?.length) {
       AND.push(Prisma.sql`a."userId" IN (${Prisma.join(userIds, ',')})`);
     }
