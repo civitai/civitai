@@ -684,8 +684,6 @@ export const upsertClubResource = async ({
   const clubIds = clubs.map((c) => c.clubId);
   const contributingClubs = await userContributingClubs({ userId, clubIds });
 
-  console.log(clubIds, contributingClubs, userId);
-
   if (!isModerator && clubIds.some((c) => !contributingClubs.find((cc) => cc.id === c))) {
     throw throwAuthorizationError(
       'You do not have permission to add this resource to one of the provided clubs'

@@ -367,7 +367,7 @@ export const completeClubMembershipCharge = async ({
         clubMembershipChargeId: clubMembershipCharge.id,
         stripePaymentIntentId: clubMembershipCharge.invoiceId,
       },
-      externalTransactionId: `club-membership-chrge-${clubMembershipCharge.id}`,
+      externalTransactionId: `club-membership-charge-${clubMembershipCharge.id}`,
     });
   });
 };
