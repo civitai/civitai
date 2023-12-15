@@ -18,6 +18,7 @@ import {
 } from '~/server/schema/club.schema';
 import {
   deleteClub,
+  deleteClubTier,
   getAllClubs,
   getClub,
   getClubDetailsForResource,
@@ -109,6 +110,25 @@ export async function upsertClubTierHandler({
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
       deleteTierIds: [],
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function deleteClubTierHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    await deleteClubTier({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

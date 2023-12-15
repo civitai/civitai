@@ -373,6 +373,145 @@ export const upsertClubTiers = async ({
   }
 };
 
+export const deleteClubTier = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & {
+  userId: number;
+  isModerator?: boolean;
+}) => {
+  const clubTier = await dbRead.clubTier.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      clubId: true,
+      _count: {
+        select: {
+          memberships: {
+            where: {
+              OR: [
+                {
+                  expiresAt: null,
+                },
+                {
+                  expiresAt: {
+                    gt: new Date(),
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const [userClub] = await userContributingClubs({ userId, clubIds: [clubTier.clubId] });
+
+  if (
+    userId !== userClub?.userId &&
+    !isModerator &&
+    !userClub?.admin?.permissions?.includes(ClubAdminPermission.ManageTiers)
+  ) {
+    throw throwBadRequestError(
+      'Only club owners and admins with manage tier access can delete club tiers'
+    );
+  }
+
+  if (clubTier._count.memberships > 0) {
+    throw throwBadRequestError(
+      'Cannot delete tier with members. Please remove the members out of this tier before deleting it.'
+    );
+  }
+
+  await dbWrite.clubTier.delete({
+    where: {
+      id,
+    },
+  });
+
+  // Check resources that require this tier:
+  const clubTierResources = await dbRead.entityAccess.findMany({
+    where: {
+      accessorId: id,
+      accessorType: 'ClubTier',
+    },
+    select: {
+      accessToId: true,
+      accessToType: true,
+    },
+  });
+
+  if (clubTierResources.length === 0) {
+    // No resources require this tier.
+    return;
+  }
+
+  // Remove this tier requirement.
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessorId: id,
+      accessorType: 'ClubTier',
+    },
+  });
+
+  // Group by type:
+  const resourcesByType = clubTierResources.reduce((acc, curr) => {
+    if (!acc[curr.accessToType]) {
+      acc[curr.accessToType] = [];
+    }
+
+    acc[curr.accessToType].push(curr.accessToId);
+
+    return acc;
+  }, {} as any);
+
+  // Check some of the tier resources it still require some special access:
+  const entitiesWithAccessAfterDelete = await dbWrite.entityAccess.findMany({
+    where: {
+      OR: Object.keys(resourcesByType).map((type) => ({
+        accessToId: {
+          in: resourcesByType[type],
+        },
+        accessToType: type as SupportedClubEntities,
+      })),
+    },
+  });
+
+  const entitiesWithoutAccess = clubTierResources.filter(
+    (r) =>
+      !entitiesWithAccessAfterDelete.find(
+        (e) => e.accessToType === r.accessToType && e.accessToId === r.accessToId
+      )
+  );
+
+  if (entitiesWithoutAccess.length === 0) {
+    // All resources still require access to some clubs / other
+    return;
+  }
+
+  const entitiesWithoutAccessByType = entitiesWithoutAccess.reduce((acc, curr) => {
+    if (!acc[curr.accessToType]) {
+      acc[curr.accessToType] = [];
+    }
+
+    acc[curr.accessToType].push(curr.accessToId);
+
+    return acc;
+  }, {} as any);
+
+  await Promise.all(
+    Object.keys(entitiesWithoutAccessByType).map((type) => {
+      return entityAvailabilityUpdate({
+        entityType: type as SupportedClubEntities,
+        entityIds: entitiesWithoutAccessByType[type],
+        availability: Availability.Public,
+      });
+    })
+  );
+};
+
 export const getClubTiers = async ({
   clubId,
   clubIds,
@@ -464,6 +603,8 @@ export const upsertClubResource = async ({
 
   const clubIds = clubs.map((c) => c.clubId);
   const contributingClubs = await userContributingClubs({ userId, clubIds });
+
+  console.log(clubIds, contributingClubs, userId);
 
   if (!isModerator && clubIds.some((c) => !contributingClubs.find((cc) => cc.id === c))) {
     throw throwAuthorizationError(
