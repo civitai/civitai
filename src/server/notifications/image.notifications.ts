@@ -1,5 +1,5 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-export const reportNotifications = createNotificationProcessor({
+export const imageNotifications = createNotificationProcessor({
   'profile-picture-blocked': {
     displayName: 'Profile picture blocked',
     toggleable: false,
