@@ -23,6 +23,8 @@ import { getComputedTags } from '~/server/utils/tag-computation';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
 
+const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
+
 const tagCache: Record<string, number> = {};
 
 enum Status {
@@ -122,6 +124,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     select: {
       id: true,
       meta: true,
+      scanJobs: true,
       postId: true,
     },
   });
@@ -129,6 +132,11 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     await logScanResultError({ id, message: 'Image not found' });
     throw new Error('Image not found');
   }
+
+  // Add to scanJobs
+  const scanJobs = (image.scanJobs ?? {}) as Record<string, any>;
+  if (!scanJobs.scans) scanJobs.scans = {};
+  scanJobs.scans[source] = Date.now();
 
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
@@ -234,13 +242,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error(e.message);
   }
 
-  // For now, only update the scanned state if we got the result from Rekognition
-  if (source === TagSource.WD14) {
-    // However we can still update the nsfw level, as it will only go up...
-    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
-    return;
-  }
-
   try {
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
     const tags =
@@ -302,10 +303,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     }
 
     const data: Prisma.ImageUpdateInput = {
-      scannedAt: new Date(),
       needsReview: reviewKey,
-      ingestion: ImageIngestionStatus.Scanned,
+      scanJobs,
     };
+    const scansComplete = REQUIRED_SCANS.every((x) => scanJobs.scans[x]);
+    if (scansComplete) {
+      data.scannedAt = new Date();
+      data.ingestion = ImageIngestionStatus.Scanned;
+    }
 
     if (nsfw && prompt) {
       // Determine if we need to block the image
