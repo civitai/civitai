@@ -6,7 +6,9 @@ export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   username: true,
   deletedAt: true,
   image: true,
-  profilePicture: { select: profileImageSelect },
+  profilePicture: {
+    select: profileImageSelect,
+  },
 });
 
 const simpleUser = Prisma.validator<Prisma.UserDefaultArgs>()({
