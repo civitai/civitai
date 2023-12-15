@@ -152,7 +152,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   nsfw: z.nativeEnum(NsfwLevel).optional(),
   needsReview: z.string().nullish(),
-  delete: z.boolean().optional(),
+  reviewAction: z.enum(['delete', 'removeName']).optional(),
   reviewType: z.enum(['minor', 'poi', 'reported']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
@@ -287,11 +287,11 @@ export const getEntitiesCoverImage = z.object({
 });
 
 export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
-
 export const imageReviewQueueInputSchema = z.object({
   limit: z.number().min(0).max(200).default(100),
   cursor: z.union([z.bigint(), z.number()]).optional(),
   needsReview: z.string().nullish(),
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
+  tagIds: z.array(z.number()).optional(),
 });
