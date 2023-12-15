@@ -243,8 +243,8 @@ export const getModelsRaw = async ({
   if (favorites && sessionUser?.id) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "Engagement" e 
-          WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Favorite')
+          SELECT 1 FROM "ModelEngagement" e 
+          WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Favorite'::"ModelEngagementType")
         `
     );
   }
@@ -252,8 +252,8 @@ export const getModelsRaw = async ({
   if (hidden && sessionUser?.id) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "Engagement" e 
-          WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Hide')
+          SELECT 1 FROM "ModelEngagement" e 
+          WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Hide'::"ModelEngagementType")
         `
     );
   }
