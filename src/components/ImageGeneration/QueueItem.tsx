@@ -14,10 +14,18 @@ import {
   createStyles,
   Alert,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { useClipboard, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { IconBolt, IconPhoto, IconPlayerPlayFilled, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconInfoHexagon,
+  IconPhoto,
+  IconPlayerPlayFilled,
+  IconTrash,
+  IconX,
+  IconCheck,
+} from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -32,6 +40,7 @@ import {
   getBaseModelSetKey,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -53,6 +62,8 @@ export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const { classes } = useStyle();
   const generationStatus = useGenerationStatus();
+  const { copied, copy } = useClipboard();
+  const currentUser = useCurrentUser();
 
   const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
@@ -87,6 +98,10 @@ export function QueueItem({ request }: Props) {
         deleteMutation.mutate({ id: request.id });
       },
     });
+  };
+
+  const handleCopy = () => {
+    copy(request.images?.map((x) => x.hash).join('\n'));
   };
 
   const handleGenerate = () => {
@@ -183,6 +198,13 @@ export function QueueItem({ request }: Props) {
             </Text>
           </Group>
           <Group spacing="xs">
+            {currentUser?.isModerator && (
+              <Tooltip {...tooltipProps} label="Copy Job IDs">
+                <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
+                  {copied ? <IconCheck /> : <IconInfoHexagon />}
+                </ActionIcon>
+              </Tooltip>
+            )}
             {generationStatus.available && (
               <Tooltip {...tooltipProps} label="Generate">
                 <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
@@ -253,7 +275,7 @@ export function QueueItem({ request }: Props) {
           )}
           grouped
         />
-        {!failed && !!request.images?.length && (
+        {!!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />

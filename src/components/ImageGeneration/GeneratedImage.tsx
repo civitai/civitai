@@ -13,12 +13,15 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { useClipboard } from '@mantine/hooks';
 import {
   IconArrowsShuffle,
   IconBan,
+  IconCheck,
   IconDotsVertical,
   IconHourglass,
   IconInfoCircle,
+  IconInfoHexagon,
   IconPlayerPlayFilled,
   IconPlayerTrackNextFilled,
   IconTrash,
@@ -35,6 +38,7 @@ import { useRef } from 'react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function GeneratedImage({
   image,
@@ -44,9 +48,11 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const { classes } = useStyles();
+  const user = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = generationImageSelect.useSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
+  const { copied, copy } = useClipboard();
 
   const handleImageClick = () => {
     if (!image || !image.available) return;
@@ -285,6 +291,24 @@ export function GeneratedImage({
                 <Menu.Item disabled icon={<IconWindowMaximize size={14} stroke={1.5} />}>
                   Upscale
                 </Menu.Item>
+                {user?.isModerator && (
+                  <>
+                    <Menu.Divider />
+                    <Menu.Label>Moderator</Menu.Label>
+                    <Menu.Item
+                      icon={
+                        copied ? (
+                          <IconCheck size={14} stroke={1.5} />
+                        ) : (
+                          <IconInfoHexagon size={14} stroke={1.5} />
+                        )
+                      }
+                      onClick={() => copy(image.hash)}
+                    >
+                      Copy Job ID
+                    </Menu.Item>
+                  </>
+                )}
               </Menu.Dropdown>
             </Menu>
             <ImageMetaPopover
