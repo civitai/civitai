@@ -17,6 +17,7 @@ import {
   BountySort,
   BountyStatus,
   BrowsingMode,
+  ClubSort,
   CollectionSort,
   ImageSort,
   ModelSort,
@@ -28,6 +29,7 @@ import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { setCookie } from '~/utils/cookies-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getInfiniteClubSchema } from '~/server/schema/club.schema';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -122,6 +124,22 @@ const bountyFilterSchema = z
     })
   );
 
+type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
+const clubFilterSchema = z
+  .object({
+    sort: z.nativeEnum(ClubSort).default(ClubSort.Newest),
+  })
+  .merge(
+    getInfiniteClubSchema.omit({
+      query: true,
+      period: true,
+      sort: true,
+      limit: true,
+      cursor: true,
+      nsfw: true,
+    })
+  );
+
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
 const videoFilterSchema = imageFilterSchema.omit({
   types: true,
@@ -129,6 +147,7 @@ const videoFilterSchema = imageFilterSchema.omit({
   excludeCrossPosts: true,
 });
 
+  
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -142,6 +161,7 @@ type StorageState = {
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
+  clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
@@ -164,6 +184,7 @@ type StoreState = FilterState & {
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
+  setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
 };
 
@@ -182,6 +203,7 @@ const localStorageSchemas: LocalStorageSchema = {
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
+  clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
 };
 
@@ -264,6 +286,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
+      setClubFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
       setVideoFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
     }))
@@ -330,6 +354,7 @@ export function useSetFilters(type: FilterSubTypes) {
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
+          clubs: state.setClubFilters,
           videos: state.setVideoFilters,
         }[type]),
       [type]

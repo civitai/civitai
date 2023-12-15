@@ -5,6 +5,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import { useBuzzTransaction } from './buzz.utils';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 type Props = ButtonProps & {
   buzzAmount: number;
@@ -36,6 +37,8 @@ export function BuzzTransactionButton({
   const onClick = (e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
+
+    console.log('trigger');
 
     if (!onPerformTransaction) {
       return;

@@ -113,8 +113,8 @@ export const useStripeTransaction = ({
     };
   }, [processingPayment, paymentIntentProcessor.active]);
 
-  const onConfirmPayment = async () => {
-    if (!stripe || !elements) {
+  const onConfirmPayment = async (paymentMethodId?: string) => {
+    if (!stripe || !(elements || paymentMethodId)) {
       // Stripe.js hasn't yet loaded.
       // Make sure to disable form submission until Stripe.js has loaded.
       return;
@@ -123,16 +123,28 @@ export const useStripeTransaction = ({
     setProcessingPayment(true);
     retries.current = 0;
 
-    const { error, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      redirect: 'if_required',
-      confirmParams: {
-        // Make sure to change this to your payment completion page
-        // TODO.stripePayments: change this to the actual return url. May not need to do anything but redirect.
-        return_url: `${env.NEXT_PUBLIC_BASE_URL}/purchase/buzz`,
-        expand: ['payment_method'],
-      },
-    });
+    const { error, paymentIntent } = paymentMethodId
+      ? await stripe.confirmPayment({
+          clientSecret,
+          redirect: 'if_required',
+          confirmParams: {
+            // Make sure to change this to your payment completion page
+            return_url: `${env.NEXT_PUBLIC_BASE_URL}/purchase/buzz`,
+            payment_method: paymentMethodId,
+            expand: ['payment_method'],
+          },
+        })
+      : elements
+      ? await stripe.confirmPayment({
+          elements,
+          redirect: 'if_required',
+          confirmParams: {
+            // Make sure to change this to your payment completion page
+            return_url: `${env.NEXT_PUBLIC_BASE_URL}/purchase/buzz`,
+            expand: ['payment_method'],
+          },
+        })
+      : { error: { message: 'Something went wrong.' }, paymentIntent: undefined };
 
     if (error) {
       if (error.type === 'card_error' || error.type === 'validation_error') {
@@ -142,6 +154,7 @@ export const useStripeTransaction = ({
       }
 
       setErrorMessage(error.message ?? 'Something went wrong.');
+      return;
     }
 
     processPaymentIntent(paymentIntent);

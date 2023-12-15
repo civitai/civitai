@@ -80,6 +80,12 @@ import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 import { deleteImageById, ingestImage } from '../services/image.service';
+import {
+  createCustomer,
+  deleteCustomerPaymentMethod,
+  getCustomerPaymentMethods,
+} from '~/server/services/stripe.service';
+import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 
 export const getAllUsersHandler = async ({
   input,
@@ -1018,6 +1024,47 @@ export const claimCosmeticHandler = async ({
     // TODO: track with clickhouse?
 
     return cosmetic;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserPaymentMethodsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    let { customerId } = ctx.user;
+
+    if (!ctx.user.email) {
+      throw throwBadRequestError('User must have an email to get payment methods');
+    }
+
+    if (!customerId) {
+      customerId = await createCustomer({
+        ...ctx.user,
+        email: ctx.user.email as string,
+      });
+    }
+
+    const paymentMethods = getCustomerPaymentMethods(customerId);
+
+    return paymentMethods;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const deleteUserPaymentMethodHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PaymentMethodDeleteInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return deleteCustomerPaymentMethod({
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+      ...input,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

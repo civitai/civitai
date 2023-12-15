@@ -110,6 +110,7 @@ export const constants = {
     image: 320,
     articles: 450,
     bounty: 332,
+    club: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
@@ -233,6 +234,16 @@ export const constants = {
     bioMaxLength: 400,
     messageMaxLength: 1200,
     locationMaxLength: 30,
+  },
+  clubs: {
+    tierImageAspectRatio: 1 / 1,
+    tierImageDisplayWidth: 124,
+    tierImageSidebarDisplayWidth: 84,
+    avatarDisplayWidth: 124,
+    minMonthlyBuzz: 3000,
+    headerImageAspectRatio: 1 / 6,
+    postCoverImageAspectRatio: 1 / 4,
+    engagementTypes: ['engaged'],
   },
 } as const;
 

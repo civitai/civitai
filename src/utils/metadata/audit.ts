@@ -173,22 +173,37 @@ export function includesMinorAge(prompt: string | undefined) {
 // #endregion
 
 // #region [inappropriate]
+function prepareWordRegex(word: string, pluralize = false) {
+  let regexStr = word;
+  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
+  if (!word.includes('[')) {
+    regexStr = regexStr
+      .replace(/i/g, '[i|l|1]')
+      .replace(/o/g, '[o|0]')
+      .replace(/s/g, '[s|z]')
+      .replace(/e/g, '[e|3]');
+  }
+  if (pluralize) regexStr += '[s|z]*';
+  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  const regex = new RegExp(regexStr, 'i');
+  return regex;
+}
+
+export function promptWordReplace(prompt: string, word: string, replacement = '') {
+  const regex = prepareWordRegex(word);
+  const match = regex.exec(prompt);
+  if (!match || typeof match.index === 'undefined') return prompt;
+  const target = trimNonAlphanumeric(match[0]) as string;
+  return (
+    prompt.substring(0, match.index) + prompt.substring(match.index).replace(target, replacement)
+  );
+}
+
 type Checkable = { regex: RegExp; word: string };
 type MatcherFn = (prompt: string, checkable: Checkable) => string | false;
 export function checkable(words: string[], options?: { pluralize?: boolean; matcher?: MatcherFn }) {
   const regexes = words.map((word) => {
-    let regexStr = word;
-    regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
-    if (!word.includes('[')) {
-      regexStr = regexStr
-        .replace(/i/g, '[i|l|1]')
-        .replace(/o/g, '[o|0]')
-        .replace(/s/g, '[s|z]')
-        .replace(/e/g, '[e|3]');
-    }
-    if (options?.pluralize) regexStr += '[s|z]*';
-    regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
-    const regex = new RegExp(regexStr, 'i');
+    const regex = prepareWordRegex(word, options?.pluralize);
     return { regex, word } as Checkable;
   });
   function inPrompt(prompt: string, matcher?: MatcherFn) {

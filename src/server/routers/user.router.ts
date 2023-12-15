@@ -21,6 +21,8 @@ import {
   userByReferralCodeHandler,
   userRewardDetailsHandler,
   claimCosmeticHandler,
+  getUserPaymentMethodsHandler,
+  deleteUserPaymentMethodHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -62,6 +64,7 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
+import { paymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -139,4 +142,8 @@ export const userRouter = router({
   equipCosmetic: protectedProcedure
     .input(getByIdSchema)
     .mutation(({ ctx, input }) => equipCosmetic({ userId: ctx.user.id, cosmeticId: input.id })),
+  getPaymentMethods: protectedProcedure.query(getUserPaymentMethodsHandler),
+  deletePaymentMethod: protectedProcedure
+    .input(paymentMethodDeleteInput)
+    .mutation(deleteUserPaymentMethodHandler),
 });

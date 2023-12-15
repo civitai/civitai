@@ -48,4 +48,4 @@ export function getTagDisplayName(name: string) {
 }
 
 export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];
-export const tagsToIgnore = ['baby', 'emaciated bodies'];
+export const tagsToIgnore = ['baby', 'emaciated bodies', 'weapons'];

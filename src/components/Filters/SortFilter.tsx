@@ -5,6 +5,7 @@ import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/Fi
 import {
   ArticleSort,
   BountySort,
+  ClubSort,
   CollectionSort,
   ImageSort,
   ImageSortHidden,
@@ -25,6 +26,7 @@ const sortOptions = {
   articles: Object.values(ArticleSort),
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
+  clubs: Object.values(ClubSort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
 };
 
@@ -43,7 +45,8 @@ type DumbProps = {
     | QuestionSort
     | ArticleSort
     | CollectionSort
-    | BountySort;
+    | BountySort
+    | ClubSort;
   onChange: (
     value:
       | ModelSort
@@ -53,6 +56,7 @@ type DumbProps = {
       | ArticleSort
       | CollectionSort
       | BountySort
+      | ClubSort
   ) => void;
 };
 function DumbSortFilter({ type, value, onChange, variant = 'menu' }: DumbProps) {

@@ -14,8 +14,8 @@ export function GenericImageCard({
   disabled,
 }: {
   image: ImageProps;
-  entityType: string;
-  entityId: number;
+  entityType?: string;
+  entityId?: number;
   disabled?: boolean;
 }) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -23,6 +23,8 @@ export function GenericImageCard({
   });
 
   const url = (() => {
+    if (!entityType || !entityId) return undefined;
+
     switch (entityType) {
       case 'Model': {
         return `/models/${entityId}`;
@@ -75,8 +77,12 @@ export function GenericImageCard({
 
                 return (
                   <>
-                    <ImageGuard.Report context="image" position="top-right" withinPortal />
-                    <ImageGuard.ToggleImage position="top-left" />
+                    {!disabled && (
+                      <>
+                        <ImageGuard.Report context="image" position="top-right" withinPortal />
+                        <ImageGuard.ToggleImage position="top-left" />
+                      </>
+                    )}
                     {safe ? (
                       <EdgeMedia
                         src={image.url}

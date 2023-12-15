@@ -55,6 +55,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 

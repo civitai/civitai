@@ -2,12 +2,15 @@ import { Group, Loader, MantineSize, Text, TextProps, Tooltip } from '@mantine/c
 import { IconBolt } from '@tabler/icons-react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { BuzzAccountType } from '~/server/schema/buzz.schema';
 
 type Props = TextProps & {
   iconSize?: number;
   textSize?: MantineSize;
   withTooltip?: boolean;
   withAbbreviation?: boolean;
+  accountId?: number;
+  accountType?: BuzzAccountType;
 };
 
 export function UserBuzz({
@@ -15,9 +18,11 @@ export function UserBuzz({
   textSize = 'md',
   withTooltip,
   withAbbreviation = true,
+  accountId,
+  accountType,
   ...textProps
 }: Props) {
-  const { balance } = useBuzz();
+  const { balance } = useBuzz(accountId, accountType);
 
   const content = (
     <Text color="accent.5" transform="uppercase" {...textProps}>
