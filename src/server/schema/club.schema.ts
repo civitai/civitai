@@ -14,13 +14,18 @@ export const upsertClubTierInput = z
     description: getSanitizedStringSchema().refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
-    unitAmount: z.number().min(constants.clubs.minMonthlyBuzz),
+    unitAmount: z
+      .number()
+      .refine(
+        (data) => data === 0 || data >= constants.clubs.minMonthlyBuzz,
+        `Minimum price is ${constants.clubs.minMonthlyBuzz} BUZZ`
+      ),
     currency: z.nativeEnum(Currency).default(Currency.BUZZ),
     coverImage: comfylessImageSchema.nullish(),
     unlisted: z.boolean().default(false),
     joinable: z.boolean().default(true),
     clubId: z.number().optional(),
-    memberLimit: z.number().nullish(),
+    memberLimit: z.number().max(constants.clubs.tierMaxMemberLimit).nullish(),
   })
   .refine((data) => !!data.clubId || !!data.id, {
     message: 'When creating a new tier, clubId must be provided',

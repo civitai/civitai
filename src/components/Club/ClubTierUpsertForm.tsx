@@ -78,10 +78,9 @@ export function ClubTierUpsertForm({
                 <InputText name="name" label="Title" placeholder="e.g.: Gold Tier" withAsterisk />
                 <InputNumber
                   name="unitAmount"
-                  placeholder={`Min. ${constants.clubs.minMonthlyBuzz} BUZZ`}
+                  placeholder={`Min. ${constants.clubs.minMonthlyBuzz} BUZZ. 0 for free tier`}
                   label="Monthly buzz"
                   variant="filled"
-                  min={constants.clubs.minMonthlyBuzz}
                   icon={<CurrencyIcon currency="BUZZ" size={16} />}
                   withAsterisk
                 />
@@ -99,6 +98,7 @@ export function ClubTierUpsertForm({
                   description="If you want to make this an exclusive tier, you can set a limit on the number of members that can join it."
                   clearable
                   variant="filled"
+                  max={constants.clubs.tierMaxMemberLimit}
                 />
                 <Group grow>
                   {coverImage && (

@@ -33,9 +33,15 @@ export const processClubMembershipRecurringPayments = createJob(
         cancelledAt: null,
         expiresAt: null,
         billingPausedAt: null,
+        unitAmount: {
+          gt: 0,
+        },
         club: {
           billing: true,
         },
+      },
+      include: {
+        downgradeClubTier: true,
       },
     });
 
@@ -78,35 +84,65 @@ export const processClubMembershipRecurringPayments = createJob(
           return;
         }
 
-        if ((account?.balance ?? 0) >= clubMembership.unitAmount) {
-          // Pay with buzz.
-          await dbWrite.$transaction(async (tx) => {
-            try {
-              await tx.clubMembership.update({
-                where: { id: clubMembership.id },
-                data: {
-                  nextBillingAt: dayjs(clubMembership.nextBillingAt).add(1, 'month').toDate(),
-                },
-              });
+        const chargedAmount =
+          clubMembership.downgradeClubTier?.unitAmount ?? clubMembership.unitAmount;
+        const downgradeClubTierId = clubMembership.downgradeClubTier?.id ?? undefined;
 
-              await createBuzzTransaction({
-                fromAccountId: clubMembership.userId,
-                toAccountId: clubMembership.clubId,
-                toAccountType: 'Club',
-                amount: clubMembership.unitAmount,
-                type: TransactionType.ClubMembership,
-                details: {
-                  clubMembershipId: clubMembership.id,
-                },
-              });
-            } catch (e) {
-              logger({
-                data: {
-                  message: 'Error paying with buzz',
-                  ...clubMembership,
-                },
-              });
+        if (chargedAmount > 0) {
+          if ((account?.balance ?? 0) >= chargedAmount) {
+            // Pay with buzz.
+            await dbWrite.$transaction(async (tx) => {
+              try {
+                await tx.clubMembership.update({
+                  where: { id: clubMembership.id },
+                  data: {
+                    nextBillingAt: dayjs(clubMembership.nextBillingAt).add(1, 'month').toDate(),
+                    clubTierId: downgradeClubTierId, // Won't do anything if the user doesn't have it.
+                    downgradeClubTierId: null,
+                  },
+                });
 
+                await createBuzzTransaction({
+                  fromAccountId: clubMembership.userId,
+                  toAccountId: clubMembership.clubId,
+                  toAccountType: 'Club',
+                  amount: chargedAmount,
+                  type: TransactionType.ClubMembership,
+                  details: {
+                    clubMembershipId: clubMembership.id,
+                  },
+                });
+              } catch (e) {
+                logger({
+                  data: {
+                    message: 'Error paying with buzz',
+                    ...clubMembership,
+                  },
+                });
+
+                await tx.clubMembership.update({
+                  where: { id: clubMembership.id },
+                  data: {
+                    // Expire that membership so the user loses access.
+                    // Might need to also send an email.
+                    expiresAt: now.toDate(),
+                  },
+                });
+              }
+            });
+
+            return; // Nothing else to do. We paid with buzz.
+          }
+
+          if (!user?.customerId) {
+            logger({
+              data: {
+                message: 'User is not a stripe customer',
+                ...clubMembership,
+              },
+            });
+
+            await dbWrite.$transaction(async (tx) => {
               await tx.clubMembership.update({
                 where: { id: clubMembership.id },
                 data: {
@@ -115,82 +151,57 @@ export const processClubMembershipRecurringPayments = createJob(
                   expiresAt: now.toDate(),
                 },
               });
-            }
-          });
-
-          return; // Nothing else to do. We paid with buzz.
-        }
-
-        if (!user?.customerId) {
-          logger({
-            data: {
-              message: 'User is not a stripe customer',
-              ...clubMembership,
-            },
-          });
-
-          await dbWrite.$transaction(async (tx) => {
-            await tx.clubMembership.update({
-              where: { id: clubMembership.id },
-              data: {
-                // Expire that membership so the user loses access.
-                // Might need to also send an email.
-                expiresAt: now.toDate(),
-              },
-            });
-          });
-        }
-
-        await dbWrite.$transaction(async (tx) => {
-          const paymentMethods = await stripe.paymentMethods.list({
-            customer: user.customerId as string,
-            // type: 'card',
-          });
-
-          const [defaultCard] = paymentMethods.data;
-
-          if (!defaultCard || !defaultCard?.id) {
-            logger({
-              data: {
-                message: 'User does not have a default payment method',
-                ...clubMembership,
-              },
             });
           }
 
-          const purchasedUnitAmount = Math.max(
-            clubMembership.unitAmount - (account?.balance ?? 0),
-            5000
-          );
+          await dbWrite.$transaction(async (tx) => {
+            const paymentMethods = await stripe.paymentMethods.list({
+              customer: user.customerId as string,
+              // type: 'card',
+            });
 
-          const paymentIntent = await stripe.paymentIntents.create({
-            amount: purchasedUnitAmount / 10, // Buzz has a 1:10 cent ratio. Stripe charges in cents.
-            currency: 'usd',
-            automatic_payment_methods: { enabled: true },
-            customer: user.customerId as string,
-            payment_method: defaultCard.id,
-            off_session: true,
-            confirm: true,
-            metadata: {
-              type: 'clubMembershipPayment',
-              unitAmount: purchasedUnitAmount / 10,
-              buzzAmount: purchasedUnitAmount,
-              userId: clubMembership.userId as number,
-            },
-          });
+            const [defaultCard] = paymentMethods.data;
 
-          await tx.clubMembershipCharge.create({
-            data: {
-              userId: clubMembership.userId,
-              clubId: clubMembership.clubId,
-              clubTierId: clubMembership.clubTierId,
-              invoiceId: paymentIntent.id,
-              unitAmount: clubMembership.unitAmount,
-              unitAmountPurchased: purchasedUnitAmount,
-              chargedAt: dayjs().toDate(),
-            },
+            if (!defaultCard || !defaultCard?.id) {
+              logger({
+                data: {
+                  message: 'User does not have a default payment method',
+                  ...clubMembership,
+                },
+              });
+            }
+
+            const purchasedUnitAmount = Math.max(chargedAmount - (account?.balance ?? 0), 5000);
+
+            const paymentIntent = await stripe.paymentIntents.create({
+              amount: purchasedUnitAmount / 10, // Buzz has a 1:10 cent ratio. Stripe charges in cents.
+              currency: 'usd',
+              automatic_payment_methods: { enabled: true },
+              customer: user.customerId as string,
+              payment_method: defaultCard.id,
+              off_session: true,
+              confirm: true,
+              metadata: {
+                type: 'clubMembershipPayment',
+                unitAmount: purchasedUnitAmount / 10,
+                buzzAmount: purchasedUnitAmount,
+                userId: clubMembership.userId as number,
+              },
+            });
+
+            await tx.clubMembershipCharge.create({
+              data: {
+                userId: clubMembership.userId,
+                clubId: clubMembership.clubId,
+                clubTierId: downgradeClubTierId ?? clubMembership.clubTierId,
+                invoiceId: paymentIntent.id,
+                unitAmount: chargedAmount,
+                unitAmountPurchased: purchasedUnitAmount,
+                chargedAt: dayjs().toDate(),
+              },
+            });
           });
-        });
+        }
       })
     );
   }
