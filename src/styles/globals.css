@@ -121,7 +121,7 @@ iframe {
 
 .demo-25 {
   opacity: 0.65;
-  stroke-width: 3;
+  stroke-width: 2px;
 }
 
 .demo-50 {
@@ -141,89 +141,69 @@ iframe {
 
 .demo-25-animated,
 .frame-decor:hover .demo-25 {
-  animation: flicker-25 5s ease-in-out infinite;
+  animation: flicker-25 2.5s ease-in-out infinite alternate;
 }
 
 .demo-50-animated,
 .frame-decor:hover .demo-50 {
-  animation: flicker-50 4s ease-in-out infinite;
+  animation: flicker-50 2s ease-in-out infinite alternate;
 }
 
 .demo-75-animated,
 .frame-decor:hover .demo-75 {
-  animation: flicker-75 3s ease-in-out infinite;
+  animation: flicker-75 1.5s ease-in-out infinite alternate;
 }
 
 .demo-100-animated,
 .frame-decor:hover .demo-100 {
-  animation: flicker-100 2s ease-in-out infinite;
+  animation: flicker-100 1s ease-in-out infinite alternate;
 }
 
 @keyframes flicker-100 {
   0% {
     opacity: 0.95;
-    stroke-width: 5px;
-  }
-
-  50% {
-    opacity: 1;
-    stroke-width: 20px;
+    stroke-width: 10px;
   }
 
   100% {
-    opacity: 0.95;
-    stroke-width: 5px;
+    opacity: 1;
+    stroke-width: 20px;
   }
 }
 
 @keyframes flicker-75 {
   0% {
     opacity: 0.85;
-    stroke-width: 0;
-  }
-
-  50% {
-    opacity: 0.9;
-    stroke-width: 15px;
+    stroke-width: 7px;
   }
 
   100% {
-    opacity: 0.85;
-    stroke-width: 0px;
+    opacity: 0.9;
+    stroke-width: 15px;
   }
 }
 
 @keyframes flicker-50 {
   0% {
     opacity: 0.75;
-    stroke-width: 0;
-  }
-
-  50% {
-    opacity: 0.8;
-    stroke-width: 10px;
+    stroke-width: 5px;
   }
 
   100% {
-    opacity: 0.75;
-    stroke-width: 0px;
+    opacity: 0.8;
+    stroke-width: 10px;
   }
 }
 
 @keyframes flicker-25 {
   0% {
     opacity: 0.65;
-    stroke-width: 0;
-  }
-
-  50% {
-    opacity: 0.7;
-    stroke-width: 5px;
+    stroke-width: 2px;
   }
 
   100% {
-    opacity: 0.65;
-    stroke-width: 0px;
+    opacity: 0.7;
+    stroke-width: 5px;
   }
 }
 
