@@ -280,7 +280,12 @@ export function QueueItem({ request }: Props) {
         {!!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
-              <GeneratedImage key={image.id} image={image} request={request} />
+              <GeneratedImage
+                key={image.id}
+                image={image}
+                request={request}
+                fullCoverage={isFullCoverageModel}
+              />
             ))}
           </div>
         )}

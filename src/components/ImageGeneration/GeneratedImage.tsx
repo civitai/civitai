@@ -43,9 +43,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export function GeneratedImage({
   image,
   request,
+  fullCoverage = false,
 }: {
   image: Generation.Image;
   request: Generation.Request;
+  fullCoverage?: boolean;
 }) {
   const { classes } = useStyles();
   const user = useCurrentUser();
@@ -94,7 +96,7 @@ export function GeneratedImage({
 
   const imageRef = useRef<HTMLImageElement>(null);
   const isLandscape = request.params.width > request.params.height;
-  const removedForSafety = image.removedForSafety && image.available;
+  const removedForSafety = image.removedForSafety && image.available && !fullCoverage;
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
