@@ -121,6 +121,8 @@ export function QueueItem({ request }: Props) {
       ? generationStatus.fullCoverageModels[baseModelSetKey]
       : undefined;
   if (!request.alternativesAvailable) fullCoverageModels = undefined;
+  const isFullCoverageModel =
+    fullCoverageModels?.some((x) => x.id === request.resources[0].id) ?? false;
 
   // const boost = (request: Generation.Request) => {
   //   console.log('boost it', request);
@@ -224,7 +226,7 @@ export function QueueItem({ request }: Props) {
           </Group>
         </Group>
       </Card.Section>
-      {removedForSafety && !!fullCoverageModels?.length && (
+      {removedForSafety && !!fullCoverageModels?.length && !isFullCoverageModel && (
         <Card.Section>
           <Alert color="yellow">
             <Stack spacing="xs">
