@@ -124,7 +124,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     select: {
       id: true,
       meta: true,
-      scanJobs: true,
       postId: true,
     },
   });
@@ -134,9 +133,11 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   }
 
   // Add to scanJobs
-  const scanJobs = (image.scanJobs ?? {}) as Record<string, any>;
-  if (!scanJobs.scans) scanJobs.scans = {};
-  scanJobs.scans[source] = Date.now();
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "Image"
+      SET "scanJobs" = jsonb_set("scanJobs", '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+    WHERE id = ${id};
+  `);
 
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
@@ -302,15 +303,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       if (poi) reviewKey = 'poi';
     }
 
-    const data: Prisma.ImageUpdateInput = {
-      needsReview: reviewKey,
-      scanJobs,
-    };
-    const scansComplete = REQUIRED_SCANS.every((x) => scanJobs.scans[x]);
-    if (scansComplete) {
-      data.scannedAt = new Date();
-      data.ingestion = ImageIngestionStatus.Scanned;
-    }
+    const data: Prisma.ImageUpdateInput = {};
+    if (reviewKey) data.needsReview = reviewKey;
 
     if (nsfw && prompt) {
       // Determine if we need to block the image
@@ -326,10 +320,28 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
     if (image.postId) await updatePostNsfwLevel(image.postId);
 
-    await dbWrite.image.updateMany({
-      where: { id },
-      data,
-    });
+    if (Object.keys(data).length > 0) {
+      await dbWrite.image.updateMany({
+        where: { id },
+        data,
+      });
+    }
+
+    // Update scannedAt and ingestion if not blocked
+    if (data.ingestion !== 'Blocked') {
+      await dbWrite.$executeRaw`
+        WITH scan_count AS (
+          SELECT id, COUNT(*) as count
+          FROM "Image",
+              jsonb_object_keys("scanJobs"->'scans') AS keys
+          WHERE id = ${id}
+          GROUP BY id
+        )
+        UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
+        FROM scan_count s
+        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length};
+      `;
+    }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
