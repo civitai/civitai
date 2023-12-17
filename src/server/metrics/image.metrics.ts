@@ -6,7 +6,7 @@ import { chunk } from 'lodash-es';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
-  async update({ db, ch, lastUpdate }) {
+  async update({ db, dbWrite, ch, lastUpdate }) {
     const recentEngagementSubquery = Prisma.sql`
     WITH recent_engagements AS
       (
@@ -296,8 +296,7 @@ export const imageMetrics = createMetricProcessor({
     for (const batch of batches) {
       try {
         const batchJson = JSON.stringify(batch);
-        await db.$executeRaw`
-          INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
+        const metrics = await db.$queryRaw<Array<unknown>>`
           SELECT
             imageId,
             timeframe,
@@ -323,9 +322,17 @@ export const imageMetrics = createMetricProcessor({
           ) im
           WHERE im.views IS NOT NULL
           AND im.imageId IN (SELECT id FROM "Image")
-          ON CONFLICT ("imageId", timeframe) DO UPDATE
-            SET "viewCount" = EXCLUDED."viewCount";
         `;
+
+        const insertBatches = chunk(metrics, 1000);
+        for (const insertBatch of insertBatches) {
+          await dbWrite.$executeRaw`
+            INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
+            ${insertBatch /* TODO: this is almost certainly not right */}
+            ON CONFLICT ("imageId", timeframe) DO UPDATE
+              SET "viewCount" = EXCLUDED."viewCount";
+          `;
+        }
       } catch (err) {
         throw err;
       }

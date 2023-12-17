@@ -2,7 +2,7 @@ import { ClickHouseClient } from '@clickhouse/client';
 import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getJobDate } from '~/server/jobs/job';
 import { redis } from '~/server/redis/client';
 
@@ -27,7 +27,7 @@ export function createMetricProcessor({
     async update() {
       if (!clickhouse) return;
       const [lastUpdate, setLastUpdate] = await getJobDate(`metric:${name.toLowerCase()}`);
-      const ctx = { db: dbWrite, ch: clickhouse, lastUpdate };
+      const ctx = { db: dbRead, dbWrite, ch: clickhouse, lastUpdate };
 
       // Clear if first run of the day
       const isFirstOfDay = lastUpdate.getDate() !== new Date().getDate();
@@ -62,7 +62,7 @@ export function createMetricProcessor({
       if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh
-      const ctx = { db: dbWrite, ch: clickhouse, lastUpdate };
+      const ctx = { db: dbRead, dbWrite, ch: clickhouse, lastUpdate };
       if ('refresh' in rank) await rank.refresh(ctx);
       else await recreateRankTable(rank.table, rank.primaryKey, rank.indexes);
 
@@ -114,6 +114,7 @@ async function recreateRankTable(rankTable: string, primaryKey: string, indexes:
 
 export type MetricProcessorRunContext = {
   db: PrismaClient;
+  dbWrite: PrismaClient;
   ch: ClickHouseClient;
   lastUpdate: Date;
 };
