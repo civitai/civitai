@@ -200,6 +200,35 @@ export const getModelsRaw = async ({
   const AND: Prisma.Sql[] = [];
   const WITH: Prisma.Sql[] = [];
 
+  if (query) {
+    const lowerQuery = query?.toLowerCase();
+
+    AND.push(
+      Prisma.join(
+        [
+          Prisma.raw(`
+          m."name" ILIKE '%${query}%'
+        `),
+          Prisma.raw(`
+          EXISTS (
+            SELECT 1 FROM "ModelVersion" mvq
+            JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
+            JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
+            WHERE mvq."modelId" = m."id" AND mfh."hash" = '${query}'
+          )
+        `),
+          Prisma.raw(`
+          EXISTS (
+            SELECT 1 FROM "ModelVersion" mvq
+            WHERE mvq."modelId" = m."id" AND '${lowerQuery}' = ANY(mvq."trainedWords")
+          )
+        `),
+        ],
+        ' OR '
+      )
+    );
+  }
+
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
       ( 
