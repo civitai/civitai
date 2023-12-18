@@ -1,5 +1,5 @@
 import React from 'react';
-import { IconCategory, IconClubs, IconPencilMinus } from '@tabler/icons-react';
+import { IconCategory, IconClubs, IconLayoutList, IconPencilMinus } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 
@@ -27,6 +27,10 @@ export const ClubFeedNavigation = ({ id }: { id: number }) => {
     articles: {
       url: `${baseUrl}/articles`,
       icon: <IconPencilMinus />,
+    },
+    posts: {
+      url: `${baseUrl}/posts`,
+      icon: <IconLayoutList />,
     },
   };
 

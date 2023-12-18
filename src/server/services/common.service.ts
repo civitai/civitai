@@ -54,12 +54,13 @@ export const hasEntityAccess = async ({
     SELECT
         "entityType",
         "entityId",
-        COALESCE(mmv."userId", a."userId") as "userId",
-        COALESCE(mv."availability", a."availability") as "availability"
+        COALESCE(mmv."userId", a."userId", p."userId") as "userId",
+        COALESCE(mv."availability", a."availability", p."availability") as "availability"
     FROM entities e
     LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = mv.id
     LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
     LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
+    LEFT JOIN "Post" p ON e."entityType" = 'Post' AND e."entityId" = a.id
   `;
 
   const privateRecords = data.filter((d) => d.availability === Availability.Private);
@@ -205,6 +206,8 @@ export const entityRequiresClub = async ({
                 THEN  (SELECT "availability" FROM "ModelVersion" WHERE id = e."entityId") 
             WHEN e."entityType" = 'Article'
                 THEN  (SELECT "availability" FROM "Article" WHERE id = e."entityId")
+            WHEN e."entityType" = 'Post'
+                THEN  (SELECT "availability" FROM "Post" WHERE id = e."entityId")
             ELSE 'Public'::"Availability"
         END as "availability"
     FROM entities e
@@ -340,11 +343,12 @@ export const entityOwnership = async ({
     SELECT
         e."entityId",
         e."entityType",
-        COALESCE(mmv."userId", a."userId") = ${userId} as "isOwner"
+        COALESCE(mmv."userId", a."userId", p."userId") = ${userId} as "isOwner"
     FROM entities e
     LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = mv.id
     LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
     LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
+    LEFT JOIN "Post" p ON e."entityType" = 'Post' AND e."entityId" = a.id
   `;
 
   return entitiesOwnership;

@@ -766,20 +766,11 @@ export const upsertClubResource = async ({
       where: {
         accessToId: entityId,
         accessToType: entityType,
-        OR: [
-          {
-            accessorId: {
-              in: clubIds,
-            },
-            accessorType: 'Club',
-          },
-          {
-            accessorId: {
-              in: clubTierIds,
-            },
-            accessorType: 'ClubTier',
-          },
-        ],
+
+        accessorType: {
+          // Do not delete user access:
+          in: ['Club', 'ClubTier'],
+        },
       },
     });
 

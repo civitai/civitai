@@ -574,6 +574,16 @@ export const useQueryClubPosts = (
   return { data, clubPosts, ...rest };
 };
 
+export const useQueryUserContributingClubs = () => {
+  const { data: userClubs = [], ...rest } = trpc.club.userContributingClubs.useQuery();
+
+  return {
+    userClubs,
+    hasClubs: userClubs.length > 0,
+    ...rest,
+  };
+};
+
 export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {
   const { data: userClubs = [], ...rest } = trpc.club.userContributingClubs.useQuery(undefined, {
     enabled: !!clubId,

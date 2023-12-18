@@ -13,7 +13,7 @@ import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
-type PostsInfiniteState = {
+export type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
   modelVersionId?: number; // not hooked up to service/schema yet
   tags?: number[];
