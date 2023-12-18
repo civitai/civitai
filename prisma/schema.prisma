@@ -2302,7 +2302,7 @@ model BountyEntryMetric {
 
 model CsamReport {
   id               Int       @id @default(autoincrement())
-  userId           Int
+  userId           Int?
   createdAt        DateTime  @default(now())
   reportedById     Int
   reportSentAt     DateTime?

@@ -80,13 +80,13 @@ export const imageRouter = router({
   getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
   getInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
-    .use(applyUserPreferences())
-    .use(applyBrowsingMode())
+    // .use(applyUserPreferences())
+    // .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
   getImagesAsPostsInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
-    .use(applyUserPreferences())
-    .use(applyBrowsingMode())
+    // .use(applyUserPreferences())
+    // .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getImageSchema).query(getImageHandler),
   getResources: publicProcedure

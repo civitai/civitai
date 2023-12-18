@@ -100,7 +100,7 @@ export default function Reports() {
   );
   const reports = useMemo(
     () => data?.items.map((x) => ({ ...x, page, type, limit })) ?? [],
-    [data?.items, page, type, limit]
+    [data?.items, page, type]
   );
 
   const handlePageChange = (page: number) => {

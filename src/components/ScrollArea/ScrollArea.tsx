@@ -2,7 +2,7 @@ import { Box, BoxProps, ThemeIcon, createStyles, useMantineTheme } from '@mantin
 import { useMergedRef } from '@mantine/hooks';
 import { IconRefresh } from '@tabler/icons-react';
 
-import { RefObject, createContext, forwardRef, useContext, useEffect, useRef } from 'react';
+import React, { RefObject, createContext, forwardRef, useContext, useEffect, useRef } from 'react';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
 
 const ScrollAreaContext = createContext<{
@@ -160,19 +160,5 @@ const useStyles = createStyles(() => ({
     willChange: 'transform',
     position: 'relative',
     scrollbarWidth: 'thin',
-    overscrollBehavior: '',
-    // '&::-webkit-scrollbar': {
-    //   width: '10px',
-    //   height: '100%',
-    // },
-    // '&::-webkit-scrollbar-track': {
-    //   background: '#f1f1f1',
-    // },
-    // '&::-webkit-scrollbar-thumb': {
-    //   background: '#888',
-    // },
-    // '&::-webkit-scrollbar-thumb:hover': {
-    //   background: '#555',
-    // },
   },
 }));

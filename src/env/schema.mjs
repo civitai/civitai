@@ -106,6 +106,7 @@ export const serverSchema = z.object({
   NCMEC_URL: z.string().optional(),
   NCMEC_USERNAME: z.string().optional(),
   NCMEC_PASSWORD: z.string().optional(),
+  DIRNAME: z.string().optional(),
 });
 
 /**

@@ -1,7 +1,7 @@
 -- CreateTable
 CREATE TABLE "CsamReport" (
     "id" SERIAL NOT NULL,
-    "userId" INTEGER NOT NULL,
+    "userId" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "reportedById" INTEGER NOT NULL,
     "reportSentAt" TIMESTAMP(3),

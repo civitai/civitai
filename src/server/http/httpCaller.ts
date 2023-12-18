@@ -11,7 +11,11 @@ export abstract class HttpCaller {
   }
 
   private async prepareResponse<TData = any>(response: Response) {
-    return response;
+    return {
+      status: response.status,
+      ok: response.ok,
+      data: (await response.json().catch(() => null)) as TData | null,
+    };
   }
 
   private handleFetchError(error: Error) {

@@ -98,7 +98,7 @@ export async function getMultipartPutUrl(
   key: string,
   size: number,
   s3: S3Client | null = null,
-  bucket: string | null
+  bucket: string | null = null
 ) {
   if (!s3) s3 = getS3Client();
 

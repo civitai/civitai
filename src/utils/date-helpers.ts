@@ -5,6 +5,11 @@ export function formatDate(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc 
   return dayjs(value).format(format);
 }
 
+export function formatDateNullable(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc = false) {
+  if (!value) return;
+  else return formatDate(value, format, utc);
+}
+
 export function formatDateMin(value: Date) {
   if (dayjs().isSame(value, 'day')) return dayjs(value).format('h:mma');
   if (dayjs().isSame(value, 'week')) return dayjs(value).format('dddd h:mma');

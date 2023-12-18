@@ -1,10 +1,11 @@
-import { CsamReport } from '@prisma/client';
+import { CsamReport, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CsamFileOutput,
   CsamReportUserInput,
   CsamTestingReportInput,
   CsamUserReportInput,
+  GetImageResourcesOutput,
   csamCapabilitiesDictionary,
   csamContentsDictionary,
 } from '~/server/schema/csam.schema';
@@ -23,26 +24,45 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { z } from 'zod';
+import plimit from 'p-limit';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { PaginationInput } from '~/server/schema/base.schema';
+import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 
-export const createCsamReport = async ({
-  reportedById,
-  userId,
-  images,
-  ...props
-}: CsamReportUserInput & { reportedById: number }) => {
-  const exists = await dbRead.csamReport.count({ where: { userId } });
-  if (exists) return;
+const baseDir = env.DIRNAME ?? process.cwd();
 
-  const report = await dbRead.csamReport.findFirst({
-    where: { userId },
-    select: { id: true, createdAt: true },
+export async function getImageResources({ ids }: GetImageResourcesOutput) {
+  return await dbRead.imageResourceHelper.findMany({
+    where: { imageId: { in: ids }, modelId: { not: null } },
+    select: {
+      modelId: true,
+      modelName: true,
+      modelVersionId: true,
+      modelVersionName: true,
+      imageId: true,
+    },
   });
+}
+
+export async function createCsamReport({
+  reportedById,
+  images,
+  userId,
+  ...props
+}: CsamReportUserInput & { reportedById: number }) {
+  const isInternalReport = userId === -1;
+  const report = !isInternalReport
+    ? await dbRead.csamReport.findFirst({
+        where: { userId },
+        select: { id: true, createdAt: true },
+      })
+    : null;
 
   const date = report ? report.createdAt : new Date();
   if (!report) {
     await dbWrite.csamReport.create({
       data: {
-        userId,
+        userId: !isInternalReport ? userId : undefined,
         reportedById,
         details: props,
         images,
@@ -57,25 +77,28 @@ export const createCsamReport = async ({
         details: props,
         images,
         createdAt: date,
+        reportSentAt: null,
+        archivedAt: null,
+        contentRemovedAt: null,
       },
     });
   }
 
-  // TODO - uncomment before prod
-  // await dbWrite.user.update({ where: { id: userId }, data: { bannedAt: date } });
-  // await invalidateSession(userId);
-  // await cancelSubscription({ userId });
-
-  // // hide user content
-  // await dbWrite.model.updateMany({
-  //   where: { userId },
-  //   data: { status: 'UnpublishedViolation' },
-  // });
-  // await dbWrite.image.updateMany({
-  //   where: { userId },
-  //   data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
-  // });
-};
+  if (!isInternalReport) {
+    // hide user content
+    await dbWrite.model.updateMany({
+      where: { userId },
+      data: { status: 'UnpublishedViolation' },
+    });
+    await dbWrite.image.updateMany({
+      where: { userId },
+      data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
+    });
+    await cancelSubscription({ userId });
+    await dbWrite.user.update({ where: { id: userId }, data: { bannedAt: date } });
+    await invalidateSession(userId);
+  }
+}
 
 type CsamImageProps = { fileId?: string; hash?: string } & CsamFileOutput;
 type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
@@ -83,20 +106,57 @@ type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
   images: CsamImageProps[];
 };
 
-export const getCsamsToReport = async () => {
+export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
+  const { take, skip } = getPagination(limit, page);
+
+  const items = await dbRead.csamReport.findMany({ take, skip });
+  const count = await dbRead.csamReport.count();
+  return getPagingData({ items, count }, take, page);
+}
+
+export async function getCsamReportStats() {
+  const [unreported, unarchived, unremoved] = await Promise.all([
+    dbRead.csamReport.count({ where: { reportSentAt: null } }),
+    dbRead.csamReport.count({ where: { reportSentAt: { not: null }, archivedAt: null } }),
+    dbRead.csamReport.count({
+      where: {
+        reportSentAt: { not: null },
+        archivedAt: { not: null },
+        userId: { not: null },
+        contentRemovedAt: null,
+      },
+    }),
+  ]);
+
+  return { unreported, unarchived, unremoved };
+}
+
+export async function getCsamsToReport() {
   const data = await dbRead.csamReport.findMany({ where: { reportSentAt: null } });
   return data as CsamReportProps[];
-};
+}
 
-export const getCsamsToArchive = async () => {
+export async function getCsamsToArchive() {
   const data = await dbRead.csamReport.findMany({
     where: { reportSentAt: { not: null }, archivedAt: null },
   });
   return data as CsamReportProps[];
-};
+}
+
+export async function getCsamsToRemoveContent() {
+  const data = await dbRead.csamReport.findMany({
+    where: {
+      reportSentAt: { not: null },
+      archivedAt: { not: null },
+      userId: { not: null },
+      contentRemovedAt: null,
+    },
+  });
+  return data as CsamReportProps[];
+}
 
 const reportedByMap = new Map<number, { email: string; name: string }>();
-const getReportingUser = async (id: number) => {
+async function getReportingUser(id: number) {
   const reportedBy = reportedByMap.get(id);
   if (reportedBy) return reportedBy;
 
@@ -104,22 +164,22 @@ const getReportingUser = async (id: number) => {
     where: { id },
     select: { email: true, name: true },
   });
-};
+}
 
-const getReportedUser = async (id: number) => {
+async function getReportedUser(id: number) {
   return await dbRead.user.findUnique({
     where: { id },
     select: { name: true, email: true, username: true },
   });
-};
+}
 
-const getReportedEntities = async ({
+async function getReportedEntities({
   imageIds,
   modelVersionIds,
 }: {
   imageIds: number[];
   modelVersionIds?: number[];
-}) => {
+}) {
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {
@@ -132,6 +192,7 @@ const getReportedEntities = async ({
       post: {
         select: { modelVersionId: true },
       },
+      tags: { select: { tag: { select: { name: true } } } },
     },
   });
   const versionIds = modelVersionIds ?? [
@@ -145,9 +206,9 @@ const getReportedEntities = async ({
   const models = modelVersions.map((x) => x.model);
 
   return { images, modelVersions, models };
-};
+}
 
-export const getUserIpInfo = async ({ userId }: { userId: number }) => {
+export async function getUserIpInfo({ userId }: { userId: number }) {
   if (!clickhouse) return [];
 
   const ips = await clickhouse
@@ -166,13 +227,13 @@ export const getUserIpInfo = async ({ userId }: { userId: number }) => {
       return res.success ? res.data : undefined;
     })
     .filter(isDefined);
-};
+}
 
 export async function processCsamReport(report: CsamReportProps) {
   const imageIds = report.images.map((x) => x.id);
   const reportingUser = await getReportingUser(report.reportedById);
-  const reportedUser = await getReportedUser(report.userId);
-  const ipAddresses = await getUserIpInfo({ userId: report.userId });
+  const reportedUser = report.userId ? await getReportedUser(report.userId) : null;
+  const ipAddresses = report.userId ? await getUserIpInfo({ userId: report.userId }) : null;
   const { images, models, modelVersions } = await getReportedEntities({
     imageIds,
     modelVersionIds: report.details.modelVersionIds,
@@ -192,27 +253,25 @@ export async function processCsamReport(report: CsamReportProps) {
   };
 
   const details = report.details;
-  let additionalInfo: string | undefined;
-  switch (details.origin) {
-    case 'user':
-      const { minorDepiction } = details as CsamUserReportInput;
-      if (minorDepiction === 'non-real')
-        additionalInfo = `<p>${reportedUser?.username} (${report.userId}), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.</p>`;
-      else
-        additionalInfo = `<p>${reportedUser?.username} (${report.userId}), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.</p>`;
+  let additionalInfo = '';
+  if (reportedUser) {
+    const { minorDepiction } = details as CsamUserReportInput;
+    if (minorDepiction === 'non-real')
+      additionalInfo = `<p>${reportedUser.username} (${report.userId}), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.</p>`;
+    else if (minorDepiction === 'real')
+      additionalInfo = `<p>${reportedUser.username} (${report.userId}), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.</p>`;
 
-      additionalInfo += getModelsText();
-      break;
-    case 'testing':
-      const { capabilities } = details as CsamTestingReportInput;
-      additionalInfo = `
+    additionalInfo += getModelsText();
+  } else {
+    additionalInfo = `
       <p>The images/videos in this report were unintentionally and inadvertently generated or manipulated, during testing that is part of Civitai's trust and safety program, by the following models, one or more artificial intelligence-powered image/video generator.</p>
       `;
 
-      additionalInfo += getModelsText();
+    additionalInfo += getModelsText();
 
-      if (capabilities.length) {
-        additionalInfo += `
+    const { capabilities } = details as CsamTestingReportInput;
+    if (capabilities?.length) {
+      additionalInfo += `
         <br />
         <p>The aforementioned model(s) can do the following:</p>
         <ul>
@@ -224,11 +283,10 @@ export async function processCsamReport(report: CsamReportProps) {
           .filter(isDefined)}
         </ul>
         `;
-      }
-      break;
+    }
   }
 
-  if (details.contents.length) {
+  if (details.contents?.length) {
     additionalInfo += `
     <br />
     <p>The images/videos in this report may involve:</p>
@@ -249,10 +307,6 @@ export async function processCsamReport(report: CsamReportProps) {
   `;
 
   additionalInfo = additionalInfo.replace(/\n/g, '').replace(/\s+/g, ' ').trim();
-
-  // // TODO - remove this before prod
-  // ipAddresses.push('test1');
-  // ipAddresses.push('test2');
 
   const reportPayload = {
     report: {
@@ -277,7 +331,7 @@ export async function processCsamReport(report: CsamReportProps) {
         //   email: reportedUser?.email,
         //   displayName: reportedUser?.username,
         // },
-        ipCaptureEvent: ipAddresses.map((ipAddress) => ({ ipAddress })),
+        ipCaptureEvent: ipAddresses?.map((ipAddress) => ({ ipAddress })),
       },
       additionalInfo: `<![CDATA[${additionalInfo}]]>`,
     },
@@ -285,48 +339,74 @@ export async function processCsamReport(report: CsamReportProps) {
 
   const { reportId } = await ncmecCaller.initializeReport(reportPayload);
 
+  // concurrency limit
+  const limit = plimit(2);
   try {
     const fileUploadResults = await Promise.all(
-      images.map(async (image) => {
-        const imageReportInfo = report.images.find((x) => x.id === image.id);
+      images.map((image) => {
+        return limit(async () => {
+          const imageReportInfo = report.images.find((x) => x.id === image.id);
 
-        const imageUrl = getEdgeUrl(image.url, { type: image.type });
-        const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
-        const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
-        const modelId = modelVersion?.model.id;
-        const modelVersionId = modelVersion?.id;
-        const additionalInfo: string[] = [];
-        if (modelId) additionalInfo.push(`model id: ${modelId}`);
-        if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-        if (prompt) additionalInfo.push(`prompt: ${prompt}`);
-        if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
+          const imageUrl = getEdgeUrl(image.url, { type: image.type });
+          const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
+          const modelVersion = modelVersions.find((x) => x.id === image.post?.modelVersionId);
+          const modelId = modelVersion?.model.id;
+          const modelVersionId = modelVersion?.id;
+          const additionalInfo: string[] = [];
+          if (modelId) additionalInfo.push(`model id: ${modelId}`);
+          if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
+          if (prompt) additionalInfo.push(`prompt: ${prompt}`);
+          if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
 
-        const blob = await fetchBlob(imageUrl);
+          const fileAnnotations =
+            imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsInput);
+          const tags = image.tags.map((x) => x.tag.name);
+          if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
+            fileAnnotations.animeDrawingVirtualHentai = true;
+          }
+          if (
+            tags.some((tag) =>
+              [
+                'violence',
+                'explosions and blasts',
+                'physical violence',
+                'weapon violence',
+                'graphic violence or gore',
+                'hanging',
+              ].includes(tag)
+            )
+          ) {
+            fileAnnotations.physicalHarm = true;
+          }
 
-        const { fileId, hash } = await ncmecCaller.uploadFile({
-          reportId,
-          file: blob,
-          fileDetails: {
-            originalFileName: image.name ?? undefined,
-            locationOfFile: imageUrl,
-            fileAnnotations: imageReportInfo?.fileAnnotations,
-            additionalInfo: additionalInfo.length
-              ? `
-              <![CDATA[
-                <ul>
-                ${additionalInfo.map((info) => `<li>${info}</li>`)}
-                </ul>
-              ]]>
-              `
-              : undefined,
-          },
+          const blob = await fetchBlob(imageUrl);
+
+          const { fileId, hash } = await ncmecCaller.uploadFile({
+            reportId,
+            file: blob,
+            fileDetails: {
+              originalFileName: image.name ?? undefined,
+              locationOfFile: imageUrl,
+              fileAnnotations,
+              additionalInfo: additionalInfo.length
+                ? `
+                <![CDATA[
+                  <ul>
+                  ${additionalInfo.map((info) => `<li>${info}</li>`)}
+                  </ul>
+                ]]>
+                `
+                : undefined,
+            },
+          });
+
+          return {
+            ...imageReportInfo,
+            fileAnnotations,
+            fileId,
+            hash,
+          };
         });
-
-        return {
-          ...imageReportInfo,
-          fileId,
-          hash,
-        };
       })
     );
 
@@ -390,8 +470,9 @@ function uploadStream({
 
   const passThroughStream = new stream.PassThrough();
 
+  const date = new Date();
   const Bucket = env.CSAM_BUCKET_NAME;
-  const Key = `${userId}/${filename}`;
+  const Key = `${userId}/${date.getTime()}_${filename}`;
 
   return new Promise<void>(async (resolve, reject) => {
     try {
@@ -422,32 +503,49 @@ function uploadStream({
   });
 }
 
-async function zipAndUploadCsamImages({ userId }: { userId: number }) {
-  const imagesDir = `${process.cwd()}/csam-images`;
-  const zipDir = `${process.cwd()}/csam-zip`;
-  const images = await dbRead.image.findMany({ where: { userId } });
+async function zipAndUploadCsamImages({
+  userId,
+  imageIds,
+}: {
+  userId: number;
+  imageIds?: number[];
+}) {
+  const isInternal = userId === -1;
+  const imagesDir = `${baseDir}/csam-images`;
+  const zipDir = `${baseDir}/csam-zip`;
+  const images = await dbRead.image.findMany({
+    where: {
+      userId: !isInternal ? userId : undefined,
+      id: imageIds ? { in: imageIds } : undefined,
+    },
+  });
 
   for (const dir of [imagesDir, zipDir]) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir);
   }
 
+  // concurrency limiter
+  const limit = plimit(10);
+
   try {
     // write image files to disk
     await Promise.all(
-      images.map(async (image) => {
-        const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
-        const arrayBuffer = await blob.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+      images.map((image) => {
+        return limit(async () => {
+          const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
+          const arrayBuffer = await blob.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
 
-        const imageName = image.name
-          ? image.name.substring(0, image.name.lastIndexOf('.'))
-          : image.url;
-        const name = imageName.length ? imageName : image.url;
-        const filename = `${name}.${blob.type.split('/').pop()}`;
-        const path = `${imagesDir}/${filename}`;
+          const imageName = image.name
+            ? image.name.substring(0, image.name.lastIndexOf('.'))
+            : image.url;
+          const name = imageName.length ? imageName : image.url;
+          const filename = `${name}.${blob.type.split('/').pop()}`;
+          const path = `${imagesDir}/${filename}`;
 
-        if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
-        await fsAsync.writeFile(path, buffer);
+          if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
+          await fsAsync.writeFile(path, buffer);
+        });
       })
     );
 
@@ -473,7 +571,10 @@ async function zipAndUploadCsamUserData(
   reportId: number | null = null,
   imagesArr?: unknown[]
 ) {
-  const jsonDir = `${process.cwd()}/csam-json`;
+  const isInternal = userId === -1;
+  if (isInternal) return;
+
+  const jsonDir = `${baseDir}/csam-json`;
   const outPath = `${jsonDir}/user_${userId}.json`;
 
   const images = imagesArr ?? (await dbRead.image.findMany({ where: { userId } }));
@@ -507,11 +608,18 @@ async function zipAndUploadCsamUserData(
 }
 
 export async function archiveCsamDataForReport(report: CsamReportProps) {
-  const { userId, reportId } = report;
+  const { userId, images, reportId } = report;
 
-  const images = await zipAndUploadCsamImages({ userId });
-
-  await zipAndUploadCsamUserData(userId, reportId, images);
+  // handle user reports
+  if (userId) {
+    const images = await zipAndUploadCsamImages({ userId });
+    await zipAndUploadCsamUserData(userId, reportId, images);
+  }
+  // handle internal reports
+  // if the report is internal, only zip the images that were reported
+  else {
+    await zipAndUploadCsamImages({ userId: -1, imageIds: images.map((x) => x.id) });
+  }
 
   await dbWrite.csamReport.update({
     where: { id: report.id },

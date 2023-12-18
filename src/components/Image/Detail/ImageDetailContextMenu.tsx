@@ -1,9 +1,16 @@
-import { Menu, Loader } from '@mantine/core';
+import { Menu, Loader, Text } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import React, { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconTrash, IconBan, IconLock, IconPencil, IconRadar2 } from '@tabler/icons-react';
+import {
+  IconTrash,
+  IconBan,
+  IconLock,
+  IconPencil,
+  IconRadar2,
+  IconAlertTriangle,
+} from '@tabler/icons-react';
 import { ToggleLockComments } from '~/components/CommentsV2';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
@@ -81,50 +88,6 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
             )}
           </>
         )}
-        {isMod && (
-          <>
-            <TosViolationButton onSuccess={handleTosViolationSuccess}>
-              {({ onClick, isLoading }) => (
-                <Menu.Item
-                  icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
-                  onClick={() => handleClick(onClick)}
-                  disabled={isLoading}
-                  closeMenuOnClick={false}
-                >
-                  Remove as TOS Violation
-                </Menu.Item>
-              )}
-            </TosViolationButton>
-            <RescanImageButton>
-              {({ onClick, isLoading }) => (
-                <Menu.Item
-                  icon={isLoading ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />}
-                  onClick={() => handleClick(onClick)}
-                  disabled={isLoading}
-                  closeMenuOnClick={false}
-                >
-                  Rescan Image
-                </Menu.Item>
-              )}
-            </RescanImageButton>
-          </>
-        )}
-        {isMod && image && (
-          <ToggleLockComments entityId={image.id} entityType="image" onSuccess={handleClose}>
-            {({ toggle, locked, isLoading }) => {
-              return (
-                <Menu.Item
-                  icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
-                  onClick={() => handleClick(toggle)}
-                  closeMenuOnClick={false}
-                  disabled={isLoading}
-                >
-                  {locked ? 'Unlock' : 'Lock'} Comments
-                </Menu.Item>
-              );
-            }}
-          </ToggleLockComments>
-        )}
         {!isOwner && (
           <>
             <HideImageButton key="hide-image-button" as="menu-item" imageId={image.id} />
@@ -138,6 +101,64 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
                 })
               }
             />
+          </>
+        )}
+        {isMod && (
+          <>
+            <Menu.Label>Moderator</Menu.Label>
+            <TosViolationButton onSuccess={handleTosViolationSuccess}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Remove as TOS Violation
+                </Menu.Item>
+              )}
+            </TosViolationButton>
+            <Menu.Item
+              icon={
+                <IconAlertTriangle size={14} stroke={1.5} />
+                // <Text size={14} mx={-2.5}>
+                //   &#128528;
+                // </Text>
+              }
+              onClick={() =>
+                router.push(`/moderator/report-csam?userId=${image.user.id}&imageId=${image.id}`)
+              }
+            >
+              Report CSAM
+            </Menu.Item>
+            <RescanImageButton>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  icon={isLoading ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Rescan Image
+                </Menu.Item>
+              )}
+            </RescanImageButton>
+            {image && (
+              <ToggleLockComments entityId={image.id} entityType="image" onSuccess={handleClose}>
+                {({ toggle, locked, isLoading }) => {
+                  return (
+                    <Menu.Item
+                      icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                      onClick={() => handleClick(toggle)}
+                      closeMenuOnClick={false}
+                      disabled={isLoading}
+                    >
+                      {locked ? 'Unlock' : 'Lock'} Comments
+                    </Menu.Item>
+                  );
+                }}
+              </ToggleLockComments>
+            )}
           </>
         )}
       </Menu.Dropdown>

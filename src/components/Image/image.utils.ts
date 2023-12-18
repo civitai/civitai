@@ -33,12 +33,12 @@ export const imagesQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.nativeEnum(ReviewReactions))
     ),
-    types: z.preprocess(
-      (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.nativeEnum(MediaType))
-    ),
+    types: z
+      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
+      .transform((val) => (Array.isArray(val) ? val : [val]))
+      .optional(),
     withMeta: booleanString(),
-    section: z.enum(['images', 'reactions', 'draft']),
+    section: z.enum(['images', 'reactions']),
     hidden: z.coerce.boolean(),
     followed: z.coerce.boolean(),
   })
@@ -65,8 +65,9 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
 
 export const useQueryImages = (
   filters?: Partial<GetInfiniteImagesInput>,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
+  options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
+  const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   // const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
@@ -74,7 +75,7 @@ export const useQueryImages = (
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...queryOptions,
     }
   );
 
@@ -90,6 +91,7 @@ export const useQueryImages = (
     // TODO - fetch user reactions for images separately
     if (loadingHidden) return [];
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
+    if (!applyHiddenPreferences) return arr;
     const filtered = arr.filter((x) => {
       if (x.user.id === currentUser?.id) return true;
       if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
@@ -99,7 +101,16 @@ export const useQueryImages = (
       return true;
     });
     return filtered;
-  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, loadingHidden]);
+  }, [
+    data,
+    currentUser,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    loadingHidden,
+    filters?.hidden,
+    applyHiddenPreferences,
+  ]);
 
   return { data, images, ...rest };
 };

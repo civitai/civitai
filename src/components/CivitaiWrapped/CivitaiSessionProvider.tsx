@@ -22,6 +22,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       ...data.user,
       isMember: data.user.tier != null,
       refresh: update,
+      // TODO - computed db prop for mod levels
     };
   }, [data?.user, update]);
 

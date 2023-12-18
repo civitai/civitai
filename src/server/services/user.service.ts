@@ -543,7 +543,7 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     select: { id: true },
   });
 
-  const res = await dbWrite.$transaction([
+  const res = await Promise.all([
     dbWrite.model.deleteMany({ where: { userId: id } }),
     dbWrite.comment.deleteMany({ where: { userId: id } }),
     dbWrite.commentV2.deleteMany({ where: { userId: id } }),

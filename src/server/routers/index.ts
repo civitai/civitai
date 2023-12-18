@@ -42,6 +42,7 @@ import { userReferralCodeRouter } from '~/server/routers/user-referral-code.rout
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { eventRouter } from '~/server/routers/event.router';
+import { csamRouter } from '~/server/routers/csam.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -86,6 +87,7 @@ export const appRouter = router({
   userProfile: userProfileRouter,
   cosmetic: cosmeticRouter,
   event: eventRouter,
+  csam: csamRouter,
 });
 
 // export type definition of API
