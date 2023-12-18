@@ -983,6 +983,8 @@ model Post {
   tosViolation   Boolean       @default(false)
   collectionId   Int?
   collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  unlisted       Boolean       @default(false)
+  availability   Availability  @default(Public)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -2461,6 +2463,8 @@ model ClubPost {
   description  String
   coverImageId Int?
   coverImage   Image?   @relation(fields: [coverImageId], references: [id])
+  entityId     Int?
+  entityType   String?
 
   thread Thread?
 }
