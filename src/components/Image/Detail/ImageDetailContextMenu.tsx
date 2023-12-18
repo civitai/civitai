@@ -125,9 +125,7 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
                 //   &#128528;
                 // </Text>
               }
-              onClick={() =>
-                router.push(`/moderator/report-csam?userId=${image.user.id}&imageId=${image.id}`)
-              }
+              onClick={() => router.push(`/moderator/csam/${image.user.id}?imageId=${image.id}`)}
             >
               Report CSAM
             </Menu.Item>

@@ -92,6 +92,9 @@ export function deleteObject(bucket: string, key: string, s3: S3Client | null = 
   );
 }
 
+// only difference is name of bucket
+// list objects by prefix
+// username on csam reports page
 export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
   return s3.send(
