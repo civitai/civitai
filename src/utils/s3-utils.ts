@@ -3,6 +3,7 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   GetObjectCommandInput,
   HeadObjectCommand,
@@ -87,6 +88,18 @@ export function deleteObject(bucket: string, key: string, s3: S3Client | null = 
     new DeleteObjectCommand({
       Bucket: bucket,
       Key: key,
+    })
+  );
+}
+
+export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client | null = null) {
+  if (!s3) s3 = getS3Client();
+  return s3.send(
+    new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: {
+        Objects: keys.map((key) => ({ Key: key })),
+      },
     })
   );
 }

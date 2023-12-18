@@ -1,4 +1,4 @@
-import { Center, Loader, Checkbox, Card, Group } from '@mantine/core';
+import { Center, Loader, Checkbox, Card, Group, Button } from '@mantine/core';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -85,6 +85,7 @@ export function CsamImageSelection({ imageId }: { imageId?: number }) {
       <Card p="xs" style={{ zIndex: 30 }}>
         <MasonryContainer size="xl">
           <Group position="right">
+            {/* <Button variant="default">Cancel</Button> */}
             <Stepper.NextButton disabled={!hasSelected}>Next</Stepper.NextButton>
           </Group>
         </MasonryContainer>
