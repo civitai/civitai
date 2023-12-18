@@ -481,6 +481,16 @@ export const getAllImages = async ({
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
 
+  const showClubPosts = !!(
+    postId ||
+    imageId ||
+    collectionId ||
+    modelId ||
+    modelVersionId ||
+    reviewId ||
+    username
+  );
+
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
     return { items: [], nextCursor: undefined };
@@ -695,6 +705,10 @@ export const getAllImages = async ({
           AND ir."userId" = ${userId}
       )`
     );
+  }
+
+  if (!showClubPosts) {
+    AND.push(Prisma.sql`p."availability" = 'Public'`);
   }
 
   const includeRank = cursorProp?.startsWith('r.');
