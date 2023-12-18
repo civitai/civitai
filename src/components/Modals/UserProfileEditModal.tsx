@@ -81,7 +81,7 @@ const { openModal, Modal } = createContextModal({
       onSuccess: (data) => {
         if (currentUser) {
           utils.userProfile.get.setData({ username: currentUser.username }, data);
-          utils.userProfile.get.invalidate({ username: currentUser ? currentUser.username : '' });
+          utils.userProfile.get.invalidate({ username: currentUser.username });
         }
         showSuccessNotification({ message: 'Profile updated successfully' });
         context.close();
@@ -95,7 +95,10 @@ const { openModal, Modal } = createContextModal({
     });
     const updateUserMutation = trpc.user.update.useMutation({
       onSuccess: async () => {
-        await currentUser?.refresh();
+        if (currentUser) {
+          await currentUser?.refresh();
+          await utils.userProfile.get.invalidate({ username: currentUser.username });
+        }
         context.close();
       },
       onError: async (error) => {
