@@ -36,6 +36,7 @@ export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
     },
     {
       lockExpiration: 30 * 60,
+      queue: 'metrics',
     }
   )
 );

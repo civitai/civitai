@@ -124,6 +124,7 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
         const batchJson = JSON.stringify(batch);
 
         rows += await db.$executeRaw`
+          -- update version download metrics
           INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
           SELECT
               mvm.modelVersionId, mvm.timeframe, mvm.downloads
@@ -225,6 +226,7 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
         const batchJson = JSON.stringify(batch);
 
         rows += await db.$executeRaw`
+          -- update version generation metrics
           INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
           SELECT
               mvm.modelVersionId, mvm.timeframe, mvm.generations
@@ -298,6 +300,7 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
     rows += await db.$executeRaw`
+      -- update version rating metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
       SELECT
           mv.id,
@@ -382,6 +385,7 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
     );
 
   const rows = await db.$executeRaw`
+    -- update version favorite metrics
     INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
     SELECT
         mv."id",
@@ -439,6 +443,7 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
+      -- update version comment metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "commentCount")
       SELECT
           mv."id",
@@ -491,6 +496,7 @@ async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunC
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
+      -- update version image metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
       SELECT
           i."modelVersionId",
@@ -545,6 +551,7 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
+      -- update version collect metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "collectedCount")
       SELECT
         mv."id",
@@ -600,6 +607,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
+      -- update version buzz metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount")
       SELECT
         mv."id",
