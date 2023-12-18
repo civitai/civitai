@@ -3,7 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';

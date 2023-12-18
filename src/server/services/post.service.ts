@@ -44,6 +44,7 @@ import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { profileImageSelect } from '../selectors/image.selector';
 import { getClubDetailsForResource } from './club.service';
+import { entityRequiresClub, hasEntityAccess } from './common.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -306,9 +307,17 @@ export const getPostsInfinite = async ({
   const userCosmetics = include?.includes('cosmetics')
     ? await getCosmeticsForUsers(postsRaw.map((i) => i.userId))
     : undefined;
+
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
     select: profileImageSelect,
+  });
+
+  const clubRequirement = await entityRequiresClub({
+    entities: postsRaw.map((post) => ({
+      entityId: post.id,
+      entityType: 'Post',
+    })),
   });
 
   return {
@@ -317,6 +326,8 @@ export const getPostsInfinite = async ({
       .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
         const { imageCount, ...image } =
           images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
+        const requiresClub =
+          clubRequirement.find((r) => r.entityId === post.id)?.requiresClub ?? undefined;
 
         return {
           ...post,
@@ -331,6 +342,7 @@ export const getPostsInfinite = async ({
           },
           stats,
           image,
+          requiresClub,
         };
       })
       .filter((x) => x.imageCount !== 0),
@@ -362,10 +374,25 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
   });
+
   if (!post) throw throwNotFoundError();
+
+  const [access] = await hasEntityAccess({
+    userId: user?.id,
+    isModerator: user?.isModerator,
+    entities: [
+      {
+        entityType: 'Post',
+        entityId: id,
+      },
+    ],
+  });
+
   return {
     ...post,
+    detail: access?.hasAccess ?? true ? post.detail : null,
     tags: post.tags.flatMap((x) => x.tag),
+    hasAccess: access.hasAccess,
   };
 };
 

@@ -11,6 +11,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { PostsQueryInput } from '../../../server/schema/post.schema';
 import { PostFiltersDropdown } from '../../../components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite, { PostsInfiniteState } from '../../../components/Post/Infinite/PostsInfinite';
+import { PostCard } from '../../../components/Cards/PostCard';
 
 const ClubImagePosts = () => {
   const router = useRouter();

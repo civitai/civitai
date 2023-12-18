@@ -60,7 +60,7 @@ export const hasEntityAccess = async ({
     LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = mv.id
     LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
     LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
-    LEFT JOIN "Post" p ON e."entityType" = 'Post' AND e."entityId" = a.id
+    LEFT JOIN "Post" p ON e."entityType" = 'Post' AND e."entityId" = p.id
   `;
 
   const privateRecords = data.filter((d) => d.availability === Availability.Private);
@@ -348,7 +348,7 @@ export const entityOwnership = async ({
     LEFT JOIN "ModelVersion" mv ON e."entityType" = 'ModelVersion' AND e."entityId" = mv.id
     LEFT JOIN "Model" mmv ON mv."modelId" = mmv.id
     LEFT JOIN "Article" a ON e."entityType" = 'Article' AND e."entityId" = a.id
-    LEFT JOIN "Post" p ON e."entityType" = 'Post' AND e."entityId" = a.id
+    LEFT JOIN "Post" p ON e."entityType" = 'Post' AND e."entityId" = p.id
   `;
 
   return entitiesOwnership;

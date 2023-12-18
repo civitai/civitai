@@ -30,6 +30,8 @@ export const ClubRequirementNotice = ({
     }
   );
 
+  console.log(hasAccess, requiresClub);
+
   const clubs = data?.items;
 
   if (isLoadingAccess) {
