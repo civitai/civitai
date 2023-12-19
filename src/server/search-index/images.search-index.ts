@@ -248,7 +248,7 @@ const onFetchItemsToIndex = async ({
           'dislikeCountAllTime', SUM("dislikeCount"),
           'likeCountAllTime', SUM("likeCount"),
           'cryCountAllTime', SUM("cryCount"),
-          'reactionCountAllTime', SUM(COALESCE("laughCount", 0) + COALESCE("heartCount", 0) + COALESCE("dislikeCount", 0) + COALESCE("likeCount", 0) + COALESCE("cryCount", 0)),
+          'reactionCountAllTime', SUM("reactionCount"),
           'collectedCountAllTime', SUM("collectedCount"),
           'tippedAmountCountAllTime', SUM("tippedAmountCount")
         ) stats
