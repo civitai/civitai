@@ -375,8 +375,10 @@ export const getModelsRaw = async ({
     const TypeOr: Prisma.Sql[] = [
       Prisma.sql`m."checkpointType" = ${checkpointType}::"CheckpointType"`,
     ];
-    if (types?.length) {
-      const otherTypes = types.filter((t) => t !== 'Checkpoint');
+
+    const otherTypes = (types ?? []).filter((t) => t !== 'Checkpoint');
+
+    if (otherTypes?.length) {
       TypeOr.push(
         Prisma.sql`m."type" IN (${Prisma.raw(
           otherTypes.map((t) => `'${t}'::"ModelType"`).join(',')

@@ -145,7 +145,7 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a."nsfw" = false`);
     }
     if (username) {
-      AND.push(Prisma.sql`u."username" = ${username}`);
+      AND.push(Prisma.raw(`u."username" = '${username}'`));
     }
 
     if (collectionId) {
