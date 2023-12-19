@@ -633,20 +633,25 @@ export const getAllImages = async ({
     );
   }
 
+  const isGallery = modelId || modelVersionId || reviewId || username;
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
-    if (sort === ImageSort.MostComments)
+    if (sort === ImageSort.MostComments) {
       orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
-    else if (sort === ImageSort.MostReactions)
+      if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
+    } else if (sort === ImageSort.MostReactions) {
       orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
-    else if (sort === ImageSort.MostCollected)
+      if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
+    } else if (sort === ImageSort.MostCollected) {
       orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
-    else if (sort === ImageSort.MostTipped)
+      if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
+    } else if (sort === ImageSort.MostTipped) {
       orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
-    else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+      if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
+    } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     else orderBy = `i."id" DESC`;
   }
 
