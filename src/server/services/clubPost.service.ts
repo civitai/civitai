@@ -1,10 +1,24 @@
-import { ClubAdminPermission, Prisma } from '@prisma/client';
-import { GetInfiniteClubPostsSchema, UpsertClubPostInput } from '~/server/schema/club.schema';
+import { ClubAdminPermission, MetricTimeframe, Prisma } from '@prisma/client';
+import {
+  GetInfiniteClubPostsSchema,
+  SupportedClubEntities,
+  UpsertClubPostInput,
+} from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { createEntityImages } from '~/server/services/image.service';
 import { getClub, userContributingClubs } from '~/server/services/club.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import {
+  GetModelsWithImagesAndModelVersions,
+  getModelsRaw,
+  getModelsWithImagesAndModelVersions,
+} from './model.service';
+import { getArticles } from './article.service';
+import { PostsInfiniteModel, getPostsInfinite } from './post.service';
+import { ArticleSort, BrowsingMode, ModelSort, PostSort } from '../common/enums';
+import { number } from 'zod';
+import { ArticleGetAll } from '../../types/router';
 
 export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
@@ -212,5 +226,216 @@ export const deleteClubPost = async ({
     where: {
       id,
     },
+  });
+};
+
+export const getResourceDetailsForClubPostCreation = async ({
+  entities,
+  userId,
+  isModerator,
+  username,
+}: {
+  entities: [
+    {
+      entityId: number;
+      entityType: SupportedClubEntities | 'Model';
+    }
+  ];
+  userId?: number;
+  isModerator?: boolean;
+  username?: string;
+}) => {
+  const postData = await dbRead.$queryRaw<
+    {
+      title: string | null;
+      description: string | null;
+      entityId: number;
+      entityType: SupportedClubEntities | 'Model';
+    }[]
+  >`
+    WITH entities AS (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
+        "entityId" INTEGER,
+        "entityType" VARCHAR
+      )
+    )
+    SELECT  
+      e.entityId,
+      e.entityType,
+      COALESCE(
+        m.name,
+        a.title,
+        p.title,
+        mmv.name || ' - ' || mv.name
+      ) AS title,
+      COALESCE (
+        m.description,
+        a.content,
+        p.detail,
+        mv.description
+      ) as description
+    FROM entities e 
+    LEFT JOIN "Model" m ON m.id = e."entityId" AND e."entityType" = 'Model' 
+    LEFT JOIN "Article" a ON a.id = e."entityId" AND e."entityType" = 'Article'
+    LEFT JOIN "Post" p ON p.id = e."entityId" AND e."entityType" = 'Post'
+    LEFT JOIN "ModelVersion" mv ON mv.id = e."entityId" AND e."entityType" = 'ModelVersion'
+    LEFT JOIN "Model" mmv ON mmv.id = mv."modelId" 
+  `;
+
+  const data = await getClubPostResourceData({
+    clubPosts: entities,
+    userId,
+    isModerator,
+    username,
+  });
+
+  return postData.map((d) => {
+    return {
+      ...d,
+      data: data.find((x) => x.entityId === d.entityId && x.entityType === d.entityType)?.data,
+    };
+  });
+};
+
+interface ModelClubPostResource {
+  entityType: 'Model';
+  data: GetModelsWithImagesAndModelVersions;
+}
+
+interface ModelVersionClubPostResource {
+  entityType: 'ModelVersion';
+  data: GetModelsWithImagesAndModelVersions;
+}
+
+interface PostClubPostResource {
+  entityType: 'Post';
+  data: PostsInfiniteModel;
+}
+
+interface ArticleClubPostResource {
+  entityType: 'Article';
+  data: ArticleGetAll['items'][0];
+}
+
+export type ClubPostData = {
+  entityId: number;
+  entityType: SupportedClubEntities | 'Model';
+  data: any;
+} & (
+  | ModelClubPostResource
+  | ArticleClubPostResource
+  | PostClubPostResource
+  | ModelVersionClubPostResource
+);
+
+export const getClubPostResourceData = async ({
+  clubPosts,
+  userId,
+  isModerator,
+  username,
+}: {
+  clubPosts: [
+    {
+      entityId: number;
+      entityType: SupportedClubEntities | 'Model';
+    }
+  ];
+  userId?: number;
+  isModerator?: boolean;
+  username?: string;
+}) => {
+  const modelIds = clubPosts.filter((x) => x.entityType === 'Model').map((x) => x.entityId);
+  const postIds = clubPosts.filter((x) => x.entityType === 'Post').map((x) => x.entityId);
+  const articleIds = clubPosts.filter((x) => x.entityType === 'Article').map((x) => x.entityId);
+  const modelVersionIds = clubPosts
+    .filter((x) => x.entityType === 'ModelVersion')
+    .map((x) => x.entityId);
+
+  const user = userId ? { id: userId, isModerator, username } : undefined;
+
+  const models =
+    modelIds.length > 0
+      ? await getModelsWithImagesAndModelVersions({
+          user,
+          input: {
+            limit: modelIds.length,
+            sort: ModelSort.Newest,
+            period: MetricTimeframe.AllTime,
+            periodMode: 'stats',
+            browsingMode: BrowsingMode.All,
+            favorites: false,
+            hidden: false,
+            ids: modelIds,
+          },
+        })
+      : { items: [] };
+
+  const articles =
+    articleIds.length > 0
+      ? await getArticles({
+          limit: articleIds.length,
+          period: MetricTimeframe.AllTime,
+          periodMode: 'stats',
+          sort: ArticleSort.Newest,
+          browsingMode: BrowsingMode.All,
+          ids: articleIds,
+          sessionUser: user,
+        })
+      : { items: [] };
+
+  const posts =
+    postIds.length > 0
+      ? await getPostsInfinite({
+          limit: postIds.length,
+          period: MetricTimeframe.AllTime,
+          periodMode: 'published',
+          sort: PostSort.Newest,
+          user,
+          browsingMode: BrowsingMode.All,
+          ids: postIds,
+          include: ['cosmetics'],
+        })
+      : { items: [] };
+
+  const modelVersions =
+    modelVersionIds.length > 0
+      ? await getModelsWithImagesAndModelVersions({
+          user,
+          input: {
+            limit: modelIds.length,
+            sort: ModelSort.Newest,
+            period: MetricTimeframe.AllTime,
+            periodMode: 'stats',
+            browsingMode: BrowsingMode.All,
+            favorites: false,
+            hidden: false,
+            modelVersionIds,
+          },
+        })
+      : { items: [] };
+
+  return clubPosts.map(({ entityId, entityType }) => {
+    const res: ClubPostData = {
+      entityId,
+      entityType,
+      data: null,
+    };
+
+    switch (entityType) {
+      case 'Model':
+        res.data = models.items.find((x) => x.id === entityId);
+        break;
+      case 'Post':
+        res.data = posts.items.find((x) => x.id === entityId);
+        break;
+      case 'Article':
+        res.data = articles.items.find((x) => x.id === entityId);
+        break;
+      case 'ModelVersion':
+        res.data = modelVersions.items.find((x) => x.version?.id === entityId);
+        break;
+    }
+
+    return res;
   });
 };

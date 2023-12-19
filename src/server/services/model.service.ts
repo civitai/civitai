@@ -160,7 +160,7 @@ export const getModelsRaw = async ({
     skip?: number;
   };
   // TODO: Likely we wanna remove session user all in all.
-  user?: SessionUser;
+  user?: { id: number; isModerator?: boolean; username?: string };
   count?: boolean;
   ignoreListedStatus?: boolean;
 }) => {
@@ -194,6 +194,7 @@ export const getModelsRaw = async ({
     collectionId,
     fileFormats,
     clubId,
+    modelVersionIds,
   } = input;
 
   let isPrivate = false;
@@ -371,6 +372,13 @@ export const getModelsRaw = async ({
 
   if (!!ids?.length) AND.push(Prisma.sql`m."id" IN (${Prisma.join(ids, ',')})`);
 
+  if (!!modelVersionIds?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" 
+      WHERE "id" IN (${Prisma.join(modelVersionIds, ',')})
+    )`);
+  }
+
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     const TypeOr: Prisma.Sql[] = [
       Prisma.sql`m."checkpointType" = ${checkpointType}::"CheckpointType"`,
@@ -504,6 +512,10 @@ export const getModelsRaw = async ({
 
   if (baseModels) {
     modelVersionWhere = Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`;
+  }
+
+  if (!!modelVersionIds?.length) {
+    modelVersionWhere = Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`;
   }
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
@@ -951,7 +963,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   user,
 }: {
   input: GetAllModelsOutput;
-  user?: SessionUser;
+  user?: { id: number; isModerator?: boolean; username?: string };
 }) => {
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;

@@ -89,12 +89,15 @@ export const getPostsInfinite = async ({
   clubId,
   browsingMode,
   ignoreListedStatus,
-}: PostsQueryInput & { user?: SessionUser; ignoreListedStatus?: boolean }) => {
+}: PostsQueryInput & {
+  user?: { id: number; isModerator?: boolean; username?: string };
+  ignoreListedStatus?: boolean;
+}) => {
   const AND = [Prisma.sql`1 = 1`];
   const WITH: Prisma.Sql[] = [];
 
   const isOwnerRequest =
-    !!user && !!username && postgresSlugify(user.username) === postgresSlugify(username);
+    !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
   let targetUser: number | undefined;
   if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
