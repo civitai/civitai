@@ -159,6 +159,7 @@ type ImageForSearchIndex = {
     heartCountAllTime: number;
     laughCountAllTime: number;
     likeCountAllTime: number;
+    reactionCountAllTime: number;
     commentCountAllTime: number;
     collectedCountAllTime: number;
     tippedAmountCountAllTime: number;
