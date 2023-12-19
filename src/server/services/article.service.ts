@@ -87,6 +87,8 @@ type ArticleRaw = {
   }[];
 };
 
+export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
+
 export const getArticles = async ({
   limit,
   cursor,

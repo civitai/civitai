@@ -2,23 +2,22 @@ import { ClubAdminPermission, MetricTimeframe, Prisma } from '@prisma/client';
 import {
   GetInfiniteClubPostsSchema,
   SupportedClubEntities,
+  SupportedClubPostEntities,
   UpsertClubPostInput,
 } from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { createEntityImages } from '~/server/services/image.service';
-import { getClub, userContributingClubs } from '~/server/services/club.service';
+import { userContributingClubs } from '~/server/services/club.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelsWithImagesAndModelVersions,
-  getModelsRaw,
   getModelsWithImagesAndModelVersions,
 } from './model.service';
-import { getArticles } from './article.service';
+import { ArticleGetAllRecord, getArticles } from './article.service';
 import { PostsInfiniteModel, getPostsInfinite } from './post.service';
 import { ArticleSort, BrowsingMode, ModelSort, PostSort } from '../common/enums';
 import { number } from 'zod';
-import { ArticleGetAll } from '../../types/router';
 
 export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
@@ -231,28 +230,27 @@ export const deleteClubPost = async ({
 
 interface ModelClubPostResource {
   entityType: 'Model';
-  data: GetModelsWithImagesAndModelVersions;
+  data?: GetModelsWithImagesAndModelVersions;
 }
 
 interface ModelVersionClubPostResource {
   entityType: 'ModelVersion';
-  data: GetModelsWithImagesAndModelVersions;
+  data?: GetModelsWithImagesAndModelVersions;
 }
 
 interface PostClubPostResource {
   entityType: 'Post';
-  data: PostsInfiniteModel;
+  data?: PostsInfiniteModel;
 }
 
 interface ArticleClubPostResource {
   entityType: 'Article';
-  data: ArticleGetAll['items'][0];
+  data?: ArticleGetAllRecord;
 }
 
 export type ClubPostData = {
   entityId: number;
-  entityType: SupportedClubEntities | 'Model';
-  data: any;
+  entityType: SupportedClubPostEntities;
 } & (
   | ModelClubPostResource
   | ArticleClubPostResource
@@ -266,12 +264,10 @@ export const getClubPostResourceData = async ({
   isModerator,
   username,
 }: {
-  clubPosts: [
-    {
-      entityId: number;
-      entityType: SupportedClubEntities | 'Model';
-    }
-  ];
+  clubPosts: {
+    entityId: number;
+    entityType: SupportedClubPostEntities;
+  }[];
   userId?: number;
   isModerator?: boolean;
   username?: string;
@@ -346,30 +342,43 @@ export const getClubPostResourceData = async ({
         })
       : { items: [] };
 
-  return clubPosts.map(({ entityId, entityType }) => {
-    const res: ClubPostData = {
+  const items: ClubPostData[] = clubPosts.map(({ entityId, entityType }) => {
+    const base = {
       entityId,
       entityType,
-      data: null,
     };
 
     switch (entityType) {
       case 'Model':
-        res.data = models.items.find((x) => x.id === entityId);
-        break;
+        return {
+          ...base,
+          entityType: 'Model',
+          data: models.items.find((x) => x.id === entityId),
+        };
       case 'Post':
-        res.data = posts.items.find((x) => x.id === entityId);
-        break;
+        return {
+          ...base,
+          entityType: 'Post',
+          data: posts.items.find((x) => x.id === entityId),
+        };
       case 'Article':
-        res.data = articles.items.find((x) => x.id === entityId);
-        break;
+        return {
+          ...base,
+          entityType: 'Article',
+          data: articles.items.find((x) => x.id === entityId),
+        };
       case 'ModelVersion':
-        res.data = modelVersions.items.find((x) => x.version?.id === entityId);
-        break;
+        return {
+          ...base,
+          entityType: 'ModelVersion',
+          data: modelVersions.items.find((x) => x.version?.id === entityId),
+        };
+      default:
+        return base;
     }
-
-    return res;
   });
+
+  return items;
 };
 
 export const getResourceDetailsForClubPostCreation = async ({
@@ -381,7 +390,7 @@ export const getResourceDetailsForClubPostCreation = async ({
   entities: [
     {
       entityId: number;
-      entityType: SupportedClubEntities | 'Model';
+      entityType: SupportedClubPostEntities;
     }
   ];
   userId?: number;
@@ -393,7 +402,7 @@ export const getResourceDetailsForClubPostCreation = async ({
       title: string | null;
       description: string | null;
       entityId: number;
-      entityType: SupportedClubEntities | 'Model';
+      entityType: SupportedClubPostEntities;
     }[]
   >`
     WITH entities AS (
@@ -403,8 +412,8 @@ export const getResourceDetailsForClubPostCreation = async ({
       )
     )
     SELECT  
-      e.entityId,
-      e.entityType,
+      e."entityId",
+      e."entityType",
       COALESCE(
         m.name,
         a.title,

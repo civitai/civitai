@@ -1,10 +1,16 @@
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '../trpc';
-import { getInfiniteClubPostsSchema, upsertClubPostInput } from '~/server/schema/club.schema';
+import {
+  clubPostResourceInput,
+  clubResourceInput,
+  getInfiniteClubPostsSchema,
+  upsertClubPostInput,
+} from '~/server/schema/club.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteClubPostHandler,
   getClubPostByIdHandler,
   getInfiniteClubPostsHandler,
+  getResourceDetailsForClubPostCreationHandler,
   upsertClubPostHandler,
 } from '~/server/controllers/clubPost.controller';
 
@@ -21,6 +27,10 @@ export const clubPostRouter = router({
     .input(upsertClubPostInput)
     .use(isFlagProtected('clubs'))
     .mutation(upsertClubPostHandler),
+  resourcePostCreateDetails: protectedProcedure
+    .input(clubPostResourceInput)
+    .use(isFlagProtected('clubs'))
+    .query(getResourceDetailsForClubPostCreationHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('clubs'))

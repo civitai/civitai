@@ -1,6 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import { throwDbError } from '~/server/utils/errorHandling';
-import { GetInfiniteClubPostsSchema, UpsertClubPostInput } from '~/server/schema/club.schema';
+import {
+  ClubPostResourceInput,
+  ClubResourceInput,
+  GetInfiniteClubPostsSchema,
+  SupportedClubEntities,
+  SupportedClubPostEntities,
+  UpsertClubPostInput,
+} from '~/server/schema/club.schema';
 import { Context } from '~/server/createContext';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -9,6 +16,8 @@ import {
   deleteClubPost,
   getAllClubPosts,
   getClubPostById,
+  getClubPostResourceData,
+  getResourceDetailsForClubPostCreation,
   upsertClubPost,
 } from '~/server/services/clubPost.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -39,7 +48,23 @@ export const getInfiniteClubPostsHandler = async ({
         createdAt: true,
         clubId: true,
         membersOnly: true,
+        entityId: true,
+        entityType: true,
       },
+    });
+
+    const entities = items
+      .filter((x) => x.entityId && x.entityType)
+      .map((x) => ({
+        entityId: x.entityId as number,
+        entityType: x.entityType as SupportedClubPostEntities,
+      }));
+
+    const entityData = await getClubPostResourceData({
+      clubPosts: entities,
+      userId: user?.id,
+      isModerator: user?.isModerator,
+      username: user?.username,
     });
 
     let nextCursor: number | undefined;
@@ -52,6 +77,7 @@ export const getInfiniteClubPostsHandler = async ({
       nextCursor,
       items: items.map(({ coverImage, ...x }) => ({
         ...x,
+        entityType: x.entityType as SupportedClubPostEntities | null,
         coverImage: coverImage
           ? {
               ...coverImage,
@@ -60,6 +86,11 @@ export const getInfiniteClubPostsHandler = async ({
               tags: coverImage.tags.map((t) => t.tag),
             }
           : null,
+        data:
+          x.entityType && x.entityId
+            ? entityData.find((d) => d.entityId === x.entityId && d.entityType === x.entityType)
+                ?.data
+            : null,
       })),
     };
   } catch (error) {
@@ -96,13 +127,28 @@ export const getClubPostByIdHandler = async ({
         createdAt: true,
         clubId: true,
         membersOnly: true,
+        entityId: true,
+        entityType: true,
       },
     });
 
     const { coverImage } = post;
 
+    const [entityData] =
+      post.entityId && post.entityType
+        ? await getClubPostResourceData({
+            clubPosts: [
+              { entityId: post.entityId, entityType: post.entityType as SupportedClubPostEntities },
+            ],
+            userId: user?.id,
+            isModerator: user?.isModerator,
+            username: user?.username,
+          })
+        : [null];
+
     return {
       ...post,
+      entityType: post.entityType as SupportedClubPostEntities | null,
       coverImage: coverImage
         ? {
             ...coverImage,
@@ -111,6 +157,7 @@ export const getClubPostByIdHandler = async ({
             tags: coverImage.tags.map((t) => t.tag),
           }
         : null,
+      data: entityData?.data ?? null,
     };
   } catch (error) {
     throw throwDbError(error);
@@ -154,3 +201,26 @@ export async function deleteClubPostHandler({
     else throwDbError(error);
   }
 }
+
+export const getResourceDetailsForClubPostCreationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ClubPostResourceInput;
+  ctx: Context;
+}) => {
+  const { user } = ctx;
+
+  try {
+    const [data] = await getResourceDetailsForClubPostCreation({
+      entities: [input],
+      userId: user?.id,
+      isModerator: user?.isModerator,
+      username: user?.username,
+    });
+
+    return data;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
