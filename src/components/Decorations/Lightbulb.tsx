@@ -19,13 +19,14 @@ export function Lightbulb({ variant, ...props }: Props) {
   return variant === 'star' ? <StarVariant {...props} /> : <DefaultVariant {...props} />;
 }
 
-function DefaultVariant({ color, size, brightness = 1, animated, ...props }: Props) {
+function DefaultVariant({ color, size, brightness = 1, animated, className, ...props }: Props) {
   const { main } = colors[color as LightbulbColor];
   const flickerClass = `demo-${brightness * 100}${animated ? '-animated' : ''}`;
 
   return (
     <svg
       {...props}
+      className={`${className} ${flickerClass}`}
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
       width={size ?? props.width}
@@ -40,7 +41,6 @@ function DefaultVariant({ color, size, brightness = 1, animated, ...props }: Pro
         />
         <path
           d="M452.5 377.4h-43c-21.9 4.9-31.7 21-26.9 56 7.3 52.8 33.1 78.2 48.3 78.5h.4c15.1-.3 40.9-25.8 48.3-78.5 4.6-35-5.2-51.1-27.1-56z"
-          className={flickerClass}
           style={{
             fill: main,
             stroke: main,
@@ -91,7 +91,14 @@ export const heartbeat = keyframes({
   },
 });
 
-function StarVariant({ color, size, brightness = 1, animated, ...props }: Omit<Props, 'variant'>) {
+function StarVariant({
+  color,
+  size,
+  brightness = 1,
+  animated,
+  className,
+  ...props
+}: Omit<Props, 'variant'>) {
   const { main } = colors[color as LightbulbColor];
   const flickerClass = `demo-${brightness * 100}${animated ? '-animated' : ''}`;
 
@@ -102,12 +109,12 @@ function StarVariant({ color, size, brightness = 1, animated, ...props }: Omit<P
       viewBox="0 0 24 24"
       width={size ?? props.width}
       height={size ?? props.height}
+      className={`${className} ${flickerClass}`}
     >
       <g>
         <path d="M7.34 14.838s-1.186 4.808-.37 5.475c.815.667 4.882-2.002 4.882-2.002s3.992 2.595 4.882 2.002c.89-.593-.37-5.105-.37-5.105s3.97-2.647 3.483-4.003c-.466-1.281-5.253-1.26-5.253-1.26s-.285-2.7-1.387-3.992c.106-.032.19-.17.19-.35v-.974c0-.201-.105-.36-.232-.36H13.1c.01-.032.01-.074.01-.106V3.57c0-.202-.105-.36-.232-.36h-2.065c-.127 0-.233.158-.233.36v.593c0 .042.01.074.01.106h-.063c-.127 0-.233.159-.233.36v.974c0 .201.106.36.233.36h.074c-1.09 1.26-1.42 3.834-1.42 3.834s-4.85.127-5.326 1.26c-.54 1.303 3.484 3.78 3.484 3.78z" />
         <path
           d="M507.4 423.4c-4.4-12.1-49.6-11.9-49.6-11.9s-2.7-25.5-13.1-37.7c-.1 0-.3.1-.4.1h-24.2c-10.3 11.9-13.4 36.2-13.4 36.2s-45.8 1.2-50.3 11.9c-5.2 12.2 32.9 35.7 32.9 35.7s-11.2 45.4-3.5 51.7c7.7 6.3 46.1-18.9 46.1-18.9s37.7 24.5 46.1 18.9c8.4-5.6-3.5-48.2-3.5-48.2s37.5-25.1 32.9-37.8z"
-          className={flickerClass}
           style={{
             fill: main,
             stroke: main,

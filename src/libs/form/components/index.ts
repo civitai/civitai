@@ -33,6 +33,7 @@ import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInput';
 import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
+import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManagementInput';
 
 export * from './Form';
 
@@ -71,6 +72,9 @@ export const InputTime = withWatcher(withController(TimeInput));
 export const InputNumberSlider = withWatcher(withController(NumberSlider));
 export const InputInlineSocialLinkInput = withWatcher(withController(InlineSocialLinkInput));
 export const InputShowcaseItemsInput = withWatcher(withController(ShowcaseItemsInput));
+export const InputClubResourceManagementInput = withWatcher(
+  withController(ClubResourceManagementInput)
+);
 export const InputProfileSectionsSettingsInput = withWatcher(
   withController(ProfileSectionsSettingsInput)
 );

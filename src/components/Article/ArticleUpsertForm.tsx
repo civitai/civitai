@@ -13,6 +13,7 @@ import {
   createStyles,
   ActionIcon,
   Paper,
+  Divider,
 } from '@mantine/core';
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
@@ -26,6 +27,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
+  InputClubResourceManagementInput,
   InputMultiFileUpload,
   InputRTE,
   InputSelect,
@@ -43,6 +45,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -76,6 +79,7 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useContext();
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
+  const features = useFeatureFlags();
 
   const defaultCategory = result.success ? result.data.category : -1;
   const defaultValues: z.infer<typeof schema> = {
@@ -85,6 +89,7 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
     cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
+    clubs: article?.clubs ?? [],
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
   const clearStorage = useFormStorage({
@@ -174,6 +179,16 @@ export function ArticleUpsertForm({ article }: Props) {
               withAsterisk
               stickyToolbar
             />
+            {features.clubs && (
+              <>
+                <Divider label="Club options" />
+                <InputClubResourceManagementInput
+                  label="Make this resource part of a club"
+                  description="This will make this resource available to club members only. People will still see this resource in the public list, but will be required to join the club to use it."
+                  name="clubs"
+                />
+              </>
+            )}
           </Stack>
         </ContainerGrid.Col>
         <ContainerGrid.Col xs={12} md={4}>

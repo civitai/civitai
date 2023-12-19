@@ -41,8 +41,13 @@ import { userRouter } from './user.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
+import { clubRouter } from '~/server/routers/club.router';
+import { commonRouter } from '~/server/routers/common.router';
+import { clubPostRouter } from '~/server/routers/clubPost.router';
+import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
 import { eventRouter } from '~/server/routers/event.router';
 import { csamRouter } from '~/server/routers/csam.router';
+import { clubAdminRouter } from './clubAdmin.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -54,9 +59,14 @@ export const appRouter = router({
   bounty: bountyRouter,
   bountyEntry: bountyEntryRouter,
   buzz: buzzRouter,
+  club: clubRouter,
+  clubPost: clubPostRouter,
+  clubMembership: clubMembershipRouter,
+  clubAdmin: clubAdminRouter,
   collection: collectionRouter,
   comment: commentRouter,
   commentv2: commentv2Router,
+  common: commonRouter,
   content: contentRouter,
   download: downloadRouter,
   homeBlock: homeBlockRouter,

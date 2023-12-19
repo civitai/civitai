@@ -10,6 +10,7 @@ export type Job = {
 export type JobOptions = {
   shouldWait: boolean;
   lockExpiration: number;
+  queue?: string;
 };
 
 export function createJob(

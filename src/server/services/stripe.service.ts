@@ -2,6 +2,7 @@ import { chunk } from 'lodash-es';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   handleLogError,
+  throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
   withRetries,
@@ -15,12 +16,12 @@ import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { playfab } from '~/server/playfab/client';
 import { Currency } from '@prisma/client';
-import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
 import { MetadataParam } from '@stripe/stripe-js';
 import { constants } from '~/server/common/constants';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
+import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -505,7 +506,10 @@ export const getPaymentIntent = async ({
   paymentMethodTypes,
   customerId,
   user,
-}: PaymentIntentCreationSchema & { user: { id: number; email: string }; customerId?: string }) => {
+}: Schema.PaymentIntentCreationSchema & {
+  user: { id: number; email: string };
+  customerId?: string;
+}) => {
   // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
   if (!customerId) {
     customerId = await createCustomer(user);
@@ -534,6 +538,7 @@ export const getPaymentIntent = async ({
     customer: customerId,
     metadata: metadata as MetadataParam,
     payment_method_types: paymentMethodTypes || undefined,
+    setup_future_usage: 'off_session',
   });
 
   return {
@@ -552,6 +557,7 @@ export const getPaymentIntentsForBuzz = async ({
       where: { id: userId },
       select: { customerId: true },
     });
+
     if (!user) throw new Error(`No user with id ${userId}`);
 
     customer = user.customerId ?? undefined; // undefined is required for the stripe api
@@ -601,4 +607,70 @@ export const getPaymentIntentsForBuzz = async ({
   }
 
   return processedPurchases;
+};
+
+export const getSetupIntent = async ({
+  paymentMethodTypes,
+  customerId,
+  user,
+}: Schema.SetupIntentCreateSchema & {
+  user: { id: number; email: string };
+  customerId?: string;
+}) => {
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  const stripe = await getServerStripe();
+  const setupIntent = await stripe.setupIntents.create({
+    automatic_payment_methods: !paymentMethodTypes
+      ? {
+          enabled: true,
+        }
+      : undefined,
+    customer: customerId,
+    payment_method_types: paymentMethodTypes || undefined,
+  });
+
+  return {
+    clientSecret: setupIntent.client_secret,
+  };
+};
+
+export const getCustomerPaymentMethods = async (customerId: string) => {
+  const stripe = await getServerStripe();
+  const paymentMethods = await stripe.paymentMethods.list({
+    customer: customerId,
+  });
+
+  return paymentMethods.data;
+};
+
+export const deleteCustomerPaymentMethod = async ({
+  paymentMethodId,
+  userId,
+  isModerator,
+}: PaymentMethodDeleteInput & {
+  userId: number;
+  isModerator: boolean;
+}) => {
+  const stripe = await getServerStripe();
+  const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+
+  if (!paymentMethod) {
+    throwBadRequestError(`No payment method with id ${paymentMethodId}`);
+  }
+
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { customerId: true },
+  });
+
+  if (!user && !isModerator) throw throwBadRequestError(`No user with id ${userId}`);
+
+  if (user?.customerId !== paymentMethod.customer && !isModerator) {
+    throw throwAuthorizationError(`Payment method does not belong to user with id ${userId}`);
+  }
+
+  return await stripe.paymentMethods.detach(paymentMethodId);
 };

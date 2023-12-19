@@ -107,6 +107,7 @@ export function UserAvatar({
   const imageSize = getRawAvatarSize(avatarSize ?? size);
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
   const isSelf = !!currentUser && currentUser.id === avatarUser.id;
+  const blockedProfilePicture = avatarUser.profilePicture?.ingestion === 'Blocked';
 
   return (
     <Group align="center" spacing={spacing} noWrap>
@@ -120,7 +121,10 @@ export function UserAvatar({
             disabled={!indicatorProps}
             withBorder
           >
-            {avatarUser.profilePicture && avatarUser.profilePicture.id && !userDeleted ? (
+            {avatarUser.profilePicture &&
+            avatarUser.profilePicture.id &&
+            !blockedProfilePicture &&
+            !userDeleted ? (
               <Paper
                 w={imageSize}
                 h={imageSize}
@@ -182,7 +186,7 @@ export function UserAvatar({
             ) : (
               <Avatar
                 src={
-                  avatarUser.image && !userDeleted
+                  avatarUser.image && !blockedProfilePicture && !userDeleted
                     ? getEdgeUrl(avatarUser.image, {
                         width: typeof avatarSize === 'number' ? avatarSize : 96,
                         anim: currentUser

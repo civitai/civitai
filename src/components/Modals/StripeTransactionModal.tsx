@@ -21,75 +21,8 @@ import { trpc } from '~/utils/trpc';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { closeAllModals } from '@mantine/modals';
-
-type Props = {
-  successMessage?: React.ReactNode;
-  message?: React.ReactNode;
-  unitAmount: number;
-  currency?: Currency;
-  onSuccess?: (stripePaymentIntentId: string) => Promise<void>;
-  metadata: PaymentIntentMetadataSchema;
-  paymentMethodTypes?: string[];
-};
-
-const { openModal, Modal } = createContextModal<Props>({
-  name: 'stripeTransaction',
-  withCloseButton: false,
-  size: 'lg',
-  radius: 'lg',
-  closeOnEscape: false,
-  closeOnClickOutside: false,
-  zIndex: 400,
-  Element: ({
-    context,
-    props: { unitAmount, currency = Currency.USD, metadata, paymentMethodTypes, ...props },
-  }) => {
-    const theme = useMantineTheme();
-    const stripePromise = useStripePromise();
-
-    const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
-      { unitAmount, currency, metadata, paymentMethodTypes },
-      { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
-    );
-
-    const clientSecret = data?.clientSecret;
-
-    if (isLoading || isFetching) {
-      return (
-        <Center>
-          <Loader variant="bars" />
-        </Center>
-      );
-    }
-
-    if (!clientSecret) {
-      throw new Error('Failed to create client secret');
-    }
-
-    const options: StripeElementsOptions = {
-      clientSecret,
-      appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
-    };
-
-    const handleClose = () => {
-      context.close();
-    };
-
-    return (
-      <Elements stripe={stripePromise} key={clientSecret} options={options}>
-        <StripeTransactionModal
-          clientSecret={clientSecret}
-          key={clientSecret}
-          onClose={handleClose}
-          unitAmount={unitAmount}
-          currency={currency}
-          metadata={metadata}
-          {...props}
-        />
-      </Elements>
-    );
-  },
-});
+import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
+import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
 
 const StripeTransactionModal = ({
   unitAmount,
@@ -101,6 +34,7 @@ const StripeTransactionModal = ({
   clientSecret,
   successMessage,
 }: Props & { clientSecret: string; onClose: () => void }) => {
+  const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const [success, setSuccess] = useState<boolean>(false);
 
   const { trackAction } = useTrackEvent();
@@ -164,6 +98,37 @@ const StripeTransactionModal = ({
         </Group>
         <Divider mx="-lg" />
         {message && <>{message}</>}
+
+        {(userPaymentMethods?.length ?? 0) > 0 && (
+          <Stack>
+            <Divider mx="-lg" />
+            <Text weight="bold">Saved payment methods</Text>
+            <Stack spacing="sm">
+              {userPaymentMethods.map((paymentMethod) => (
+                <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
+                  <Button
+                    color="blue"
+                    onClick={async () => {
+                      const paymentIntent = await onConfirmPayment(paymentMethod.id);
+                      trackAction({
+                        type: 'PurchaseFunds_Confirm',
+                        details: { ...metadata, method: paymentMethod.type },
+                      }).catch(() => undefined);
+
+                      console.log(paymentIntent);
+                    }}
+                    disabled={processingPayment || processingTooLong}
+                    loading={processingPayment}
+                  >
+                    Pay ${formatPriceForDisplay(unitAmount, currency)}
+                  </Button>
+                </PaymentMethodItem>
+              ))}
+            </Stack>
+            <Divider mx="-lg" />
+            <Text weight="bold">Add new payment method</Text>
+          </Stack>
+        )}
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
           <Text color="red" size="sm">
@@ -199,6 +164,76 @@ const StripeTransactionModal = ({
     </form>
   );
 };
+
+type Props = {
+  successMessage?: React.ReactNode;
+  message?: React.ReactNode;
+  unitAmount: number;
+  currency?: Currency;
+  onSuccess?: (stripePaymentIntentId: string) => Promise<void>;
+  metadata: PaymentIntentMetadataSchema;
+  paymentMethodTypes?: string[];
+};
+
+const { openModal, Modal } = createContextModal<Props>({
+  name: 'stripeTransaction',
+  withCloseButton: false,
+  size: 'lg',
+  radius: 'lg',
+  closeOnEscape: false,
+  closeOnClickOutside: false,
+  zIndex: 400,
+  Element: ({
+    context,
+    props: { unitAmount, currency = Currency.USD, metadata, paymentMethodTypes, ...props },
+  }) => {
+    const theme = useMantineTheme();
+    const stripePromise = useStripePromise();
+    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
+
+    const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
+      { unitAmount, currency, metadata, paymentMethodTypes },
+      { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
+    );
+
+    const clientSecret = data?.clientSecret;
+
+    if (isLoading || isFetching || isLoadingPaymentMethods) {
+      return (
+        <Center>
+          <Loader variant="bars" />
+        </Center>
+      );
+    }
+
+    if (!clientSecret) {
+      throw new Error('Failed to create client secret');
+    }
+
+    const options: StripeElementsOptions = {
+      clientSecret,
+      appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+    };
+
+    const handleClose = () => {
+      context.close();
+    };
+
+    return (
+      <Elements stripe={stripePromise} key={clientSecret} options={options}>
+        <StripeTransactionModal
+          clientSecret={clientSecret}
+          key={clientSecret}
+          onClose={handleClose}
+          unitAmount={unitAmount}
+          currency={currency}
+          metadata={metadata}
+          {...props}
+        />
+      </Elements>
+    );
+  },
+});
 
 export const openStripeTransactionModal = openModal;
 export default Modal;

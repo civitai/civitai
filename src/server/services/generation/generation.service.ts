@@ -17,7 +17,7 @@ import {
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { Availability, ModelType, Prisma } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -42,6 +42,7 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis } from '~/server/redis/client';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 
 export function parseModelVersionId(assetId: string) {
@@ -359,8 +360,27 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
 
 async function checkGenerationAvailability(resources: CreateGenerationRequestInput['resources']) {
   const data = await getResourceData(resources.map((x) => x.id));
-
   return data.every((x) => !!x.generationCoverage?.covered);
+}
+
+async function checkResourcesAccess(
+  resources: CreateGenerationRequestInput['resources'],
+  userId: number
+) {
+  const data = await getResourceData(resources.map((x) => x.id));
+  const hasPrivateResources = data.some((x) => x.availability === Availability.Public);
+
+  if (hasPrivateResources) {
+    // Check for permission:
+    const entityAccess = await hasEntityAccess({
+      entities: data.map((d) => ({ entityType: 'ModelVersion', entityId: d.id })),
+      userId,
+    });
+
+    return entityAccess.every((a) => a.hasAccess);
+  }
+
+  return true;
 }
 
 export const createGenerationRequest = async ({
@@ -380,6 +400,11 @@ export const createGenerationRequest = async ({
   const allResourcesAvailable = await checkGenerationAvailability(resources).catch(() => false);
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
+
+  const access = await checkResourcesAccess(resources, userId).catch(() => false);
+
+  if (!access)
+    throw throwAuthorizationError('You do not have access to some of the selected resources');
 
   const isSDXL = params.baseModel === 'SDXL';
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);

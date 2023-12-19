@@ -23,6 +23,8 @@ import { getComputedTags } from '~/server/utils/tag-computation';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
 
+const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
+
 const tagCache: Record<string, number> = {};
 
 enum Status {
@@ -130,6 +132,13 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error('Image not found');
   }
 
+  // Add to scanJobs
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "Image"
+      SET "scanJobs" = jsonb_set("scanJobs", '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+    WHERE id = ${id};
+  `);
+
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
     for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
@@ -234,13 +243,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error(e.message);
   }
 
-  // For now, only update the scanned state if we got the result from Rekognition
-  if (source === TagSource.WD14) {
-    // However we can still update the nsfw level, as it will only go up...
-    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
-    return;
-  }
-
   try {
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
     const tags =
@@ -301,11 +303,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       if (poi) reviewKey = 'poi';
     }
 
-    const data: Prisma.ImageUpdateInput = {
-      scannedAt: new Date(),
-      needsReview: reviewKey,
-      ingestion: ImageIngestionStatus.Scanned,
-    };
+    const data: Prisma.ImageUpdateInput = {};
+    if (reviewKey) data.needsReview = reviewKey;
 
     if (nsfw && prompt) {
       // Determine if we need to block the image
@@ -321,10 +320,28 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
     if (image.postId) await updatePostNsfwLevel(image.postId);
 
-    await dbWrite.image.updateMany({
-      where: { id },
-      data,
-    });
+    if (Object.keys(data).length > 0) {
+      await dbWrite.image.updateMany({
+        where: { id },
+        data,
+      });
+    }
+
+    // Update scannedAt and ingestion if not blocked
+    if (data.ingestion !== 'Blocked') {
+      await dbWrite.$executeRaw`
+        WITH scan_count AS (
+          SELECT id, COUNT(*) as count
+          FROM "Image",
+              jsonb_object_keys("scanJobs"->'scans') AS keys
+          WHERE id = ${id}
+          GROUP BY id
+        )
+        UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
+        FROM scan_count s
+        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length};
+      `;
+    }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);

@@ -20,7 +20,7 @@ export function getPagingData<T>(
   const { count: totalItems = 0, items } = data;
   const currentPage = page ?? 1;
   const pageSize = limit ?? totalItems;
-  const totalPages = pageSize && totalItems ? Math.ceil(totalItems / pageSize) : 1;
+  const totalPages = pageSize && totalItems ? Math.ceil((totalItems as number) / pageSize) : 1;
 
   return { items, totalItems, currentPage, pageSize, totalPages };
 }

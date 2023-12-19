@@ -129,6 +129,7 @@ export function PostDetail({ postId }: { postId: number }) {
                     <Collection
                       items={post.tags}
                       limit={2}
+                      badgeProps={{ radius: 'xl', size: 'lg' }}
                       renderItem={(item) => (
                         <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
                           <Badge

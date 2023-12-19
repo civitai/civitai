@@ -69,6 +69,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   meta: true,
   earlyAccessDeadline: true,
   mode: true,
+  unlisted: true,
   reportStats: {
     select: {
       ownershipProcessing: true,
@@ -83,7 +84,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       // TODO.leaderboard: uncomment when migration is done
       // leaderboardShowcase: true,
       rank: { select: { leaderboardRank: true } },
-      profilePicture: { select: profileImageSelect },
+      profilePicture: {
+        select: profileImageSelect,
+      },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
@@ -164,6 +167,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       collectedCountAllTime: true,
       tippedAmountCountAllTime: true,
       generationCountAllTime: true,
+      commentCountAllTime: true,
     },
   },
   tagsOnModels: {

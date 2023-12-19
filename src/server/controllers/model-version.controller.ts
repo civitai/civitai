@@ -33,6 +33,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { modelFileSelect } from '../selectors/modelFile.selector';
+import { getClubDetailsForResource } from '~/server/services/club.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -109,7 +110,16 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         },
       },
     });
+
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
+    const [entityClubDetails] = await getClubDetailsForResource({
+      entities: [
+        {
+          entityType: 'ModelVersion',
+          entityId: version.id,
+        },
+      ],
+    });
 
     return {
       ...version,
@@ -129,6 +139,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         trainedWords: resource.trainedWords,
         strength: (settings as any)?.strength,
       })),
+      clubs: entityClubDetails?.clubs ?? [],
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;
@@ -170,6 +181,7 @@ export const upsertModelVersionHandler = async ({
       ...input,
       trainingDetails: input.trainingDetails,
     });
+
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     // Just update early access deadline if updating the model version

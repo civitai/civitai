@@ -14,10 +14,18 @@ import {
   createStyles,
   Alert,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { useClipboard, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { IconBolt, IconPhoto, IconPlayerPlayFilled, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconInfoHexagon,
+  IconPhoto,
+  IconPlayerPlayFilled,
+  IconTrash,
+  IconX,
+  IconCheck,
+} from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -32,6 +40,7 @@ import {
   getBaseModelSetKey,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -53,6 +62,8 @@ export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const { classes } = useStyle();
   const generationStatus = useGenerationStatus();
+  const { copied, copy } = useClipboard();
+  const currentUser = useCurrentUser();
 
   const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
@@ -89,6 +100,10 @@ export function QueueItem({ request }: Props) {
     });
   };
 
+  const handleCopy = () => {
+    copy(request.images?.map((x) => x.hash).join('\n'));
+  };
+
   const handleGenerate = () => {
     const { resources, params } = request;
     generationStore.setData({
@@ -100,12 +115,14 @@ export function QueueItem({ request }: Props) {
   const { prompt, ...details } = request.params;
   const baseModelSetKey = getBaseModelSetKey(details.baseModel ?? 'SD1');
 
-  const removedForSafety = request.images?.some((x) => x.removedForSafety);
+  const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
   let fullCoverageModels =
     baseModelSetKey && generationStatus.fullCoverageModels
       ? generationStatus.fullCoverageModels[baseModelSetKey]
       : undefined;
   if (!request.alternativesAvailable) fullCoverageModels = undefined;
+  const isFullCoverageModel =
+    fullCoverageModels?.some((x) => x.id === request.resources[0].id) ?? false;
 
   // const boost = (request: Generation.Request) => {
   //   console.log('boost it', request);
@@ -183,6 +200,13 @@ export function QueueItem({ request }: Props) {
             </Text>
           </Group>
           <Group spacing="xs">
+            {currentUser?.isModerator && (
+              <Tooltip {...tooltipProps} label="Copy Job IDs">
+                <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
+                  {copied ? <IconCheck /> : <IconInfoHexagon />}
+                </ActionIcon>
+              </Tooltip>
+            )}
             {generationStatus.available && (
               <Tooltip {...tooltipProps} label="Generate">
                 <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
@@ -202,7 +226,7 @@ export function QueueItem({ request }: Props) {
           </Group>
         </Group>
       </Card.Section>
-      {removedForSafety && !!fullCoverageModels?.length && (
+      {removedForSafety && !!fullCoverageModels?.length && !isFullCoverageModel && (
         <Card.Section>
           <Alert color="yellow">
             <Stack spacing="xs">
@@ -253,10 +277,15 @@ export function QueueItem({ request }: Props) {
           )}
           grouped
         />
-        {!failed && !!request.images?.length && (
+        {!!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
-              <GeneratedImage key={image.id} image={image} request={request} />
+              <GeneratedImage
+                key={image.id}
+                image={image}
+                request={request}
+                fullCoverage={isFullCoverageModel}
+              />
             ))}
           </div>
         )}

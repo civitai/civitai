@@ -45,6 +45,7 @@ import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 
 dayjs.extend(duration);
@@ -124,7 +125,7 @@ function MyApp(props: CustomAppProps) {
                   <ReferralsProvider>
                     <FiltersProvider value={filters}>
                       <HiddenPreferencesProvider>
-                        <CivitaiLinkProvider>
+                        <CivitaiLinkProvider> 
                           <NotificationsProvider zIndex={9999}>
                             <BrowserRouterProvider>
                               <BaseLayout>
@@ -132,12 +133,13 @@ function MyApp(props: CustomAppProps) {
                                   <TosProvider>
                                     {getLayout(<Component {...pageProps} />)}
                                   </TosProvider>
+                                  <StripeSetupSuccessProvider />
                                   <DialogProvider />
                                   <RoutedDialogProvider />
                                 </CustomModalsProvider>
                               </BaseLayout>
                             </BrowserRouterProvider>
-                          </NotificationsProvider>
+                          </NotificationsProvider> 
                         </CivitaiLinkProvider>
                       </HiddenPreferencesProvider>
                     </FiltersProvider>

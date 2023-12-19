@@ -785,14 +785,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </AlertWithIcon>
                 </>
               )}
+              <Text size="xs">
+                Bounty requests MUST adhere to the content rules defined in our{' '}
+                <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                  Terms of service
+                </Anchor>
+                .
+              </Text>
               <List size="xs" spacing={8}>
-                <List.Item>
-                  Bounty requests MUST adhere to the content rules defined in our{' '}
-                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
-                    TOS
-                  </Anchor>
-                  .
-                </List.Item>
                 <List.Item>
                   For Bounty Example images, they should either be:
                   <List size="xs" spacing={4}>

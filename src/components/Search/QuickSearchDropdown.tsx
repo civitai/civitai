@@ -138,7 +138,16 @@ const useStyles = createStyles((theme) => ({
 
 type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   supportedIndexes?: TargetIndex[];
-  onItemSelected: (item: ShowcaseItemSchema) => void;
+  onItemSelected: (
+    item: ShowcaseItemSchema,
+    data:
+      | ModelSearchIndexRecord
+      | ArticleSearchIndexRecord
+      | ImageSearchIndexRecord
+      | UserSearchIndexRecord
+      | CollectionSearchIndexRecord
+      | BountySearchIndexRecord
+  ) => void;
   filters?: string;
   dropdownItemLimit?: number;
 };
@@ -333,10 +342,13 @@ const QuickSearchDropdownContent = ({
         // onBlur={() => (!isMobile ? onClear?.() : undefined)}
         onItemSubmit={(item) => {
           if (item.hit) {
-            onItemSelected({
-              entityId: item.hit.id,
-              entityType: SearchIndexEntityTypes[SearchPathToIndexMap[indexName]],
-            });
+            onItemSelected(
+              {
+                entityId: item.hit.id,
+                entityType: SearchIndexEntityTypes[SearchPathToIndexMap[indexName]],
+              },
+              item.hit
+            );
 
             setSearch('');
           }

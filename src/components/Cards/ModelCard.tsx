@@ -6,6 +6,8 @@ import {
   Menu,
   Stack,
   Text,
+  ThemeIcon,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -18,6 +20,7 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
+  IconClubs,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -285,6 +288,17 @@ export function ModelCard({ data }: Props) {
                                     </Menu.Dropdown>
                                   </Menu>
                                 )}
+                                {data.requiresClub && (
+                                  <Tooltip
+                                    label="This model requires joining a club to get access to it."
+                                    withinPortal
+                                    maw={350}
+                                  >
+                                    <ThemeIcon size={30} radius="xl" color="blue">
+                                      <IconClubs stroke={2.5} size={16} />
+                                    </ThemeIcon>
+                                  </Tooltip>
+                                )}
                                 {features.imageGeneration && data.canGenerate && (
                                   <HoverActionButton
                                     label="Create"
@@ -390,69 +404,71 @@ export function ModelCard({ data }: Props) {
                 <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
                   {data.name}
                 </Text>
-                <Group spacing={4} position="apart">
-                  {!data.locked && (
-                    <IconBadge
-                      className={classes.iconBadge}
-                      sx={{ userSelect: 'none' }}
-                      icon={<StarRating size={14} value={data.rank.rating} />}
-                    >
-                      <Text
-                        size="xs"
-                        color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}
-                        inline
+                {data.rank && (
+                  <Group spacing={4} position="apart">
+                    {!data.locked && (
+                      <IconBadge
+                        className={classes.iconBadge}
+                        sx={{ userSelect: 'none' }}
+                        icon={<StarRating size={14} value={data.rank.rating} />}
                       >
-                        {abbreviateNumber(data.rank.ratingCount)}
-                      </Text>
-                    </IconBadge>
-                  )}
-                  <Group spacing={4}>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      icon={
-                        <IconHeart
-                          size={14}
-                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                          color={isFavorite ? theme.colors.red[6] : undefined}
-                        />
-                      }
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
-                    </IconBadge>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      icon={<IconMessageCircle2 size={14} />}
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-                    </IconBadge>
-                    <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
-                      <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                    </IconBadge>
-                    <AddToCollectionDropdown
-                      dropdownTrigger={
-                        <IconBadge
-                          className={classes.iconBadge}
-                          icon={<IconPlaylistAdd size={14} />}
+                        <Text
+                          size="xs"
+                          color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}
+                          inline
                         >
-                          <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
-                        </IconBadge>
-                      }
-                      modelId={data.id}
-                      type={CollectionType.Model}
-                    />
-                    <InteractiveTipBuzzButton
-                      toUserId={data.user.id}
-                      entityType={'Model'}
-                      entityId={data.id}
-                    >
-                      <IconBadge className={classes.iconBadge} icon={<IconBolt size={14} />}>
-                        <Text size="xs">
-                          {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                          {abbreviateNumber(data.rank.ratingCount)}
                         </Text>
                       </IconBadge>
-                    </InteractiveTipBuzzButton>
+                    )}
+                    <Group spacing={4}>
+                      <IconBadge
+                        className={classes.iconBadge}
+                        icon={
+                          <IconHeart
+                            size={14}
+                            style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                            color={isFavorite ? theme.colors.red[6] : undefined}
+                          />
+                        }
+                      >
+                        <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
+                      </IconBadge>
+                      <IconBadge
+                        className={classes.iconBadge}
+                        icon={<IconMessageCircle2 size={14} />}
+                      >
+                        <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                      </IconBadge>
+                      <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
+                        <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                      </IconBadge>
+                      <AddToCollectionDropdown
+                        dropdownTrigger={
+                          <IconBadge
+                            className={classes.iconBadge}
+                            icon={<IconPlaylistAdd size={14} />}
+                          >
+                            <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                          </IconBadge>
+                        }
+                        modelId={data.id}
+                        type={CollectionType.Model}
+                      />
+                      <InteractiveTipBuzzButton
+                        toUserId={data.user.id}
+                        entityType={'Model'}
+                        entityId={data.id}
+                      >
+                        <IconBadge className={classes.iconBadge} icon={<IconBolt size={14} />}>
+                          <Text size="xs">
+                            {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                          </Text>
+                        </IconBadge>
+                      </InteractiveTipBuzzButton>
+                    </Group>
                   </Group>
-                </Group>
+                )}
               </Stack>
               {onSite && <OnsiteIndicator />}
             </>

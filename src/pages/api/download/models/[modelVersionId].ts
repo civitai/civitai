@@ -9,7 +9,6 @@ import { playfab } from '~/server/playfab/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
-import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -64,6 +63,7 @@ export default RateLimitedEndpoint(
       ...input,
       user: session?.user,
     });
+
     if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
     if (fileResult.status === 'archived')
       return errorResponse(410, 'Model archived, not available for download');
@@ -101,23 +101,12 @@ export default RateLimitedEndpoint(
 
       const userId = session?.user?.id;
       if (userId) {
-        await dbWrite.downloadHistory.upsert({
-          where: {
-            userId_modelVersionId: {
-              userId,
-              modelVersionId,
-            },
-          },
-          create: {
-            userId,
-            modelVersionId,
-            downloadAt: now,
-            hidden: false,
-          },
-          update: {
-            downloadAt: now,
-          },
-        });
+        await dbWrite.$executeRaw`
+          -- Update user history
+          INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
+          VALUES (${userId}, ${modelVersionId}, ${now}, false)
+          ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
+        `;
 
         await playfab.trackEvent(userId, {
           eventName: 'user_download_model',

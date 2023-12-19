@@ -173,7 +173,12 @@ export const getFormData = (
   }
 
   if (params) {
-    formData.aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
+    if (params.width || params.height)
+      formData.aspectRatio = getClosestAspectRatio(
+        params?.width,
+        params?.height,
+        params?.baseModel
+      );
     if (params.sampler)
       formData.sampler = generation.samplers.includes(params.sampler as any)
         ? params.sampler

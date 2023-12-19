@@ -15,6 +15,7 @@ import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesM
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { ModalProps } from '@mantine/core';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
+import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -48,6 +49,7 @@ const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
+const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClubPostModal'));
 
 const registry = {
   blockModelTags: {
@@ -105,6 +107,10 @@ const registry = {
   userProfileEditModal: {
     Component: UserProfileEditModal,
     fn: openUserProfileEditModal,
+  },
+  manageClubPostModal: {
+    Component: ManageClubPostModal,
+    fn: openManageClubPostModal,
   },
 };
 

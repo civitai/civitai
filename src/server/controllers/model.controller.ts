@@ -631,23 +631,12 @@ export const getDownloadCommandHandler = async ({
 
     const now = new Date();
     if (userId) {
-      await dbWrite.downloadHistory.upsert({
-        where: {
-          userId_modelVersionId: {
-            userId: userId,
-            modelVersionId: modelVersion.id,
-          },
-        },
-        create: {
-          userId,
-          modelVersionId: modelVersion.id,
-          downloadAt: now,
-          hidden: false,
-        },
-        update: {
-          downloadAt: now,
-        },
-      });
+      await dbWrite.$executeRaw`
+        -- Update user history
+        INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
+        VALUES (${userId}, ${modelVersionId}, ${now}, false)
+        ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
+      `;
     }
     ctx.track.modelVersionEvent({
       type: 'Download',
@@ -1268,7 +1257,6 @@ export async function getModelTemplateFieldsHandler({
           take: 1,
           orderBy: { createdAt: 'desc' },
           select: {
-            id: true,
             baseModel: true,
             baseModelType: true,
             settings: true,

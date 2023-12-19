@@ -29,7 +29,7 @@ export const buzzPriceMetadataSchema = z.object({
 
 const buzzPurchaseMetadataSchema = z
   .object({
-    type: z.literal('buzzPurchase'),
+    type: z.enum(['buzzPurchase', 'clubMembershipPayment']),
     buzzAmount: z.coerce.number().positive(),
     unitAmount: z.coerce.number().positive(),
     userId: z.coerce.number().positive(),
@@ -56,4 +56,14 @@ export const getPaymentIntentsForBuzzSchema = z.object({
   userId: z.coerce.number().optional(),
   startingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
   endingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
+});
+
+export type SetupIntentCreateSchema = z.infer<typeof setupIntentCreateSchema>;
+export const setupIntentCreateSchema = z.object({
+  paymentMethodTypes: z.array(z.string()).nullish(),
+});
+
+export type PaymentMethodDeleteInput = z.infer<typeof paymentMethodDeleteInput>;
+export const paymentMethodDeleteInput = z.object({
+  paymentMethodId: z.string(),
 });

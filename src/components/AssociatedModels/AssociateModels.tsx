@@ -33,7 +33,9 @@ import { ModelGetAssociatedResourcesSimple } from '~/types/router';
 import { useDebouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
 
-type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
+type State = Array<
+  Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number; requiresClub?: boolean }
+>;
 
 export function AssociateModels({
   fromId,

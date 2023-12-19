@@ -3,10 +3,11 @@ export const getImageEntityUrl = (image: {
   entityId?: number | null;
   entityType?: string | null;
   postId?: number | null;
+  metadata?: { profilePicture?: boolean; username?: number } | null;
 }) => {
-  if (image.postId) {
-    return `/posts/${image.postId}`;
-  }
+  if (image.postId) return `/posts/${image.postId}`;
+  if (image.metadata?.username) return `/user/${image.metadata.username}`;
+
   switch (image.entityType) {
     case 'Bounty':
       return `/bounties/${image.entityId}`;
