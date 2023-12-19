@@ -517,23 +517,22 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
+  let from = 'FROM "Image" i';
+  const joins: string[] = [];
   // Filter to specific model/review content
   const prioritizeUser = !!prioritizedUserIds?.length;
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
-    const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
-    if (reviewId) irhAnd.push(Prisma.sql`re."id" = ${reviewId}`);
-    else if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
-    else if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "ImageResource" irr
-      ${Prisma.raw(
-        !modelVersionId && modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : ''
-      )}
-      ${Prisma.raw(
-        reviewId ? 'JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"' : ''
-      )}
-      WHERE ${Prisma.join(irhAnd, ' AND ')}
-    )`);
+    from = `FROM "ImageResource" irr`;
+    joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
+    if (reviewId) {
+      joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
+      AND.push(Prisma.sql`re."id" = ${reviewId}`);
+    } else if (modelVersionId) {
+      AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+    } else if (modelId) {
+      joins.push(`JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`);
+      AND.push(Prisma.sql`mv."modelId" = ${modelId}`);
+    }
   }
 
   // Filter to specific user content
@@ -565,10 +564,9 @@ export const getAllImages = async ({
 
   // Filter to specific tags
   if (tags?.length) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
-      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tags)}) AND NOT toi.disabled
-    )`);
+    from = 'FROM "TagsOnImage" toi';
+    joins.push(`JOIN "Image" i ON i.id = toi."imageId"`);
+    AND.push(Prisma.sql`(toi."tagId" IN (${Prisma.join(tags)}) AND NOT toi.disabled)`);
   }
 
   // Filter to specific generation process
@@ -702,7 +700,8 @@ export const getAllImages = async ({
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
-    FROM "Image" i
+    ${Prisma.raw(from)}
+    ${Prisma.raw(joins.join('\n'))}
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
       !isModerator
