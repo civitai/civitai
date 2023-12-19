@@ -11,6 +11,7 @@ import {
   getDownloadCommandHandler,
   getModelByHashesHandler,
   getModelDetailsForReviewHandler,
+  getModelGallerySettingsHandler,
   getModelHandler,
   getModelReportDetailsHandler,
   getModelsInfiniteHandler,
@@ -243,6 +244,7 @@ export const modelRouter = router({
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: publicProcedure.input(modelByHashesInput).mutation(getModelByHashesHandler),
   getTemplateFields: guardedProcedure.input(getByIdSchema).query(getModelTemplateFieldsHandler),
+  getGallerySettings: publicProcedure.input(getByIdSchema).query(getModelGallerySettingsHandler),
   updateGallerySettings: guardedProcedure
     .input(updateGallerySettingsSchema)
     .use(isOwnerOrModerator)

@@ -146,6 +146,13 @@ export const modelGallerySettingsSchema = z.object({
   images: z.number().array().optional(),
 });
 
+export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
+export const modelGallerySettingsInput = z.object({
+  hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
+  hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
+  hiddenImages: z.number().array(),
+});
+
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const modelUpsertSchema = licensingSchema.extend({
   id: z.number().optional(),
@@ -165,7 +172,7 @@ export const modelUpsertSchema = licensingSchema.extend({
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
 export const updateGallerySettingsSchema = z.object({
   id: z.number(),
-  gallerySettings: modelGallerySettingsSchema.nullable(),
+  gallerySettings: modelGallerySettingsInput.nullable(),
 });
 
 export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;

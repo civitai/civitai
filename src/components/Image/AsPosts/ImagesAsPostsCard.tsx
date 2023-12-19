@@ -1,7 +1,6 @@
 import { Carousel, Embla } from '@mantine/carousel';
 import { ActionIcon, Center, Group, Menu, Paper, Text, Tooltip, createStyles } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
-import produce from 'immer';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -9,6 +8,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { useModelGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -19,9 +19,6 @@ import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
-import { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 export function ImagesAsPostsCard({
   data,
@@ -34,12 +31,10 @@ export function ImagesAsPostsCard({
 }) {
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes } = useStyles();
-  const queryUtils = trpc.useContext();
 
-  const { modelVersions, showModerationOptions } = useImagesAsPostsInfiniteContext();
+  const { modelVersions, showModerationOptions, model } = useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
   const modelVersionName = targetModelVersion?.name;
-  const modelId = targetModelVersion?.modelId;
   const postId = data.postId ?? undefined;
 
   const cover = data.images[0];
@@ -48,46 +43,15 @@ export function ImagesAsPostsCard({
   const [embla, setEmbla] = useState<Embla | null>(null);
   const [slidesInView, setSlidesInView] = useState<number[]>([]);
 
-  const { data: model } = trpc.model.getById.useQuery(
-    { id: modelId as number },
-    { enabled: !!modelId }
-  );
-  const updateGallerySettingsMutation = trpc.model.updateGallerySettings.useMutation({
-    onMutate: async ({ id, gallerySettings }) => {
-      await queryUtils.model.getById.cancel({ id });
-      const previousModel = queryUtils.model.getById.getData({ id });
-      queryUtils.model.getById.setData(
-        { id },
-        produce((draft) => (draft ? { ...draft, gallerySettings } : draft))
-      );
-
-      return { previousModel };
-    },
-    onError: (error, { id }, context) => {
-      showErrorNotification({ title: 'Unable to toggle image', error: new Error(error.message) });
-      queryUtils.model.getById.setData({ id }, context?.previousModel);
-    },
+  const { hiddenImages, toggleGallerySettings } = useModelGallerySettings({
+    modelId: model.id,
   });
-  const handleUpdateGallerySettings = (imageId: number) => {
+  const handleUpdateGallerySettings = async (imageId: number) => {
     if (showModerationOptions && model) {
-      const gallerySettings: ModelGallerySettingsSchema = model.gallerySettings ?? {
-        images: [],
-        users: [],
-        tags: [],
-      };
-      const updatedSettings = {
-        ...gallerySettings,
-        images: gallerySettings.images
-          ? gallerySettings.images.includes(imageId)
-            ? gallerySettings.images.filter((x) => x !== imageId)
-            : [...gallerySettings.images, imageId]
-          : [],
-      };
-
-      updateGallerySettingsMutation.mutate({
-        id: model.id,
-        gallerySettings: updatedSettings,
-      });
+      await toggleGallerySettings({
+        modelId: model.id,
+        images: [{ id: imageId }],
+      }).catch(() => null); // Error is handled in the mutation events
     }
   };
 
@@ -105,7 +69,8 @@ export function ImagesAsPostsCard({
   const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
 
   const moderationOptions = (imageId: number) => {
-    const alreadyHidden = model?.gallerySettings?.images?.includes(imageId);
+    if (!showModerationOptions) return null;
+    const alreadyHidden = hiddenImages.get(imageId);
 
     return [
       <Menu.Divider key="menu-divider" />,

@@ -308,7 +308,9 @@ ImageGuard.Report = function ReportImage({
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
   context?: 'post' | 'image';
-  additionalMenuItems?: React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[];
+  additionalMenuItems?:
+    | React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[]
+    | null;
 }) {
   const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();

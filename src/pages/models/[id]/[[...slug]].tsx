@@ -1052,7 +1052,7 @@ export default function ModelDetailsV2({
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
-            modelId={model.id}
+            model={model}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
             showModerationOptions={isOwner}

@@ -35,9 +35,13 @@ import { isDefined } from '~/utils/type-guards';
 import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { IconSettings } from '@tabler/icons-react';
+import { ModelById } from '~/types/router';
+import { GalleryModerationModal } from './GalleryModerationModal';
+import { useModelGallerySettings } from './gallery.utils';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
+  model: ModelById;
   modelVersions?: ModelVersionsProps[];
   filters: {
     modelId?: number;
@@ -54,7 +58,7 @@ export const useImagesAsPostsInfiniteContext = () => {
 
 type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
-  modelId: number;
+  model: ModelById;
   username?: string;
   modelVersions?: ModelVersionsProps[];
   generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
@@ -63,7 +67,7 @@ type ImagesAsPostsInfiniteProps = {
 
 const LIMIT = 50;
 export default function ImagesAsPostsInfinite({
-  modelId,
+  model,
   username,
   modelVersions,
   selectedVersionId,
@@ -75,13 +79,14 @@ export default function ImagesAsPostsInfinite({
   const isMobile = useContainerSmallerThan('sm');
   // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
+  const [opened, setOpened] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
   const setFilters = useSetFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
     modelVersionId: selectedVersionId,
-    modelId,
+    modelId: model.id,
     username,
     types: undefined, // override global types image filter
   });
@@ -104,22 +109,29 @@ export default function ImagesAsPostsInfinite({
     isLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
 
+  const {
+    hiddenImages: galleryHiddenImages,
+    hiddenTags: galleryHiddenTags,
+    hiddenUsers: galleryHiddenUsers,
+    isLoading: loadingGallerySettings,
+  } = useModelGallerySettings({ modelId: model.id });
+
   const items = useMemo(() => {
     // TODO - fetch user reactions for images separately
-    if (isLoadingHidden) return [];
+    if (isLoadingHidden || loadingGallerySettings) return [];
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
     const filtered = arr
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
-        if (hiddenUsers.get(x.user.id)) return false;
+        if (hiddenUsers.get(x.user.id) || galleryHiddenUsers.get(x.user.id)) return false;
         return true;
       })
       .map(({ images, ...x }) => {
         const filteredImages = images?.filter((i) => {
           if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
-          if (hiddenImages.get(i.id)) return false;
+          if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
           for (const tag of i.tagIds ?? []) {
-            if (hiddenTags.get(tag)) return false;
+            if (hiddenTags.get(tag) || galleryHiddenTags.get(tag)) return false;
           }
           return true;
         });
@@ -133,17 +145,28 @@ export default function ImagesAsPostsInfinite({
       })
       .filter(isDefined);
     return filtered;
-  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, isLoadingHidden]);
+  }, [
+    data,
+    currentUser,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    isLoadingHidden,
+    galleryHiddenImages,
+    galleryHiddenTags,
+    galleryHiddenUsers,
+    loadingGallerySettings,
+  ]);
 
   const isMuted = currentUser?.muted ?? false;
-  const addPostLink = `/posts/create?modelId=${modelId}${
+  const addPostLink = `/posts/create?modelId=${model.id}${
     selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
   }&returnUrl=${router.asPath}`;
   const { excludeCrossPosts } = imageFilters;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider
-      value={{ filters, modelVersions, showModerationOptions }}
+      value={{ filters, modelVersions, showModerationOptions, model }}
     >
       <MasonryProvider columnWidth={310} maxColumnCount={6} maxSingleColumnWidth={450}>
         <MasonryContainer
@@ -177,7 +200,7 @@ export default function ImagesAsPostsInfinite({
                 </Group>
               )}
               {showModerationOptions && (
-                <ActionIcon variant="outline" ml="auto">
+                <ActionIcon variant="outline" ml="auto" onClick={() => setOpened(true)}>
                   <IconSettings size={16} />
                 </ActionIcon>
               )}
@@ -289,6 +312,8 @@ export default function ImagesAsPostsInfinite({
           </Stack>
         </Paper>
       )} */}
+
+      <GalleryModerationModal opened={opened} onClose={() => setOpened(false)} />
     </ImagesAsPostsInfiniteContext.Provider>
   );
 }
