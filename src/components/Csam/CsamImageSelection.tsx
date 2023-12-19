@@ -48,7 +48,7 @@ export function CsamImageSelection({ imageId }: { imageId?: number }) {
         <Loader />
       </Center>
     );
-  if (!images.length) return <NoContent message="No images found for this user" />;
+  if (!images.length) return <NoContent p="xl" message="No images found for this user" />;
 
   return (
     <MasonryProvider columnWidth={300} maxColumnCount={7} maxSingleColumnWidth={450}>

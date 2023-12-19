@@ -19,6 +19,7 @@ import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion
 import { Job } from '~/server/jobs/job';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
+import { csamJobs } from '~/server/jobs/process-csam';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -70,6 +71,7 @@ export const jobs: Job[] = [
   rewardsDailyReset,
   ...bountyJobs,
   ...Object.values(eventEngineJobs),
+  // ...csamJobs,
 ];
 
 const log = createLogger('jobs', 'green');

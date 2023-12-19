@@ -8,7 +8,7 @@ import {
   processCsamReport,
 } from '~/server/services/csam.service';
 
-export const sendCsamReportsJob = createJob('send-csam-reports', '30 */1 * * *', async () => {
+const sendCsamReportsJob = createJob('send-csam-reports', '0 */1 * * *', async () => {
   const reports = await getCsamsToReport();
   // wait for each process to finish before going to the next
   for (const report of reports) {
@@ -16,7 +16,7 @@ export const sendCsamReportsJob = createJob('send-csam-reports', '30 */1 * * *',
   }
 });
 
-export const archiveCsamReportDataJob = createJob('send-csam-reports', '0 */1 * * *', async () => {
+const archiveCsamReportDataJob = createJob('send-csam-reports', '20 */1 * * *', async () => {
   const reports = await getCsamsToArchive();
   // wait for each process to finish before going to the next
   for (const report of reports) {
@@ -24,9 +24,9 @@ export const archiveCsamReportDataJob = createJob('send-csam-reports', '0 */1 * 
   }
 });
 
-export const removeContentForCsamReportsJob = createJob(
+const removeContentForCsamReportsJob = createJob(
   'remove-csam-content',
-  '45 */1 * * *',
+  '40 */1 * * *',
   async () => {
     if (!isProd) return;
     const reports = await getCsamsToRemoveContent();
@@ -36,3 +36,5 @@ export const removeContentForCsamReportsJob = createJob(
     }
   }
 );
+
+export const csamJobs = [sendCsamReportsJob, archiveCsamReportDataJob];

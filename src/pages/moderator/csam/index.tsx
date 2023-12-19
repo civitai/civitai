@@ -110,9 +110,7 @@ export default function CsamReports() {
         <MantineReactTable
           columns={columns}
           data={reports}
-          manualFiltering
           manualPagination
-          manualSorting
           onPaginationChange={setPagination}
           enableMultiSort={false}
           rowCount={data?.totalItems ?? 0}

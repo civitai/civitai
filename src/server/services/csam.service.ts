@@ -58,7 +58,7 @@ export async function createCsamReport({
       })
     : null;
 
-  const date = report ? report.createdAt : new Date();
+  const date = new Date();
   if (!report) {
     await dbWrite.csamReport.create({
       data: {
@@ -76,7 +76,6 @@ export async function createCsamReport({
         reportedById,
         details: props,
         images,
-        createdAt: date,
         reportSentAt: null,
         archivedAt: null,
         contentRemovedAt: null,
