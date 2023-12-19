@@ -229,74 +229,6 @@ export const deleteClubPost = async ({
   });
 };
 
-export const getResourceDetailsForClubPostCreation = async ({
-  entities,
-  userId,
-  isModerator,
-  username,
-}: {
-  entities: [
-    {
-      entityId: number;
-      entityType: SupportedClubEntities | 'Model';
-    }
-  ];
-  userId?: number;
-  isModerator?: boolean;
-  username?: string;
-}) => {
-  const postData = await dbRead.$queryRaw<
-    {
-      title: string | null;
-      description: string | null;
-      entityId: number;
-      entityType: SupportedClubEntities | 'Model';
-    }[]
-  >`
-    WITH entities AS (
-      SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
-        "entityId" INTEGER,
-        "entityType" VARCHAR
-      )
-    )
-    SELECT  
-      e.entityId,
-      e.entityType,
-      COALESCE(
-        m.name,
-        a.title,
-        p.title,
-        mmv.name || ' - ' || mv.name
-      ) AS title,
-      COALESCE (
-        m.description,
-        a.content,
-        p.detail,
-        mv.description
-      ) as description
-    FROM entities e 
-    LEFT JOIN "Model" m ON m.id = e."entityId" AND e."entityType" = 'Model' 
-    LEFT JOIN "Article" a ON a.id = e."entityId" AND e."entityType" = 'Article'
-    LEFT JOIN "Post" p ON p.id = e."entityId" AND e."entityType" = 'Post'
-    LEFT JOIN "ModelVersion" mv ON mv.id = e."entityId" AND e."entityType" = 'ModelVersion'
-    LEFT JOIN "Model" mmv ON mmv.id = mv."modelId" 
-  `;
-
-  const data = await getClubPostResourceData({
-    clubPosts: entities,
-    userId,
-    isModerator,
-    username,
-  });
-
-  return postData.map((d) => {
-    return {
-      ...d,
-      data: data.find((x) => x.entityId === d.entityId && x.entityType === d.entityType)?.data,
-    };
-  });
-};
-
 interface ModelClubPostResource {
   entityType: 'Model';
   data: GetModelsWithImagesAndModelVersions;
@@ -437,5 +369,73 @@ export const getClubPostResourceData = async ({
     }
 
     return res;
+  });
+};
+
+export const getResourceDetailsForClubPostCreation = async ({
+  entities,
+  userId,
+  isModerator,
+  username,
+}: {
+  entities: [
+    {
+      entityId: number;
+      entityType: SupportedClubEntities | 'Model';
+    }
+  ];
+  userId?: number;
+  isModerator?: boolean;
+  username?: string;
+}) => {
+  const postData = await dbRead.$queryRaw<
+    {
+      title: string | null;
+      description: string | null;
+      entityId: number;
+      entityType: SupportedClubEntities | 'Model';
+    }[]
+  >`
+    WITH entities AS (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
+        "entityId" INTEGER,
+        "entityType" VARCHAR
+      )
+    )
+    SELECT  
+      e.entityId,
+      e.entityType,
+      COALESCE(
+        m.name,
+        a.title,
+        p.title,
+        mmv.name || ' - ' || mv.name
+      ) AS title,
+      COALESCE (
+        m.description,
+        a.content,
+        p.detail,
+        mv.description
+      ) as description
+    FROM entities e 
+    LEFT JOIN "Model" m ON m.id = e."entityId" AND e."entityType" = 'Model' 
+    LEFT JOIN "Article" a ON a.id = e."entityId" AND e."entityType" = 'Article'
+    LEFT JOIN "Post" p ON p.id = e."entityId" AND e."entityType" = 'Post'
+    LEFT JOIN "ModelVersion" mv ON mv.id = e."entityId" AND e."entityType" = 'ModelVersion'
+    LEFT JOIN "Model" mmv ON mmv.id = mv."modelId" 
+  `;
+
+  const data = await getClubPostResourceData({
+    clubPosts: entities,
+    userId,
+    isModerator,
+    username,
+  });
+
+  return postData.map((d) => {
+    return {
+      ...d,
+      data: data.find((x) => x.entityId === d.entityId && x.entityType === d.entityType)?.data,
+    };
   });
 };
