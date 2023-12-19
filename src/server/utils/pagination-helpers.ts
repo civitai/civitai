@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
 import { PaginationInput } from '~/server/schema/base.schema';
@@ -80,5 +81,64 @@ export async function getPagedData<TQuery extends PaginationInput, TData>(
     totalPages: !!take && !!count ? Math.ceil(count / take) : 1,
     totalItems: count,
     items,
+  };
+}
+
+type SortOrder = 'ASC' | 'DESC';
+
+interface SortField {
+  field: string;
+  order: SortOrder;
+}
+
+function parseSortString(sortString: string): SortField[] {
+  return sortString.split(',').map((part) => {
+    const [field, order = 'ASC'] = part.trim().split(' ').filter(Boolean);
+    return { field, order: order.toUpperCase() as SortOrder };
+  });
+}
+
+function parseCursor(fields: SortField[], cursor: string | number | bigint) {
+  if (typeof cursor === 'number' || typeof cursor === 'bigint')
+    return { [fields[0].field]: cursor };
+
+  const values = cursor.split(':').map(Number);
+  const result: Record<string, number> = {};
+  for (let i = 0; i < fields.length; i++) {
+    result[fields[i].field] = values[i];
+  }
+  return result;
+}
+
+export function getCursor(sortString: string, cursor: string | number | bigint | undefined) {
+  const sortFields = parseSortString(sortString);
+  let where: Prisma.Sql | undefined;
+  if (cursor) {
+    const cursors = parseCursor(sortFields, cursor);
+    const conditions: Prisma.Sql[] = [];
+
+    for (let i = 0; i < sortFields.length; i++) {
+      const conditionParts: Prisma.Sql[] = [];
+      for (let j = 0; j <= i; j++) {
+        const { field, order } = sortFields[j];
+        let operator = j < i ? '=' : order === 'DESC' ? '<' : '>';
+        if (j < i) operator = '=';
+
+        conditionParts.push(
+          Prisma.sql`${Prisma.raw(field)} ${Prisma.raw(operator)} ${cursors[field]}`
+        );
+      }
+      conditions.push(Prisma.sql`(${Prisma.join(conditionParts, ' AND ')})`);
+    }
+
+    where = Prisma.sql`(${Prisma.join(conditions, ' OR ')})`;
+  }
+
+  const sortProps = sortFields.map((x) => x.field);
+  const prop =
+    sortFields.length === 1 ? sortFields[0].field : `CONCAT(${sortProps.join(`, ':', `)})`;
+  return {
+    where,
+    prop,
   };
 }

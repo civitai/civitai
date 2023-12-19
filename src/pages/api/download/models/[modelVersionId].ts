@@ -101,23 +101,12 @@ export default RateLimitedEndpoint(
 
       const userId = session?.user?.id;
       if (userId) {
-        await dbWrite.downloadHistory.upsert({
-          where: {
-            userId_modelVersionId: {
-              userId,
-              modelVersionId,
-            },
-          },
-          create: {
-            userId,
-            modelVersionId,
-            downloadAt: now,
-            hidden: false,
-          },
-          update: {
-            downloadAt: now,
-          },
-        });
+        await dbWrite.$executeRaw`
+          -- Update user history
+          INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
+          VALUES (${userId}, ${modelVersionId}, ${now}, false)
+          ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
+        `;
 
         await playfab.trackEvent(userId, {
           eventName: 'user_download_model',

@@ -324,7 +324,7 @@ export const updateUserHandler = async ({
     });
 
     // Delete old profilePic and ingest new one
-    if (user.profilePictureId && user.profilePictureId !== profilePicture?.id) {
+    if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
       await deleteImageById({ id: user.profilePictureId });
     }
 

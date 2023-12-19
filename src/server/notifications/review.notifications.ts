@@ -73,7 +73,7 @@ export const reviewNotifications = createNotificationProcessor({
             'modelVersionId', mv.id,
             'modelVersionName', mv.name
           ) "details"
-        FROM "DownloadHistoryNew" ua
+        FROM "DownloadHistory" ua
         JOIN "ModelVersion" mv ON mv.id = ua."modelVersionId" AND mv.status = 'Published'
         JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
         WHERE ua."userId" IS NOT NULL

@@ -1090,7 +1090,6 @@ model Image {
   tagComposites      ImageTag[]
   metrics            ImageMetric[]
   stats              ImageStat?
-  rank               ImageRank?
   modHelper          ImageModHelper?
   resources          ImageResource[]
   resourceHelper     ImageResourceHelper[]
@@ -3100,62 +3099,6 @@ model ImageStat {
   viewCountMonth           Int   @default(0)
   viewCountYear            Int   @default(0)
   viewCountAllTime         Int   @default(0)
-}
-
-/// @view
-model ImageRank {
-  imageId                      Int   @id
-  image                        Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  cryCountDayRank              Int   @default(0)
-  cryCountWeekRank             Int   @default(0)
-  cryCountMonthRank            Int   @default(0)
-  cryCountYearRank             Int   @default(0)
-  cryCountAllTimeRank          Int   @default(0)
-  dislikeCountDayRank          Int   @default(0)
-  dislikeCountWeekRank         Int   @default(0)
-  dislikeCountMonthRank        Int   @default(0)
-  dislikeCountYearRank         Int   @default(0)
-  dislikeCountAllTimeRank      Int   @default(0)
-  heartCountDayRank            Int   @default(0)
-  heartCountWeekRank           Int   @default(0)
-  heartCountMonthRank          Int   @default(0)
-  heartCountYearRank           Int   @default(0)
-  heartCountAllTimeRank        Int   @default(0)
-  laughCountDayRank            Int   @default(0)
-  laughCountWeekRank           Int   @default(0)
-  laughCountMonthRank          Int   @default(0)
-  laughCountYearRank           Int   @default(0)
-  laughCountAllTimeRank        Int   @default(0)
-  likeCountDayRank             Int   @default(0)
-  likeCountWeekRank            Int   @default(0)
-  likeCountMonthRank           Int   @default(0)
-  likeCountYearRank            Int   @default(0)
-  likeCountAllTimeRank         Int   @default(0)
-  commentCountDayRank          Int   @default(0)
-  commentCountWeekRank         Int   @default(0)
-  commentCountMonthRank        Int   @default(0)
-  commentCountYearRank         Int   @default(0)
-  commentCountAllTimeRank      Int   @default(0)
-  reactionCountDayRank         Int   @default(0)
-  reactionCountWeekRank        Int   @default(0)
-  reactionCountMonthRank       Int   @default(0)
-  reactionCountYearRank        Int   @default(0)
-  reactionCountAllTimeRank     Int   @default(0)
-  collectedCountDayRank        Int   @default(0)
-  collectedCountWeekRank       Int   @default(0)
-  collectedCountMonthRank      Int   @default(0)
-  collectedCountYearRank       Int   @default(0)
-  collectedCountAllTimeRank    Int   @default(0)
-  tippedCountDayRank           Int   @default(0)
-  tippedCountWeekRank          Int   @default(0)
-  tippedCountMonthRank         Int   @default(0)
-  tippedCountYearRank          Int   @default(0)
-  tippedCountAllTimeRank       Int   @default(0)
-  tippedAmountCountDayRank     Int   @default(0)
-  tippedAmountCountWeekRank    Int   @default(0)
-  tippedAmountCountMonthRank   Int   @default(0)
-  tippedAmountCountYearRank    Int   @default(0)
-  tippedAmountCountAllTimeRank Int   @default(0)
 }
 
 /// @view
