@@ -197,7 +197,7 @@ export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z
   .object({
     limit: z.number().min(0).max(200).default(100),
-    cursor: z.union([z.bigint(), z.number()]).optional(),
+    cursor: z.union([z.bigint(), z.number(), z.string()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
     collectionId: z.number().optional(),

@@ -59,6 +59,7 @@ import { ImageResourceHelperModel, profileImageSelect } from '~/server/selectors
 import { purgeCache } from '~/server/cloudflare/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { promptWordReplace } from '~/utils/metadata/audit';
+import { getCursor } from '~/server/utils/pagination-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -518,7 +519,6 @@ export const getAllImages = async ({
 
   // Filter to specific model/review content
   const prioritizeUser = !!prioritizedUserIds?.length;
-  const optionalRank = !!(modelId || modelVersionId || reviewId || username || collectionId);
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (reviewId) irhAnd.push(Prisma.sql`re."id" = ${reviewId}`);
@@ -638,10 +638,14 @@ export const getAllImages = async ({
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
-    if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
-    else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
-    else if (sort === ImageSort.MostCollected) orderBy = `r."collectedCount${period}Rank"`;
-    else if (sort === ImageSort.MostTipped) orderBy = `r."tippedAmountCount${period}Rank"`;
+    if (sort === ImageSort.MostComments)
+      orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    else if (sort === ImageSort.MostReactions)
+      orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
+    else if (sort === ImageSort.MostCollected)
+      orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    else if (sort === ImageSort.MostTipped)
+      orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
     else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     else orderBy = `i."id" DESC`;
   }
@@ -658,18 +662,12 @@ export const getAllImages = async ({
   if (period !== 'AllTime' && periodMode !== 'stats')
     AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
 
-  const [cursorProp, cursorDirection] =
-    sort === ImageSort.Random ? `i."id"`.split(' ') : orderBy?.split(' ');
-  if (cursor) {
-    if (skip) throw new Error('Cannot use skip with cursor');
+  // Handle cursor & skip conflict
+  if (cursor && skip) throw new Error('Cannot use skip with cursor');
 
-    if (sort !== ImageSort.Random) {
-      // Random sort cursor is handled by the WITH query
-      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-      if (cursorProp)
-        AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
-    }
-  }
+  // Handle cursor prop
+  const { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
+  if (cursorClause) AND.push(cursorClause);
 
   if (prioritizeUser) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
@@ -697,8 +695,6 @@ export const getAllImages = async ({
     );
   }
 
-  const includeRank = cursorProp?.startsWith('r.');
-
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     FROM "Image" i
@@ -709,28 +705,9 @@ export const getAllImages = async ({
         : ''
     )}
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    ${Prisma.raw(
-      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
-    )}
-    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
-
-  const exclusions =
-    (excludedImageIds?.length ?? 0) +
-    (excludedTagIds?.length ?? 0) +
-    (excludedUserIds?.length ?? 0);
-
-  const queryHeader = Object.entries({
-    exclusions,
-    cursor,
-    skip,
-    limit,
-    ...(headers ?? {}),
-  })
-    .filter(([, v]) => v !== undefined)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(', ');
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
@@ -790,7 +767,7 @@ export const getAllImages = async ({
       ) reactions,
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
-      ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
+      ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
@@ -887,6 +864,7 @@ export const getAllImages = async ({
       tippedAmountCount,
       profilePictureId,
       viewCount,
+      cursorId,
       ...i
     }) => ({
       ...i,

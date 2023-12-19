@@ -61,10 +61,10 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes: SortableAttributes = [
     'createdAt',
-    'rank.commentCountAllTimeRank',
-    'rank.reactionCountAllTimeRank',
-    'rank.collectedCountAllTimeRank',
-    'rank.tippedAmountCountAllTimeRank',
+    'stats.commentCountAllTime',
+    'stats.reactionCountAllTime',
+    'stats.collectedCountAllTime',
+    'stats.tippedAmountCountAllTime',
   ];
 
   const filterableAttributes: FilterableAttributes = [
@@ -159,14 +159,10 @@ type ImageForSearchIndex = {
     heartCountAllTime: number;
     laughCountAllTime: number;
     likeCountAllTime: number;
+    reactionCountAllTime: number;
     commentCountAllTime: number;
+    collectedCountAllTime: number;
     tippedAmountCountAllTime: number;
-  } | null;
-  rank: {
-    commentCountAllTimeRank: number;
-    reactionCountAllTimeRank: number;
-    collectedCountAllTimeRank: number;
-    tippedAmountCountAllTimeRank: number;
   } | null;
 };
 
@@ -242,18 +238,6 @@ const onFetchItemsToIndex = async ({
       WHERE ${Prisma.join(WHERE, ' AND ')}
     ORDER BY i."id"
     LIMIT ${READ_BATCH_SIZE}
-  ), ranks AS MATERIALIZED (
-    SELECT
-      ir."imageId",
-      jsonb_build_object(
-        'commentCountAllTimeRank', ir."commentCountAllTimeRank",
-        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank",
-        'collectedCountAllTimeRank', ir."collectedCountAllTimeRank",
-        'tippedAmountCountAllTimeRank', ir."tippedAmountCountAllTimeRank"
-      ) rank
-    FROM "ImageRank" ir
-    WHERE ir."imageId" IN (SELECT id FROM target)
-    GROUP BY ir."imageId"
   ), stats AS MATERIALIZED (
       SELECT
         im."imageId",
@@ -264,6 +248,8 @@ const onFetchItemsToIndex = async ({
           'dislikeCountAllTime', SUM("dislikeCount"),
           'likeCountAllTime', SUM("likeCount"),
           'cryCountAllTime', SUM("cryCount"),
+          'reactionCountAllTime', SUM(COALESCE("laughCount", 0) + COALESCE("heartCount", 0) + COALESCE("dislikeCount", 0) + COALESCE("likeCount", 0) + COALESCE("cryCount", 0)),
+          'collectedCountAllTime', SUM("collectedCount"),
           'tippedAmountCountAllTime', SUM("tippedAmountCount")
         ) stats
       FROM "ImageMetric" im
@@ -307,7 +293,6 @@ const onFetchItemsToIndex = async ({
   )
   SELECT
     t.*,
-    (SELECT rank FROM ranks r WHERE r."imageId" = t.id),
     (SELECT stats FROM stats s WHERE s."imageId" = t.id),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
