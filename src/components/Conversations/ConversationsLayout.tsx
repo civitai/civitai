@@ -1,6 +1,7 @@
 import { ConversationsSidebar } from '~/components/Conversations/ConversationsSidebar';
 import { AppShell, Header, Text } from '@mantine/core';
 
+// TODO: Create conversations provider to maintain states
 export default function ConversationsLayout({ children }: { children: React.ReactNode }) {
   return (
     <AppShell

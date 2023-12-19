@@ -1,5 +1,6 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import ConversationsLayout from '~/components/Conversations/ConversationsLayout';
+import { ConversationsDefault } from '~/components/Conversations/ConvsationsDefault';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSSG: true,
@@ -13,7 +14,7 @@ import ConversationsLayout from '~/components/Conversations/ConversationsLayout'
 export default function ConversationsPage() {
   return (
     <ConversationsLayout>
-      <h1>Default Convo copy</h1>
+      <ConversationsDefault />
     </ConversationsLayout>
   );
 }

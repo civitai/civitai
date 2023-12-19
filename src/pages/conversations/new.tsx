@@ -1,38 +1,60 @@
 import ConversationsLayout from '~/components/Conversations/ConversationsLayout';
 import { serviceClient } from '~/utils/trpc';
-import { TextInput, Group, Button } from '@mantine/core';
-import { IconSend } from '@tabler/icons-react';
+import { TextInput, Group, Button, Badge, ActionIcon } from '@mantine/core';
+import { IconSend, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useRouter } from 'next/router';
+import { UserSearchDropdown } from '~/components/Conversations/ConversationsUserSearch';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
-/**
- * TODO:
- * - Search and add users
- * - Send message
- * - Creates new conversation and redirects to conversationId
- */
 export default function ConversationsNewPage() {
   const { push } = useRouter();
   const [text, setText] = useState<null | string>(null);
   const [title, setTitle] = useState<null | string>(null);
+  const [users, setUsers] = useState<Partial<UserWithCosmetics>[]>([]);
 
   // TODO: Error handling
   const handleNewConversation = async () => {
     const data = await serviceClient.conversations.createConversation.mutate({
-      name: title || 'New conversation', // TODO: Use usernames instead
-      users: [],
+      name: title || users.map((user) => user.username).join(', '),
+      users: users.map((user) => user.id || 0),
     });
 
-    const message = await serviceClient.messages.createMessage.mutate({
-      conversationId: data.id,
-      text: text || '',
-    });
+    if (text) {
+      await serviceClient.messages.createMessage.mutate({
+        conversationId: data.id,
+        text: text || '',
+      });
+    }
 
     push(`/conversations/${data.id}`);
   };
 
+  const handleRemoveUser = (user: Partial<UserWithCosmetics>) => {
+    setUsers((prev) => prev.filter((u) => u.id !== user.id));
+  };
+
+  const removeButton = (
+    <ActionIcon size="xs" variant="transparent">
+      <IconX size={10} />
+    </ActionIcon>
+  );
+
   return (
     <ConversationsLayout>
+      <UserSearchDropdown onItemSelected={(item) => setUsers((prev) => [...prev, item])} />
+      <Group my={50}>
+        {users.map((user) => (
+          <Badge
+            color="gray"
+            onClick={() => handleRemoveUser(user)}
+            key={user.id}
+            rightSection={removeButton}
+          >
+            {user.username}
+          </Badge>
+        ))}
+      </Group>
       <Group>
         <TextInput placeholder="Set title" onChange={(event) => setTitle(event.target.value)} />
       </Group>

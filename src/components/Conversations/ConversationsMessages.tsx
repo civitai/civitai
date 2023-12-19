@@ -16,7 +16,6 @@ export function ConversationMessages() {
   useEffect(() => {
     const fetchConversations = async () => {
       setLoading(true);
-      // TODO: Replace this id with param from route
       const data = await serviceClient.messages.getMessagesByConversationId.query({
         conversationId: router.query.conversationId || '',
         first: 10,

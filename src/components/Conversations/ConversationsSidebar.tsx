@@ -19,10 +19,11 @@ export function ConversationsSidebar() {
   const [conversations, setConversations] = useState<any>([]);
   const [loading, setLoading] = useState(false);
 
+  // TODO: Pagination
   useEffect(() => {
     const fetchConversations = async () => {
       setLoading(true);
-      const data = await serviceClient.conversations.getConversations.query({ first: 3 });
+      const data = await serviceClient.conversations.getConversations.query({ first: 10 });
       setConversations(data);
       setLoading(false);
 
