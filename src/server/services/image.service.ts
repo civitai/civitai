@@ -638,12 +638,14 @@ export const getAllImages = async ({
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
-    // TODO.reactions: Need to add reaction count back in. This is a temporary fix. For that, requires to update the image.metrics table & job
-    if (sort === ImageSort.MostComments) orderBy = `im."commentCount" DESC, im."imageId"`;
+    if (sort === ImageSort.MostComments)
+      orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
     else if (sort === ImageSort.MostReactions)
-      orderBy = `im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
-    else if (sort === ImageSort.MostCollected) orderBy = `im."collectedCount" DESC, im."imageId"`;
-    else if (sort === ImageSort.MostTipped) orderBy = `im."tippedAmountCount" DESC, im."imageId"`;
+      orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
+    else if (sort === ImageSort.MostCollected)
+      orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    else if (sort === ImageSort.MostTipped)
+      orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
     else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     else orderBy = `i."id" DESC`;
   }
