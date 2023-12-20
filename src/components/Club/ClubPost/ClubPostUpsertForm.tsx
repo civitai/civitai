@@ -119,6 +119,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
           <InputSimpleImageUpload
             name="coverImage"
             label="Post cover image"
+            description={`Suggested resolution: ${constants.clubs.coverImageWidth}x${constants.clubs.coverImageHeight}px`}
             aspectRatio={constants.clubs.postCoverImageAspectRatio}
             previewWidth={1250}
             style={{ maxWidth: '100%' }}

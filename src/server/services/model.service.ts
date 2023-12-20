@@ -610,8 +610,6 @@ export const getModelsRaw = async ({
     LIMIT ${take}
   `;
 
-  console.log(models.length, take);
-
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
     select: { ...profileImageSelect, ingestion: true },
