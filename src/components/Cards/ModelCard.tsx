@@ -63,6 +63,8 @@ import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuIte
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
+import { ClubPostFromResourceMenuItem } from '../Club/ClubPostFromResourceMenuItem';
+import { AddToClubMenuItem } from '../Club/AddToClubMenuItem';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -146,6 +148,17 @@ export function ModelCard({ data }: Props) {
       />,
     ]);
   }
+
+  if (features.clubs) {
+    contextMenuItems = contextMenuItems.concat([
+      <ClubPostFromResourceMenuItem
+        key="create-club-post-from-resource"
+        entityType="Model"
+        entityId={data.id}
+      />,
+    ]);
+  }
+
   if (features.profileOverhaul && currentUser?.id === data.user.id) {
     contextMenuItems = contextMenuItems.concat([
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
@@ -266,7 +279,7 @@ export function ModelCard({ data }: Props) {
                               </Group>
                               <Stack spacing="xs">
                                 {contextMenuItems.length > 0 && (
-                                  <Menu position="left-start" withArrow offset={-5}>
+                                  <Menu position="left-start" withArrow offset={-5} withinPortal>
                                     <Menu.Target>
                                       <ActionIcon
                                         variant="transparent"

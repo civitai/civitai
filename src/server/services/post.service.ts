@@ -43,6 +43,8 @@ import {
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { profileImageSelect } from '../selectors/image.selector';
+import { getClubDetailsForResource } from './club.service';
+import { entityRequiresClub, hasEntityAccess } from './common.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -84,12 +86,18 @@ export const getPostsInfinite = async ({
   include,
   draftOnly,
   followed,
+  clubId,
   browsingMode,
-}: PostsQueryInput & { user?: SessionUser }) => {
+  ignoreListedStatus,
+}: PostsQueryInput & {
+  user?: { id: number; isModerator?: boolean; username?: string };
+  ignoreListedStatus?: boolean;
+}) => {
   const AND = [Prisma.sql`1 = 1`];
+  const WITH: Prisma.Sql[] = [];
 
   const isOwnerRequest =
-    !!user && !!username && postgresSlugify(user.username) === postgresSlugify(username);
+    !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
   let targetUser: number | undefined;
   if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
@@ -214,7 +222,43 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
   }
 
+  if (!ignoreListedStatus) {
+    AND.push(
+      Prisma.sql`
+      (
+          p."unlisted" = false
+          ${Prisma.raw(user?.id ? `OR p."userId" = ${user?.id}` : '')}
+      )
+      `
+    );
+  }
+
+  if (clubId) {
+    WITH.push(Prisma.sql`
+      "clubPosts" AS (
+        SELECT DISTINCT ON (p."id") p."id" as "postId"
+        FROM "EntityAccess" ea
+        JOIN "Post" p ON p."id" = ea."accessToId"
+        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
+        WHERE (
+            (
+             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
+            )
+            OR (
+              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
+            )
+          )
+          AND ea."accessToType" = 'Post'
+      )
+    `);
+
+    joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
+  }
+
+  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+
   const postsRaw = await dbRead.$queryRaw<GetAllPostsRaw[]>`
+    ${queryWith}
     SELECT
       p.id,
       p.nsfw,
@@ -266,9 +310,17 @@ export const getPostsInfinite = async ({
   const userCosmetics = include?.includes('cosmetics')
     ? await getCosmeticsForUsers(postsRaw.map((i) => i.userId))
     : undefined;
+
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
     select: profileImageSelect,
+  });
+
+  const clubRequirement = await entityRequiresClub({
+    entities: postsRaw.map((post) => ({
+      entityId: post.id,
+      entityType: 'Post',
+    })),
   });
 
   return {
@@ -277,6 +329,8 @@ export const getPostsInfinite = async ({
       .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
         const { imageCount, ...image } =
           images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
+        const requiresClub =
+          clubRequirement.find((r) => r.entityId === post.id)?.requiresClub ?? undefined;
 
         return {
           ...post,
@@ -291,6 +345,7 @@ export const getPostsInfinite = async ({
           },
           stats,
           image,
+          requiresClub,
         };
       })
       .filter((x) => x.imageCount !== 0),
@@ -322,10 +377,25 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
   });
+
   if (!post) throw throwNotFoundError();
+
+  const [access] = await hasEntityAccess({
+    userId: user?.id,
+    isModerator: user?.isModerator,
+    entities: [
+      {
+        entityType: 'Post',
+        entityId: id,
+      },
+    ],
+  });
+
   return {
     ...post,
+    detail: access?.hasAccess ?? true ? post.detail : null,
     tags: post.tags.flatMap((x) => x.tag),
+    hasAccess: access.hasAccess,
   };
 };
 
@@ -344,14 +414,25 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
     meta: x.meta as ImageMetaProps | null,
     _count: { tags: imageTagCounts[x.id] },
   }));
+
   const castedPost = {
     ...post,
     images,
   };
 
+  const [entityClubDetails] = await getClubDetailsForResource({
+    entities: [
+      {
+        entityType: 'Post',
+        entityId: post.id,
+      },
+    ],
+  });
+
   return {
     ...castedPost,
     tags: castedPost.tags.flatMap((x) => x.tag),
+    clubs: entityClubDetails?.clubs ?? [],
   };
 };
 
@@ -376,9 +457,20 @@ export const createPost = async ({
     ...rawResult,
     images,
   };
+
+  const [entityClubDetails] = await getClubDetailsForResource({
+    entities: [
+      {
+        entityType: 'Post',
+        entityId: result.id,
+      },
+    ],
+  });
+
   return {
     ...result,
     tags: result.tags.flatMap((x) => x.tag),
+    clubs: entityClubDetails?.clubs ?? [],
   };
 };
 

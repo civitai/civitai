@@ -13,7 +13,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { chunk } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
@@ -482,6 +482,16 @@ export const getAllImages = async ({
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
 
+  const showClubPosts = !!(
+    postId ||
+    imageId ||
+    collectionId ||
+    modelId ||
+    modelVersionId ||
+    reviewId ||
+    username
+  );
+
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
     return { items: [], nextCursor: undefined };
@@ -698,6 +708,10 @@ export const getAllImages = async ({
     );
   }
 
+  if (!showClubPosts) {
+    AND.push(Prisma.sql`p."availability" = 'Public'`);
+  }
+
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -709,7 +723,9 @@ export const getAllImages = async ({
         : ''
     )}
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${Prisma.raw(
+      isDev ? 'LEFT ' : ''
+    )}JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -775,6 +791,8 @@ export const getAllImages = async ({
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
+
+  console.log('rawImages', rawImages);
 
   let nextCursor: bigint | undefined;
   if (rawImages.length > limit) {

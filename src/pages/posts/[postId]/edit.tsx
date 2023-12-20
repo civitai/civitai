@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Group, Badge, Grid } from '@mantine/core';
+import { Container, Stack, Title, Group, Badge, Grid, Divider } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 
@@ -13,6 +13,7 @@ import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { EditPostClubs } from '../../../components/Post/Edit/EditPostClubs';
 
 export default function PostEdit() {
   const mutating = useIsMutating();
@@ -47,6 +48,7 @@ export default function PostEdit() {
               </Badge>
             </Group>
             <EditPostControls />
+            <EditPostClubs />
             <EditPostReviews />
           </Stack>
         </ContainerGrid.Col>

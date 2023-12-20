@@ -118,6 +118,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
 import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
+import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -813,7 +814,7 @@ export default function ModelDetailsV2({
                         )}
                       </ToggleLockModel>
                     )}
-                    {isCreator && selectedVersion && (
+                    {isCreator && features.clubs && selectedVersion && (
                       <AddToClubMenuItem
                         entityId={selectedVersion.id}
                         entityType="ModelVersion"
@@ -833,6 +834,13 @@ export default function ModelDetailsV2({
                           version: selectedVersion,
                           versions: model.modelVersions,
                         }}
+                      />
+                    )}
+
+                    {features.clubs && selectedVersion && (
+                      <ClubPostFromResourceMenuItem
+                        entityType="ModelVersion"
+                        entityId={selectedVersion.id}
                       />
                     )}
                   </Menu.Dropdown>

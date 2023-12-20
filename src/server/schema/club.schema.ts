@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
-import { infiniteQuerySchema, paginationSchema } from '~/server/schema/base.schema';
+import { infiniteQuerySchema, paginationSchema, resourceInput } from '~/server/schema/base.schema';
 import { ClubSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 
@@ -58,8 +58,10 @@ export const getClubTiersInput = z.object({
   tierId: z.number().optional(),
 });
 
-export const supportedClubEntities = ['ModelVersion', 'Article'] as const;
+export const supportedClubEntities = ['ModelVersion', 'Article', 'Post'] as const;
 export type SupportedClubEntities = (typeof supportedClubEntities)[number];
+export const supportedClubPostEntities = [...supportedClubEntities, 'Model'] as const;
+export type SupportedClubPostEntities = (typeof supportedClubPostEntities)[number];
 
 export const clubResourceSchema = z.object({
   clubId: z.number(),
@@ -102,6 +104,8 @@ export const upsertClubPostInput = z.object({
   coverImage: comfylessImageSchema.nullish(),
   membersOnly: z.boolean().default(false),
   clubId: z.number(),
+  entityId: z.number().nullish(),
+  entityType: z.enum(supportedClubPostEntities).nullish(),
 });
 
 export type UpsertClubPostInput = z.infer<typeof upsertClubPostInput>;
@@ -135,3 +139,15 @@ export const updateClubResourceInput = clubResourceSchema.extend({
 });
 
 export type UpdateClubResourceInput = z.infer<typeof updateClubResourceInput>;
+
+export const clubResourceInput = resourceInput.extend({
+  entityType: z.enum(supportedClubEntities),
+});
+
+export type ClubResourceInput = z.infer<typeof clubResourceInput>;
+
+export const clubPostResourceInput = resourceInput.extend({
+  entityType: z.enum(supportedClubPostEntities),
+});
+
+export type ClubPostResourceInput = z.infer<typeof clubPostResourceInput>;
