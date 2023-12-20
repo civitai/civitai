@@ -3,6 +3,7 @@ import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
+import { dbWrite } from '~/server/db/client';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
@@ -344,6 +345,8 @@ export const imageMetrics = createMetricProcessor({
     await imagesSearchIndex.queueUpdate(
       affectedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
+
+    await updateMetricAgeGroups();
   },
   async clearDay({ db }) {
     await db.$executeRaw`
@@ -351,3 +354,21 @@ export const imageMetrics = createMetricProcessor({
     `;
   },
 });
+
+async function updateMetricAgeGroups() {
+  await dbWrite.$executeRaw`
+    UPDATE "ImageMetric"
+    SET "ageGroup" = CASE
+        WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'
+        WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'
+        WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'
+        WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'
+        ELSE 'AllTime'
+    END
+    WHERE
+      ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
+      ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
+      ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
+      ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
+  `;
+}
