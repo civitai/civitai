@@ -8,6 +8,7 @@ import { useFeatureFlags } from '../../providers/FeatureFlagsProvider';
 import { getDisplayName } from '../../utils/string-helpers';
 import { dialogStore } from '../Dialog/dialogStore';
 import { ManageClubMembershipModal } from './ClubMemberships/ManageClubMembershipModal';
+import { LoginPopover } from '../LoginPopover/LoginPopover';
 
 export const ClubRequirementNotice = ({
   entityId,
@@ -91,23 +92,25 @@ export const ClubRequirementNotice = ({
                 return (
                   <List.Item key={club.id}>
                     <Stack spacing={0}>
-                      <Anchor
-                        onClick={(e) => {
-                          dialogStore.trigger({
-                            component: ManageClubMembershipModal,
-                            props: {
-                              clubId: club.id,
-                              clubTierIds:
-                                requiredTiers.length > 0
-                                  ? requiredTiers.map((t) => t.id)
-                                  : undefined,
-                            },
-                          });
-                        }}
-                        span
-                      >
-                        {club.name} by {club.user.username}{' '}
-                      </Anchor>
+                      <LoginPopover>
+                        <Anchor
+                          onClick={(e) => {
+                            dialogStore.trigger({
+                              component: ManageClubMembershipModal,
+                              props: {
+                                clubId: club.id,
+                                clubTierIds:
+                                  requiredTiers.length > 0
+                                    ? requiredTiers.map((t) => t.id)
+                                    : undefined,
+                              },
+                            });
+                          }}
+                          span
+                        >
+                          {club.name} by {club.user.username}{' '}
+                        </Anchor>
+                      </LoginPopover>
                       {requiredTiers.length > 0 && (
                         <Text size="xs">
                           Only available on tiers:{' '}

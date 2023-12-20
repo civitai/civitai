@@ -816,6 +816,7 @@ export default function ModelDetailsV2({
                     )}
                     {isCreator && features.clubs && selectedVersion && (
                       <AddToClubMenuItem
+                        key="add-to-club"
                         entityId={selectedVersion.id}
                         entityType="ModelVersion"
                         resource={{

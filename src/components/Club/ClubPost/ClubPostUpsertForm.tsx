@@ -138,8 +138,8 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
             stickyToolbar
           />
           <Input.Wrapper
-            label="Link one of your resources to this post:"
-            description="By linking your resource, the resource card will be displayed in your club feed and post. This will not affect the resource permisisons or access. Your post title and description will be overwritten by the resource title and description."
+            label="Link a resources to this post"
+            description="By linking a resource, the resource card will be displayed in your club feed and post. This will not affect the resource permisisons or access. Your post title will be overwritten by the resource title if possible."
           >
             <Divider mt="md" size={0} />
             <Stack>
