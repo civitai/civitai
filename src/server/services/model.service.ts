@@ -374,8 +374,8 @@ export const getModelsRaw = async ({
 
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "ModelVersion" 
-      WHERE "id" IN (${Prisma.join(modelVersionIds, ',')})
+      SELECT 1 FROM "ModelVersion" mv
+      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')}) AND mv."modelId" = m."id"
     )`);
   }
 
@@ -606,10 +606,11 @@ export const getModelsRaw = async ({
       ) as "userCosmetics",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
-    
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take}
   `;
+
+  console.log(models.length, take);
 
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
@@ -617,7 +618,7 @@ export const getModelsRaw = async ({
   });
 
   let nextCursor: string | bigint | undefined;
-  if (take && models.length >= take) {
+  if (take && models.length > take) {
     const nextItem = models.pop();
     nextCursor = nextItem?.cursorId || undefined;
   }
@@ -982,9 +983,6 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
-  // TODO: getModelsRaw
-  //       user: { select: userWithCosmeticsSelect },
-  //       modelVersions.trainingStatus
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,

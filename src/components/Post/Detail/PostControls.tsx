@@ -3,6 +3,8 @@ import { CollectionType } from '@prisma/client';
 import { IconEdit, IconFlag, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
+import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -53,7 +55,17 @@ export function PostControls({
             >
               Edit Post
             </Menu.Item>
+            {isOwner && features.clubs && (
+              <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={postId} />
+            )}
           </>
+        )}
+        {features.clubs && (
+          <ClubPostFromResourceMenuItem
+            key="create-club-post-from-resource"
+            entityType="Post"
+            entityId={postId}
+          />
         )}
         {/* {features.collections && (
           <AddToCollectionMenuItem

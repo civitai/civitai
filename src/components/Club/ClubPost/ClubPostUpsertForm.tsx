@@ -14,9 +14,10 @@ import {
   Loader,
   Box,
   Input,
+  Select,
 } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import {
   Form,
@@ -33,7 +34,7 @@ import {
   SupportedClubPostEntities,
   upsertClubPostInput,
 } from '~/server/schema/club.schema';
-import { useMutateClub } from '~/components/Club/club.utils';
+import { useMutateClub, useQueryUserContributingClubs } from '~/components/Club/club.utils';
 import { constants } from '~/server/common/constants';
 import { ClubPostGetAll, ClubPostResource, ClubTier } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -44,46 +45,29 @@ import { ArticleCard } from '../../Cards/ArticleCard';
 import { PostCard } from '../../Cards/PostCard';
 import { QuickSearchDropdown } from '../../Search/QuickSearchDropdown';
 import { useCurrentUser } from '../../../hooks/useCurrentUser';
+import { ClubAdminPermission } from '@prisma/client';
+import { ClubPostResourceCard } from './ClubFeed';
 
 const formSchema = upsertClubPostInput;
 
 type Props = {
+  resource?: {
+    entityId: number;
+    entityType: SupportedClubPostEntities;
+  };
   clubPost?: ClubPostGetAll[number];
   clubId: number;
   onSuccess?: () => void;
   onCancel?: () => void;
 };
 
-export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostResource }) => {
-  if (!resourceData.data) {
-    return null;
-  }
-
-  if (resourceData.entityType === 'ModelVersion' || resourceData.entityType === 'Model') {
-    return (
-      <ModelCard
-        data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
-      />
-    );
-  }
-
-  if (resourceData.entityType === 'Article') {
-    return <ArticleCard data={resourceData.data} />;
-  }
-
-  if (resourceData.entityType === 'Post') {
-    return <PostCard data={resourceData.data} />;
-  }
-
-  return null;
-};
-
-export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel }: Props) {
+export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, resource }: Props) {
   const currentUser = useCurrentUser();
   const form = useForm({
     schema: formSchema,
     defaultValues: {
       membersOnly: true,
+      ...resource,
       ...clubPost,
       clubId,
     },
@@ -228,6 +212,79 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel }: Pr
     </Form>
   );
 }
+
+export const ClubPostFromResourceModal = ({
+  entityId,
+  entityType,
+  requiredClubIds,
+}: {
+  entityId: number;
+  entityType: SupportedClubPostEntities;
+  requiredClubIds: number[];
+}) => {
+  const currentUser = useCurrentUser();
+  const { userClubs, isLoading: isLoadingUserClubs } = useQueryUserContributingClubs();
+  const canCreateClubPostClubs = useMemo(() => {
+    return (
+      userClubs?.filter(
+        (club) =>
+          (!requiredClubIds?.length || requiredClubIds.includes(club.id)) &&
+          (club.userId === currentUser?.id ||
+            club.admin?.permissions.includes(ClubAdminPermission.ManagePosts))
+      ) ?? []
+    );
+  }, [userClubs, currentUser]);
+  const [selectedClubId, setSelectedClubId] = useState<number | null>(null);
+
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+
+  const handleSuccess = () => {
+    showSuccessNotification({
+      title: 'Club post created',
+      message: 'Your post was created and is now part of your club',
+    });
+
+    handleClose();
+  };
+
+  return (
+    <Modal {...dialog} size="lg" withCloseButton title="Create club post from this resource">
+      <Stack>
+        <Divider mx="-lg" />
+        {isLoadingUserClubs && (
+          <Center>
+            <Loader variant="bars" />
+          </Center>
+        )}
+        {canCreateClubPostClubs?.length > 0 ? (
+          <Select
+            label="What club do you want to add this post to?"
+            data={canCreateClubPostClubs.map((club) => ({
+              value: club.id.toString(),
+              label: club.name,
+            }))}
+            value={selectedClubId?.toString() ?? ''}
+            onChange={(clubId: string) => setSelectedClubId(Number(clubId))}
+          />
+        ) : (
+          <Text size="sm" color="dimmed">
+            You are not a member of, or own, any clubs that allow you to create posts.
+          </Text>
+        )}
+
+        {selectedClubId && (
+          <ClubPostUpsertForm
+            clubId={selectedClubId}
+            resource={{ entityId, entityType }}
+            onCancel={handleClose}
+            onSuccess={handleSuccess}
+          />
+        )}
+      </Stack>
+    </Modal>
+  );
+};
 
 export const ClubPostUpsertFormModal = (props: { clubId: number }) => {
   const dialog = useDialogContext();

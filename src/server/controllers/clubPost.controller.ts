@@ -75,23 +75,25 @@ export const getInfiniteClubPostsHandler = async ({
 
     return {
       nextCursor,
-      items: items.map(({ coverImage, ...x }) => ({
-        ...x,
-        entityType: x.entityType as SupportedClubPostEntities | null,
-        coverImage: coverImage
-          ? {
-              ...coverImage,
-              metadata: coverImage.metadata as MixedObject,
-              meta: coverImage.meta as ImageMetaProps,
-              tags: coverImage.tags.map((t) => t.tag),
-            }
-          : null,
-        data:
+      items: items.map(({ coverImage, ...x }) => {
+        const resource =
           x.entityType && x.entityId
             ? entityData.find((d) => d.entityId === x.entityId && d.entityType === x.entityType)
-                ?.data
+            : {};
+        return {
+          ...x,
+          ...resource,
+          entityType: x.entityType as SupportedClubPostEntities | null,
+          coverImage: coverImage
+            ? {
+                ...coverImage,
+                metadata: coverImage.metadata as MixedObject,
+                meta: coverImage.meta as ImageMetaProps,
+                tags: coverImage.tags.map((t) => t.tag),
+              }
             : null,
-      })),
+        };
+      }),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -148,6 +150,7 @@ export const getClubPostByIdHandler = async ({
 
     return {
       ...post,
+      ...entityData,
       entityType: post.entityType as SupportedClubPostEntities | null,
       coverImage: coverImage
         ? {
@@ -157,7 +160,6 @@ export const getClubPostByIdHandler = async ({
             tags: coverImage.tags.map((t) => t.tag),
           }
         : null,
-      data: entityData?.data ?? null,
     };
   } catch (error) {
     throw throwDbError(error);

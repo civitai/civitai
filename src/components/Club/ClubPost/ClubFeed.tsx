@@ -1,6 +1,8 @@
 import {
   ActionIcon,
   ActionIconProps,
+  Box,
+  Center,
   createStyles,
   Divider,
   Group,
@@ -13,7 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import React from 'react';
-import { ClubPostGetAll } from '~/types/router';
+import { ClubPostGetAll, ClubPostResource } from '~/types/router';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -45,6 +47,9 @@ import { useInView } from '~/hooks/useInView';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ClubAdminPermission } from '@prisma/client';
+import { ModelCard } from '~/components/Cards/ModelCard';
+import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { PostCard } from '~/components/Cards/PostCard';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -211,6 +216,13 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
 
           <ClubPostContextMenu clubPost={clubPost} />
         </Group>
+        {clubPost.entityType && clubPost.entityId && (
+          <Center my="sm">
+            <Box style={{ maxWidth: 250, width: '100%' }}>
+              <ClubPostResourceCard resourceData={clubPost} />
+            </Box>
+          </Center>
+        )}
         <RenderHtml html={clubPost.description} />
         <Divider />
         {inView && (
@@ -223,4 +235,31 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
       </Stack>
     </Paper>
   );
+};
+
+export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostResource }) => {
+  if (!('data' in resourceData)) {
+    return null;
+  }
+
+  if (
+    (resourceData.entityType === 'ModelVersion' || resourceData.entityType === 'Model') &&
+    resourceData.data
+  ) {
+    return (
+      <ModelCard
+        data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
+      />
+    );
+  }
+
+  if (resourceData.entityType === 'Article' && resourceData.data) {
+    return <ArticleCard data={resourceData.data} />;
+  }
+
+  if (resourceData.entityType === 'Post' && resourceData.data) {
+    return <PostCard data={resourceData.data} />;
+  }
+
+  return null;
 };

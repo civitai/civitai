@@ -441,9 +441,10 @@ export const getResourceDetailsForClubPostCreation = async ({
   });
 
   return postData.map((d) => {
+    const resouce = data.find((x) => x.entityId === d.entityId && x.entityType === d.entityType);
     return {
       ...d,
-      data: data.find((x) => x.entityId === d.entityId && x.entityType === d.entityType)?.data,
+      ...resouce,
     };
   });
 };
