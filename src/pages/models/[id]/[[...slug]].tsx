@@ -816,7 +816,6 @@ export default function ModelDetailsV2({
                     )}
                     {isCreator && features.clubs && selectedVersion && (
                       <AddToClubMenuItem
-                        key="add-to-club"
                         entityId={selectedVersion.id}
                         entityType="ModelVersion"
                         resource={{
@@ -840,7 +839,6 @@ export default function ModelDetailsV2({
 
                     {features.clubs && selectedVersion && (
                       <ClubPostFromResourceMenuItem
-                        key="create-club-post-from-resource"
                         entityType="ModelVersion"
                         entityId={selectedVersion.id}
                       />

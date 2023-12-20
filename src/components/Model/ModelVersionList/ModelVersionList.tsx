@@ -304,19 +304,11 @@ export function ModelVersionList({
                     </Menu.Item>
                   )}
                   {features.clubs && (
-                    <AddToClubMenuItem
-                      key="add-to-club"
-                      entityType="ModelVersion"
-                      entityId={version.id}
-                    />
+                    <AddToClubMenuItem entityType="ModelVersion" entityId={version.id} />
                   )}
 
                   {features.clubs && (
-                    <ClubPostFromResourceMenuItem
-                      key="create-club-post-from-resource"
-                      entityType="ModelVersion"
-                      entityId={version.id}
-                    />
+                    <ClubPostFromResourceMenuItem entityType="ModelVersion" entityId={version.id} />
                   )}
                 </Menu.Dropdown>
               </Menu>
