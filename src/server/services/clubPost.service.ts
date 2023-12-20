@@ -399,7 +399,6 @@ export const getResourceDetailsForClubPostCreation = async ({
   const postData = await dbRead.$queryRaw<
     {
       title: string | null;
-      description: string | null;
       entityId: number;
       entityType: SupportedClubPostEntities;
     }[]
@@ -418,13 +417,7 @@ export const getResourceDetailsForClubPostCreation = async ({
         a.title,
         p.title,
         mmv.name || ' - ' || mv.name
-      ) AS title,
-      COALESCE (
-        m.description,
-        a.content,
-        p.detail,
-        mv.description
-      ) as description
+      ) AS title
     FROM entities e 
     LEFT JOIN "Model" m ON m.id = e."entityId" AND e."entityType" = 'Model' 
     LEFT JOIN "Article" a ON a.id = e."entityId" AND e."entityType" = 'Article'

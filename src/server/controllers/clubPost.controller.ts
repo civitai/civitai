@@ -79,11 +79,11 @@ export const getInfiniteClubPostsHandler = async ({
         const resource =
           x.entityType && x.entityId
             ? entityData.find((d) => d.entityId === x.entityId && d.entityType === x.entityType)
-            : {};
+            : undefined;
         return {
           ...x,
-          ...resource,
           entityType: x.entityType as SupportedClubPostEntities | null,
+          ...resource,
           coverImage: coverImage
             ? {
                 ...coverImage,
@@ -146,12 +146,12 @@ export const getClubPostByIdHandler = async ({
             isModerator: user?.isModerator,
             username: user?.username,
           })
-        : [null];
+        : [undefined];
 
     return {
       ...post,
-      ...entityData,
       entityType: post.entityType as SupportedClubPostEntities | null,
+      ...entityData,
       coverImage: coverImage
         ? {
             ...coverImage,

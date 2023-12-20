@@ -74,12 +74,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
     shouldUnregister: false,
   });
 
-  const [entityId, entityType, title, description] = form.watch([
-    'entityId',
-    'entityType',
-    'title',
-    'description',
-  ]);
+  const [entityId, entityType, title] = form.watch(['entityId', 'entityType', 'title']);
   const { data: resourceData, isLoading: isLoadingResource } =
     trpc.clubPost.resourcePostCreateDetails.useQuery(
       {
@@ -114,7 +109,6 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
     if (resourceData && (entityId !== clubPost?.entityId || entityType !== clubPost?.entityType)) {
       // Resource changed, change our data. Fallback to current data if resource data is not available
       form.setValue('title', resourceData.title || title);
-      form.setValue('description', resourceData.description || description);
     }
   }, [entityId, entityType, resourceData]);
 
