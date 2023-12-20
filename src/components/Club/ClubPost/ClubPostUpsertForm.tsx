@@ -59,21 +59,23 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
     return null;
   }
 
-  switch (resourceData.entityType) {
-    case 'Model':
-    case 'ModelVersion':
-      return (
-        <ModelCard
-          data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
-        />
-      );
-    case 'Article':
-      return <ArticleCard data={resourceData.data as any} />;
-    case 'Post':
-      return <PostCard data={resourceData.data as any} />;
-    default:
-      return null;
+  if (resourceData.entityType === 'ModelVersion' || resourceData.entityType === 'Model') {
+    return (
+      <ModelCard
+        data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
+      />
+    );
   }
+
+  if (resourceData.entityType === 'Article') {
+    return <ArticleCard data={resourceData.data} />;
+  }
+
+  if (resourceData.entityType === 'Post') {
+    return <PostCard data={resourceData.data} />;
+  }
+
+  return null;
 };
 
 export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel }: Props) {

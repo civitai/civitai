@@ -250,7 +250,6 @@ interface ArticleClubPostResource {
 
 export type ClubPostData = {
   entityId: number;
-  entityType: SupportedClubPostEntities;
 } & (
   | ModelClubPostResource
   | ArticleClubPostResource
