@@ -790,6 +790,7 @@ export const getAllImages = async ({
   `;
   // TODO: Move reactions out of main query
 
+  if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 

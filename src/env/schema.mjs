@@ -98,6 +98,7 @@ export const serverSchema = z.object({
   SIGNALS_ENDPOINT: z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
+  IMAGE_QUERY_CACHING: zc.booleanString,
 });
 
 /**

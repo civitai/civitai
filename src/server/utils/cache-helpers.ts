@@ -14,12 +14,14 @@ type cachedQueryOptions = {
 };
 export function queryCache(db: PrismaClient, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
+    if (options?.ttl === 0) return db.$queryRaw<T>(query);
+
     const cacheKey = [key, version, hashifyObject(query).toString()].filter(isDefined).join(':');
     const cachedData = await redis.get(cacheKey);
     if (cachedData && options?.ttl !== 0) return fromJson<T>(cachedData) ?? ([] as unknown as T);
 
     const result = await db.$queryRaw<T>(query);
-    if (options?.ttl !== 0) await redis.set(cacheKey, toJson(result), { EX: options?.ttl });
+    await redis.set(cacheKey, toJson(result), { EX: options?.ttl });
 
     if (options?.tag) await tagCacheKey(cacheKey, options?.tag);
     return result;
