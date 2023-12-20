@@ -475,7 +475,6 @@ export const getAllImages = async ({
   nsfw?: NsfwLevel;
   headers?: Record<string, string>;
 }) => {
-  console.time('start');
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
@@ -790,17 +789,13 @@ export const getAllImages = async ({
       LIMIT ${limit + 1}
   `;
   // TODO: Move reactions out of main query
-  console.timeEnd('start');
 
-  console.time('getAllImages');
   const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
-  console.timeEnd('getAllImages');
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
   if (userId) {
-    console.time('reactions');
     const reactionsRaw = await dbRead.imageReaction.findMany({
       where: { imageId: { in: imageIds }, userId },
       select: { imageId: true, reaction: true },
@@ -810,10 +805,8 @@ export const getAllImages = async ({
       acc[imageId].push(reaction);
       return acc;
     }, {} as Record<number, ReviewReactions[]>);
-    console.timeEnd('reactions');
   }
 
-  console.time('after');
   let nextCursor: bigint | undefined;
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
@@ -935,7 +928,6 @@ export const getAllImages = async ({
         tagIds: tagIdsVar?.[i.id]?.tags,
       })
     );
-  console.timeEnd('after');
 
   return {
     nextCursor,
