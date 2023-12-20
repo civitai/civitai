@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Button,
   Center,
   Group,
@@ -11,7 +12,14 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons-react';
+import {
+  IconArrowsCross,
+  IconCloudOff,
+  IconEye,
+  IconEyeOff,
+  IconPlus,
+  IconStar,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useMemo, useState } from 'react';
@@ -80,6 +88,7 @@ export default function ImagesAsPostsInfinite({
   // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
   const [opened, setOpened] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
   const setFilters = useSetFilters('modelImages');
@@ -123,11 +132,15 @@ export default function ImagesAsPostsInfinite({
     const filtered = arr
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
-        if (hiddenUsers.get(x.user.id) || galleryHiddenUsers.get(x.user.id)) return false;
+        if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
+          return false;
         return true;
       })
       .map(({ images, ...x }) => {
         const filteredImages = images?.filter((i) => {
+          // show hidden images only
+          if (showHidden) return galleryHiddenImages.get(i.id);
+
           if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
           if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
           for (const tag of i.tagIds ?? []) {
@@ -156,6 +169,7 @@ export default function ImagesAsPostsInfinite({
     galleryHiddenTags,
     galleryHiddenUsers,
     loadingGallerySettings,
+    showHidden,
   ]);
 
   const isMuted = currentUser?.muted ?? false;
@@ -163,6 +177,8 @@ export default function ImagesAsPostsInfinite({
     selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
   }&returnUrl=${router.asPath}`;
   const { excludeCrossPosts } = imageFilters;
+  const hasModerationPreferences =
+    hiddenImages.size > 0 || hiddenTags.size > 0 || hiddenUsers.size > 0;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider
@@ -200,12 +216,29 @@ export default function ImagesAsPostsInfinite({
                 </Group>
               )}
               {showModerationOptions && (
-                <ActionIcon variant="outline" ml="auto" onClick={() => setOpened(true)}>
-                  <IconSettings size={16} />
-                </ActionIcon>
+                <Group ml="auto" spacing={8}>
+                  <ActionIcon
+                    variant="outline"
+                    color="red"
+                    onClick={() => setShowHidden((h) => !h)}
+                  >
+                    {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                  </ActionIcon>
+                  <ActionIcon variant="outline" onClick={() => setOpened(true)}>
+                    <IconSettings size={16} />
+                  </ActionIcon>
+                </Group>
               )}
             </Group>
-            {/* IMAGES */}
+            {hasModerationPreferences ? (
+              <Text size="xs" color="dimmed">
+                Some images have been hidden based on moderation preferences set by the creator,{' '}
+                <Link href={`/images?modelVersionId=${selectedVersionId}`} passHref>
+                  <Anchor span>view all images using this resource</Anchor>
+                </Link>
+                .
+              </Text>
+            ) : null}
             <Group position="apart" spacing={0}>
               <SortFilter type="modelImages" />
               <Group spacing={4}>
