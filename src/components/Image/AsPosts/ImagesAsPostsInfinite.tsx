@@ -22,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -172,13 +172,17 @@ export default function ImagesAsPostsInfinite({
     showHidden,
   ]);
 
+  useEffect(() => {
+    if (galleryHiddenImages.size === 0) setShowHidden(false);
+  }, [galleryHiddenImages.size]);
+
   const isMuted = currentUser?.muted ?? false;
   const addPostLink = `/posts/create?modelId=${model.id}${
     selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
   }&returnUrl=${router.asPath}`;
   const { excludeCrossPosts } = imageFilters;
   const hasModerationPreferences =
-    hiddenImages.size > 0 || hiddenTags.size > 0 || hiddenUsers.size > 0;
+    galleryHiddenImages.size > 0 || galleryHiddenTags.size > 0 || galleryHiddenUsers.size > 0;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider
@@ -217,28 +221,25 @@ export default function ImagesAsPostsInfinite({
               )}
               {showModerationOptions && (
                 <Group ml="auto" spacing={8}>
-                  <ActionIcon
-                    variant="outline"
-                    color="red"
-                    onClick={() => setShowHidden((h) => !h)}
-                  >
-                    {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                  </ActionIcon>
-                  <ActionIcon variant="outline" onClick={() => setOpened(true)}>
-                    <IconSettings size={16} />
-                  </ActionIcon>
+                  {galleryHiddenImages.size > 0 && (
+                    <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
+                      <ActionIcon
+                        variant="outline"
+                        color="red"
+                        onClick={() => setShowHidden((h) => !h)}
+                      >
+                        {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                      </ActionIcon>
+                    </ButtonTooltip>
+                  )}
+                  <ButtonTooltip label="Gallery Moderation Preferences">
+                    <ActionIcon variant="outline" onClick={() => setOpened(true)}>
+                      <IconSettings size={16} />
+                    </ActionIcon>
+                  </ButtonTooltip>
                 </Group>
               )}
             </Group>
-            {hasModerationPreferences ? (
-              <Text size="xs" color="dimmed">
-                Some images have been hidden based on moderation preferences set by the creator,{' '}
-                <Link href={`/images?modelVersionId=${selectedVersionId}`} passHref>
-                  <Anchor span>view all images using this resource</Anchor>
-                </Link>
-                .
-              </Text>
-            ) : null}
             <Group position="apart" spacing={0}>
               <SortFilter type="modelImages" />
               <Group spacing={4}>
@@ -255,6 +256,15 @@ export default function ImagesAsPostsInfinite({
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
+            {hasModerationPreferences ? (
+              <Text size="xs" color="dimmed" mt="-md">
+                Some images have been hidden based on moderation preferences set by the creator,{' '}
+                <Link href={`/images?modelVersionId=${selectedVersionId}`} passHref>
+                  <Anchor span>view all images using this resource</Anchor>
+                </Link>
+                .
+              </Text>
+            ) : null}
             {/* <ImageCategories /> */}
             {isLoading ? (
               <Paper style={{ minHeight: 200, position: 'relative' }}>

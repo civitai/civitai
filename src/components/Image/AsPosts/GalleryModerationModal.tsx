@@ -23,7 +23,7 @@ import { isDefined } from '~/utils/type-guards';
 
 export function GalleryModerationModal({ opened, onClose }: Props) {
   return (
-    <Modal opened={opened} onClose={onClose} title="Gallery Moderation Settings">
+    <Modal opened={opened} onClose={onClose} title="Gallery Moderation Preferences">
       <Stack>
         <HiddenTagsSection />
         <HiddenUsersSection />
