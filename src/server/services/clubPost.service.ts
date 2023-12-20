@@ -214,8 +214,8 @@ export const deleteClubPost = async ({
     throw throwAuthorizationError('You do not have permission to delete posts on this club.');
   }
 
-  const isClubOwner = userClub.userId === userId;
-  const canDeletePost = userClub.admin?.permissions.includes(ClubAdminPermission.ManagePosts);
+  const isClubOwner = userClub?.userId === userId;
+  const canDeletePost = userClub?.admin?.permissions.includes(ClubAdminPermission.ManagePosts);
 
   if (!isClubOwner && !isModerator && !canDeletePost) {
     throw throwAuthorizationError('You do not have permission to delete this post.');

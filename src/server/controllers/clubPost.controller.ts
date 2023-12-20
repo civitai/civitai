@@ -199,6 +199,7 @@ export async function deleteClubPostHandler({
       isModerator: !!ctx.user.isModerator,
     });
   } catch (error) {
+    console.log(error);
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }

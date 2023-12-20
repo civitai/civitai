@@ -865,6 +865,9 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
           },
           {
             unlisted: false,
+            posts: {
+              some: {},
+            },
           },
         ],
       });
