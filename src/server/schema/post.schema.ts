@@ -36,6 +36,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
   collectionId: z.number().optional(),
   include: z.array(postInclude).default(['cosmetics']).optional(),
   followed: z.boolean().optional(),
+  clubId: z.number().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;

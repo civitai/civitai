@@ -1,4 +1,4 @@
-import { AspectRatio, createStyles } from '@mantine/core';
+import { AspectRatio, Group, Stack, ThemeIcon, Tooltip, createStyles } from '@mantine/core';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -9,16 +9,17 @@ import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
+import { IconClubs } from '@tabler/icons-react';
 
 export function PostsCard({
-  data: { image, id, stats, imageCount },
+  data: { image, id, stats, imageCount, requiresClub },
   height,
 }: {
   data: PostsInfiniteModel;
   height?: number;
 }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
@@ -34,8 +35,37 @@ export function PostsCard({
                     {image.meta && 'civitaiResources' in (image.meta as object) && (
                       <OnsiteIndicator />
                     )}
-                    <ImageGuard.Report context="post" />
-                    <ImageGuard.ToggleConnect position="top-left" />
+                    <Group
+                      position="apart"
+                      align="start"
+                      spacing={4}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        width: '100%',
+                        left: 0,
+                        zIndex: 10,
+                        padding: theme.spacing.sm,
+                      }}
+                    >
+                      <ImageGuard.ToggleConnect position="static" />
+
+                      <Stack spacing="xs" ml="auto">
+                        <ImageGuard.Report context="post" position="static" />
+                        {requiresClub && (
+                          <Tooltip
+                            label="This post requires joining a club to read its contents."
+                            withinPortal
+                            maw={350}
+                          >
+                            <ThemeIcon size={30} radius="xl" color="blue">
+                              <IconClubs stroke={2.5} size={16} />
+                            </ThemeIcon>
+                          </Tooltip>
+                        )}
+                      </Stack>
+                    </Group>
+
                     <RoutedDialogLink name="postDetail" state={{ postId: id }}>
                       {!safe ? (
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

@@ -111,3 +111,4 @@ export type UserPaymentMethod = RouterOutput['user']['getPaymentMethods'][number
 
 export type ClubAdminInvite = RouterOutput['clubAdmin']['getInvitesPaged']['items'][number];
 export type ClubAdmin = RouterOutput['clubAdmin']['getAdminsPaged']['items'][number];
+export type ClubPostResource = RouterOutput['clubPost']['resourcePostCreateDetails'];

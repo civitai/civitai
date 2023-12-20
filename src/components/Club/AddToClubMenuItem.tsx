@@ -45,7 +45,7 @@ export function AddToClubMenuItem({ entityType, entityId, resource }: Props) {
         e.stopPropagation();
         onClick();
       }}
-      key="add-to-showcase"
+      key="add-to-club"
     >
       Add to club
     </Menu.Item>

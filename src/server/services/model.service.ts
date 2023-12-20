@@ -160,7 +160,7 @@ export const getModelsRaw = async ({
     skip?: number;
   };
   // TODO: Likely we wanna remove session user all in all.
-  user?: SessionUser;
+  user?: { id: number; isModerator?: boolean; username?: string };
   count?: boolean;
   ignoreListedStatus?: boolean;
 }) => {
@@ -194,6 +194,7 @@ export const getModelsRaw = async ({
     collectionId,
     fileFormats,
     clubId,
+    modelVersionIds,
   } = input;
 
   let isPrivate = false;
@@ -371,6 +372,13 @@ export const getModelsRaw = async ({
 
   if (!!ids?.length) AND.push(Prisma.sql`m."id" IN (${Prisma.join(ids, ',')})`);
 
+  if (!!modelVersionIds?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')}) AND mv."modelId" = m."id"
+    )`);
+  }
+
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     const TypeOr: Prisma.Sql[] = [
       Prisma.sql`m."checkpointType" = ${checkpointType}::"CheckpointType"`,
@@ -508,6 +516,10 @@ export const getModelsRaw = async ({
     modelVersionWhere = Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`;
   }
 
+  if (!!modelVersionIds?.length) {
+    modelVersionWhere = Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`;
+  }
+
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
     ${queryWith}
     SELECT
@@ -596,7 +608,6 @@ export const getModelsRaw = async ({
       ) as "userCosmetics",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
-    
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take}
   `;
@@ -607,7 +618,7 @@ export const getModelsRaw = async ({
   });
 
   let nextCursor: string | bigint | undefined;
-  if (take && models.length >= take) {
+  if (take && models.length > take) {
     const nextItem = models.pop();
     nextCursor = nextItem?.cursorId || undefined;
   }
@@ -953,7 +964,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   user,
 }: {
   input: GetAllModelsOutput;
-  user?: SessionUser;
+  user?: { id: number; isModerator?: boolean; username?: string };
 }) => {
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
@@ -972,9 +983,6 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
-  // TODO: getModelsRaw
-  //       user: { select: userWithCosmeticsSelect },
-  //       modelVersions.trainingStatus
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,

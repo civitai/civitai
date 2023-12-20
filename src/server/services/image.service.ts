@@ -13,7 +13,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { chunk } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
@@ -482,6 +482,16 @@ export const getAllImages = async ({
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
 
+  const showClubPosts = !!(
+    postId ||
+    imageId ||
+    collectionId ||
+    modelId ||
+    modelVersionId ||
+    reviewId ||
+    username
+  );
+
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
     return { items: [], nextCursor: undefined };
@@ -665,8 +675,9 @@ export const getAllImages = async ({
   }
 
   // Limit to images created since period start
-  if (period !== 'AllTime' && periodMode !== 'stats')
-    AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+  if (period !== 'AllTime' && periodMode !== 'stats') {
+    AND.push(Prisma.sql`im."ageGroup" = ${period}::"MetricTimeframe"`);
+  }
 
   // Handle cursor & skip conflict
   if (cursor && skip) throw new Error('Cannot use skip with cursor');
@@ -702,6 +713,12 @@ export const getAllImages = async ({
     );
   }
 
+  // TODO: Availability query seems to be killing us. Need to figure out how to optimize this.
+  // At the moment, club-required images will show up in the feed.
+  if (!showClubPosts) {
+    AND.push(Prisma.sql`p."availability" != 'Private'`);
+  }
+
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -709,7 +726,9 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${Prisma.raw(
+      isDev ? 'LEFT ' : ''
+    )}JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 

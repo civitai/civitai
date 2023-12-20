@@ -1,4 +1,4 @@
-import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Group, Stack, Text, ThemeIcon, UnstyledButton, Tooltip } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -8,7 +8,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
-import { IconPhoto } from '@tabler/icons-react';
+import { IconClubs, IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
@@ -17,6 +17,7 @@ const IMAGE_CARD_WIDTH = 332;
 export function PostCard({ data }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
+
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
       <div className={classes.root}>
@@ -28,8 +29,28 @@ export function PostCard({ data }: Props) {
               <ImageGuard.Content>
                 {({ safe }) => (
                   <>
-                    <ImageGuard.Report context="post" />
-                    <ImageGuard.ToggleConnect position="top-left" />
+                    <Group
+                      position="apart"
+                      align="start"
+                      spacing={4}
+                      className={cx(classes.contentOverlay, classes.top)}
+                    >
+                      <ImageGuard.ToggleConnect position="static" />
+                      <Stack spacing="xs" ml="auto">
+                        <ImageGuard.Report context="post" position="static" withinPortal />
+                        {data.requiresClub && (
+                          <Tooltip
+                            label="This post requires joining a club to read its contents."
+                            withinPortal
+                            maw={350}
+                          >
+                            <ThemeIcon size={30} radius="xl" color="blue">
+                              <IconClubs stroke={2.5} size={16} />
+                            </ThemeIcon>
+                          </Tooltip>
+                        )}
+                      </Stack>
+                    </Group>
                     {!safe ? (
                       <MediaHash {...data.image} />
                     ) : (

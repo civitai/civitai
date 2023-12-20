@@ -87,6 +87,8 @@ type ArticleRaw = {
   }[];
 };
 
+export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -109,12 +111,14 @@ export const getArticles = async ({
   browsingMode,
   followed,
   clubId,
-}: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
+}: GetInfiniteArticlesSchema & {
+  sessionUser?: { id: number; isModerator?: boolean; username?: string };
+}) => {
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
     const isOwnerRequest =
-      !!sessionUser &&
+      !!sessionUser?.username &&
       !!username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
 

@@ -18,6 +18,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
+import { ClubPostFromResourceMenuItem } from '../Club/ClubPostFromResourceMenuItem';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
@@ -170,7 +171,10 @@ export function ArticleContextMenu({ article, ...props }: Props) {
           </>
         )}
         {isOwner && features.clubs && (
-          <AddToClubMenuItem key="add-to-club" entityType="Article" entityId={article.id} />
+          <AddToClubMenuItem entityType="Article" entityId={article.id} />
+        )}
+        {features.clubs && (
+          <ClubPostFromResourceMenuItem entityType="Article" entityId={article.id} />
         )}
         {(!isOwner || isModerator) && (
           <LoginRedirect reason="report-article">
