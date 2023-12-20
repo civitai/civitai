@@ -708,7 +708,9 @@ export const getAllImages = async ({
     );
   }
 
-  if (!showClubPosts) {
+  // TODO: Availability query seems to be killing us. Need to figure out how to optimize this.
+  // At the moment, club-required images will show up in the feed.
+  if (!showClubPosts && false) {
     AND.push(Prisma.sql`p."availability" = 'Public'`);
   }
 
@@ -791,8 +793,6 @@ export const getAllImages = async ({
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
-
-  console.log('rawImages', rawImages);
 
   let nextCursor: bigint | undefined;
   if (rawImages.length > limit) {
