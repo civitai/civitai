@@ -965,6 +965,14 @@ export async function getTagIdsForImages(imageIds: number[]) {
   });
 }
 
+export async function clearImageTagIdsCache(imageId: number | number[]) {
+  const imageIds = Array.isArray(imageId) ? imageId : [imageId];
+  await redis.hDel(
+    'tagIdsForImages',
+    imageIds.map((x) => x.toString())
+  );
+}
+
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
 };
