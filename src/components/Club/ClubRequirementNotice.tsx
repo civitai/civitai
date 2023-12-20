@@ -6,6 +6,8 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useFeatureFlags } from '../../providers/FeatureFlagsProvider';
 import { getDisplayName } from '../../utils/string-helpers';
+import { dialogStore } from '../Dialog/dialogStore';
+import { ManageClubMembershipModal } from './ClubMemberships/ManageClubMembershipModal';
 
 export const ClubRequirementNotice = ({
   entityId,
@@ -89,7 +91,21 @@ export const ClubRequirementNotice = ({
                 return (
                   <List.Item key={club.id}>
                     <Stack spacing={0}>
-                      <Anchor href={`/clubs/${club.id}`} span>
+                      <Anchor
+                        onClick={(e) => {
+                          dialogStore.trigger({
+                            component: ManageClubMembershipModal,
+                            props: {
+                              clubId: club.id,
+                              clubTierIds:
+                                requiredTiers.length > 0
+                                  ? requiredTiers.map((t) => t.id)
+                                  : undefined,
+                            },
+                          });
+                        }}
+                        span
+                      >
                         {club.name} by {club.user.username}{' '}
                       </Anchor>
                       {requiredTiers.length > 0 && (

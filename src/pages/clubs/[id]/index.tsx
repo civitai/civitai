@@ -51,7 +51,11 @@ import {
   ClubPostUpsertFormModal,
 } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import { ClubTierItem, useToggleClubMembershipCancelStatus } from '~/components/Club/ClubTierItem';
+import {
+  ClubMembershipStatus,
+  ClubTierItem,
+  useToggleClubMembershipCancelStatus,
+} from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -177,14 +181,8 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
     clubId: id,
   });
 
-  const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
-    clubId: id,
-  });
   const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
   const canPost = isOwner || isModerator || isClubAdmin;
-  const { isCancelled, isToggling, toggleCancelStatus } = useToggleClubMembershipCancelStatus({
-    clubId: id,
-  });
 
   const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
     {
@@ -321,64 +319,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
               <Grid.Col xs={12} md={3}>
                 <Stack>
                   <Title order={3}>Membership Tiers</Title>
-                  {membership?.cancelledAt ? (
-                    <Alert color="yellow">
-                      <Stack>
-                        <Text size="sm">
-                          Your membership was cancelled on {formatDate(membership.cancelledAt)} and
-                          will be active until{' '}
-                          <Text weight="bold" component="span">
-                            {formatDate(membership.expiresAt)}
-                          </Text>
-                          .
-                        </Text>
-                        <Button
-                          size="xs"
-                          onClick={toggleCancelStatus}
-                          loading={isToggling}
-                          variant="subtle"
-                          color="yellow"
-                        >
-                          {isCancelled ? 'Restore membership' : 'Cancel membership'}
-                        </Button>
-                      </Stack>
-                    </Alert>
-                  ) : membership?.nextBillingAt ? (
-                    <Alert color="yellow">
-                      <Stack spacing={4}>
-                        <Text size="sm">You are a member of this club.</Text>
-                        {membership?.unitAmount > 0 && (
-                          <>
-                            <Text size="sm">
-                              Your next billing date is{' '}
-                              <Text weight="bold" component="span">
-                                {formatDate(membership.nextBillingAt)}
-                              </Text>
-                              .
-                            </Text>
-                            <Text>
-                              Your monthly fee is{' '}
-                              <CurrencyBadge
-                                unitAmount={membership.unitAmount}
-                                currency={Currency.BUZZ}
-                              />
-                              .
-                            </Text>
-                          </>
-                        )}
-                        <Button
-                          size="xs"
-                          onClick={toggleCancelStatus}
-                          loading={isToggling}
-                          variant="subtle"
-                          color="yellow"
-                          mt="md"
-                        >
-                          {isCancelled ? 'Restore membership' : 'Cancel membership'}
-                        </Button>
-                      </Stack>
-                    </Alert>
-                  ) : null}
+                  <ClubMembershipStatus clubId={club.id} />
                   {tiers.length > 0 ? (
                     <>
                       {tiers.map((tier) => (

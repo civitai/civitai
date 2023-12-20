@@ -167,7 +167,8 @@ export const useMutateClub = () => {
   const createClubMembershipMutation = trpc.clubMembership.createClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
-      await queryUtils.club.userContributingClubs.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
@@ -190,7 +191,8 @@ export const useMutateClub = () => {
   const updateClubMembershipMutation = trpc.clubMembership.updateClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
-      await queryUtils.club.userContributingClubs.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
