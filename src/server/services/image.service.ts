@@ -574,9 +574,11 @@ export const getAllImages = async ({
 
   // Filter to specific tags
   if (tags?.length) {
-    from = 'FROM "TagsOnImage" toi';
-    joins.push(`JOIN "Image" i ON i.id = toi."imageId"`);
-    AND.push(Prisma.sql`(toi."tagId" IN (${Prisma.join(tags)}) AND NOT toi.disabled)`);
+    AND.push(Prisma.sql`i.id IN (
+      SELECT "imageId"
+      FROM "TagsOnImage"
+      WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
+    )`);
   }
 
   // Filter to specific generation process
