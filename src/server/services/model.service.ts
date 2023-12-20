@@ -232,8 +232,8 @@ export const getModelsRaw = async ({
 
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
-      ( 
-        m."meta"->>'needsReview' = 'true' 
+      (
+        m."meta"->>'needsReview' = 'true'
         OR
         EXISTS (
           SELECT 1 FROM "ModelVersion" mv
@@ -273,7 +273,7 @@ export const getModelsRaw = async ({
   if (favorites && sessionUser?.id) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "ModelEngagement" e 
+          SELECT 1 FROM "ModelEngagement" e
           WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Favorite'::"ModelEngagementType")
         `
     );
@@ -282,7 +282,7 @@ export const getModelsRaw = async ({
   if (hidden && sessionUser?.id) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "ModelEngagement" e 
+          SELECT 1 FROM "ModelEngagement" e
           WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Hide'::"ModelEngagementType")
         `
     );
@@ -500,7 +500,7 @@ export const getModelsRaw = async ({
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const queryFrom = Prisma.sql`
     FROM "Model" m
-    LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id" 
+    LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id"
     LEFT JOIN "User" u ON m."userId" = u.id
     ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -551,15 +551,15 @@ export const getModelsRaw = async ({
             AND "tagId" IS NOT NULL
       ) as "tagsOnModels",
       (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash" 
-            WHERE "modelId" = m."id" 
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash"
+            WHERE "modelId" = m."id"
 		  	    AND "modelId" IS NOT NULL
-            AND "hashType" = 'SHA256' 
+            AND "hashType" = 'SHA256'
             AND "fileType" IN ('Model', 'Pruned Model')
 		  	AND "hash" IS NOT NULL
       ) as "hashes",
       (
-        SELECT 
+        SELECT
          jsonb_build_object(
            'id', mv."id",
            'earlyAccessTimeFrame', mv."earlyAccessTimeFrame",
@@ -571,7 +571,7 @@ export const getModelsRaw = async ({
              'covered', COALESCE(gc."covered", false)
             )
          ) as "modelVersion"
-       FROM "ModelVersion" mv 
+       FROM "ModelVersion" mv
 	     LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
 	     WHERE mv."modelId" = m."id"
          ${modelVersionWhere ? Prisma.sql`AND ${modelVersionWhere}` : Prisma.sql``}
@@ -587,7 +587,7 @@ export const getModelsRaw = async ({
       (
         SELECT
           jsonb_agg(
-            jsonb_build_object( 
+            jsonb_build_object(
               'data', uc.data,
               'cosmetic', jsonb_build_object(
                 'id', c.id,
@@ -599,7 +599,7 @@ export const getModelsRaw = async ({
                 'leaderboardPosition', c."leaderboardPosition"
               )
             )
-          ) 
+          )
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
             AND "equippedAt" IS NOT NULL
@@ -609,7 +609,7 @@ export const getModelsRaw = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
     ORDER BY ${Prisma.raw(orderBy)}
-    LIMIT ${take}
+    LIMIT ${(take ?? 100) + 1}
   `;
 
   const profilePictures = await dbRead.image.findMany({
