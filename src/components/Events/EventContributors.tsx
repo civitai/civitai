@@ -25,7 +25,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 const resetTime = dayjs().endOf('hour').toDate();
 const startTime = dayjs().startOf('hour').toDate();
 
-export function EventContributors({ event }: { event: string }) {
+export function EventContributors({ event, endDate }: { event: string; endDate: Date }) {
   const { contributors, loading } = useQueryEventContributors({ event });
   const { classes } = useStyles();
 
@@ -44,10 +44,12 @@ export function EventContributors({ event }: { event: string }) {
               <Text size={32} weight="bold">
                 Top Donors All Time
               </Text>
-              <Text size="xs" color="dimmed">
-                As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
-                <Countdown endTime={resetTime} format="short" />
-              </Text>
+              {resetTime < endDate && (
+                <Text size="xs" color="dimmed">
+                  As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                  <Countdown endTime={resetTime} format="short" />
+                </Text>
+              )}
             </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
@@ -101,10 +103,12 @@ export function EventContributors({ event }: { event: string }) {
               <Text size={32} weight="bold">
                 Top Donors Today
               </Text>
-              <Text size="xs" color="dimmed">
-                As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
-                <Countdown endTime={resetTime} format="short" />
-              </Text>
+              {resetTime < endDate && (
+                <Text size="xs" color="dimmed">
+                  As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                  <Countdown endTime={resetTime} format="short" />
+                </Text>
+              )}
             </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (

@@ -19,7 +19,7 @@ import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 export const eventRouter = router({
   getData: publicProcedure
     .input(eventSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
     .query(({ input }) => getEventData(input)),
   getTeamScores: publicProcedure
     .input(eventSchema)
