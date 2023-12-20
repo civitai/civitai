@@ -50,6 +50,7 @@ import { ClubAdminPermission } from '@prisma/client';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { PostCard } from '~/components/Cards/PostCard';
+import { SupportedClubPostEntities } from '~/server/schema/club.schema';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -216,10 +217,16 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
 
           <ClubPostContextMenu clubPost={clubPost} />
         </Group>
-        {clubPost.entityType && clubPost.entityId && (
+        {clubPost.entityType !== null && !!clubPost.entityId !== null && 'data' in clubPost && (
           <Center my="sm">
             <Box style={{ maxWidth: 250, width: '100%' }}>
-              <ClubPostResourceCard resourceData={clubPost} />
+              <ClubPostResourceCard
+                resourceData={{
+                  entityType: clubPost.entityType as SupportedClubPostEntities,
+                  entityId: clubPost.entityId as number,
+                  data: clubPost.data,
+                }}
+              />
             </Box>
           </Center>
         )}
