@@ -63,6 +63,7 @@ import {
   updateUserById,
   userByReferralCode,
   equipCosmetic,
+  deleteUserProfilePictureCache,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -332,7 +333,7 @@ export const updateUserHandler = async ({
       profilePicture &&
       updatedUser.profilePictureId &&
       user.profilePictureId !== profilePicture?.id
-    )
+    ) {
       await ingestImage({
         image: {
           id: updatedUser.profilePictureId,
@@ -342,6 +343,8 @@ export const updateUserHandler = async ({
           width: profilePicture.width,
         },
       });
+      await deleteUserProfilePictureCache(id);
+    }
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
