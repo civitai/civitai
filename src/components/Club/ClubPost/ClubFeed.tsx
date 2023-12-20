@@ -217,14 +217,14 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
 
           <ClubPostContextMenu clubPost={clubPost} />
         </Group>
-        {clubPost.entityType !== null && !!clubPost.entityId !== null && 'data' in clubPost && (
+        {!!clubPost.entityType && !!clubPost.entityId && (
           <Center my="sm">
             <Box style={{ maxWidth: 250, width: '100%' }}>
               <ClubPostResourceCard
                 resourceData={{
-                  entityType: clubPost.entityType as SupportedClubPostEntities,
+                  ...clubPost,
                   entityId: clubPost.entityId as number,
-                  data: clubPost.data,
+                  entityType: clubPost.entityType as SupportedClubPostEntities,
                 }}
               />
             </Box>
