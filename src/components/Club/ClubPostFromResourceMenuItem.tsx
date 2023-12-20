@@ -31,7 +31,6 @@ export function ClubPostFromResourceMenuItem({ entityType, entityId }: Props) {
     dialogStore.trigger({
       component: ClubPostFromResourceModal,
       props: {
-        requiredClubIds: clubRequirement?.clubs?.map((c) => c.clubId),
         entityType,
         entityId,
       },

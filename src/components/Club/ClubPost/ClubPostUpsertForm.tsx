@@ -151,7 +151,6 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
                     form.setValue('entityId', item.entityId);
                     form.setValue('entityType', item.entityType as SupportedClubPostEntities);
                   }}
-                  filters={`user.username='${'theally' ?? currentUser.username}'`}
                   dropdownItemLimit={25}
                 />
               )}
@@ -166,6 +165,18 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
                 <Center>
                   <Loader />
                 </Center>
+              )}
+              {resourceData && !resource && (
+                <Button
+                  variant="outline"
+                  color="red"
+                  onClick={() => {
+                    form.setValue('entityId', null);
+                    form.setValue('entityType', null);
+                  }}
+                >
+                  Remove resource
+                </Button>
               )}
             </Stack>
           </Input.Wrapper>
@@ -210,11 +221,9 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
 export const ClubPostFromResourceModal = ({
   entityId,
   entityType,
-  requiredClubIds,
 }: {
   entityId: number;
   entityType: SupportedClubPostEntities;
-  requiredClubIds: number[];
 }) => {
   const currentUser = useCurrentUser();
   const { userClubs, isLoading: isLoadingUserClubs } = useQueryUserContributingClubs();
@@ -222,9 +231,8 @@ export const ClubPostFromResourceModal = ({
     return (
       userClubs?.filter(
         (club) =>
-          (!requiredClubIds?.length || requiredClubIds.includes(club.id)) &&
-          (club.userId === currentUser?.id ||
-            club.admin?.permissions.includes(ClubAdminPermission.ManagePosts))
+          club.userId === currentUser?.id ||
+          club.admin?.permissions.includes(ClubAdminPermission.ManagePosts)
       ) ?? []
     );
   }, [userClubs, currentUser]);
