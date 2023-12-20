@@ -2343,6 +2343,22 @@ export const getImageModerationReviewQueue = async ({
   };
 };
 
+export async function get404Images() {
+  const imagesRaw = await dbRead.$queryRaw<{ url: string; username: string }[]>`
+    SELECT
+      u.username,
+      i.url
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
+    JOIN "Collection" c ON c.id = ci."collectionId"
+    WHERE c."userId" = -1 AND c.name = '404 Contest';
+  `;
+
+  const images = Object.values(imagesRaw).map((x) => [x.username, x.url] as [string, string]);
+  return images;
+}
+
 type POITag = {
   id: number;
   name: string;
