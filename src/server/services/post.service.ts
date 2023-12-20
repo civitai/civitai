@@ -25,7 +25,7 @@ import {
   ingestImage,
 } from '~/server/services/image.service';
 import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
-import { getCosmeticsForUsers } from '~/server/services/user.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -43,6 +43,7 @@ import {
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { profileImageSelect } from '../selectors/image.selector';
+import { bustCacheTag } from '~/server/utils/cache-helpers';
 
 type GetAllPostsRaw = {
   id: number;
@@ -263,13 +264,11 @@ export const getPostsInfinite = async ({
     : [];
 
   // Get user cosmetics
+  const userIds = postsRaw.map((i) => i.userId);
   const userCosmetics = include?.includes('cosmetics')
-    ? await getCosmeticsForUsers(postsRaw.map((i) => i.userId))
+    ? await getCosmeticsForUsers(userIds)
     : undefined;
-  const profilePictures = await dbRead.image.findMany({
-    where: { id: { in: postsRaw.map((i) => i.profilePictureId).filter(isDefined) } },
-    select: profileImageSelect,
-  });
+  const profilePictures = await getProfilePicturesForUsers(userIds);
 
   return {
     nextCursor,
@@ -287,7 +286,7 @@ export const getPostsInfinite = async ({
             image: userImage,
             deletedAt,
             cosmetics: userCosmetics?.[creatorId] ?? [],
-            profilePicture: profilePictures.find((i) => i.id === post.profilePictureId) ?? null,
+            profilePicture: profilePictures[creatorId] ?? null,
           },
           stats,
           image,
@@ -506,6 +505,23 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!image) throw throwDbError(`Image not found`);
+
+  const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
+  // Cache Busting
+  await bustCacheTag(`images-user:${props.userId}`);
+  if (!!modelVersionIds.length) {
+    for (const modelVersionId of modelVersionIds) {
+      await bustCacheTag(`images-modelVersion:${modelVersionId}`);
+    }
+
+    const modelVersions = await dbRead.modelVersion.findMany({
+      where: { id: { in: modelVersionIds } },
+      select: { modelId: true },
+    });
+    for (const modelVersion of modelVersions) {
+      await bustCacheTag(`images-model:${modelVersion.modelId}`);
+    }
+  }
 
   return image;
 };
