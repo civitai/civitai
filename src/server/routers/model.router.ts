@@ -225,7 +225,7 @@ export const modelRouter = router({
   setCategory: protectedProcedure
     .input(setModelsCategorySchema)
     .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
-  findResourcesToAssociate: publicProcedure
+  findResourcesToAssociate: protectedProcedure
     .input(findResourcesToAssociateSchema)
     .query(findResourcesToAssociateHandler),
   getAssociatedResourcesCardData: publicProcedure

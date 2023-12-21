@@ -1,5 +1,4 @@
 import {
-  Availability,
   CommercialUse,
   CosmeticSource,
   CosmeticType,
@@ -441,6 +440,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
   else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
 
+  // eslint-disable-next-line prefer-const
   let [cursorProp, cursorDirection] = orderBy?.split(' ');
 
   if (cursorProp === 'm."lastVersionAt"') {
