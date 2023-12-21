@@ -245,7 +245,7 @@ export default function EventPageDetails({
                       force
                       animated
                     />
-                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg * 2}>
+                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg}>
                       <Text size="xl" weight={590}>
                         Your Garland
                       </Text>
@@ -263,6 +263,9 @@ export default function EventPageDetails({
                           / 31
                         </Text>
                       </div>
+                      <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
+                        {userTeam} Team
+                      </Text>
                     </Stack>
                     {eventCosmetic.available && (
                       <Stack spacing="sm">
