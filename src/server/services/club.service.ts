@@ -95,11 +95,23 @@ export const getClub = async ({
       billing: true,
       unlisted: true,
       userId: true,
+      tiers: {
+        take: 1,
+        where: {
+          unlisted: false,
+          joinable: true,
+        },
+      },
+      posts: {
+        take: 1,
+      },
     },
   });
 
+  const { tiers, posts, ...data } = club;
+
   return {
-    ...club,
+    ...data,
     avatar: club.avatar
       ? {
           ...club.avatar,
@@ -121,6 +133,8 @@ export const getClub = async ({
           metadata: club.headerImage.metadata as MixedObject,
         }
       : club.headerImage,
+    hasTiers: tiers.length > 0,
+    hasPosts: posts.length > 0,
   };
 };
 
