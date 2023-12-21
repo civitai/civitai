@@ -27,6 +27,11 @@ const getResourceDetails = (
         label: resource.data.title,
         url: `/articles/${resource.data.id}`,
       };
+    case 'Post':
+      return {
+        label: resource.data.title || 'N/A', // Safeguard this one since posts can have no title.
+        url: `/posts/${resource.data.id}`,
+      };
   }
 };
 export const ClubResourcePagedUpdateForm = ({
