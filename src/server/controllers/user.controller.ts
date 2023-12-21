@@ -87,6 +87,7 @@ import {
   getCustomerPaymentMethods,
 } from '~/server/services/stripe.service';
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import { isProd } from '~/env/other';
 
 export const getAllUsersHandler = async ({
   input,
@@ -375,7 +376,8 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  if (id !== currentUser.id) throw throwAuthorizationError();
+  const canRemoveAsModerator = !isProd && currentUser.isModerator;
+  if (id !== currentUser.id && !canRemoveAsModerator) throw throwAuthorizationError();
 
   try {
     const user = await deleteUser(input);
