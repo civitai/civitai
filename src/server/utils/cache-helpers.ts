@@ -46,9 +46,9 @@ export async function bustCacheTag(tag: string | string[]) {
 
 type CachedLookupOptions<T extends object> = {
   key: string;
-  ids: number[] | string[];
+  ids: number[];
   idKey: keyof T;
-  lookupFn: (ids: number[] | string[]) => Promise<Record<string, object>>;
+  lookupFn: (ids: number[]) => Promise<Record<string, object>>;
   ttl?: number;
 };
 export async function cachedArray<T extends object>({
@@ -83,11 +83,10 @@ export async function cachedArray<T extends object>({
     const cachedAt = Date.now();
     for (const id of cacheMisses) {
       const result = dbResults[id];
-      // Temp disable null caching
-      // if (!result) {
-      //   toCache[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
-      //   continue;
-      // }
+      if (!result) {
+        toCache[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
+        continue;
+      }
       results.add(result as T);
       toCache[id] = JSON.stringify({ ...result, cachedAt });
     }

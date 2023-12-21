@@ -4,7 +4,7 @@ import { constants } from '~/server/common/constants';
 import { imagesSearchIndex } from '~/server/search-index';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { clearImageTagIdsCache } from '~/server/services/image.service';
+import { updateImageTagIdsForImages } from '~/server/services/image.service';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -75,7 +75,7 @@ async function applyUpvotes() {
   `;
 
   // Bust cache
-  await clearImageTagIdsCache(affectedImageResults.map(({ imageId }) => imageId));
+  await updateImageTagIdsForImages(affectedImageResults.map(({ imageId }) => imageId));
 
   // Update search index
   await imagesSearchIndex.queueUpdate(
@@ -238,7 +238,7 @@ async function applyDownvotes() {
   `;
 
   // Bust cache
-  await clearImageTagIdsCache(affectedImageResults.map(({ imageId }) => imageId));
+  await updateImageTagIdsForImages(affectedImageResults.map(({ imageId }) => imageId));
 
   // Update search index
   await imagesSearchIndex.queueUpdate(

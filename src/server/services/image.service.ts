@@ -936,25 +936,29 @@ export const getAllImages = async ({
   };
 };
 
+async function tagLookup(imageId: number | number[], fromWrite = false) {
+  const imageIds = Array.isArray(imageId) ? imageId : [imageId];
+  const db = fromWrite ? dbWrite : dbRead;
+  const tags = await db.tagsOnImage.findMany({
+    where: { imageId: { in: imageIds }, disabled: false },
+    select: { tagId: true, imageId: true },
+  });
+
+  const result = tags.reduce((acc, { tagId, imageId }) => {
+    acc[imageId.toString()] ??= { imageId, tags: [] };
+    acc[imageId.toString()].tags.push(tagId);
+    return acc;
+  }, {} as Record<string, { imageId: number; tags: number[] }>);
+  return result;
+}
+
 export async function getTagIdsForImages(imageIds: number[]) {
   return await cachedObject<{ imageId: number; tags: number[] }>({
     key: 'tagIdsForImages',
     idKey: 'imageId',
     ids: imageIds,
     ttl: CacheTTL.day,
-    lookupFn: async (ids) => {
-      const tags = await dbRead.tagsOnImage.findMany({
-        where: { imageId: { in: ids as number[] }, disabled: false },
-        select: { tagId: true, imageId: true },
-      });
-
-      const result = tags.reduce((acc, { tagId, imageId }) => {
-        acc[imageId.toString()] ??= { imageId, tags: [] };
-        acc[imageId.toString()].tags.push(tagId);
-        return acc;
-      }, {} as Record<string, { imageId: number; tags: number[] }>);
-      return result;
-    },
+    lookupFn: tagLookup,
   });
 }
 
@@ -964,6 +968,14 @@ export async function clearImageTagIdsCache(imageId: number | number[]) {
     'tagIdsForImages',
     imageIds.map((x) => x.toString())
   );
+}
+
+export async function updateImageTagIdsForImages(imageId: number | number[]) {
+  const results = tagLookup(imageId, true);
+  const toCache = Object.fromEntries(
+    Object.entries(results).map(([key, x]) => [key, JSON.stringify(x)])
+  );
+  await redis.hSet('tagIdsForImages', toCache);
 }
 
 type GetImageRaw = GetAllImagesRaw & {
