@@ -35,6 +35,8 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
     ([team, users]) => [team, users.slice(0, 4)] as const
   );
 
+  const ended = resetTime > endDate;
+
   return (
     <Grid gutter={48}>
       <Grid.Col xs={12} sm="auto">
@@ -44,7 +46,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               <Text size={32} weight="bold">
                 Top Donors All Time
               </Text>
-              {resetTime < endDate && (
+              {!ended && (
                 <Text size="xs" color="dimmed">
                   As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                   <Countdown endTime={resetTime} format="short" />
@@ -96,63 +98,65 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
           </Stack>
         </Card>
       </Grid.Col>
-      <Grid.Col xs={12} sm="auto">
-        <Card p={32} radius="lg" h="100%" className={classes.card}>
-          <Stack spacing="xl">
-            <Stack spacing={0}>
-              <Text size={32} weight="bold">
-                Top Donors Today
-              </Text>
-              {resetTime < endDate && (
-                <Text size="xs" color="dimmed">
-                  As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
-                  <Countdown endTime={resetTime} format="short" />
+      {!ended && (
+        <Grid.Col xs={12} sm="auto">
+          <Card p={32} radius="lg" h="100%" className={classes.card}>
+            <Stack spacing="xl">
+              <Stack spacing={0}>
+                <Text size={32} weight="bold">
+                  Top Donors Today
                 </Text>
-              )}
-            </Stack>
-            {loading ? (
-              Array.from({ length: 4 }).map((_, index) => (
-                <Group key={index} spacing={8} noWrap>
-                  <Skeleton height={40} circle />
-                  <Skeleton height={44} />
-                </Group>
-              ))
-            ) : topDayContributors.length > 0 ? (
-              topDayContributors.map((contributor) => (
-                <Group key={contributor.userId} spacing="md" position="apart">
-                  <UserAvatar
-                    userId={contributor.userId}
-                    user={contributor.user}
-                    indicatorProps={{ color: contributor.team.toLowerCase() }}
-                    avatarSize="md"
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing={4}>
-                    <CurrencyIcon currency={Currency.BUZZ} />
-                    <Text size="xl" weight={500} color="dimmed">
-                      {abbreviateNumber(contributor.amount ?? 0)}
-                    </Text>
+                {!ended && (
+                  <Text size="xs" color="dimmed">
+                    As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                    <Countdown endTime={resetTime} format="short" />
+                  </Text>
+                )}
+              </Stack>
+              {loading ? (
+                Array.from({ length: 4 }).map((_, index) => (
+                  <Group key={index} spacing={8} noWrap>
+                    <Skeleton height={40} circle />
+                    <Skeleton height={44} />
                   </Group>
-                </Group>
-              ))
-            ) : (
-              <Paper p="xl">
-                <Center>
-                  <Text color="dimmed">No donors yet</Text>
-                </Center>
-              </Paper>
-            )}
-            <Group position="right">
-              <Link href={`/leaderboard/${event}:day`}>
-                <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
-                  View All
-                </Button>
-              </Link>
-            </Group>
-          </Stack>
-        </Card>
-      </Grid.Col>
+                ))
+              ) : topDayContributors.length > 0 ? (
+                topDayContributors.map((contributor) => (
+                  <Group key={contributor.userId} spacing="md" position="apart">
+                    <UserAvatar
+                      userId={contributor.userId}
+                      user={contributor.user}
+                      indicatorProps={{ color: contributor.team.toLowerCase() }}
+                      avatarSize="md"
+                      withUsername
+                      linkToProfile
+                    />
+                    <Group spacing={4}>
+                      <CurrencyIcon currency={Currency.BUZZ} />
+                      <Text size="xl" weight={500} color="dimmed">
+                        {abbreviateNumber(contributor.amount ?? 0)}
+                      </Text>
+                    </Group>
+                  </Group>
+                ))
+              ) : (
+                <Paper p="xl">
+                  <Center>
+                    <Text color="dimmed">No donors yet</Text>
+                  </Center>
+                </Paper>
+              )}
+              <Group position="right">
+                <Link href={`/leaderboard/${event}:day`}>
+                  <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                    View All
+                  </Button>
+                </Link>
+              </Group>
+            </Stack>
+          </Card>
+        </Grid.Col>
+      )}
       <Grid.Col span={12}>
         <Card p={32} radius="lg" className={classes.card}>
           <Grid gutter="xl">

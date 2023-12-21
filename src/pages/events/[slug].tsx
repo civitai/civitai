@@ -1,5 +1,4 @@
 import {
-  Alert,
   Button,
   Card,
   Center,
@@ -11,7 +10,6 @@ import {
   Loader,
   NumberInput,
   Paper,
-  SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
@@ -97,7 +95,6 @@ const options: ChartOptions<'line'> = {
 };
 
 const resetTime = dayjs().utc().endOf('day').toDate();
-const startTime = dayjs().utc().startOf('day').toDate();
 
 const aboutText =
   "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
@@ -114,13 +111,9 @@ export default function EventPageDetails({
     teamScores,
     teamScoresHistory,
     eventCosmetic,
-    rewards,
-    userRank,
     partners,
     loading,
     loadingHistory,
-    loadingRewards,
-    loadingUserRank,
   } = useQueryEvent({ event });
 
   const userTeam = (eventCosmetic?.cosmetic?.data as { type: string; color: string })?.color;
@@ -153,7 +146,7 @@ export default function EventPageDetails({
     });
 
     return datasets;
-  }, [teamScoresHistory]);
+  }, [teamScoresHistory, theme.colors, theme.fn]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
@@ -263,7 +256,7 @@ export default function EventPageDetails({
                       </div>
                     </Stack>
                     {eventCosmetic.available && !ended && (
-                      <Stack spacing="sm">
+                      <Stack spacing="sm" w="100%">
                         <Button
                           component={NextLink}
                           href="/posts/create"
@@ -425,7 +418,18 @@ export default function EventPageDetails({
             )}
             <Grid.Col span={12} order={ended ? 1 : undefined}>
               <SectionCard
-                title="Spirit Bank History"
+                title={
+                  ended ? (
+                    <Group spacing={4}>
+                      <CurrencyIcon currency={Currency.BUZZ} size={32} />
+                      <Text>
+                        {abbreviateNumber(totalTeamScores).toUpperCase()} Buzz donated to charity!
+                      </Text>
+                    </Group>
+                  ) : (
+                    'Spirit Bank History'
+                  )
+                }
                 subtitle={
                   ended
                     ? `Thank you to everybody who participated in the ${eventData.title} event! Here are the final results`
@@ -507,6 +511,10 @@ export default function EventPageDetails({
 
 const useStyles = createStyles((theme) => ({
   card: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
     background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
   },
 }));
