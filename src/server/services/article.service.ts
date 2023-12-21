@@ -374,10 +374,8 @@ export const getArticles = async ({
     }
 
     const clubRequirement = await entityRequiresClub({
-      entities: articles.map((article) => ({
-        entityId: article.id,
-        entityType: 'Article',
-      })),
+      entityIds: articles.map((article) => article.id),
+      entityType: 'Article',
     });
 
     const profilePictures = await dbRead.image.findMany({
@@ -487,12 +485,8 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     const [access] = await hasEntityAccess({
       userId: user?.id,
       isModerator: isMod,
-      entities: [
-        {
-          entityType: 'Article',
-          entityId: id,
-        },
-      ],
+      entityIds: [id],
+      entityType: 'Article',
     });
 
     const article = await dbRead.article.findFirst({
@@ -506,12 +500,8 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
     const [entityClubDetails] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityType: 'Article',
-          entityId: article.id,
-        },
-      ],
+      entityType: 'Article',
+      entityIds: [article.id],
     });
 
     const articleCategories = await getCategoryTags('article');

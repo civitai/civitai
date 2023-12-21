@@ -113,12 +113,8 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
     const [entityClubDetails] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityType: 'ModelVersion',
-          entityId: version.id,
-        },
-      ],
+      entityType: 'ModelVersion',
+      entityIds: [version.id],
     });
 
     return {

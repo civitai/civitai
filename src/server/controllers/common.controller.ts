@@ -17,12 +17,8 @@ export const getEntityAccessHandler = async ({
     }
 
     const [entityAccess] = await hasEntityAccess({
-      entities: [
-        {
-          entityType: entityType as SupportedClubEntities,
-          entityId,
-        },
-      ],
+      entityIds: [entityId],
+      entityType: entityType as SupportedClubEntities,
       userId: ctx.user?.id,
       isModerator: !!ctx.user?.isModerator,
     });
@@ -45,12 +41,8 @@ export const getEntityClubRequirementHandler = async ({
     }
 
     const [clubRequirement] = await entityRequiresClub({
-      entities: [
-        {
-          entityType: entityType as SupportedClubEntities,
-          entityId,
-        },
-      ],
+      entityIds: [entityId],
+      entityType: entityType as SupportedClubEntities,
     });
 
     return clubRequirement;

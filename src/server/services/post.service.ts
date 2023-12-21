@@ -316,10 +316,8 @@ export const getPostsInfinite = async ({
   const profilePictures = await getProfilePicturesForUsers(userIds);
 
   const clubRequirement = await entityRequiresClub({
-    entities: postsRaw.map((post) => ({
-      entityId: post.id,
-      entityType: 'Post',
-    })),
+    entityType: 'Post',
+    entityIds: postsRaw.map(({ id }) => id),
   });
 
   return {
@@ -382,12 +380,8 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   const [access] = await hasEntityAccess({
     userId: user?.id,
     isModerator: user?.isModerator,
-    entities: [
-      {
-        entityType: 'Post',
-        entityId: id,
-      },
-    ],
+    entityIds: [id],
+    entityType: 'Post',
   });
 
   return {
@@ -420,12 +414,8 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   };
 
   const [entityClubDetails] = await getClubDetailsForResource({
-    entities: [
-      {
-        entityType: 'Post',
-        entityId: post.id,
-      },
-    ],
+    entityType: 'Post',
+    entityIds: [post.id],
   });
 
   return {
@@ -458,12 +448,8 @@ export const createPost = async ({
   };
 
   const [entityClubDetails] = await getClubDetailsForResource({
-    entities: [
-      {
-        entityType: 'Post',
-        entityId: result.id,
-      },
-    ],
+    entityType: 'Post',
+    entityIds: [result.id],
   });
 
   return {

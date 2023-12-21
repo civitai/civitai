@@ -295,10 +295,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const entityAccess = await hasEntityAccess({
       userId: ctx?.user?.id,
       isModerator: ctx?.user?.isModerator,
-      entities: postIds.map((id) => ({
-        entityType: 'Post',
-        entityId: id,
-      })),
+      entityIds: postIds,
+      entityType: 'Post',
     });
 
     // Prepare the results

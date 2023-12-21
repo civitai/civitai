@@ -675,7 +675,7 @@ export const upsertClubResource = async ({
   isModerator?: boolean;
 }) => {
   // First, check that the person is
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityIds: [entityId], entityType });
 
   if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
@@ -705,12 +705,8 @@ export const upsertClubResource = async ({
   if (clubIds.length === 0) {
     // this resource will be made public:
     const [details] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityId,
-          entityType,
-        },
-      ],
+      entityIds: [entityId],
+      entityType,
     });
 
     await dbWrite.entityAccess.deleteMany({
@@ -813,15 +809,18 @@ export const upsertClubResource = async ({
 };
 
 export const getClubDetailsForResource = async ({
-  entities,
+  entityIds,
+  entityType,
 }: {
-  entities: {
-    entityType: SupportedClubEntities;
-    entityId: number;
-  }[];
+  entityType: SupportedClubEntities;
+  entityIds: number[];
 }) => {
-  const clubRequirements = await entityRequiresClub({ entities });
-  return clubRequirements;
+  const clubRequirement = await entityRequiresClub({
+    entityType,
+    entityIds,
+  });
+
+  return clubRequirement;
 };
 
 export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
@@ -1011,7 +1010,7 @@ export const updateClubResource = async ({
   isModerator?: boolean;
 }) => {
   // First, check that the person is
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityType, entityIds: [entityId] });
 
   if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
@@ -1093,7 +1092,7 @@ export const removeClubResource = async ({
   isModerator?: boolean;
 }) => {
   const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityType, entityIds: [entityId] });
   const canRemoveResource =
     isModerator ||
     ownership.isOwner ||
