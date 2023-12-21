@@ -78,9 +78,8 @@ const featureFlags = createFeatureFlags({
     description: `An improved user profile experience to boast around.`,
     availability: ['public'],
   },
-  // DO NOT MERGE WITH PUBLIC!
-  clubs: ['public'],
-  createClubs: ['public'],
+  clubs: [''mod', 'granted''],
+  createClubs: [''mod', 'granted''],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 
