@@ -1,6 +1,8 @@
 {
   "adjectives": [
     "young",
+    "younger",
+    "youngest",
     "adolescence",
     "jnr",
     "jr",
@@ -27,15 +29,21 @@
     "not old",
     "disney",
     "loli",
-    "shota"
+    "shota",
+    "babe"
   ],
   "partialNouns": [
     "\\w*girl+\\w*",
     "\\w*female\\w*",
     "\\w*bo+y+\\w*",
-    "\\w*male\\w*"
+    "\\w*male\\w*",
+    "sister",
+    "daughter",
+    "brother",
+    "son"
   ],
   "nouns": [
+    "extremely young",
     "mini girl",
     "mini boy",
     "kindergartens*",
@@ -44,6 +52,7 @@
     "to*ddle?r",
     "under ager",
     "under age",
+    "under the legal age",
     "under aged",
     "under developed",
     "under grown",
@@ -54,6 +63,7 @@
     "\\w*kindergartener\\w*",
     "\\w*kindergarten\\w*",
     "\\w*preschooler\\w*",
+    "\\w*preschool\\w*",
     "pre k",
     "elementary school?",
     "elementary aged?",
