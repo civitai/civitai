@@ -203,7 +203,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
     return <NotFound />;
   }
 
-  const setupIncomplete = !club.hasTiers || !clubs.hasPosts;
+  const setupIncomplete = !club.hasTiers || !club.hasPosts;
 
   return (
     <AppLayout>
