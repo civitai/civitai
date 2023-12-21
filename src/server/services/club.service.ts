@@ -923,12 +923,20 @@ type Article = {
   };
 };
 
+type Post = {
+  entityType: 'Post';
+  data: {
+    id: number;
+    title: string;
+  };
+};
+
 type PaginatedClubResource = {
   entityId: number;
   entityType: string;
   clubId: number;
   clubTierIds: number[];
-} & (ModelVersionClubResource | Article);
+} & (ModelVersionClubResource | Article | Post);
 
 export const getPaginatedClubResources = async ({
   clubId,
@@ -954,6 +962,7 @@ export const getPaginatedClubResources = async ({
     LEFT JOIN "ModelVersion" mv ON mv."id" = ea."accessToId" AND ea."accessToType" = 'ModelVersion'
     LEFT JOIN "Model" m ON m."id" = mv."modelId"
     LEFT JOIN "Article" a ON a."id" = ea."accessToId" AND ea."accessToType" = 'Article'
+    LEFT JOIN "Post" p ON p."id" = ea."accessToId" AND ea."accessToType" = 'Post'
     
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
@@ -985,12 +994,16 @@ export const getPaginatedClubResources = async ({
           'id', a."id",
           'title', a."title"
         )
+        WHEN ea."accessToType" = 'Post' THEN jsonb_build_object(
+          'id', p."id",
+          'title', COALESCE(p."title", 'N/A')
+        )
         ELSE '{}'::jsonb
       END
       as "data"
     
     ${fromQuery}
-    GROUP BY "entityId", "entityType", m."id", mv."id", a."id"
+    GROUP BY "entityId", "entityType", m."id", mv."id", a."id", p."id"
     ORDER BY ea."accessToId" DESC
     LIMIT ${limit} OFFSET ${(page - 1) * limit}
   `;

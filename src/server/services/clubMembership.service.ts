@@ -20,6 +20,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { userContributingClubs } from '~/server/services/club.service';
+import { createNotification } from './notification.service';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { cursor, limit: take, clubId, clubTierId, userId, sort },
@@ -95,6 +96,7 @@ export const createClubMembership = async ({
       club: {
         select: {
           name: true,
+          userId: true,
         },
       },
       _count: {
@@ -180,6 +182,14 @@ export const createClubMembership = async ({
       });
     }
     // Attempt to pay the membership fee
+    await createNotification({
+      type: 'club-new-member-joined',
+      userId: clubTier.club.userId,
+      details: {
+        username: '',
+        clubId: clubTier.clubId,
+      },
+    });
 
     return membership;
   });
