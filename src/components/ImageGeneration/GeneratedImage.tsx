@@ -204,33 +204,20 @@ export function GeneratedImage({
                           align="center"
                           sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
                         >
-                          Blocked by OctoML
+                          Blocked by Provider
                         </Text>
                         <Text
                           size="xs"
                           component="a"
                           td="underline"
                           color="dimmed"
-                          href="/blocked-by-octoml"
+                          href="/blocked-by-provider"
                           target="_blank"
                         >
                           Why?
                         </Text>
                       </Stack>
                     </Box>
-                    <Text size="xs" color="dimmed" className={classes.mistake}>
-                      Is this a mistake?
-                    </Text>
-                    <Text
-                      size="xs"
-                      component="a"
-                      td="underline"
-                      color="dimmed"
-                      href="https://octoml.ai/contact-us/"
-                      target="_blank"
-                    >
-                      Contact OctoML
-                    </Text>
                   </Stack>
                 </Center>
               ) : (

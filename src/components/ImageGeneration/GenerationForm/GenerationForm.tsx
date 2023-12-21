@@ -415,9 +415,9 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   {nsfw &&
                     isFullCoverageModel &&
                     'You are using a model with Full Coverage, your generation times may be longer than average.'}
-                  {nsfw && !isFullCoverageModel && 'Your generation may be censored by OctoML.'}
+                  {nsfw && !isFullCoverageModel && 'Your generation may be censored by Provider.'}
                   {!nsfw &&
-                    'Your generation may still be blocked by OctoML due to flaws in their filter.'}
+                    'Your generation may still be blocked by Provider due to flaws in their filter.'}
                 </Text>
               </Stack>
             </Card>
