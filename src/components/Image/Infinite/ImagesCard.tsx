@@ -9,9 +9,11 @@ import {
   Stack,
   Text,
   createStyles,
+  Tooltip,
+  ThemeIcon,
 } from '@mantine/core';
 import { ImageIngestionStatus, CosmeticType } from '@prisma/client';
-import { IconInfoCircle, IconBrush } from '@tabler/icons-react';
+import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -62,6 +64,8 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
     ingestionData.ingestion === ImageIngestionStatus.Scanned;
 
   const onSite = image.meta && 'civitaiResources' in image.meta;
+  const notPublished = image.publishedAt === null;
+  const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
   const cardDecoration = image.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
@@ -115,6 +119,20 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               >
                                 <IconBrush stroke={2.5} size={16} />
                               </HoverActionButton>
+                            )}
+                            {scheduled && (
+                              <Tooltip label="Scheduled">
+                                <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                                  <IconClock2 size={16} strokeWidth={2.5} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                            {notPublished && (
+                              <Tooltip label="Not published">
+                                <ThemeIcon size={30} radius="xl" variant="filled" color="yellow">
+                                  <IconAlertTriangle size={16} strokeWidth={2.5} />
+                                </ThemeIcon>
+                              </Tooltip>
                             )}
                           </Stack>
                         </Group>
