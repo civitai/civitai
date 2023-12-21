@@ -25,7 +25,7 @@ export const clubNotifications = createNotificationProcessor({
           c.id "clubId",
           c.name "name",
           cm."userId"
-        FROM "ClubPost" p 
+        FROM "ClubPost" p
         JOIN "Club" c ON p."clubId" = c.id
         JOIN "ClubMembership" cm ON cm."clubId" = c.id
         WHERE p."createdAt" > '${lastSent}' AND (cm."expiresAt" > NOW() OR cm."expiresAt" IS NULL)
@@ -65,7 +65,7 @@ export const clubNotifications = createNotificationProcessor({
         LEFT JOIN "Club" cct ON ct."clubId" = cct.id
         WHERE COALESCE(c.id, ct."clubId") IS NOT NULL AND ea."addedAt" > '${lastSent}'
       ), data AS (
-        SELECT 
+        SELECT
           ce."clubId",
           ce."resourceId",
           ce."resourceType",

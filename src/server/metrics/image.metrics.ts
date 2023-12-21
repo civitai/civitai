@@ -359,11 +359,11 @@ async function updateMetricAgeGroups() {
   await dbWrite.$executeRaw`
     UPDATE "ImageMetric"
     SET "ageGroup" = CASE
-        WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'
-        WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'
-        WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'
-        WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'
-        ELSE 'AllTime'
+        WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
+        WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
+        WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
+        WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
+        ELSE 'AllTime'::"MetricTimeframe"
     END
     WHERE
       ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
