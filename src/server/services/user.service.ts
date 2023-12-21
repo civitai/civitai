@@ -640,7 +640,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
     ids: userIds,
     lookupFn: async (ids) => {
       const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-        where: { userId: { in: ids as number[] }, equippedAt: { not: null } },
+        where: { userId: { in: ids }, equippedAt: { not: null } },
         select: {
           userId: true,
           data: true,
@@ -648,7 +648,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
         },
       });
       const results = userCosmeticsRaw.reduce((acc, { userId, ...cosmetic }) => {
-        acc[userId] = { userId, cosmetics: [] };
+        acc[userId] ??= { userId, cosmetics: [] };
         acc[userId].cosmetics.push(cosmetic);
         return acc;
       }, {} as Record<number, UserCosmeticLookup>);
