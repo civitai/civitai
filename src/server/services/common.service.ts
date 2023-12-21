@@ -43,43 +43,43 @@ export const hasEntityAccess = async ({
     { availability: Availability; userId: number; entityId: number }[]
   >`
      SELECT
-         ${
-           entityType === 'ModelVersion'
-             ? Prisma.raw(`
-          mmv.id as "entityId",
-          mmv."userId" as "userId",
-          mv."availability" as "availability"
-        `)
-             : entityType === 'Article'
-             ? Prisma.raw(`
-          a."id" as "entityId",
-          a."userId" as "userId",
-          a."availability" as "availability"
-        `)
-             : entityType === 'Post'
-             ? Prisma.raw(`
-          p."id" as "entityId",,
-          p."userId" as "userId",
-          p."availability" as "availability"
-        `)
-             : ''
-         }
+    ${
+      entityType === 'ModelVersion'
+        ? Prisma.raw(`
+      mmv.id as "entityId",
+      mmv."userId" as "userId",
+      mv."availability" as "availability"
+    `)
+        : entityType === 'Article'
+        ? Prisma.raw(`
+      a."id" as "entityId",
+      a."userId" as "userId",
+      a."availability" as "availability"
+    `)
+        : entityType === 'Post'
+        ? Prisma.raw(`
+      p."id" as "entityId",
+      p."userId" as "userId",
+      p."availability" as "availability"
+    `)
+        : ''
+    }
     ${
       entityType === 'ModelVersion'
         ? Prisma.raw(`
         FROM "ModelVersion" mv 
         JOIN "Model" mmv ON mv."modelId" = mmv.id
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        WHERE mv.id IN (${entityIds.join(', ')})
     `)
         : entityType === 'Article'
         ? Prisma.raw(`
         FROM "Article" a
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        WHERE id IN (${entityIds.join(', ')})
     `)
         : entityType === 'Post'
         ? Prisma.raw(`
-        FROM "Post" p ON e."entityType" = 'Post'
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        FROM "Post" p
+        WHERE id IN (${entityIds.join(', ')})
     `)
         : ''
     }
@@ -121,7 +121,7 @@ export const hasEntityAccess = async ({
       ea."accessToId" "entityId",
 	    ea."accessToType" "entityType",
       COALESCE(c.id, cct.id, ca."clubId", cact."clubId", cmc."clubId", cmt."clubId", u.id) IS NOT NULL as "hasAccess"
-    "EntityAccess" ea
+    FROM "EntityAccess" ea
     LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id"
     -- User is the owner of the club and the resource is tied to the club as a whole
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id AND c."userId" = ${userId} 
@@ -210,39 +210,40 @@ export const entityRequiresClub = async ({
     { availability: Availability; entityId: number }[]
   >`
     SELECT
-         ${
-           entityType === 'ModelVersion'
-             ? Prisma.raw(`
-          mmv.id as "entityId",
-          mv."availability" as "availability"
-        `)
-             : entityType === 'Article'
-             ? Prisma.raw(`
-          a."id" as "entityId",
-          a."availability" as "availability"
-        `)
-             : entityType === 'Post'
-             ? Prisma.raw(`
-          p."id" as "entityId",,
-          p."availability" as "availability"
-        `)
-             : ''
-         }
+    ${
+      entityType === 'ModelVersion'
+        ? Prisma.raw(`
+      mmv.id as "entityId",
+      mv."availability" as "availability"
+    `)
+        : entityType === 'Article'
+        ? Prisma.raw(`
+      a."id" as "entityId",
+      a."availability" as "availability"
+    `)
+        : entityType === 'Post'
+        ? Prisma.raw(`
+      p."id" as "entityId",
+      p."availability" as "availability"
+    `)
+        : ''
+    }
     ${
       entityType === 'ModelVersion'
         ? Prisma.raw(`
         FROM "ModelVersion" mv 
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        JOIN "Model" mmv ON mv."modelId" = mmv.id
+        WHERE mv.id IN (${entityIds.join(', ')})
     `)
         : entityType === 'Article'
         ? Prisma.raw(`
         FROM "Article" a
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        WHERE id IN (${entityIds.join(', ')})
     `)
         : entityType === 'Post'
         ? Prisma.raw(`
-        FROM "Post" p ON e."entityType" = 'Post'
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        FROM "Post" p
+        WHERE id IN (${entityIds.join(', ')})
     `)
         : ''
     }
@@ -291,7 +292,7 @@ export const entityRequiresClub = async ({
       ea."accessToType" "entityType", 
       COALESCE(c.id, ct."clubId") as "clubId",
       ct."id" as "clubTierId"
-    "EntityAccess" ea 
+    FROM "EntityAccess" ea 
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${getClubFilter(
       'c.id'
     )}
@@ -381,7 +382,7 @@ export const entityOwnership = async ({
     `)
         : entityType === 'Post'
         ? Prisma.raw(`
-      p."id" as "entityId",,
+      p."id" as "entityId",
       p."userId" = ${userId} as "isOwner" 
     `)
         : ''
@@ -391,17 +392,17 @@ export const entityOwnership = async ({
         ? Prisma.raw(`
         FROM "ModelVersion" mv 
         JOIN "Model" mmv ON mv."modelId" = mmv.id
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        WHERE mv.id IN (${entityIds.join(', ')})
     `)
         : entityType === 'Article'
         ? Prisma.raw(`
         FROM "Article" a
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        WHERE id IN (${entityIds.join(', ')})
     `)
         : entityType === 'Post'
         ? Prisma.raw(`
-        FROM "Post" p ON e."entityType" = 'Post'
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        FROM "Post" p
+        WHERE id IN (${entityIds.join(', ')})
     `)
         : ''
     }
