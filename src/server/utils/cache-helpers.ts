@@ -82,11 +82,13 @@ export async function cachedArray<T extends object>({
     const dbResults = await lookupFn([...cacheMisses] as typeof ids);
 
     const toCache: Record<string, string> = {};
+    const toCacheNotFound: Record<string, string> = {};
     const cachedAt = Date.now();
     for (const id of cacheMisses) {
       const result = dbResults[id];
-      if (!result && cacheNotFound) {
-        toCache[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
+      if (!result) {
+        if (cacheNotFound)
+          toCacheNotFound[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
         continue;
       }
       results.add(result as T);
@@ -95,6 +97,12 @@ export async function cachedArray<T extends object>({
 
     // then cache the results
     if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
+
+    // Use NX to avoid overwriting a value with a not found...
+    if (Object.keys(toCacheNotFound).length > 0) {
+      for (const [key, value] of Object.entries(toCacheNotFound))
+        await redis.hSetNX(key, key, value);
+    }
   }
 
   return [...results];
