@@ -868,7 +868,7 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
             posts: {
               some: {},
             },
-            memberships: {
+            tiers: {
               some: {},
             },
           },
@@ -878,7 +878,15 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
   }
 
   if (!userId) {
-    AND.push({ OR: [{ unlisted: false }] });
+    AND.push({
+      unlisted: false,
+      posts: {
+        some: {},
+      },
+      tiers: {
+        some: {},
+      },
+    });
   }
 
   const orderBy: Prisma.ClubFindManyArgs['orderBy'] = [];
