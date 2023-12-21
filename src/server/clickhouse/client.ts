@@ -272,6 +272,7 @@ export class Tracker {
     imageId: number;
     nsfw: NsfwLevel;
     tags: string[];
+    ownerId: number;
   }) {
     return this.track('images', values);
   }
