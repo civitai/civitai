@@ -241,7 +241,7 @@ export const constants = {
     tierImageDisplayWidth: 124,
     tierImageSidebarDisplayWidth: 84,
     avatarDisplayWidth: 124,
-    minMonthlyBuzz: 100,
+    minMonthlyBuzz: 5,
     minStripeCharge: 3000, // 3000 Buzz = $3.00 USD
     headerImageAspectRatio: 1 / 4,
     postCoverImageAspectRatio: 1 / 4,
