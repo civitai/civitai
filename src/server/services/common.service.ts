@@ -12,6 +12,11 @@ type UserEntityAccessStatus = {
   hasAccess: boolean;
 };
 
+type EntityAccessRaw = {
+  entityId: number;
+  hasAccess: boolean;
+};
+
 // TODO replace "entities" with "entityIds" and "entityType"
 export const hasEntityAccess = async ({
   entityType,
@@ -109,35 +114,70 @@ export const hasEntityAccess = async ({
     }));
   }
 
-  // TODO: We migth wanna get more improvements here. might not be possible tho.
-  const entityAccess = await dbRead.$queryRaw<
-    {
-      entityId: number;
-      entityType: SupportedClubEntities;
-      hasAccess: boolean;
-    }[]
-  >`
+  // TODO: Add userId index to Club, ClubMemberhsip and ClubAdmin.
+  const entityAccess = await dbRead.$queryRaw<EntityAccessRaw[]>`
     SELECT 
       ea."accessToId" "entityId",
-	    ea."accessToType" "entityType",
-      COALESCE(c.id, cct.id, ca."clubId", cact."clubId", cmc."clubId", cmt."clubId", u.id) IS NOT NULL as "hasAccess"
+      true as "hasAccess"
     FROM "EntityAccess" ea
-    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id"
-    -- User is the owner of the club and the resource is tied to the club as a whole
-    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id AND c."userId" = ${userId} 
-    -- User is the owner of the club and the resource is tied to a club tier
-    LEFT JOIN "Club" cct ON ct."clubId" = cct.id AND cct."userId" = ${userId}
-    -- User is an admin of the club and resource is tied to the club as a whole:
-    LEFT JOIN "ClubAdmin" ca ON ea."accessorType" = 'Club' AND ea."accessorId" = ca."clubId" AND ca."userId" = ${userId}
-    -- User is an admin of the club and resource is tied a club tier:
-    LEFT JOIN "ClubAdmin" cact  ON ct."clubId" = cact."clubId" AND cact."userId" = ${userId}
-    -- User is a member
-    LEFT JOIN "ClubMembership" cmc ON ea."accessorType" = 'Club' AND ea."accessorId" = cmc."clubId" AND cmc."userId" = ${userId}
-    LEFT JOIN "ClubMembership" cmt ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = cmt."clubTierId" AND cmt."userId" = ${userId}
-    -- User access was granted
-    LEFT JOIN "User" u ON ea."accessorType" = 'User' AND ea."accessorId" = u.id AND u.id = ${userId}
     WHERE ea."accessToId" IN (${Prisma.join(entityIds, ', ')})
       AND ea."accessToType" = ${entityType}
+      AND (
+        -- ClubTier check
+        (
+          ea."accessorType" = 'ClubTier' AND 
+          (
+            -- User is a member of the club tier
+            ea."accessorId" IN (
+              SELECT cm."clubTierId"
+              FROM "ClubMembership" cm 
+              WHERE cm."userId" = ${userId}
+            )
+            -- User is a admin of the club tier
+            OR ea."accessorId" IN (
+              SELECT ct.id
+              FROM "ClubTier" ct
+              JOIN "ClubAdmin" ca ON ca."clubId" = ct."clubId"
+              WHERE ca."userId" = ${userId}
+            )
+            -- User is a owner of the club
+            OR ea."accessorId" IN (
+              SELECT ct.id
+              FROM "ClubTier" ct
+              JOIN "Club" c ON c.id = ct."clubId"
+              WHERE c."userId" = ${userId}
+            )
+          )
+        ) OR
+        -- Club check
+        (
+          ea."accessorType" = 'Club' AND 
+          (
+            -- User is the owner of the club
+            ea."accessorId" IN (
+              SELECT c.id
+              FROM "Club" c
+              WHERE c."userId" = ${userId}
+            )
+            -- User is a member of this club
+            OR ea."accessorId" IN (
+              SELECT cm."clubId"
+              FROM "ClubMembership" cm
+              WHERE cm."userId" = ${userId}
+            )
+            --- User is an admin of this club
+            OR ea."accessorId" IN (
+              SELECT ca."clubId"
+              FROM "ClubAdmin" ca
+              WHERE ca."userId" = ${userId}
+            )
+          )
+        ) OR 
+        -- User check
+        (
+          ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
+        )
+      )
   `;
 
   // Complex scenario - we have mixed entities with public/private access.
@@ -154,9 +194,7 @@ export const hasEntityAccess = async ({
       };
     }
 
-    const privateEntityAccess = entityAccess.find(
-      (entity) => entity.entityId === entityId && entity.entityType === entityType
-    );
+    const privateEntityAccess = entityAccess.find((entity) => entity.entityId === entityId);
     // If we could not find a privateEntityAccess record, means the user is guaranteed not to have
     // a link between the entity and himself.
     if (!privateEntityAccess) {
