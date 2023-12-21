@@ -964,6 +964,8 @@ export async function getTagIdsForImages(imageIds: number[]) {
 
 export async function clearImageTagIdsCache(imageId: number | number[]) {
   const imageIds = Array.isArray(imageId) ? imageId : [imageId];
+  if (!imageIds.length) return;
+
   await redis.hDel(
     'tagIdsForImages',
     imageIds.map((x) => x.toString())
@@ -972,6 +974,8 @@ export async function clearImageTagIdsCache(imageId: number | number[]) {
 
 export async function updateImageTagIdsForImages(imageId: number | number[]) {
   const results = tagLookup(imageId, true);
+  if (Object.keys(results).length === 0) return;
+
   const toCache = Object.fromEntries(
     Object.entries(results).map(([key, x]) => [key, JSON.stringify(x)])
   );
