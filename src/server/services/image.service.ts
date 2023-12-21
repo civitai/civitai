@@ -62,6 +62,7 @@ import { promptWordReplace } from '~/utils/metadata/audit';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL } from '~/server/common/constants';
+import { getPeriods } from '~/server/utils/enum-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -677,7 +678,10 @@ export const getAllImages = async ({
 
   // Limit to images created since period start
   if (period !== 'AllTime' && periodMode !== 'stats') {
-    AND.push(Prisma.sql`im."ageGroup" = ${period}::"MetricTimeframe"`);
+    const ageGroups = getPeriods(period);
+    AND.push(
+      Prisma.sql`im."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+    );
   }
 
   // Handle cursor & skip conflict
@@ -788,7 +792,6 @@ export const getAllImages = async ({
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
-  // TODO: Move reactions out of main query
 
   if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
