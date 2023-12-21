@@ -693,7 +693,11 @@ export const getAllImages = async ({
   if (cursor && skip) throw new Error('Cannot use skip with cursor');
 
   // Handle cursor prop
-  const { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
+  let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
+  if (sort === ImageSort.Random) {
+    cursorProp = 'i."id"';
+    cursorClause = undefined;
+  }
   if (cursorClause) AND.push(cursorClause);
 
   if (prioritizeUser) {
