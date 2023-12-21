@@ -2433,7 +2433,12 @@ export async function get404Images() {
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
     JOIN "Collection" c ON c.id = ci."collectionId"
-    WHERE c."userId" = -1 AND c.name = '404 Contest';
+    WHERE c."userId" = -1
+      AND c.name = '404 Contest'
+      AND i."ingestion" = 'Scanned'
+      AND i."needsReview" IS NULL
+      AND i.nsfw = 'None'
+      AND ci.status = 'ACCEPTED';
   `;
 
   const images = Object.values(imagesRaw).map((x) => [x.username, x.url] as [string, string]);
