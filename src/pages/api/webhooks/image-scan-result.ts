@@ -23,6 +23,7 @@ import { getComputedTags } from '~/server/utils/tag-computation';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { clearImageTagIdsCache } from '~/server/services/image.service';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -332,6 +333,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {
+      // Clear cached image tags after completing scans
+      await clearImageTagIdsCache(id);
+
       await dbWrite.$executeRaw`
         WITH scan_count AS (
           SELECT id, COUNT(*) as count
