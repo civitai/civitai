@@ -976,11 +976,12 @@ export async function clearImageTagIdsCache(imageId: number | number[]) {
 }
 
 export async function updateImageTagIdsForImages(imageId: number | number[]) {
-  const results = tagLookup(imageId, true);
+  const results = await tagLookup(imageId, true);
   if (Object.keys(results).length === 0) return;
 
+  const cachedAt = Date.now();
   const toCache = Object.fromEntries(
-    Object.entries(results).map(([key, x]) => [key, JSON.stringify(x)])
+    Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
   );
   await redis.hSet('tagIdsForImages', toCache);
 }
