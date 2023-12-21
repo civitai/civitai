@@ -437,7 +437,7 @@ export default function ModelDetailsV2({
     }
   }, [publishedVersions, selectedVersion, modelVersionId]);
 
-  if (loadingModel || isLoadingAccess) return <PageLoader />;
+  if (loadingModel) return <PageLoader />;
 
   if (!hasAccess && model?.unlisted) {
     return <NotFound />;

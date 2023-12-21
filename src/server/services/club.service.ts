@@ -868,6 +868,9 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
             posts: {
               some: {},
             },
+            memberships: {
+              some: {},
+            },
           },
         ],
       });

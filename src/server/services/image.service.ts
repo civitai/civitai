@@ -34,7 +34,7 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
-import { getCosmeticsForUsers } from '~/server/services/user.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -60,6 +60,9 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { getCursor } from '~/server/utils/pagination-helpers';
+import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
+import { CacheTTL } from '~/server/common/constants';
+import { getPeriods } from '~/server/utils/enum-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -80,7 +83,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
   try {
     const image = await dbRead.image.findUnique({
       where: { id },
-      select: { url: true, postId: true, nsfw: true },
+      select: { url: true, postId: true, nsfw: true, userId: true },
     });
     if (!image) return;
 
@@ -424,7 +427,6 @@ type GetAllImagesRaw = {
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
-  profilePictureId: number | null;
   cryCount: number;
   laughCount: number;
   likeCount: number;
@@ -433,7 +435,6 @@ type GetAllImagesRaw = {
   commentCount: number;
   tippedAmountCount: number;
   viewCount: number;
-  reactions?: ReviewReactions[];
   cursorId?: bigint;
   type: MediaType;
   metadata: Prisma.JsonValue;
@@ -450,8 +451,6 @@ export const getAllImages = async ({
   modelVersionId,
   imageId,
   username,
-  excludedTagIds,
-  excludedUserIds,
   excludedImageIds,
   period,
   periodMode,
@@ -467,7 +466,6 @@ export const getAllImages = async ({
   excludeCrossPosts,
   reactions,
   ids,
-  headers,
   includeBaseModel,
   types,
   hidden,
@@ -481,6 +479,8 @@ export const getAllImages = async ({
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
+  const cacheTags: string[] = [];
+  let cacheTime = CacheTTL.xs;
 
   const showClubPosts = !!(
     postId ||
@@ -497,21 +497,9 @@ export const getAllImages = async ({
     return { items: [], nextCursor: undefined };
   }
 
-  // ensure that only scanned images make it to the main feed if no user is logged in
-  if (!userId)
-    AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
-  // otherwise, bring scanned images or all images created by the current user
-  else
-    AND.push(
-      Prisma.sql`(i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" OR i."userId" = ${userId})`
-    );
-
-  // If User Isn't mod
-  if (!isModerator) {
-    applyModRulesSql(AND, { userId, publishedOnly: !collectionId });
-  }
-
   if (excludeCrossPosts && modelVersionId) {
+    cacheTime = CacheTTL.day;
+    cacheTags.push(`images-modelVersion:${modelVersionId}`);
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
   }
 
@@ -537,11 +525,16 @@ export const getAllImages = async ({
     if (reviewId) {
       joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
       AND.push(Prisma.sql`re."id" = ${reviewId}`);
+      cacheTime = 0;
     } else if (modelVersionId) {
       AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+      cacheTime = CacheTTL.day;
+      cacheTags.push(`images-modelVersion:${modelVersionId}`);
     } else if (modelId) {
       joins.push(`JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`);
       AND.push(Prisma.sql`mv."modelId" = ${modelId}`);
+      cacheTime = CacheTTL.day;
+      cacheTags.push(`images-model:${modelId}`);
     }
   }
 
@@ -550,6 +543,11 @@ export const getAllImages = async ({
     const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
     if (!targetUser) throw new Error('User not found');
     AND.push(Prisma.sql`u."id" = ${targetUser.id}`);
+    // Don't cache self queries
+    if (targetUser.id !== userId) {
+      cacheTime = CacheTTL.day;
+      cacheTags.push(`images-user:${targetUser.id}`);
+    } else cacheTime = 0;
   }
 
   // Filter only followed users
@@ -570,13 +568,16 @@ export const getAllImages = async ({
         followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null
       })`
     );
+    cacheTime = 0;
   }
 
   // Filter to specific tags
   if (tags?.length) {
-    from = 'FROM "TagsOnImage" toi';
-    joins.push(`JOIN "Image" i ON i.id = toi."imageId"`);
-    AND.push(Prisma.sql`(toi."tagId" IN (${Prisma.join(tags)}) AND NOT toi.disabled)`);
+    AND.push(Prisma.sql`i.id IN (
+      SELECT "imageId"
+      FROM "TagsOnImage"
+      WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
+    )`);
   }
 
   // Filter to specific generation process
@@ -599,6 +600,7 @@ export const getAllImages = async ({
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
+    if (userId) cacheTime = 0;
     const useRandomCursor = cursor && sort === ImageSort.Random;
 
     WITH.push(
@@ -663,7 +665,10 @@ export const getAllImages = async ({
     else orderBy = `i."id" DESC`;
   }
 
-  if (hidden) AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
+  if (hidden) {
+    cacheTime = 0;
+    AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
+  }
 
   if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
   else if (nsfw !== undefined) {
@@ -672,8 +677,12 @@ export const getAllImages = async ({
   }
 
   // Limit to images created since period start
-  if (period !== 'AllTime' && periodMode !== 'stats')
-    AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+  if (period !== 'AllTime' && periodMode !== 'stats') {
+    const ageGroups = getPeriods(period);
+    AND.push(
+      Prisma.sql`im."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+    );
+  }
 
   // Handle cursor & skip conflict
   if (cursor && skip) throw new Error('Cannot use skip with cursor');
@@ -697,6 +706,7 @@ export const getAllImages = async ({
   }
 
   if (userId && !!reactions?.length) {
+    cacheTime = 0;
     AND.push(
       Prisma.sql`EXISTS (
         SELECT 1
@@ -708,8 +718,10 @@ export const getAllImages = async ({
     );
   }
 
+  // TODO: Availability query seems to be killing us. Need to figure out how to optimize this.
+  // At the moment, club-required images will show up in the feed.
   if (!showClubPosts) {
-    AND.push(Prisma.sql`p."availability" = 'Public'`);
+    AND.push(Prisma.sql`p."availability" != 'Private'`);
   }
 
   // TODO: Adjust ImageMetric
@@ -717,11 +729,7 @@ export const getAllImages = async ({
     ${Prisma.raw(from)}
     ${Prisma.raw(joins.join('\n'))}
     JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
-      !isModerator
-        ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
-        : ''
-    )}
+    JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     ${Prisma.raw(
       isDev ? 'LEFT ' : ''
@@ -730,7 +738,7 @@ export const getAllImages = async ({
   `;
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-  const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+  const query = Prisma.sql`
     ${queryWith}
     SELECT
       i.id,
@@ -759,7 +767,6 @@ export const getAllImages = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
-      u."profilePictureId",
       ${Prisma.raw(
         includeBaseModel
           ? `(
@@ -779,12 +786,6 @@ export const getAllImages = async ({
       COALESCE(im."commentCount", 0) "commentCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       COALESCE(im."viewCount", 0) "viewCount",
-      (
-        SELECT jsonb_agg(reaction)
-        FROM "ImageReaction"
-        WHERE "imageId" = i.id
-        AND "userId" = ${userId}
-      ) reactions,
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -792,7 +793,23 @@ export const getAllImages = async ({
       LIMIT ${limit + 1}
   `;
 
-  console.log('rawImages', rawImages);
+  if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
+  const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
+  const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+
+  const imageIds = rawImages.map((i) => i.id);
+  let userReactions: Record<number, ReviewReactions[]> | undefined;
+  if (userId) {
+    const reactionsRaw = await dbRead.imageReaction.findMany({
+      where: { imageId: { in: imageIds }, userId },
+      select: { imageId: true, reaction: true },
+    });
+    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
+      acc[imageId] ??= [] as ReviewReactions[];
+      acc[imageId].push(reaction);
+      return acc;
+    }, {} as Record<number, ReviewReactions[]>);
+  }
 
   let nextCursor: bigint | undefined;
   if (rawImages.length > limit) {
@@ -800,18 +817,13 @@ export const getAllImages = async ({
     nextCursor = nextItem?.cursorId;
   }
 
-  let tagIdsVar: { tagId: number; imageId: number }[] | undefined;
+  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
   if (include?.includes('tagIds')) {
-    const imageIds = rawImages.map((i) => i.id);
-    tagIdsVar = await dbRead.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
-      select: { tagId: true, imageId: true },
-    });
+    tagIdsVar = await getTagIdsForImages(imageIds);
   }
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (include?.includes('tags')) {
-    const imageIds = rawImages.map((i) => i.id);
     const rawTags = await dbRead.imageTag.findMany({
       where: { imageId: { in: imageIds } },
       select: {
@@ -852,16 +864,15 @@ export const getAllImages = async ({
   }
 
   // Get user cosmetics
+  const userIds = rawImages.map((i) => i.userId);
   const userCosmetics = include?.includes('cosmetics')
-    ? await getCosmeticsForUsers(rawImages.map((i) => i.userId))
+    ? await getCosmeticsForUsers(userIds)
     : undefined;
-  const profilePictures = await dbRead.image.findMany({
-    where: {
-      id: { in: rawImages.map((i) => i.profilePictureId).filter(isDefined) },
-    },
-    select: profileImageSelect,
-  });
+  const profilePictures = include?.includes('profilePictures')
+    ? await getProfilePicturesForUsers(userIds)
+    : undefined;
 
+  const now = new Date();
   const images: Array<
     ImageV2Model & {
       tags?: VotableTagModel[] | undefined;
@@ -870,49 +881,57 @@ export const getAllImages = async ({
       modelVersionId?: number | null;
       baseModel?: string | null;
     }
-  > = rawImages.map(
-    ({
-      reactions,
-      userId: creatorId,
-      username,
-      userImage,
-      deletedAt,
-      cryCount,
-      likeCount,
-      laughCount,
-      dislikeCount,
-      heartCount,
-      commentCount,
-      tippedAmountCount,
-      profilePictureId,
-      viewCount,
-      cursorId,
-      ...i
-    }) => ({
-      ...i,
-      user: {
-        id: creatorId,
-        username,
-        image: userImage,
-        deletedAt,
-        cosmetics: userCosmetics?.[creatorId] ?? [],
-        profilePicture: profilePictures.find((x) => x.id === profilePictureId) ?? null,
-      },
-      stats: {
-        cryCountAllTime: cryCount,
-        laughCountAllTime: laughCount,
-        likeCountAllTime: likeCount,
-        dislikeCountAllTime: dislikeCount,
-        heartCountAllTime: heartCount,
-        commentCountAllTime: commentCount,
-        tippedAmountCountAllTime: tippedAmountCount,
-        viewCountAllTime: viewCount,
-      },
-      reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
-      tags: tagsVar?.filter((x) => x.imageId === i.id),
-      tagIds: tagIdsVar?.filter((x) => x.imageId === i.id).map((x) => x.tagId),
+  > = rawImages
+    .filter((x) => {
+      // Filter out images that shouldn't be seen by user
+      if (isModerator) return true;
+      if (x.needsReview && x.userId !== userId) return false;
+      if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
+      if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
+      return true;
     })
-  );
+    .map(
+      ({
+        userId: creatorId,
+        username,
+        userImage,
+        deletedAt,
+        cryCount,
+        likeCount,
+        laughCount,
+        dislikeCount,
+        heartCount,
+        commentCount,
+        tippedAmountCount,
+        viewCount,
+        cursorId,
+        ...i
+      }) => ({
+        ...i,
+        user: {
+          id: creatorId,
+          username,
+          image: userImage,
+          deletedAt,
+          cosmetics: userCosmetics?.[creatorId] ?? [],
+          profilePicture: profilePictures?.[creatorId] ?? null,
+        },
+        stats: {
+          cryCountAllTime: cryCount,
+          laughCountAllTime: laughCount,
+          likeCountAllTime: likeCount,
+          dislikeCountAllTime: dislikeCount,
+          heartCountAllTime: heartCount,
+          commentCountAllTime: commentCount,
+          tippedAmountCountAllTime: tippedAmountCount,
+          viewCountAllTime: viewCount,
+        },
+        reactions:
+          userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
+        tags: tagsVar?.filter((x) => x.imageId === i.id),
+        tagIds: tagIdsVar?.[i.id]?.tags,
+      })
+    );
 
   return {
     nextCursor,
@@ -920,6 +939,56 @@ export const getAllImages = async ({
   };
 };
 
+async function tagLookup(imageId: number | number[], fromWrite = false) {
+  const imageIds = Array.isArray(imageId) ? imageId : [imageId];
+  const db = fromWrite ? dbWrite : dbRead;
+  const tags = await db.tagsOnImage.findMany({
+    where: { imageId: { in: imageIds }, disabled: false },
+    select: { tagId: true, imageId: true },
+  });
+
+  const result = tags.reduce((acc, { tagId, imageId }) => {
+    acc[imageId.toString()] ??= { imageId, tags: [] };
+    acc[imageId.toString()].tags.push(tagId);
+    return acc;
+  }, {} as Record<string, { imageId: number; tags: number[] }>);
+  return result;
+}
+
+export async function getTagIdsForImages(imageIds: number[]) {
+  return await cachedObject<{ imageId: number; tags: number[] }>({
+    key: 'tagIdsForImages',
+    idKey: 'imageId',
+    ids: imageIds,
+    ttl: CacheTTL.day,
+    lookupFn: tagLookup,
+  });
+}
+
+export async function clearImageTagIdsCache(imageId: number | number[]) {
+  const imageIds = Array.isArray(imageId) ? imageId : [imageId];
+  if (!imageIds.length) return;
+
+  await redis.hDel(
+    'tagIdsForImages',
+    imageIds.map((x) => x.toString())
+  );
+}
+
+export async function updateImageTagIdsForImages(imageId: number | number[]) {
+  const results = await tagLookup(imageId, true);
+  if (Object.keys(results).length === 0) return;
+
+  const cachedAt = Date.now();
+  const toCache = Object.fromEntries(
+    Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
+  );
+  await redis.hSet('tagIdsForImages', toCache);
+}
+
+type GetImageRaw = GetAllImagesRaw & {
+  reactions?: ReviewReactions[];
+};
 export const getImage = async ({
   id,
   userId,
@@ -938,7 +1007,7 @@ export const getImage = async ({
       )})`
     );
 
-  const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+  const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
       i.name,
@@ -1009,18 +1078,12 @@ export const getImage = async ({
       commentCount,
       tippedAmountCount,
       viewCount,
-      profilePictureId,
       ...firstRawImage
     },
   ] = rawImages;
 
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
-  const profilePicture = profilePictureId
-    ? await dbRead.image.findUnique({
-        where: { id: profilePictureId },
-        select: profileImageSelect,
-      })
-    : null;
+  const profilePictures = await getProfilePicturesForUsers([creatorId]);
 
   const image = {
     ...firstRawImage,
@@ -1030,7 +1093,7 @@ export const getImage = async ({
       image: userImage,
       deletedAt,
       cosmetics: userCosmetics?.[creatorId] ?? [],
-      profilePicture,
+      profilePicture: profilePictures?.[creatorId] ?? null,
     },
     stats: {
       cryCountAllTime: cryCount,

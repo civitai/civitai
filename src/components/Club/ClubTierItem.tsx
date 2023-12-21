@@ -237,7 +237,13 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                     </Text>
                     <Text weight="bold">
                       Your card will only be charged if you do not have the amount of buzz at the
-                      time of renewal to continue your membership
+                      time of renewal to continue your membership. A minimum of{' '}
+                      <CurrencyBadge
+                        unitAmount={constants.clubs.minStripeCharge / 10}
+                        currency={Currency.USD}
+                      />{' '}
+                      will be charged to your card only in the case that you do not have enough buzz
+                      to
                     </Text>
                     <Text>
                       You can always add a payment method later in your{' '}

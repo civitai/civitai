@@ -63,6 +63,7 @@ import {
   updateUserById,
   userByReferralCode,
   equipCosmetic,
+  deleteUserProfilePictureCache,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -86,6 +87,7 @@ import {
   getCustomerPaymentMethods,
 } from '~/server/services/stripe.service';
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import { isProd } from '~/env/other';
 
 export const getAllUsersHandler = async ({
   input,
@@ -332,7 +334,7 @@ export const updateUserHandler = async ({
       profilePicture &&
       updatedUser.profilePictureId &&
       user.profilePictureId !== profilePicture?.id
-    )
+    ) {
       await ingestImage({
         image: {
           id: updatedUser.profilePictureId,
@@ -342,6 +344,8 @@ export const updateUserHandler = async ({
           width: profilePicture.width,
         },
       });
+      await deleteUserProfilePictureCache(id);
+    }
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
@@ -372,7 +376,8 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  if (id !== currentUser.id) throw throwAuthorizationError();
+  const canRemoveAsModerator = !isProd && currentUser.isModerator;
+  if (id !== currentUser.id && !canRemoveAsModerator) throw throwAuthorizationError();
 
   try {
     const user = await deleteUser(input);

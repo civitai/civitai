@@ -22,6 +22,8 @@ import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
+import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { updateImageTagIdsForImages } from '~/server/services/image.service';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -123,7 +125,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     where: { id },
     select: {
       id: true,
+      userId: true,
       meta: true,
+      metadata: true,
       postId: true,
     },
   });
@@ -329,6 +333,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {
+      // Clear cached image tags after completing scans
+      await updateImageTagIdsForImages(id);
+
       await dbWrite.$executeRaw`
         WITH scan_count AS (
           SELECT id, COUNT(*) as count
@@ -341,6 +348,12 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length};
       `;
+
+      const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
+      const isProfilePicture = imageMetadata?.profilePicture === true;
+      if (isProfilePicture) {
+        await deleteUserProfilePictureCache(image.userId);
+      }
     }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });

@@ -1,10 +1,11 @@
 CREATE OR REPLACE FUNCTION add_image_metrics()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO "ImageMetric" ("imageId", timeframe)
+    INSERT INTO "ImageMetric" ("imageId", timeframe, "createdAt")
     SELECT
       NEW.id,
-      timeframe
+      timeframe,
+      NEW."createdAt"
     FROM (
       SELECT UNNEST(ENUM_RANGE(NULL::"MetricTimeframe")) AS timeframe
     ) tf(timeframe);

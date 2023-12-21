@@ -4,6 +4,7 @@ import { constants } from '~/server/common/constants';
 import { imagesSearchIndex } from '~/server/search-index';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { updateImageTagIdsForImages } from '~/server/services/image.service';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -66,13 +67,17 @@ async function applyUpvotes() {
     );
   `;
 
-  // Get affected images to update search index
+  // Get affected images to update search index and cache
   // --------------------------------------------
   const affectedImageResults = await dbWrite.$queryRaw<{ imageId: number }[]>`
     SELECT DISTINCT "imageId" FROM "TagsOnImage"
     WHERE "createdAt" = ${now}
   `;
 
+  // Bust cache
+  await updateImageTagIdsForImages(affectedImageResults.map(({ imageId }) => imageId));
+
+  // Update search index
   await imagesSearchIndex.queueUpdate(
     affectedImageResults.map(({ imageId }) => ({
       id: imageId,
@@ -232,6 +237,10 @@ async function applyDownvotes() {
     WHERE "disabledAt" = ${now}
   `;
 
+  // Bust cache
+  await updateImageTagIdsForImages(affectedImageResults.map(({ imageId }) => imageId));
+
+  // Update search index
   await imagesSearchIndex.queueUpdate(
     affectedImageResults.map(({ imageId }) => ({
       id: imageId,

@@ -95,6 +95,7 @@ export const deleteImageHandler = async ({
         imageId: input.id,
         nsfw: image.nsfw,
         tags: imageTags.map((x) => x.tagName),
+        ownerId: image.userId,
       });
     }
 
@@ -171,6 +172,7 @@ export const setTosViolationHandler = async ({
       imageId: id,
       nsfw: image.nsfw,
       tags: image.tags.map((x) => x.tag.name),
+      ownerId: image.userId,
     });
     return image;
   } catch (error) {

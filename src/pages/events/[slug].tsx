@@ -245,7 +245,7 @@ export default function EventPageDetails({
                       force
                       animated
                     />
-                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg * 2}>
+                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg}>
                       <Text size="xl" weight={590}>
                         Your Garland
                       </Text>
@@ -263,6 +263,9 @@ export default function EventPageDetails({
                           / 31
                         </Text>
                       </div>
+                      <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
+                        {userTeam} Team
+                      </Text>
                     </Stack>
                     {eventCosmetic.available && (
                       <Stack spacing="sm">
@@ -343,6 +346,9 @@ export default function EventPageDetails({
                                     size={32}
                                     animated
                                   />
+                                  <Text size="xl" weight={590} tt="capitalize" color={color}>
+                                    {color} Team
+                                  </Text>
                                 </Group>
                                 <Group spacing={4} noWrap>
                                   <CurrencyIcon currency={Currency.BUZZ} />
@@ -443,6 +449,15 @@ export default function EventPageDetails({
                             <ThemeIcon color={teamScore.team.toLowerCase()} radius="xl" size={12}>
                               {null}
                             </ThemeIcon>
+                            <Text
+                              size="xs"
+                              color={teamScore.team.toLowerCase()}
+                              transform="uppercase"
+                              weight={500}
+                              lineClamp={1}
+                            >
+                              {teamScore.team}
+                            </Text>
                             <Text
                               size="xs"
                               color="dimmed"

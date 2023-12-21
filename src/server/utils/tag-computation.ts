@@ -196,6 +196,7 @@ const tagCombos: ComputedTagCombo[] = [
       'bdsm',
       'ass grab',
       'breast press',
+      'grabbing own breast',
     ],
     sources: [TagSource.WD14],
   },

@@ -38,6 +38,7 @@ export function SortFilter(props: SortFilterProps) {
 type DumbProps = {
   type: FilterSubTypes;
   variant?: 'menu' | 'button';
+  includeNewest?: boolean;
   value:
     | ModelSort
     | PostSort
@@ -59,10 +60,18 @@ type DumbProps = {
       | ClubSort
   ) => void;
 };
-function DumbSortFilter({ type, value, onChange, variant = 'menu' }: DumbProps) {
+function DumbSortFilter({
+  type,
+  value,
+  onChange,
+  variant = 'menu',
+  includeNewest = true,
+}: DumbProps) {
   const sharedProps = {
     label: value,
-    options: sortOptions[type].map((x) => ({ label: x, value: x })),
+    options: sortOptions[type]
+      .map((x) => ({ label: x, value: x }))
+      .filter((x) => includeNewest || x.value !== 'Newest'),
     onClick: onChange,
     value,
   };
@@ -80,8 +89,9 @@ type StatefulProps = {
   value?: undefined;
   onChange?: undefined;
   variant?: 'menu' | 'button';
+  includeNewest?: boolean;
 };
-function StatefulSortFilter({ type, variant }: StatefulProps) {
+function StatefulSortFilter({ type, variant, includeNewest }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
   const globalSort = useFiltersContext((state) => state[type].sort);
   const querySort = query.sort as typeof globalSort | undefined;
@@ -96,5 +106,13 @@ function StatefulSortFilter({ type, variant }: StatefulProps) {
   };
 
   const sort = querySort ? querySort : globalSort;
-  return <DumbSortFilter type={type} value={sort} onChange={setSort} variant={variant} />;
+  return (
+    <DumbSortFilter
+      type={type}
+      value={sort}
+      onChange={setSort}
+      variant={variant}
+      includeNewest={includeNewest}
+    />
+  );
 }
