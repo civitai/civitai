@@ -24,8 +24,13 @@ const getResourceDetails = (
       };
     case 'Article':
       return {
-        label: resource.data.title,
+        label: resource.data.title || 'N/A',
         url: `/articles/${resource.data.id}`,
+      };
+    case 'Post':
+      return {
+        label: resource.data.title,
+        url: `/posts/${resource.data.id}`,
       };
   }
 };
