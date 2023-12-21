@@ -346,6 +346,9 @@ export default function EventPageDetails({
                                     size={32}
                                     animated
                                   />
+                                  <Text size="xl" weight={590} tt="capitalize" color={color}>
+                                    {color} Team
+                                  </Text>
                                 </Group>
                                 <Group spacing={4} noWrap>
                                   <CurrencyIcon currency={Currency.BUZZ} />
@@ -446,6 +449,15 @@ export default function EventPageDetails({
                             <ThemeIcon color={teamScore.team.toLowerCase()} radius="xl" size={12}>
                               {null}
                             </ThemeIcon>
+                            <Text
+                              size="xs"
+                              color={teamScore.team.toLowerCase()}
+                              transform="uppercase"
+                              weight={500}
+                              lineClamp={1}
+                            >
+                              {teamScore.team}
+                            </Text>
                             <Text
                               size="xs"
                               color="dimmed"
