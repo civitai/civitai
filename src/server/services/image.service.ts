@@ -482,15 +482,7 @@ export const getAllImages = async ({
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
 
-  const showClubPosts = !!(
-    postId ||
-    imageId ||
-    collectionId ||
-    modelId ||
-    modelVersionId ||
-    reviewId ||
-    username
-  );
+  const showClubPosts = !!postId || !!collectionId || !!modelId || !!modelVersionId || !!reviewId;
 
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
