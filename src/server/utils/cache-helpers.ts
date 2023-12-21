@@ -50,6 +50,7 @@ type CachedLookupOptions<T extends object> = {
   idKey: keyof T;
   lookupFn: (ids: number[]) => Promise<Record<string, object>>;
   ttl?: number;
+  cacheNotFound?: boolean;
 };
 export async function cachedArray<T extends object>({
   key,
@@ -57,6 +58,7 @@ export async function cachedArray<T extends object>({
   idKey,
   lookupFn,
   ttl = CacheTTL.xs,
+  cacheNotFound = true,
 }: CachedLookupOptions<T>) {
   if (!ids.length) return [];
   const results = new Set<T>();
@@ -83,7 +85,7 @@ export async function cachedArray<T extends object>({
     const cachedAt = Date.now();
     for (const id of cacheMisses) {
       const result = dbResults[id];
-      if (!result) {
+      if (!result && cacheNotFound) {
         toCache[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
         continue;
       }

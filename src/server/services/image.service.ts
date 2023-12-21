@@ -962,6 +962,7 @@ export async function getTagIdsForImages(imageIds: number[]) {
     ids: imageIds,
     ttl: CacheTTL.day,
     lookupFn: tagLookup,
+    cacheNotFound: false,
   });
 }
 
