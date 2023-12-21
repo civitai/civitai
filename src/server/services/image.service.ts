@@ -17,7 +17,7 @@ import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
-import { ImageScanType, ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -127,7 +127,12 @@ export const moderateImages = async ({
     if (reviewType !== 'reported') {
       await dbWrite.image.updateMany({
         where: { id: { in: ids }, needsReview: { not: null } },
-        data: { nsfw, needsReview: null, ingestion: 'Blocked', blockedFor: 'moderated' },
+        data: {
+          nsfw,
+          needsReview: null,
+          ingestion: 'Blocked',
+          blockedFor: BlockedReason.Moderated,
+        },
       });
     } else {
       const images = await dbRead.image.findMany({
@@ -147,7 +152,7 @@ export const moderateImages = async ({
   } else {
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { nsfw, needsReview },
+      data: { nsfw, needsReview, ingestion: 'Scanned' },
     });
 
     // Remove tags that triggered review
@@ -2523,7 +2528,8 @@ async function removeNameReference(images: number[]) {
       )
       UPDATE "Image" i
         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
-          "needsReview" = null
+          "needsReview" = null,
+          ingestion = 'Scanned'::"ImageIngestionStatus"
       FROM updates t
       WHERE t.id = i.id;
     `;
