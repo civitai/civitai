@@ -7,6 +7,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { isDev } from '~/env/other';
+import { constants } from '../common/constants';
 
 const logger = ({ type = 'error', data = {} }: { type?: string; data?: MixedObject }) => {
   logToAxiom(
@@ -171,7 +172,10 @@ export const processClubMembershipRecurringPayments = createJob(
               });
             }
 
-            const purchasedUnitAmount = Math.max(chargedAmount - (account?.balance ?? 0), 5000);
+            const purchasedUnitAmount = Math.max(
+              chargedAmount - (account?.balance ?? 0),
+              constants.clubs.minStripeCharge
+            );
 
             const paymentIntent = await stripe.paymentIntents.create({
               amount: purchasedUnitAmount / 10, // Buzz has a 1:10 cent ratio. Stripe charges in cents.
