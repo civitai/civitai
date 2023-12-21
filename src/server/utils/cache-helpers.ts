@@ -83,10 +83,11 @@ export async function cachedArray<T extends object>({
     const cachedAt = Date.now();
     for (const id of cacheMisses) {
       const result = dbResults[id];
-      if (!result) {
-        toCache[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
-        continue;
-      }
+      // Temp disable null caching
+      // if (!result) {
+      //   toCache[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
+      //   continue;
+      // }
       results.add(result as T);
       toCache[id] = JSON.stringify({ ...result, cachedAt });
     }
