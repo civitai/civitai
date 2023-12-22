@@ -12,7 +12,7 @@ import { useInView } from '~/hooks/useInView';
 import { IconClubs } from '@tabler/icons-react';
 
 export function PostsCard({
-  data: { image, id, stats, imageCount, requiresClub },
+  data: { image, id, stats, imageCount, clubRequirement },
   height,
 }: {
   data: PostsInfiniteModel;
@@ -52,7 +52,7 @@ export function PostsCard({
 
                       <Stack spacing="xs" ml="auto">
                         <ImageGuard.Report context="post" position="static" />
-                        {requiresClub && (
+                        {clubRequirement?.requiresClub && (
                           <Tooltip
                             label="This post requires joining a club to read its contents."
                             withinPortal

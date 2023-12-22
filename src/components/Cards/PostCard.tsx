@@ -38,7 +38,7 @@ export function PostCard({ data }: Props) {
                       <ImageGuard.ToggleConnect position="static" />
                       <Stack spacing="xs" ml="auto">
                         <ImageGuard.Report context="post" position="static" withinPortal />
-                        {data.requiresClub && (
+                        {data.clubRequirement?.requiresClub && (
                           <Tooltip
                             label="This post requires joining a club to read its contents."
                             withinPortal

@@ -32,10 +32,11 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
+import { getClubDetailsForResource, upsertClubResource } from '../services/club.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -171,6 +172,44 @@ export const updatePostHandler = async ({
           type: 'published',
           entityType: 'post',
           entityId: updatedPost.id,
+        });
+      }
+
+      const [clubDetails] = await getClubDetailsForResource({
+        entityIds: [updatedPost.id],
+        entityType: 'Post',
+      });
+
+      if (input.clubs) {
+        // This is a club post pretty much, so we'll go ahead and create a clubPost with this entityId/entityType.
+        // And make this an unlisted resource.
+
+        // Update the resource itself:
+        await upsertClubResource({
+          userId: ctx.user.id,
+          entityId: updatedPost.id,
+          entityType: 'Post',
+          isModerator: ctx.user.isModerator,
+          clubs: input.clubs ?? [],
+        });
+
+        if (input.clubPostMembersOnly) {
+          // First, make the reosurce unlisted:
+          await dbWrite.post.update({
+            where: { id: updatedPost.id },
+            data: { unlisted: true },
+          });
+        }
+
+        // Now create the clubPost based off of the image post:
+        await dbWrite.clubPost.createMany({
+          data: clubDetails.clubs.map((c) => ({
+            clubId: c.clubId,
+            entityId: updatedPost.id,
+            entityType: 'Post',
+            membersOnly: input.clubPostMembersOnly ?? false,
+            createdById: updatedPost.userId,
+          })),
         });
       }
     }

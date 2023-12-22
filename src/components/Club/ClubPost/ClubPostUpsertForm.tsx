@@ -48,7 +48,17 @@ import { useCurrentUser } from '../../../hooks/useCurrentUser';
 import { ClubAdminPermission } from '@prisma/client';
 import { ClubPostResourceCard } from './ClubFeed';
 
-const formSchema = upsertClubPostInput;
+const formSchema = upsertClubPostInput.refine(
+  (data) => {
+    if (data.entityType !== 'Post' && !(data.title && data.description)) {
+      return false;
+    }
+  },
+  {
+    message: 'Title and description are required',
+    path: ['title', 'description'],
+  }
+);
 
 type Props = {
   resource?: {

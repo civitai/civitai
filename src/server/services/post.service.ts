@@ -401,8 +401,6 @@ export const getPostsInfinite = async ({
       .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
         const { imageCount, ...image } =
           images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
-        const requiresClub =
-          clubRequirement.find((r) => r.entityId === post.id)?.requiresClub ?? undefined;
 
         return {
           ...post,
@@ -417,7 +415,7 @@ export const getPostsInfinite = async ({
           },
           stats,
           image,
-          requiresClub,
+          clubRequirement: clubRequirement.find((r) => r.entityId === post.id),
         };
       })
       .filter((x) => x.imageCount !== 0),

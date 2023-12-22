@@ -230,8 +230,12 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
             </Box>
           </Center>
         )}
-        <RenderHtml html={clubPost.description} />
-        <Divider />
+        {clubPost.description && (
+          <>
+            <RenderHtml html={clubPost.description} />
+            <Divider />
+          </>
+        )}
         {inView && (
           <ClubPostDiscussion
             clubId={clubPost.clubId}

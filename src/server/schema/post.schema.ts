@@ -6,6 +6,7 @@ import { periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { clubResourceSchema } from './club.schema';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -56,6 +57,8 @@ export const postUpdateSchema = z.object({
   detail: z.string().optional(),
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
+  clubs: z.array(clubResourceSchema).optional(),
+  clubPostMembersOnly: z.boolean().optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
