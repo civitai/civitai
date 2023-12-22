@@ -3,6 +3,7 @@ import { useMergedRef } from '@mantine/hooks';
 import { IconRefresh } from '@tabler/icons-react';
 
 import { RefObject, createContext, forwardRef, useContext, useEffect, useRef } from 'react';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
 
 const ScrollAreaContext = createContext<{
@@ -51,6 +52,8 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
     const startPointRef = useRef<number | null>(null);
     const pullChangeRef = useRef(0);
     const theme = useMantineTheme();
+    // Hardset breakpoint to 1024px cause mantine breakpoints are huge
+    const mobile = useIsMobile({ breakpoint: 'md' });
 
     useEffect(() => {
       const node = scrollRef.current;
@@ -130,25 +133,27 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
         node.removeEventListener('touchmove', pull);
         node.removeEventListener('touchend', endPull);
       };
-    }, []);
+    }, [mobile]);
 
     return (
       <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
         <Box ref={mergedRef as any} className={cx(classes.root, className)} py="md" {...props}>
-          <ThemeIcon
-            ref={loaderRef}
-            radius="xl"
-            size="xl"
-            style={{
-              position: 'absolute',
-              left: '50%',
-              zIndex: 10,
-              opacity: 0,
-              transform: 'translateX(-50%)',
-            }}
-          >
-            <IconRefresh />
-          </ThemeIcon>
+          {mobile && (
+            <ThemeIcon
+              ref={loaderRef}
+              radius="xl"
+              size="xl"
+              style={{
+                position: 'absolute',
+                left: '50%',
+                zIndex: 10,
+                opacity: 0,
+                transform: 'translateX(-50%)',
+              }}
+            >
+              <IconRefresh />
+            </ThemeIcon>
+          )}
           {children}
         </Box>
       </ScrollAreaContext.Provider>
