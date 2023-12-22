@@ -46,7 +46,14 @@ export function EdgeVideo({
           loop
           playsInline
           style={{ display: 'block', ...style }}
-          onLoadedData={controls ? (e) => setShowAudioControl(hasAudio(e.target)) : undefined}
+          onLoadedData={
+            controls
+              ? (e) => {
+                  setShowAudioControl(hasAudio(e.target));
+                  e.currentTarget.style.opacity = '1';
+                }
+              : (e) => (e.currentTarget.style.opacity = '1')
+          }
           {...props}
         >
           <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
