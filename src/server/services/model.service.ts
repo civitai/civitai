@@ -1,5 +1,4 @@
 import {
-  Availability,
   CommercialUse,
   CosmeticSource,
   CosmeticType,
@@ -29,6 +28,7 @@ import {
   GetAllModelsOutput,
   GetModelsByCategoryInput,
   GetModelVersionsSchema,
+  ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
@@ -441,6 +441,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
   else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
 
+  // eslint-disable-next-line prefer-const
   let [cursorProp, cursorDirection] = orderBy?.split(' ');
 
   if (cursorProp === 'm."lastVersionAt"') {
@@ -1839,3 +1840,28 @@ export const setAssociatedResources = async (
   ]);
 };
 // #endregion
+
+export const getGalleryHiddenPreferences = async ({
+  settings,
+}: {
+  settings: ModelGallerySettingsSchema;
+}) => {
+  const { tags, users, images } = settings;
+  const hiddenTags =
+    tags && tags.length
+      ? await dbRead.tag.findMany({
+          where: { id: { in: tags } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+  const hiddenUsers =
+    users && users.length
+      ? await dbRead.user.findMany({
+          where: { id: { in: users } },
+          select: { id: true, username: true },
+        })
+      : [];
+
+  return { hiddenTags, hiddenUsers, hiddenImages: images ?? [] };
+};

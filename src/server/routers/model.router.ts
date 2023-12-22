@@ -11,6 +11,7 @@ import {
   getDownloadCommandHandler,
   getModelByHashesHandler,
   getModelDetailsForReviewHandler,
+  getModelGallerySettingsHandler,
   getModelHandler,
   getModelReportDetailsHandler,
   getModelsInfiniteHandler,
@@ -28,6 +29,7 @@ import {
   restoreModelHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
+  updateGallerySettingsHandler,
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
@@ -55,6 +57,7 @@ import {
   toggleModelLockSchema,
   unpublishModelSchema,
   getSimpleModelsInfiniteSchema,
+  updateGallerySettingsSchema,
 } from '~/server/schema/model.schema';
 import {
   getAllModelsWithCategories,
@@ -241,4 +244,9 @@ export const modelRouter = router({
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: publicProcedure.input(modelByHashesInput).mutation(getModelByHashesHandler),
   getTemplateFields: guardedProcedure.input(getByIdSchema).query(getModelTemplateFieldsHandler),
+  getGallerySettings: publicProcedure.input(getByIdSchema).query(getModelGallerySettingsHandler),
+  updateGallerySettings: guardedProcedure
+    .input(updateGallerySettingsSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateGallerySettingsHandler),
 });

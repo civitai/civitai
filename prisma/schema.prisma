@@ -416,6 +416,7 @@ model Model {
   earlyAccessDeadline DateTime?
   mode                ModelModifier?
   unlisted            Boolean         @default(false)
+  gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
 
   // Licensing
   allowNoCredit         Boolean       @default(true)

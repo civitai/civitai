@@ -9,7 +9,13 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelType,
+  CacheTTL,
+  ModelFileType,
+  constants,
+} from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
@@ -28,19 +34,21 @@ import {
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
   GetAllModelsOutput,
-  getAllModelsSchema,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
+  GetSimpleModelsInfiniteSchema,
   ModelByHashesInput,
+  ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
   ToggleModelLockInput,
   UnpublishModelSchema,
+  UpdateGallerySettingsInput,
   UserPreferencesForModelsInput,
-  GetSimpleModelsInfiniteSchema,
+  getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -56,10 +64,11 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,
   getDraftModelsByUserId,
+  getGalleryHiddenPreferences,
   getModel,
+  getModelVersionsMicro,
   getModels,
   getModelsWithImagesAndModelVersions,
-  getModelVersionsMicro,
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
@@ -85,7 +94,9 @@ import {
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getDownloadUrl } from '~/utils/delivery-worker';
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
@@ -1293,3 +1304,63 @@ export async function getModelTemplateFieldsHandler({
     throw throwDbError(error);
   }
 }
+
+export const getModelGallerySettingsHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const cachedSettings = await redis.get(`model:gallery-settings:${input.id}`);
+    if (cachedSettings)
+      return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
+
+    const model = await getModel({
+      id: input.id,
+      select: { id: true, userId: true, gallerySettings: true },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    const settings = model.gallerySettings
+      ? await getGalleryHiddenPreferences({
+          settings: model.gallerySettings as ModelGallerySettingsSchema,
+        })
+      : null;
+    await redis.set(`model:gallery-settings:${input.id}`, toJson(settings), { EX: CacheTTL.week });
+
+    return settings;
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
+export const updateGallerySettingsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateGallerySettingsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id, gallerySettings } = input;
+    const { user: sessionUser } = ctx;
+
+    const model = await getModel({ id, select: { id: true, userId: true } });
+    if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
+      throw throwNotFoundError(`No model with id ${id}`);
+
+    const updatedSettings = gallerySettings
+      ? {
+          images: gallerySettings.hiddenImages,
+          users: gallerySettings.hiddenUsers.map(({ id }) => id),
+          tags: gallerySettings.hiddenTags.map(({ id }) => id),
+        }
+      : null;
+    const updatedModel = await updateModelById({
+      id,
+      data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
+    });
+    // Clear cache
+    await redis.del(`model:gallery-settings:${id}`);
+
+    return { ...updatedModel, gallerySettings };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
