@@ -15,18 +15,16 @@ import { useMemo } from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 
-import { NotificationList } from '~/components/Notifications/NotificationList';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { NotificationList } from '~/components/Notifications/NotificationList';
+import { trpc } from '~/utils/trpc';
 
 export default function Notifications() {
-  const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.notification.getAllByUser.useInfiniteQuery(
-      {},
+      { limit: 100 },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
       }
@@ -43,7 +41,7 @@ export default function Notifications() {
     },
   });
   const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-    if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
+    readNotificationMutation.mutate({ id, all });
   };
 
   return (

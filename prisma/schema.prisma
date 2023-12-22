@@ -1507,15 +1507,19 @@ model Log {
 }
 
 model Notification {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    Int
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String
   details   Json?
-  createdAt DateTime  @default(now())
-  viewedAt  DateTime?
+  createdAt DateTime @default(now())
 
-  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model NotificationViewed {
+  id     String @id
+  userId Int
 }
 
 model UserNotificationSettings {

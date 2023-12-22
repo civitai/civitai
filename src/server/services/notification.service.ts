@@ -8,43 +8,64 @@ import {
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getUserNotifications = async <TSelect extends Prisma.NotificationSelect>({
+type NotificationsRaw = {
+  id: string;
+  type: string;
+  details: Prisma.JsonValue;
+  createdAt: Date;
+  read: boolean;
+};
+export async function getUserNotifications({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
   userId,
-  select,
   count = false,
   unread = false,
 }: Partial<GetUserNotificationsSchema> & {
   userId: number;
-  select: TSelect;
   count?: boolean;
-}) => {
-  const where: Prisma.NotificationWhereInput = {
-    userId,
-    viewedAt: unread ? { equals: null } : undefined,
-  };
-  const notificationQuery = dbRead.notification.findMany({
-    take: limit,
-    cursor: cursor ? { id: cursor } : undefined,
-    where,
-    select,
-    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-  });
+}) {
+  const AND = [Prisma.sql`n."userId" = ${userId}`];
+  if (unread) AND.push(Prisma.sql`nv.id IS NULL`);
+  if (cursor) AND.push(Prisma.sql`n."createdAt" < ${cursor}`);
+  else AND.push(Prisma.sql`n."createdAt" > NOW() - interval '1 month'`);
 
-  if (count) {
-    const [items, count] = await dbRead.$transaction([
-      notificationQuery,
-      dbRead.notification.count({ where }),
-    ]);
+  const items = await dbRead.$queryRaw<NotificationsRaw[]>`
+    SELECT n."id", "type", "details", "createdAt", nv."id" IS NOT NULL as read
+    FROM "Notification" n
+    LEFT JOIN "NotificationViewed" nv ON n."id" = nv."id" AND nv."userId" = ${userId}
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY "createdAt" DESC
+    LIMIT ${limit}
+  `;
 
-    return { items, count };
-  }
-
-  const items = await notificationQuery;
+  if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
   return { items };
-};
+}
+
+export async function getUserNotificationCount({
+  userId,
+  unread,
+}: {
+  userId: number;
+  unread: boolean;
+}) {
+  const AND = [Prisma.sql`"userId" = ${userId}`];
+  if (unread)
+    AND.push(
+      Prisma.sql`"id" NOT IN (SELECT id FROM "NotificationViewed" WHERE "userId" = ${userId})`
+    );
+  else AND.push(Prisma.sql`"createdAt" > NOW() - interval '1 month'`);
+
+  const [result] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT COUNT(*) as count
+    FROM "Notification"
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  return result.count;
+}
 
 export const createUserNotificationSetting = async ({
   toggle,
@@ -53,16 +74,26 @@ export const createUserNotificationSetting = async ({
   return dbWrite.userNotificationSettings.create({ data });
 };
 
-export const updateUserNoticationById = ({
+export const markNotificationsRead = ({
   id,
   userId,
-  data,
   all = false,
-}: MarkReadNotificationInput & { data: Prisma.NotificationUpdateInput }) => {
-  return dbWrite.notification.updateMany({
-    where: { id: !all ? id : undefined, userId, viewedAt: { equals: null } },
-    data,
-  });
+}: MarkReadNotificationInput & { userId: number }) => {
+  if (all) {
+    return dbWrite.$executeRaw`
+      INSERT INTO "NotificationViewed" ("id", "userId")
+      SELECT "id", ${userId}
+      FROM "Notification"
+      WHERE "userId" = ${userId}
+        AND "id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})
+    `;
+  } else {
+    return dbWrite.$executeRaw`
+      INSERT INTO "NotificationViewed" ("id", "userId")
+      VALUES (${id}, ${userId})
+      ON CONFLICT ("id", "userId") DO NOTHING
+    `;
+  }
 };
 
 export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {

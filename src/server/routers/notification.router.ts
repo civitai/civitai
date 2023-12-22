@@ -6,9 +6,9 @@ import {
 } from '~/server/schema/notification.schema';
 import {
   getUserNotificationsInfiniteHandler,
-  markReadNotificationHandler,
   upsertUserNotificationSettingsHandler,
 } from '~/server/controllers/notification.controller';
+import { markNotificationsRead } from '~/server/services/notification.service';
 
 export const notificationRouter = router({
   getAllByUser: protectedProcedure
@@ -16,7 +16,7 @@ export const notificationRouter = router({
     .query(getUserNotificationsInfiniteHandler),
   markRead: protectedProcedure
     .input(markReadNotificationInput)
-    .mutation(markReadNotificationHandler),
+    .mutation(({ input, ctx }) => markNotificationsRead({ ...input, userId: ctx.user.id })),
   updateUserSettings: protectedProcedure
     .input(toggleNotificationSettingInput)
     .mutation(upsertUserNotificationSettingsHandler),

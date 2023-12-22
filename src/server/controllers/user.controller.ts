@@ -47,7 +47,6 @@ import {
   getUserEngagedModelVersions,
   getUserEngagedModels,
   getUserTags,
-  getUserUnreadNotificationsCount,
   getUsers,
   isUsernamePermitted,
   toggleBan,
@@ -88,6 +87,7 @@ import {
 } from '~/server/services/stripe.service';
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import { isProd } from '~/env/other';
+import { getUserNotificationCount } from '~/server/services/notification.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -181,10 +181,8 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   const { id } = ctx.user;
 
   try {
-    const user = await getUserUnreadNotificationsCount({ id });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-    return { count: user._count.notifications };
+    const count = await getUserNotificationCount({ userId: id, unread: true });
+    return { count };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
