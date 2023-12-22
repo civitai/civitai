@@ -136,7 +136,7 @@ const useStyles = createStyles((theme) => ({
 //   { value: COLLECTIONS_SEARCH_INDEX, label: 'Collections' },
 // ] as const;
 
-type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
+export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   supportedIndexes?: TargetIndex[];
   onItemSelected: (
     item: ShowcaseItemSchema,
@@ -150,6 +150,7 @@ type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   ) => void;
   filters?: string;
   dropdownItemLimit?: number;
+  clearable?: boolean;
 };
 
 export const QuickSearchDropdown = ({

@@ -3,7 +3,6 @@ import {
   CosmeticSource,
   CosmeticType,
   MetricTimeframe,
-  ModelType,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -126,7 +125,7 @@ export const getArticles = async ({
     const WITH: Prisma.Sql[] = [];
 
     if (query) {
-      AND.push(Prisma.sql`a."title" LIKE '%${query}%'`);
+      AND.push(Prisma.raw(`a."title" ILIKE '%${query}%'`));
     }
     if (!!tags?.length) {
       AND.push(
@@ -255,6 +254,7 @@ export const getArticles = async ({
     else if (sort === ArticleSort.MostTipped)
       orderBy = `rank."tippedAmountCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
 
+    // eslint-disable-next-line prefer-const
     let [cursorProp, cursorDirection] = orderBy?.split(' ');
 
     if (cursorProp === 'a."publishedAt"') {
