@@ -46,6 +46,8 @@ import { profileImageSelect } from '../selectors/image.selector';
 import { bustCacheTag } from '~/server/utils/cache-helpers';
 import { getClubDetailsForResource } from './club.service';
 import { entityRequiresClub, hasEntityAccess } from './common.service';
+import { env } from 'process';
+import { CacheTTL } from '../common/constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -96,10 +98,12 @@ export const getPostsInfinite = async ({
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const WITH: Prisma.Sql[] = [];
+  let cacheTime = CacheTTL.xs;
 
   const isOwnerRequest =
     !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
   let targetUser: number | undefined;
+
   if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (record) {
@@ -110,6 +114,7 @@ export const getPostsInfinite = async ({
 
   // Filter only followed users
   if (!!user && followed) {
+    cacheTime = 0;
     const followedUsers = await dbRead.user.findUnique({
       where: { id: user.id },
       select: {
@@ -150,6 +155,7 @@ export const getPostsInfinite = async ({
         WHERE i."postId" = p.id AND i."ingestion" = 'Scanned'
       )`);
     }
+
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "TagsOnPost" top
@@ -158,6 +164,7 @@ export const getPostsInfinite = async ({
 
     if (!!excludedUserIds?.length)
       AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+
     if (!user?.isModerator) {
       // Handle Post Visibility
       joins.push('LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id');
@@ -289,6 +296,10 @@ export const getPostsInfinite = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
+
+  if (!env.POST_QUERY_CACHING) cacheTime = 0;
+  const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
+  const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
   let nextCursor: number | Date | undefined | null;
   if (postsRaw.length > limit) {
