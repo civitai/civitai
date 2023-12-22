@@ -51,6 +51,7 @@ type EditPostProps = {
   reorder: boolean;
   selectedImageId?: number;
   clubs?: ClubResourceSchema[];
+  deleting: boolean;
 };
 
 interface EditPostState extends EditPostProps {
@@ -74,6 +75,7 @@ interface EditPostState extends EditPostProps {
   /** used to clean up object urls */
   cleanup: () => void;
   reset: (post?: PostEditDetail) => void;
+  setDeleting: (value: boolean) => void;
 }
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
@@ -114,6 +116,7 @@ const createEditPostStore = ({
         return {
           objectUrls: [],
           reorder: false,
+          deleting: false,
           ...initialData,
           // methods
           setTitle: (title) =>
@@ -250,6 +253,10 @@ const createEditPostStore = ({
               state.clubs = data.clubs;
             });
           },
+          setDeleting: (value) =>
+            set((state) => {
+              state.deleting = value;
+            }),
         };
       })
     )

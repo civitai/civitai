@@ -23,6 +23,7 @@ import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const queryUtils = trpc.useContext();
@@ -97,10 +98,14 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 
   const id = useEditPostContext((state) => state.id);
-  const tags = useEditPostContext((state) => state.tags);
   const images = useEditPostContext((state) => state.images);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
+
+  useCatchNavigation({
+    unsavedChanges: !publishedAt,
+    message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
+  });
 
   const getFileUploadStatus = useS3UploadStore((state) => state.getStatus);
   const { uploading = 0 } = getFileUploadStatus((item) => item.meta?.versionId === modelVersionId);
@@ -115,9 +120,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
   const publishModelMutation = trpc.model.publish.useMutation();
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
 
-  const canSave =
-    tags.filter((x) => !!x.id).length > 0 &&
-    images.filter((x) => x.discriminator === 'image').length > 0;
+  const canSave = images.filter((x) => x.discriminator === 'image').length > 0;
   const canPublish = !isUploading && !!modelVersion?.files?.length;
 
   const handlePublish = async (publishDate?: Date) => {
@@ -200,7 +203,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
       {!publishedAt && (
         <Tooltip
           disabled={canSave}
-          label="At least one tag is required in order to publish this post to the community"
+          label="At least one image is required in order to publish this post to the community"
           multiline
           width={260}
           withArrow

@@ -43,7 +43,7 @@ export function PostControls({
                 <Menu.Item
                   color={theme.colors.red[6]}
                   icon={<IconTrash size={14} stroke={1.5} />}
-                  onClick={onClick}
+                  onClick={() => onClick()}
                 >
                   Delete Post
                 </Menu.Item>
