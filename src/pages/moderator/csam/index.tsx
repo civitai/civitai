@@ -97,7 +97,7 @@ export default function CsamReports() {
       <Stack>
         <Group position="apart">
           <Title>Csam Reports</Title>
-          {statsArr.length && (
+          {statsArr.length > 0 && (
             <Group>
               {statsArr.map(({ label, count }) => (
                 <Badge key={label} rightSection={count}>
