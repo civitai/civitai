@@ -476,7 +476,7 @@ export type EntityAccessWithKey = {
   entityKey: string;
 };
 
-export const getUserEntityAccessItems = async ({ userId }: { userId: number }) => {
+export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
   const entities = await dbRead.$queryRaw<EntityAccessWithKey[]>`
     SELECT 
       ea."accessToId" "entityId",

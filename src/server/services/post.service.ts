@@ -1,4 +1,5 @@
 import {
+  Availability,
   CollectionContributorPermission,
   CollectionReadConfiguration,
   ImageGenerationProcess,
@@ -50,6 +51,7 @@ import { getClubDetailsForResource } from './club.service';
 import { entityRequiresClub, hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
+import { getPrivateEntityAccessForUser } from './user-cache.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -65,6 +67,7 @@ type GetAllPostsRaw = {
   unlisted: boolean;
   modelVersionId: number | null;
   collectionId: number | null;
+  availability: Availability;
   stats: {
     commentCount: number;
     likeCount: number;
@@ -258,6 +261,7 @@ export const getPostsInfinite = async ({
       p."unlisted",
       p."modelVersionId",
       p."collectionId",
+      p."availability",
       (
         SELECT jsonb_build_object(
           'cryCount', COALESCE(pm."cryCount", 0),
@@ -322,12 +326,10 @@ export const getPostsInfinite = async ({
     entityIds: postsRaw.map(({ id }) => id),
   });
 
-  const entityAccess = await hasEntityAccess({
-    userId: user?.id,
-    isModerator: user?.isModerator,
-    entityIds: postsRaw.map(({ id }) => id),
-    entityType: 'Post',
-  });
+  const userEntityAccess = await getPrivateEntityAccessForUser({ userId: user?.id });
+  const privatePostAccessIds = userEntityAccess
+    .filter((x) => x.entityType === 'Post')
+    .map((x) => x.entityId);
 
   // Filter to published model versions:
   const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
@@ -365,8 +367,11 @@ export const getPostsInfinite = async ({
         if (user?.isModerator || p.userId === user?.id) return true;
 
         // Hide posts where the user does not have permission.
-        const access = entityAccess.find((x) => x.entityId === p.id);
-        if (!access?.hasAccess && p.unlisted) {
+        if (
+          p.unlisted &&
+          p.availability === Availability.Private &&
+          !privatePostAccessIds.includes(p.id)
+        ) {
           return false;
         }
 

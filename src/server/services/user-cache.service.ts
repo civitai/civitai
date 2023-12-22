@@ -287,7 +287,7 @@ export async function getPrivateEntityAccessForUser({
 
   const entities = await getUserEntityAccess({ userId });
   await redis.set(`user:${userId}:private-entity-access`, JSON.stringify(entities), {
-    EX: HIDDEN_CACHE_EXPIRY,
+    EX: PRIVATE_RESOURCE_ACCESS_CACHE_EXPIRY,
   });
 
   return entities;

@@ -77,8 +77,6 @@ export const useQueryPosts = (
     return filtered;
   }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, loadingHidden]);
 
-  console.log(posts);
-
   return { data, posts, ...rest };
 };
 

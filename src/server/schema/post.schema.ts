@@ -20,7 +20,7 @@ const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
 export const postsQuerySchema = postsFilterSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(50),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
   excludedTagIds: z.array(z.number()).optional(),
