@@ -21,6 +21,8 @@ import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
 import { IconClock } from '@tabler/icons-react';
 import { showErrorNotification } from '~/utils/notifications';
+import { useFeatureFlags } from '../../../providers/FeatureFlagsProvider';
+import { useQueryUserContributingClubs } from '../../Club/club.utils';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;

@@ -51,6 +51,7 @@ type EditPostProps = {
   reorder: boolean;
   selectedImageId?: number;
   clubs?: ClubResourceSchema[];
+  unlisted: boolean;
 };
 
 interface EditPostState extends EditPostProps {
@@ -64,6 +65,7 @@ interface EditPostState extends EditPostProps {
   setImages: (updateFn: (images: PostEditImage[]) => PostEditImage[]) => void;
   setSelectedImageId: (id?: number) => void;
   setClubs: (clubs?: ClubResourceSchema[]) => void;
+  toggleUnlisted: (value?: boolean) => void;
   upload: (
     { postId, modelVersionId }: { postId: number; modelVersionId?: number },
     files: File[]
@@ -163,6 +165,10 @@ const createEditPostStore = ({
           setClubs: (clubs) =>
             set((state) => {
               state.clubs = clubs;
+            }),
+          toggleUnlisted: (value) =>
+            set((state) => {
+              state.unlisted = value ?? !state.unlisted;
             }),
           upload: async ({ postId, modelVersionId }, files) => {
             set((state) => {

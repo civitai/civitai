@@ -58,7 +58,7 @@ export const postUpdateSchema = z.object({
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
   clubs: z.array(clubResourceSchema).optional(),
-  clubPostMembersOnly: z.boolean().optional(),
+  unlisted: z.boolean().optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;

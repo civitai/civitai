@@ -47,7 +47,7 @@ import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { profileImageSelect } from '../selectors/image.selector';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { getClubDetailsForResource } from './club.service';
+import { getClubDetailsForResource, upsertClubResource } from './club.service';
 import { entityRequiresClub, hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
@@ -532,8 +532,14 @@ export const createPost = async ({
   };
 };
 
-export const updatePost = ({ id, ...data }: PostUpdateInput) => {
-  return dbWrite.post.update({
+export const updatePost = async ({
+  id,
+  clubs,
+  userId,
+  isModerator,
+  ...data
+}: PostUpdateInput & { userId?: number; isModerator?: boolean }) => {
+  const post = await dbWrite.post.update({
     where: { id },
     data: {
       ...data,
@@ -541,6 +547,19 @@ export const updatePost = ({ id, ...data }: PostUpdateInput) => {
       detail: data.detail !== undefined ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
+
+  if (post && clubs && userId) {
+    // Update the resource itself:
+    await upsertClubResource({
+      userId,
+      isModerator,
+      entityId: post.id,
+      entityType: 'Post',
+      clubs: clubs ?? [],
+    });
+  }
+
+  return post;
 };
 
 export const deletePost = async ({ id }: GetByIdInput) => {

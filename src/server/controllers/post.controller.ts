@@ -36,7 +36,12 @@ import { dbRead, dbWrite } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
-import { getClubDetailsForResource, upsertClubResource } from '../services/club.service';
+import {
+  getClubDetailsForResource,
+  upsertClubResource,
+  userContributingClubs,
+} from '../services/club.service';
+import { ClubAdminPermission } from '@prisma/client';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -119,7 +124,12 @@ export const updatePostHandler = async ({
         publishedAt: true,
       },
     });
-    const updatedPost = await updatePost(input);
+
+    const updatedPost = await updatePost({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
 
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
@@ -175,42 +185,32 @@ export const updatePostHandler = async ({
         });
       }
 
-      const [clubDetails] = await getClubDetailsForResource({
-        entityIds: [updatedPost.id],
-        entityType: 'Post',
-      });
-
-      if (input.clubs) {
-        // This is a club post pretty much, so we'll go ahead and create a clubPost with this entityId/entityType.
-        // And make this an unlisted resource.
-
-        // Update the resource itself:
-        await upsertClubResource({
+      if (input.clubs && !isScheduled) {
+        // Get user clubs:
+        const userClubs = await userContributingClubs({
           userId: ctx.user.id,
-          entityId: updatedPost.id,
-          entityType: 'Post',
-          isModerator: ctx.user.isModerator,
-          clubs: input.clubs ?? [],
+          clubIds: input.clubs.map((c) => c.clubId),
         });
 
-        if (input.clubPostMembersOnly) {
-          // First, make the reosurce unlisted:
-          await dbWrite.post.update({
-            where: { id: updatedPost.id },
-            data: { unlisted: true },
+        const canCreatePostClubs = userClubs.filter(
+          (c) =>
+            c.userId === ctx.user.id ||
+            ctx.user.isModerator ||
+            c.admin?.permissions?.includes(ClubAdminPermission.ManagePosts)
+        );
+
+        if (canCreatePostClubs.length > 0) {
+          // Now create the clubPost based off of the image post:
+          await dbWrite.clubPost.createMany({
+            data: canCreatePostClubs.map((c) => ({
+              clubId: c.id,
+              entityId: updatedPost.id,
+              entityType: 'Post',
+              membersOnly: input.unlisted ?? false,
+              createdById: updatedPost.userId,
+            })),
           });
         }
-
-        // Now create the clubPost based off of the image post:
-        await dbWrite.clubPost.createMany({
-          data: clubDetails.clubs.map((c) => ({
-            clubId: c.clubId,
-            entityId: updatedPost.id,
-            entityType: 'Post',
-            membersOnly: input.clubPostMembersOnly ?? false,
-            createdById: updatedPost.userId,
-          })),
-        });
       }
     }
   } catch (error) {
