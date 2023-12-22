@@ -14,7 +14,7 @@ import {
   Container,
 } from '@mantine/core';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
-import { uniqBy } from 'lodash';
+import { uniqBy } from 'lodash-es';
 
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
