@@ -3,9 +3,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { CSSProperties, ReactNode } from 'react';
+import { CSSProperties, ReactNode, useRef } from 'react';
 import { MediaType } from '@prisma/client';
 import { constants } from '~/server/common/constants';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -36,6 +37,9 @@ export function EdgeMedia({
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
   const currentUser = useCurrentUser();
+
+  const imgRef = useRef<HTMLImageElement>(null);
+  if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
   let transcode = false;
@@ -79,6 +83,7 @@ export function EdgeMedia({
       return (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
         <img
+          ref={imgRef}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           onLoad={(e) => (e.currentTarget.style.opacity = '1')}
           src={_src}
@@ -95,6 +100,7 @@ export function EdgeMedia({
           controls={controls}
           wrapperProps={wrapperProps}
           contain={contain}
+          fadeIn={fadeIn}
         />
       );
     case 'audio':

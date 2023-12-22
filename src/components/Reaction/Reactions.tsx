@@ -88,27 +88,35 @@ export function Reactions({
 
   const ignoredKeys = ['tippedAmountCount'];
   const available = availableReactions[entityType];
-  const hasAllReactions =
-    !!metrics &&
-    Object.entries(metrics).every(([key, value]) => {
+  let hasReactions = false;
+  let hasAllReactions = true;
+  if (metrics) {
+    for (const [key, value] of Object.entries(metrics)) {
+      // ie. converts the key `likeCount` to `Like`
       const reactionType = capitalize(key).replace(/count/, '');
       if (available && !available.includes(reactionType as ReviewReactions)) {
-        return true;
+        continue;
       }
       if (ignoredKeys.includes(key)) {
-        return true;
+        continue;
       }
 
-      // ie. converts the key `likeCount` to `Like`
       const hasReaction =
         storedReactions[reactionType] !== undefined
           ? storedReactions[reactionType]
           : !!reactions.find((x) => x.reaction === reactionType);
 
-      return value > 0 || !!storedReactions[reactionType] || hasReaction;
-    });
+      if (value > 0 || !!storedReactions[reactionType] || hasReaction) {
+        hasReactions = true;
+      } else {
+        hasAllReactions = false;
+      }
+    }
+  } else hasAllReactions = false;
 
   const supportsBuzzTipping = ['image'].includes(entityType);
+
+  if (readonly && !hasReactions) return null;
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>

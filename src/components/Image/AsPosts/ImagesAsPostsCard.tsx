@@ -150,193 +150,195 @@ export function ImagesAsPostsCard({
         <div className={classes.blurHash}>
           <MediaHash {...data.images[0]} />
         </div>
-        {inView && (
-          <div className={classes.content} style={{ opacity: 1 }}>
-            {data.images.length === 1 ? (
-              <ImageGuard
-                images={[cover]}
-                render={(image) => (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <div className={classes.imageContainer}>
-                        {image.meta && 'civitaiResources' in (image.meta as object) && (
-                          <OnsiteIndicator />
-                        )}
-                        <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
-                        <ImageGuard.ToggleImage position="top-left" />
-                        <RoutedDialogLink
-                          name="imageDetail"
-                          state={{ imageId: image.id, images: [image] }}
-                          className={classes.link}
-                        >
-                          <>
-                            {safe && (
-                              <EdgeMedia
-                                src={image.url}
-                                name={image.name ?? image.id.toString()}
-                                alt={image.name ?? undefined}
-                                type={image.type}
-                                width={450}
-                                placeholder="empty"
-                                className={classes.image}
-                                fadeIn
-                              />
-                            )}
-                          </>
-                        </RoutedDialogLink>
-
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                          }}
-                          readonly={!safe}
-                          className={classes.reactions}
-                          targetUserId={image.user.id}
-                        />
-                        {!image.hideMeta && image.meta && (
-                          <ImageMetaPopover
-                            meta={image.meta}
-                            generationProcess={image.generationProcess ?? undefined}
-                            imageId={image.id}
-                          >
-                            <ActionIcon className={classes.info} variant="transparent" size="lg">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </ActionIcon>
-                          </ImageMetaPopover>
-                        )}
-                      </div>
-                    )}
-                  </ImageGuard.Content>
-                )}
-              />
-            ) : (
-              <Carousel
-                key={carouselKey}
-                withControls
-                draggable
-                loop
-                style={{ flex: 1 }}
-                withIndicators
-                controlSize={32}
-                height={carouselHeight}
-                getEmblaApi={setEmbla}
-                styles={{
-                  indicators: {
-                    bottom: 0,
-                    zIndex: 5,
-                    display: 'flex',
-                    gap: 1,
-                  },
-                  indicator: {
-                    width: 'auto',
-                    height: 8,
-                    flex: 1,
-                    transition: 'width 250ms ease',
-                    borderRadius: 0,
-                    boxShadow: '0 0 3px rgba(0, 0, 0, .3)',
-                  },
-                }}
-              >
+        <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
+          {inView && (
+            <>
+              {data.images.length === 1 ? (
                 <ImageGuard
-                  images={data.images}
-                  connect={postId ? { entityType: 'post', entityId: postId } : undefined}
-                  render={(image, index) => (
-                    <Carousel.Slide className={classes.slide}>
-                      {slidesInView.includes(index) && (
-                        <ImageGuard.Content>
-                          {({ safe }) => (
-                            <div className={classes.imageContainer}>
-                              {image.meta && 'civitaiResources' in (image.meta as object) && (
-                                <OnsiteIndicator />
-                              )}
-                              <ImageGuard.Report
-                                additionalMenuItems={moderationOptions(image.id)}
-                              />
-                              <ImageGuard.ToggleConnect position="top-left" />
-                              <RoutedDialogLink
-                                name="imageDetail"
-                                state={{ imageId: image.id, images: data.images }}
-                                className={classes.link}
-                              >
-                                <>
-                                  <div className={classes.blurHash}>
-                                    <MediaHash {...image} />
-                                  </div>
-                                  {safe && (
-                                    <EdgeMedia
-                                      src={image.url}
-                                      name={image.name ?? image.id.toString()}
-                                      alt={image.name ?? undefined}
-                                      type={image.type}
-                                      width={450}
-                                      placeholder="empty"
-                                      className={classes.image}
-                                      fadeIn
-                                    />
-                                  )}
-                                </>
-                              </RoutedDialogLink>
-                              <Reactions
-                                entityId={image.id}
-                                entityType="image"
-                                reactions={image.reactions}
-                                metrics={{
-                                  likeCount: image.stats?.likeCountAllTime,
-                                  dislikeCount: image.stats?.dislikeCountAllTime,
-                                  heartCount: image.stats?.heartCountAllTime,
-                                  laughCount: image.stats?.laughCountAllTime,
-                                  cryCount: image.stats?.cryCountAllTime,
-                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                }}
-                                readonly={!safe}
-                                className={classes.reactions}
-                                targetUserId={image.user.id}
-                              />
-                              {!image.hideMeta && image.meta && (
-                                <ImageMetaPopover
-                                  meta={image.meta}
-                                  generationProcess={image.generationProcess ?? undefined}
-                                  imageId={image.id}
-                                >
-                                  <ActionIcon
-                                    className={classes.info}
-                                    variant="transparent"
-                                    size="lg"
-                                  >
-                                    <IconInfoCircle
-                                      color="white"
-                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                      opacity={0.8}
-                                      strokeWidth={2.5}
-                                      size={26}
-                                    />
-                                  </ActionIcon>
-                                </ImageMetaPopover>
-                              )}
-                            </div>
+                  images={[cover]}
+                  render={(image) => (
+                    <ImageGuard.Content>
+                      {({ safe }) => (
+                        <div className={classes.imageContainer}>
+                          {image.meta && 'civitaiResources' in (image.meta as object) && (
+                            <OnsiteIndicator />
                           )}
-                        </ImageGuard.Content>
+                          <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
+                          <ImageGuard.ToggleImage position="top-left" />
+                          <RoutedDialogLink
+                            name="imageDetail"
+                            state={{ imageId: image.id, images: [image] }}
+                            className={classes.link}
+                          >
+                            <>
+                              {safe && (
+                                <EdgeMedia
+                                  src={image.url}
+                                  name={image.name ?? image.id.toString()}
+                                  alt={image.name ?? undefined}
+                                  type={image.type}
+                                  width={450}
+                                  placeholder="empty"
+                                  className={classes.image}
+                                  fadeIn
+                                />
+                              )}
+                            </>
+                          </RoutedDialogLink>
+
+                          <Reactions
+                            entityId={image.id}
+                            entityType="image"
+                            reactions={image.reactions}
+                            metrics={{
+                              likeCount: image.stats?.likeCountAllTime,
+                              dislikeCount: image.stats?.dislikeCountAllTime,
+                              heartCount: image.stats?.heartCountAllTime,
+                              laughCount: image.stats?.laughCountAllTime,
+                              cryCount: image.stats?.cryCountAllTime,
+                            }}
+                            readonly={!safe}
+                            className={classes.reactions}
+                            targetUserId={image.user.id}
+                          />
+                          {!image.hideMeta && image.meta && (
+                            <ImageMetaPopover
+                              meta={image.meta}
+                              generationProcess={image.generationProcess ?? undefined}
+                              imageId={image.id}
+                            >
+                              <ActionIcon className={classes.info} variant="transparent" size="lg">
+                                <IconInfoCircle
+                                  color="white"
+                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                  opacity={0.8}
+                                  strokeWidth={2.5}
+                                  size={26}
+                                />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                          )}
+                        </div>
                       )}
-                    </Carousel.Slide>
+                    </ImageGuard.Content>
                   )}
                 />
-              </Carousel>
-            )}
-          </div>
-        )}
+              ) : (
+                <Carousel
+                  key={carouselKey}
+                  withControls
+                  draggable
+                  loop
+                  style={{ flex: 1 }}
+                  withIndicators
+                  controlSize={32}
+                  height={carouselHeight}
+                  getEmblaApi={setEmbla}
+                  styles={{
+                    indicators: {
+                      bottom: -8,
+                      zIndex: 5,
+                      display: 'flex',
+                      gap: 1,
+                    },
+                    indicator: {
+                      width: 'auto',
+                      height: 8,
+                      flex: 1,
+                      transition: 'width 250ms ease',
+                      borderRadius: 0,
+                      boxShadow: '0 0 3px rgba(0, 0, 0, .3)',
+                    },
+                  }}
+                >
+                  <ImageGuard
+                    images={data.images}
+                    connect={postId ? { entityType: 'post', entityId: postId } : undefined}
+                    render={(image, index) => (
+                      <Carousel.Slide className={classes.slide}>
+                        {slidesInView.includes(index) && (
+                          <ImageGuard.Content>
+                            {({ safe }) => (
+                              <div className={classes.imageContainer}>
+                                {image.meta && 'civitaiResources' in (image.meta as object) && (
+                                  <OnsiteIndicator />
+                                )}
+                                <ImageGuard.Report
+                                  additionalMenuItems={moderationOptions(image.id)}
+                                />
+                                <ImageGuard.ToggleConnect position="top-left" />
+                                <RoutedDialogLink
+                                  name="imageDetail"
+                                  state={{ imageId: image.id, images: data.images }}
+                                  className={classes.link}
+                                >
+                                  <>
+                                    <div className={classes.blurHash}>
+                                      <MediaHash {...image} />
+                                    </div>
+                                    {safe && (
+                                      <EdgeMedia
+                                        src={image.url}
+                                        name={image.name ?? image.id.toString()}
+                                        alt={image.name ?? undefined}
+                                        type={image.type}
+                                        width={450}
+                                        placeholder="empty"
+                                        className={classes.image}
+                                        fadeIn
+                                      />
+                                    )}
+                                  </>
+                                </RoutedDialogLink>
+                                <Reactions
+                                  entityId={image.id}
+                                  entityType="image"
+                                  reactions={image.reactions}
+                                  metrics={{
+                                    likeCount: image.stats?.likeCountAllTime,
+                                    dislikeCount: image.stats?.dislikeCountAllTime,
+                                    heartCount: image.stats?.heartCountAllTime,
+                                    laughCount: image.stats?.laughCountAllTime,
+                                    cryCount: image.stats?.cryCountAllTime,
+                                    tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                  }}
+                                  readonly={!safe}
+                                  className={classes.reactions}
+                                  targetUserId={image.user.id}
+                                />
+                                {!image.hideMeta && image.meta && (
+                                  <ImageMetaPopover
+                                    meta={image.meta}
+                                    generationProcess={image.generationProcess ?? undefined}
+                                    imageId={image.id}
+                                  >
+                                    <ActionIcon
+                                      className={classes.info}
+                                      variant="transparent"
+                                      size="lg"
+                                    >
+                                      <IconInfoCircle
+                                        color="white"
+                                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                        opacity={0.8}
+                                        strokeWidth={2.5}
+                                        size={26}
+                                      />
+                                    </ActionIcon>
+                                  </ImageMetaPopover>
+                                )}
+                              </div>
+                            )}
+                          </ImageGuard.Content>
+                        )}
+                      </Carousel.Slide>
+                    )}
+                  />
+                </Carousel>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </MasonryCard>
   );
@@ -363,9 +365,11 @@ const useStyles = createStyles((theme) => ({
     flexDirection: 'column',
   },
   imageContainer: {
-    position: 'relative',
-    overflow: 'hidden',
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -389,14 +393,21 @@ const useStyles = createStyles((theme) => ({
   },
   blurHash: {
     opacity: 0.7,
+    zIndex: 1,
   },
   container: {
     position: 'relative',
     flex: 1,
   },
   content: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
     transition: theme.other.fadeIn,
     opacity: 0,
+    zIndex: 2,
   },
   info: {
     position: 'absolute',
