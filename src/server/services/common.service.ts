@@ -17,7 +17,6 @@ type EntityAccessRaw = {
   hasAccess: boolean;
 };
 
-// TODO replace "entities" with "entityIds" and "entityType"
 export const hasEntityAccess = async ({
   entityType,
   entityIds,
@@ -469,4 +468,86 @@ export const entityAvailabilityUpdate = async ({
     UPDATE "${entityType}" t 
     SET "availability" = '${availability}'::"Availability"
     WHERE t.id IN (${entityIds.join(', ')})`);
+};
+
+export type EntityAccessWithKey = {
+  entityId: number;
+  entityType: SupportedClubEntities;
+  entityKey: string;
+};
+
+export const getUserEntityAccessItems = async ({ userId }: { userId: number }) => {
+  const entities = await dbRead.$queryRaw<EntityAccessWithKey[]>`
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    WHERE ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
+
+    UNION
+
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    JOIN "Club" c ON c.id = ea."accessorId" AND ea."accessorType" = 'Club'
+    WHERE c."userId" = ${userId}
+
+    UNION
+
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    JOIN "ClubTier" ct ON ct.id = ea."accessorId" AND ea."accessorType" = 'ClubTier'
+    JOIN "Club" c ON c.id = ct."clubId"
+    WHERE c."userId" = ${userId}
+
+    UNION
+
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    JOIN "ClubTier" ct ON ct.id = ea."accessorId" AND ea."accessorType" = 'ClubTier'
+    JOIN "ClubAdmin" ca ON ca."clubId" = ct."clubId"
+    WHERE ca."userId" = ${userId}
+
+    UNION
+
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    JOIN "Club" c ON c.id = ea."accessorId" AND ea."accessorType" = 'Club'
+    JOIN "ClubAdmin" ca ON ca."clubId" = c.id
+    WHERE ca."userId" = ${userId}
+
+    UNION 
+
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'Club'
+    WHERE cm."userId" = ${userId}
+
+    UNION 
+
+    SELECT 
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
+      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
+    FROM "EntityAccess" ea
+    JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'ClubTier'
+    WHERE cm."userId" = ${userId}
+  `;
+
+  return entities;
 };
