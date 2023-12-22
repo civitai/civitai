@@ -207,23 +207,23 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.join(
         [
-          Prisma.raw(`
-          m."name" ILIKE '%${query}%'
-        `),
-          Prisma.raw(`
+          Prisma.sql`
+          m."name" ILIKE ${`%${query}%`}
+        `,
+          Prisma.sql`
           EXISTS (
             SELECT 1 FROM "ModelVersion" mvq
             JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
             JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-            WHERE mvq."modelId" = m."id" AND mfh."hash" = '${query}'
+            WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
           )
-        `),
-          Prisma.raw(`
+        `,
+          Prisma.sql`
           EXISTS (
             SELECT 1 FROM "ModelVersion" mvq
-            WHERE mvq."modelId" = m."id" AND '${lowerQuery}' = ANY(mvq."trainedWords")
+            WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
           )
-        `),
+        `,
         ],
         ' OR '
       )
@@ -257,7 +257,14 @@ export const getModelsRaw = async ({
   }
 
   if (username || user) {
-    AND.push(Prisma.raw(`u."username" = '${username ?? user ?? ''}'`));
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: (username || user) ?? '' },
+      select: { id: true },
+    });
+
+    if (!targetUser) throw new Error('User not found');
+
+    AND.push(Prisma.sql`u.id = ${targetUser.id}`);
   }
 
   if (types?.length) {
