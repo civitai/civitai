@@ -20,6 +20,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
+import { useQueryUserContributingClubs } from './club.utils';
 
 type ClubResourceManagementInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ClubResourceSchema[];
@@ -43,8 +44,7 @@ export const ClubResourceManagementInput = ({
     }
   );
 
-  const { data: userClubs, isLoading: isLoadingUserClubs } =
-    trpc.club.userContributingClubs.useQuery();
+  const { userClubs, isLoading: isLoadingUserClubs } = useQueryUserContributingClubs();
 
   useDidUpdate(() => {
     if (clubResources) {

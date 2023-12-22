@@ -42,13 +42,19 @@ import { env } from '~/env/client.mjs';
 import { toStringList } from '~/utils/array-helpers';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ClubRequirementNotice } from '../../Club/ClubRequirementNotice';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
   const { query } = useBrowserRouter();
   const theme = useMantineTheme();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
-  const { images, isLoading: imagesLoading } = useQueryImages({ postId });
+  const { images, isLoading: imagesLoading } = useQueryImages(
+    { postId, limit: post?.hasAccess ? undefined : 1 },
+    // Haivng this be enabled only when the post is available is a bit slower for the user
+    // but prevents users with no access from looking at all the images in the post
+    { enabled: !!post }
+  );
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
 
   const meta = (
@@ -218,6 +224,7 @@ export function PostDetail({ postId }: { postId: number }) {
                 <FollowUserButton userId={post.user.id} size="md" compact />
               </Group>
             </Group>
+            <ClubRequirementNotice entityId={post.id} entityType="Post" />
           </Stack>
           <Container size="sm">
             <PostImages postId={post.id} images={images} isLoading={imagesLoading} />

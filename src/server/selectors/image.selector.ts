@@ -45,6 +45,10 @@ export const profileImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   height: true,
   metadata: true,
 });
+const profileImage = Prisma.validator<Prisma.ImageDefaultArgs>()({
+  select: profileImageSelect,
+});
+export type ProfileImage = Prisma.ImageGetPayload<typeof profileImage>;
 
 const { name, ...imageSelectWithoutName } = imageSelect;
 export { imageSelectWithoutName };

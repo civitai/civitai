@@ -31,6 +31,7 @@ import {
   BaseModel,
   baseModelSets,
   BaseModelSetType,
+  CacheTTL,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
@@ -44,6 +45,7 @@ import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
+import { cachedArray } from '~/server/utils/cache-helpers';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -191,42 +193,25 @@ export const getGenerationResources = async ({
   }));
 };
 
-const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 const getResourceData = async (modelVersionIds: number[]) => {
-  if (modelVersionIds.length === 0) return [];
+  return await cachedArray<GenerationResourceSelect>({
+    key: 'generation:resource-data',
+    ids: modelVersionIds,
+    idKey: 'id',
+    lookupFn: async (ids) => {
+      const dbResults = await dbRead.modelVersion.findMany({
+        where: { id: { in: ids as number[] } },
+        select: generationResourceSelect,
+      });
 
-  const results = new Set<GenerationResourceSelect>();
-  const cacheJsons = await redis.hmGet('generation:resource-data', modelVersionIds.map(String));
-  const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
-  const cache = Object.fromEntries(cacheArray.map((x) => [x.id, x]));
-
-  const cacheCutoff = Date.now() - CACHE_TTL;
-  const cacheMisses = new Set<number>();
-  for (const id of modelVersionIds) {
-    const cached = cache[id];
-    if (cached && cached.cachedAt > cacheCutoff) results.add(cached);
-    else cacheMisses.add(id);
-  }
-
-  // If we have cache misses, we need to fetch from the DB
-  if (cacheMisses.size > 0) {
-    const dbResults = await dbRead.modelVersion.findMany({
-      where: { id: { in: [...cacheMisses] } },
-      select: generationResourceSelect,
-    });
-
-    const toCache: Record<string, string> = {};
-    const cachedAt = Date.now();
-    for (const result of dbResults) {
-      results.add(result);
-      toCache[result.id] = JSON.stringify({ ...result, cachedAt });
-    }
-
-    // then cache the results
-    if (Object.keys(toCache).length > 0) await redis.hSet('generation:resource-data', toCache);
-  }
-
-  return [...results];
+      const results = dbResults.reduce((acc, result) => {
+        acc[result.id] = result;
+        return acc;
+      }, {} as Record<string, GenerationResourceSelect>);
+      return results;
+    },
+    ttl: CacheTTL.hour,
+  });
 };
 
 const baseModelSetsEntries = Object.entries(baseModelSets);

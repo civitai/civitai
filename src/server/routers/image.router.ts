@@ -1,4 +1,4 @@
-import { applyBrowsingMode, edgeCacheIt } from './../middleware.trpc';
+import { applyBrowsingMode, cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
   getImageDetailHandler,
@@ -39,6 +39,7 @@ import {
   ingestImageById,
   removeImageResource,
   getModeratorPOITags,
+  get404Images,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 
@@ -115,4 +116,8 @@ export const imageRouter = router({
     .input(imageReviewQueueInputSchema)
     .query(getModeratorReviewQueueHandler),
   getModeratorPOITags: moderatorProcedure.query(() => getModeratorPOITags()),
+  get404Images: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.month }))
+    .use(cacheIt({ ttl: CacheTTL.week }))
+    .query(() => get404Images()),
 });

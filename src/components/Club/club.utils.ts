@@ -95,6 +95,28 @@ export const useMutateClub = () => {
     },
   });
 
+  const deleteClubTierMutation = trpc.club.deleteTier.useMutation({
+    async onSuccess() {
+      await queryUtils.club.getTiers.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to save club tier',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to save club tier',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const upsertClubResourceMutation = trpc.club.upsertResource.useMutation({
     async onSuccess() {
       await queryUtils.club.resourceDetails.invalidate();
@@ -145,7 +167,8 @@ export const useMutateClub = () => {
   const createClubMembershipMutation = trpc.clubMembership.createClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
-      await queryUtils.club.userContributingClubs.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
@@ -168,7 +191,8 @@ export const useMutateClub = () => {
   const updateClubMembershipMutation = trpc.clubMembership.updateClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
-      await queryUtils.club.userContributingClubs.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
@@ -393,9 +417,11 @@ export const useMutateClub = () => {
   const handleUpsertClub = (data: UpsertClubInput) => {
     return upsertClubMutation.mutateAsync(data);
   };
-
   const handleUpsertClubTier = (data: UpsertClubTierInput) => {
     return upsertClubTierMutation.mutateAsync(data);
+  };
+  const handleDeleteClubTier = (data: GetByIdInput) => {
+    return deleteClubTierMutation.mutateAsync(data);
   };
   const handleUpsertClubResource = (data: UpsertClubResourceInput) => {
     return upsertClubResourceMutation.mutateAsync(data);
@@ -442,6 +468,8 @@ export const useMutateClub = () => {
     upserting: upsertClubMutation.isLoading,
     upsertClubTier: handleUpsertClubTier,
     upsertingTier: upsertClubTierMutation.isLoading,
+    deleteClubTier: handleDeleteClubTier,
+    deletingTier: deleteClubTierMutation.isLoading,
     upsertClubResource: handleUpsertClubResource,
     upsertingResource: upsertClubResourceMutation.isLoading,
     upsertClubPost: handleUpsertClubPost,
@@ -546,6 +574,16 @@ export const useQueryClubPosts = (
   }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
 
   return { data, clubPosts, ...rest };
+};
+
+export const useQueryUserContributingClubs = () => {
+  const { data: userClubs = [], ...rest } = trpc.club.userContributingClubs.useQuery();
+
+  return {
+    userClubs,
+    hasClubs: userClubs.length > 0,
+    ...rest,
+  };
 };
 
 export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {

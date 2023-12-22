@@ -5,12 +5,14 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { CSSProperties, ReactNode } from 'react';
 import { MediaType } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
     controls?: boolean;
     wrapperProps?: React.ComponentPropsWithoutRef<'div'>;
     contain?: boolean;
+    fadeIn?: boolean;
   };
 
 export function EdgeMedia({
@@ -29,6 +31,7 @@ export function EdgeMedia({
   controls,
   wrapperProps,
   contain,
+  fadeIn = false,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
@@ -75,13 +78,19 @@ export function EdgeMedia({
     case 'image':
       return (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-        <img className={cx(classes.responsive, className)} src={_src} style={style} {...imgProps} />
+        <img
+          className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
+          onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+          src={_src}
+          style={style}
+          {...imgProps}
+        />
       );
     case 'video':
       return (
         <EdgeVideo
           src={_src}
-          className={cx(classes.responsive, className)}
+          className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           style={style}
           controls={controls}
           wrapperProps={wrapperProps}
@@ -94,6 +103,14 @@ export function EdgeMedia({
   }
 }
 
-const useStyles = createStyles((_theme, params: { maxWidth?: number }) => ({
-  responsive: { width: '100%', height: 'auto', maxWidth: params.maxWidth },
+const useStyles = createStyles((theme, params: { maxWidth?: number }) => ({
+  responsive: {
+    width: '100%',
+    height: 'auto',
+    maxWidth: params.maxWidth,
+  },
+  fadeIn: {
+    opacity: 0,
+    transition: theme.other.fadeIn,
+  },
 }));

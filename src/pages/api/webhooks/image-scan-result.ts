@@ -22,6 +22,10 @@ import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
+import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { updateImageTagIdsForImages } from '~/server/services/image.service';
+
+const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
 const tagCache: Record<string, number> = {};
 
@@ -121,7 +125,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     where: { id },
     select: {
       id: true,
+      userId: true,
       meta: true,
+      metadata: true,
       postId: true,
     },
   });
@@ -129,6 +135,13 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     await logScanResultError({ id, message: 'Image not found' });
     throw new Error('Image not found');
   }
+
+  // Add to scanJobs
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "Image"
+      SET "scanJobs" = jsonb_set("scanJobs", '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+    WHERE id = ${id};
+  `);
 
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
@@ -234,13 +247,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error(e.message);
   }
 
-  // For now, only update the scanned state if we got the result from Rekognition
-  if (source === TagSource.WD14) {
-    // However we can still update the nsfw level, as it will only go up...
-    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
-    return;
-  }
-
   try {
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
     const tags =
@@ -301,11 +307,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       if (poi) reviewKey = 'poi';
     }
 
-    const data: Prisma.ImageUpdateInput = {
-      scannedAt: new Date(),
-      needsReview: reviewKey,
-      ingestion: ImageIngestionStatus.Scanned,
-    };
+    const data: Prisma.ImageUpdateInput = {};
+    if (reviewKey) data.needsReview = reviewKey;
 
     if (nsfw && prompt) {
       // Determine if we need to block the image
@@ -321,10 +324,37 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
     if (image.postId) await updatePostNsfwLevel(image.postId);
 
-    await dbWrite.image.updateMany({
-      where: { id },
-      data,
-    });
+    if (Object.keys(data).length > 0) {
+      await dbWrite.image.updateMany({
+        where: { id },
+        data,
+      });
+    }
+
+    // Update scannedAt and ingestion if not blocked
+    if (data.ingestion !== 'Blocked') {
+      // Clear cached image tags after completing scans
+      await updateImageTagIdsForImages(id);
+
+      await dbWrite.$executeRaw`
+        WITH scan_count AS (
+          SELECT id, COUNT(*) as count
+          FROM "Image",
+              jsonb_object_keys("scanJobs"->'scans') AS keys
+          WHERE id = ${id}
+          GROUP BY id
+        )
+        UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
+        FROM scan_count s
+        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length};
+      `;
+
+      const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
+      const isProfilePicture = imageMetadata?.profilePicture === true;
+      if (isProfilePicture) {
+        await deleteUserProfilePictureCache(image.userId);
+      }
+    }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);

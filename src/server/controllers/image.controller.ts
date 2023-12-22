@@ -34,6 +34,8 @@ import {
 } from '~/server/utils/errorHandling';
 import { ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { hasEntityAccess } from '../services/common.service';
+import { isDefined } from '../../utils/type-guards';
 
 type SortableImage = {
   nsfw: NsfwLevel;
@@ -93,6 +95,7 @@ export const deleteImageHandler = async ({
         imageId: input.id,
         nsfw: image.nsfw,
         tags: imageTags.map((x) => x.tagName),
+        ownerId: image.userId,
       });
     }
 
@@ -169,6 +172,7 @@ export const setTosViolationHandler = async ({
       imageId: id,
       nsfw: image.nsfw,
       tags: image.tags.map((x) => x.tag.name),
+      ownerId: image.userId,
     });
     return image;
   } catch (error) {
@@ -287,13 +291,27 @@ export const getImagesAsPostsInfiniteHandler = async ({
       orderBy: { rating: 'desc' },
     });
 
+    const postIds = Object.keys(posts).filter(isDefined).map(Number);
+    const entityAccess = await hasEntityAccess({
+      userId: ctx?.user?.id,
+      isModerator: ctx?.user?.isModerator,
+      entities: postIds.map((id) => ({
+        entityType: 'Post',
+        entityId: id,
+      })),
+    });
+
     // Prepare the results
     const results = Object.values(posts).map((images) => {
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
       const createdAt = images.map((image) => image.createdAt).sort()[0];
+
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+      const access = entityAccess.find((x) => x.entityId === image.postId);
+
       return {
         postId: image.postId as number,
         postTitle: image.postTitle,
@@ -301,7 +319,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         publishedAt: image.publishedAt,
         createdAt,
         user,
-        images,
+        images: access?.hasAccess ?? true ? images : [images[0]],
         review: review
           ? {
               rating: review.rating,

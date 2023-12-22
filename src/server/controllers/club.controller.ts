@@ -18,6 +18,7 @@ import {
 } from '~/server/schema/club.schema';
 import {
   deleteClub,
+  deleteClubTier,
   getAllClubs,
   getClub,
   getClubDetailsForResource,
@@ -27,7 +28,7 @@ import {
   updateClubResource,
   upsertClub,
   upsertClubResource,
-  upsertClubTiers,
+  upsertClubTier,
   userContributingClubs,
 } from '~/server/services/club.service';
 import { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
@@ -103,12 +104,30 @@ export async function upsertClubTierHandler({
 }) {
   const { clubId, ...tier } = input;
   try {
-    await upsertClubTiers({
+    await upsertClubTier({
       clubId: clubId as number,
-      tiers: [tier],
+      tier,
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
-      deleteTierIds: [],
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+}
+
+export async function deleteClubTierHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    await deleteClubTier({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

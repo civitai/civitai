@@ -330,12 +330,16 @@ export function InteractiveTipBuzzButton({
             e.stopPropagation();
             return false;
           }}
-          style={{
+          sx={{
             position: 'relative',
             touchAction: 'none',
             userSelect: 'none',
             WebkitUserSelect: 'none',
             WebkitTouchCallout: 'none',
+            color: 'inherit',
+            fontWeight: 'inherit',
+          }}
+          style={{
             cursor: !selfView ? 'pointer' : 'default',
           }}
           onClick={undefined}

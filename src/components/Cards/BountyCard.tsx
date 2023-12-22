@@ -34,7 +34,7 @@ import { Currency } from '@prisma/client';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 
-const IMAGE_CARD_WIDTH = 332;
+const IMAGE_CARD_WIDTH = 450;
 
 const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   radius: 'xl',

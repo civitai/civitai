@@ -79,7 +79,6 @@ export function Reactions({
   Omit<GroupProps, 'children' | 'onClick'> & {
     targetUserId?: number;
   }) {
-  const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -88,14 +87,19 @@ export function Reactions({
   });
 
   const ignoredKeys = ['tippedAmountCount'];
+  const available = availableReactions[entityType];
   const hasAllReactions =
     !!metrics &&
     Object.entries(metrics).every(([key, value]) => {
+      const reactionType = capitalize(key).replace(/count/, '');
+      if (available && !available.includes(reactionType as ReviewReactions)) {
+        return true;
+      }
       if (ignoredKeys.includes(key)) {
         return true;
       }
+
       // ie. converts the key `likeCount` to `Like`
-      const reactionType = capitalize(key).replace(/count/, '');
       const hasReaction =
         storedReactions[reactionType] !== undefined
           ? storedReactions[reactionType]
@@ -144,6 +148,7 @@ export function Reactions({
           entityId={entityId}
           noEmpty={!showAll}
           readonly={readonly}
+          available={available}
         />
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge

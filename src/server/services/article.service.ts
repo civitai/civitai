@@ -87,6 +87,8 @@ type ArticleRaw = {
   }[];
 };
 
+export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -109,12 +111,14 @@ export const getArticles = async ({
   browsingMode,
   followed,
   clubId,
-}: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
+}: GetInfiniteArticlesSchema & {
+  sessionUser?: { id: number; isModerator?: boolean; username?: string };
+}) => {
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
     const isOwnerRequest =
-      !!sessionUser &&
+      !!sessionUser?.username &&
       !!username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
 
@@ -134,6 +138,7 @@ export const getArticles = async ({
         )`
       );
     }
+
     if (!!userIds?.length) {
       AND.push(Prisma.sql`a."userId" IN (${Prisma.join(userIds, ',')})`);
     }
@@ -144,7 +149,7 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a."nsfw" = false`);
     }
     if (username) {
-      AND.push(Prisma.sql`u."username" = ${username}`);
+      AND.push(Prisma.raw(`u."username" = '${username}'`));
     }
 
     if (collectionId) {

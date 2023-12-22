@@ -114,8 +114,6 @@ const StripeTransactionModal = ({
                         type: 'PurchaseFunds_Confirm',
                         details: { ...metadata, method: paymentMethod.type },
                       }).catch(() => undefined);
-
-                      console.log(paymentIntent);
                     }}
                     disabled={processingPayment || processingTooLong}
                     loading={processingPayment}

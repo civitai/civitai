@@ -160,7 +160,7 @@ export const getModelsRaw = async ({
     skip?: number;
   };
   // TODO: Likely we wanna remove session user all in all.
-  user?: SessionUser;
+  user?: { id: number; isModerator?: boolean; username?: string };
   count?: boolean;
   ignoreListedStatus?: boolean;
 }) => {
@@ -194,16 +194,46 @@ export const getModelsRaw = async ({
     collectionId,
     fileFormats,
     clubId,
+    modelVersionIds,
   } = input;
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
   const WITH: Prisma.Sql[] = [];
 
+  if (query) {
+    const lowerQuery = query?.toLowerCase();
+
+    AND.push(
+      Prisma.join(
+        [
+          Prisma.raw(`
+          m."name" ILIKE '%${query}%'
+        `),
+          Prisma.raw(`
+          EXISTS (
+            SELECT 1 FROM "ModelVersion" mvq
+            JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
+            JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
+            WHERE mvq."modelId" = m."id" AND mfh."hash" = '${query}'
+          )
+        `),
+          Prisma.raw(`
+          EXISTS (
+            SELECT 1 FROM "ModelVersion" mvq
+            WHERE mvq."modelId" = m."id" AND '${lowerQuery}' = ANY(mvq."trainedWords")
+          )
+        `),
+        ],
+        ' OR '
+      )
+    );
+  }
+
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
-      ( 
-        m."meta"->>'needsReview' = 'true' 
+      (
+        m."meta"->>'needsReview' = 'true'
         OR
         EXISTS (
           SELECT 1 FROM "ModelVersion" mv
@@ -243,7 +273,7 @@ export const getModelsRaw = async ({
   if (favorites && sessionUser?.id) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "ModelEngagement" e 
+          SELECT 1 FROM "ModelEngagement" e
           WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Favorite'::"ModelEngagementType")
         `
     );
@@ -252,7 +282,7 @@ export const getModelsRaw = async ({
   if (hidden && sessionUser?.id) {
     AND.push(
       Prisma.sql`EXISTS (
-          SELECT 1 FROM "ModelEngagement" e 
+          SELECT 1 FROM "ModelEngagement" e
           WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Hide'::"ModelEngagementType")
         `
     );
@@ -342,12 +372,21 @@ export const getModelsRaw = async ({
 
   if (!!ids?.length) AND.push(Prisma.sql`m."id" IN (${Prisma.join(ids, ',')})`);
 
+  if (!!modelVersionIds?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')}) AND mv."modelId" = m."id"
+    )`);
+  }
+
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     const TypeOr: Prisma.Sql[] = [
       Prisma.sql`m."checkpointType" = ${checkpointType}::"CheckpointType"`,
     ];
-    if (types?.length) {
-      const otherTypes = types.filter((t) => t !== 'Checkpoint');
+
+    const otherTypes = (types ?? []).filter((t) => t !== 'Checkpoint');
+
+    if (otherTypes?.length) {
       TypeOr.push(
         Prisma.sql`m."type" IN (${Prisma.raw(
           otherTypes.map((t) => `'${t}'::"ModelType"`).join(',')
@@ -462,7 +501,7 @@ export const getModelsRaw = async ({
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const queryFrom = Prisma.sql`
     FROM "Model" m
-    LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id" 
+    LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id"
     LEFT JOIN "User" u ON m."userId" = u.id
     ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -476,6 +515,10 @@ export const getModelsRaw = async ({
 
   if (baseModels) {
     modelVersionWhere = Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`;
+  }
+
+  if (!!modelVersionIds?.length) {
+    modelVersionWhere = Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`;
   }
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
@@ -509,15 +552,15 @@ export const getModelsRaw = async ({
             AND "tagId" IS NOT NULL
       ) as "tagsOnModels",
       (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash" 
-            WHERE "modelId" = m."id" 
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash"
+            WHERE "modelId" = m."id"
 		  	    AND "modelId" IS NOT NULL
-            AND "hashType" = 'SHA256' 
+            AND "hashType" = 'SHA256'
             AND "fileType" IN ('Model', 'Pruned Model')
 		  	AND "hash" IS NOT NULL
       ) as "hashes",
       (
-        SELECT 
+        SELECT
          jsonb_build_object(
            'id', mv."id",
            'earlyAccessTimeFrame', mv."earlyAccessTimeFrame",
@@ -529,7 +572,7 @@ export const getModelsRaw = async ({
              'covered', COALESCE(gc."covered", false)
             )
          ) as "modelVersion"
-       FROM "ModelVersion" mv 
+       FROM "ModelVersion" mv
 	     LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
 	     WHERE mv."modelId" = m."id"
          ${modelVersionWhere ? Prisma.sql`AND ${modelVersionWhere}` : Prisma.sql``}
@@ -545,7 +588,7 @@ export const getModelsRaw = async ({
       (
         SELECT
           jsonb_agg(
-            jsonb_build_object( 
+            jsonb_build_object(
               'data', uc.data,
               'cosmetic', jsonb_build_object(
                 'id', c.id,
@@ -557,7 +600,7 @@ export const getModelsRaw = async ({
                 'leaderboardPosition', c."leaderboardPosition"
               )
             )
-          ) 
+          )
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
             AND "equippedAt" IS NOT NULL
@@ -566,9 +609,8 @@ export const getModelsRaw = async ({
       ) as "userCosmetics",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
-    
     ORDER BY ${Prisma.raw(orderBy)}
-    LIMIT ${take}
+    LIMIT ${(take ?? 100) + 1}
   `;
 
   const profilePictures = await dbRead.image.findMany({
@@ -577,7 +619,7 @@ export const getModelsRaw = async ({
   });
 
   let nextCursor: string | bigint | undefined;
-  if (take && models.length >= take) {
+  if (take && models.length > take) {
     const nextItem = models.pop();
     nextCursor = nextItem?.cursorId || undefined;
   }
@@ -923,7 +965,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   user,
 }: {
   input: GetAllModelsOutput;
-  user?: SessionUser;
+  user?: { id: number; isModerator?: boolean; username?: string };
 }) => {
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
@@ -942,9 +984,6 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
-  // TODO: getModelsRaw
-  //       user: { select: userWithCosmeticsSelect },
-  //       modelVersions.trainingStatus
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,

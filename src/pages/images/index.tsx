@@ -16,6 +16,7 @@ import { constants } from '~/server/common/constants';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import { env } from '~/env/client.mjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const useStyles = createStyles((theme) => ({
   filtersWrapper: {
@@ -33,6 +34,8 @@ export default function ImagesPage() {
   const { classes, theme } = useStyles();
   const canToggleView = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !hidden;
   const view = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && canToggleView ? queryView : 'feed';
+  const currentUser = useCurrentUser();
+  const canViewNewest = currentUser?.showNsfw ?? false;
 
   return (
     <>
@@ -60,7 +63,7 @@ export default function ImagesPage() {
             <Group position="apart" spacing={8}>
               {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
-                <SortFilter type="images" variant="button" />
+                <SortFilter type="images" variant="button" includeNewest={canViewNewest} />
                 <ImageFiltersDropdown />
                 {canToggleView && (
                   <ViewToggle

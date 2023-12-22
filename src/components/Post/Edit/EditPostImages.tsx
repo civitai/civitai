@@ -27,6 +27,7 @@ import {
   IconExclamationMark,
   IconExclamationCircle,
   IconCheck,
+  IconArrowBackUp,
 } from '@tabler/icons-react';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
@@ -45,6 +46,7 @@ import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvide
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -121,6 +123,9 @@ function ImageController({
   const handleSelectImageClick = () => setSelectedImageId(id);
 
   const data = useImageIngestionContext(useCallback((state) => state.images[id] ?? {}, [id]));
+  const setImages = useImageIngestionContext(useCallback((state) => state.setImages, []));
+  const unblockImage = (imageId: number) =>
+    setImages({ [imageId]: { ingestion: ImageIngestionStatus.Scanned } });
   const pending = useImageIngestionContext(
     useCallback((state) => state.pending[id] ?? { attempts: 0, success: false }, [id])
   );
@@ -244,13 +249,34 @@ function ImageController({
           >
             <Stack align="flex-end" spacing={0}>
               <Text>This image has been flagged as a TOS violation.</Text>
-              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)} skipConfirm>
-                {({ onClick, isLoading }) => (
-                  <Button onClick={onClick} loading={isLoading}>
-                    Ok
-                  </Button>
-                )}
-              </DeleteImage>
+              <Group grow w="100%">
+                <UnblockImage imageId={id} onSuccess={(id) => unblockImage(id)} skipConfirm>
+                  {({ onClick, isLoading }) => (
+                    <Button
+                      onClick={onClick}
+                      loading={isLoading}
+                      color="gray.6"
+                      mt="xs"
+                      leftIcon={<IconArrowBackUp size={20} />}
+                    >
+                      Unblock
+                    </Button>
+                  )}
+                </UnblockImage>
+                <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)} skipConfirm>
+                  {({ onClick, isLoading }) => (
+                    <Button
+                      onClick={onClick}
+                      loading={isLoading}
+                      color="red.7"
+                      mt="xs"
+                      leftIcon={<IconTrash size={20} />}
+                    >
+                      Delete
+                    </Button>
+                  )}
+                </DeleteImage>
+              </Group>
             </Stack>
           </Alert>
         </Card>

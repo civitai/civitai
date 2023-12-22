@@ -11,6 +11,7 @@ import {
   ArticleEngagementType,
   BountyEngagementType,
   CosmeticSource,
+  CosmeticType,
   ModelEngagementType,
   OnboardingStep,
   Prisma,
@@ -52,7 +53,8 @@ import { articleMetrics, imageMetrics, userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
-import { imageSelect } from '../selectors/image.selector';
+import { ProfileImage } from '../selectors/image.selector';
+import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -275,17 +277,6 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   }
 
   return { items };
-};
-
-export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: {
-      _count: {
-        select: { notifications: { where: { viewedAt: { equals: null } } } },
-      },
-    },
-  });
 };
 
 export const toggleModelEngagement = async ({
@@ -617,24 +608,80 @@ export const getUserCosmetics = ({
   });
 };
 
-export const getCosmeticsForUsers = async (userIds: number[]) => {
-  const users = [...new Set(userIds)];
-  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-    where: { userId: { in: users }, equippedAt: { not: null } },
-    select: {
-      userId: true,
-      data: true,
-      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
-    },
-  });
-  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic, data }) => {
-    acc[userId] = acc[userId] ?? [];
-    acc[userId].push({ cosmetic, data: data as MixedObject | null });
-    return acc;
-  }, {} as Record<number, Array<{ cosmetic: (typeof userCosmeticsRaw)[0]['cosmetic']; data: MixedObject | null }>>);
-
-  return userCosmetics;
+type UserCosmeticLookup = {
+  userId: number;
+  cosmetics: {
+    cosmetic: {
+      id: number;
+      name: string;
+      type: CosmeticType;
+      data: Prisma.JsonValue;
+      source: CosmeticSource;
+    };
+    data: Prisma.JsonValue;
+  }[];
 };
+export async function getCosmeticsForUsers(userIds: number[]) {
+  const userCosmetics = await cachedObject<UserCosmeticLookup>({
+    key: 'cosmetics',
+    idKey: 'userId',
+    ids: userIds,
+    lookupFn: async (ids) => {
+      const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+        where: { userId: { in: ids }, equippedAt: { not: null } },
+        select: {
+          userId: true,
+          data: true,
+          cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
+        },
+      });
+      const results = userCosmeticsRaw.reduce((acc, { userId, ...cosmetic }) => {
+        acc[userId] ??= { userId, cosmetics: [] };
+        acc[userId].cosmetics.push(cosmetic);
+        return acc;
+      }, {} as Record<number, UserCosmeticLookup>);
+      return results;
+    },
+    ttl: 60 * 60 * 24, // 24 hours
+  });
+
+  return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
+}
+export async function deleteUserCosmeticCache(userId: number) {
+  await bustCachedArray('cosmetics', 'userId', userId);
+}
+
+export async function getProfilePicturesForUsers(userIds: number[]) {
+  return await cachedObject<ProfileImage>({
+    key: 'profile-pictures',
+    idKey: 'userId',
+    ids: userIds,
+    lookupFn: async (ids) => {
+      const profilePictures = await dbRead.$queryRaw<ProfileImage[]>`
+        SELECT
+          i.id,
+          i.name,
+          i.url,
+          i.nsfw,
+          i.hash,
+          i."userId",
+          i.ingestion,
+          i.type,
+          i.width,
+          i.height,
+          i.metadata
+        FROM "User" u
+        JOIN "Image" i ON i.id = u."profilePictureId"
+        WHERE u.id IN (${Prisma.join(ids as number[])})
+      `;
+      return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
+    },
+    ttl: 60 * 60 * 24, // 24 hours
+  });
+}
+export async function deleteUserProfilePictureCache(userId: number) {
+  await bustCachedArray('profile-pictures', 'userId', userId);
+}
 
 // #region [article engagement]
 export const getUserArticleEngagements = async ({ userId }: { userId: number }) => {
@@ -944,7 +991,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
   let available = true;
-  const userCosmetic = await dbRead.userCosmetic.findFirst({
+  const userCosmetic = await dbWrite.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
     select: { obtainedAt: true, equippedAt: true, data: true },
   });
@@ -986,4 +1033,7 @@ export async function equipCosmetic({
       data: { equippedAt: new Date() },
     }),
   ]);
+
+  // Clear cache
+  await deleteUserCosmeticCache(userId);
 }

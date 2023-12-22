@@ -17,12 +17,10 @@ import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
 export function NotificationBell() {
-  const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
   const [opened, setOpened] = useState(false);
@@ -38,7 +36,7 @@ export function NotificationBell() {
     },
   });
   const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-    if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
+    readNotificationMutation.mutate({ id, all });
   };
 
   return (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { ClubMembershipOnClub, ClubTier } from '~/types/router';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';
@@ -24,6 +24,78 @@ import { useRouter } from 'next/router';
 import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { Currency } from '@prisma/client';
+
+export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
+  const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
+    clubId,
+  });
+  const { isCancelled, isToggling, toggleCancelStatus } = useToggleClubMembershipCancelStatus({
+    clubId,
+  });
+
+  if (!membership) {
+    return null;
+  }
+
+  return (
+    <>
+      {membership?.cancelledAt ? (
+        <Alert color="yellow">
+          <Stack>
+            <Text size="sm">
+              Your membership was cancelled on {formatDate(membership.cancelledAt)} and will be
+              active until{' '}
+              <Text weight="bold" component="span">
+                {formatDate(membership.expiresAt)}
+              </Text>
+              .
+            </Text>
+            <Button
+              size="xs"
+              onClick={toggleCancelStatus}
+              loading={isToggling}
+              variant="subtle"
+              color="yellow"
+            >
+              {isCancelled ? 'Restore membership' : 'Cancel membership'}
+            </Button>
+          </Stack>
+        </Alert>
+      ) : membership?.nextBillingAt ? (
+        <Alert color="yellow">
+          <Stack spacing={4}>
+            <Text size="sm">You are a member of this club.</Text>
+            {membership?.unitAmount > 0 && (
+              <>
+                <Text size="sm">
+                  Your next billing date is{' '}
+                  <Text weight="bold" component="span">
+                    {formatDate(membership.nextBillingAt)}
+                  </Text>
+                  .
+                </Text>
+                <Text>
+                  Your monthly fee is{' '}
+                  <CurrencyBadge unitAmount={membership.unitAmount} currency={Currency.BUZZ} />.
+                </Text>
+              </>
+            )}
+            <Button
+              size="xs"
+              onClick={toggleCancelStatus}
+              loading={isToggling}
+              variant="subtle"
+              color="yellow"
+              mt="md"
+            >
+              {isCancelled ? 'Restore membership' : 'Cancel membership'}
+            </Button>
+          </Stack>
+        </Alert>
+      ) : null}
+    </>
+  );
+};
 
 export const TierCoverImage = ({
   clubTier,
@@ -108,14 +180,25 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             <Text align="center" weight={800}>
               {clubTier.name}
             </Text>
-            <Text align="center">
-              You will be charged the membership fee immediately and get access to this tier&rsquo;s
-              benefits. Memberships are billed monthly and can be canceled at any time.
-            </Text>
+            {clubTier.unitAmount > 0 ? (
+              <>
+                <Text align="center">
+                  You will be charged the membership fee immediately and get access to this
+                  tier&rsquo;s benefits. Memberships are billed monthly and can be canceled at any
+                  time.
+                </Text>
 
-            <Text color="dimmed" size="sm" align="center">
-              Your next billing date will be on {formatDate(dayjs().add(1, 'month').toDate())}
-            </Text>
+                <Text color="dimmed" size="sm" align="center">
+                  Your next billing date will be on {formatDate(dayjs().add(1, 'month').toDate())}
+                </Text>
+              </>
+            ) : (
+              <Text>
+                You&rsquo;re about to join a FREE tier for this club. This means you will be getting
+                notifciations and access to some club resources and exclusive posts. No charges will
+                be made to your account.
+              </Text>
+            )}
           </Stack>
         </Center>
       ),
@@ -132,7 +215,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             message: 'You are now a member of this club! Enjoy your stay.',
           });
 
-          if (userPaymentMethods.length === 0) {
+          if (userPaymentMethods.length === 0 && clubTier.unitAmount > 0) {
             dialogStore.trigger({
               component: StripePaymentMethodSetupModal,
               props: {
@@ -154,7 +237,13 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                     </Text>
                     <Text weight="bold">
                       Your card will only be charged if you do not have the amount of buzz at the
-                      time of renewal to continue your membership
+                      time of renewal to continue your membership. A minimum of{' '}
+                      <CurrencyBadge
+                        unitAmount={constants.clubs.minStripeCharge / 10}
+                        currency={Currency.USD}
+                      />{' '}
+                      will be charged to your card only in the case that you do not have enough buzz
+                      to
                     </Text>
                     <Text>
                       You can always add a payment method later in your{' '}
@@ -329,6 +418,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 radius="md"
                 onPerformTransaction={isUpgrade ? handleMembershipUpdate : handleMembershipJoin}
                 label={isUpgrade ? 'Upgrade' : 'Become a member'}
+                color="yellow.7"
               />
             )}
           </LoginPopover>
@@ -387,9 +477,7 @@ export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number
 
         showSuccessNotification({
           title: 'Success',
-          message: `Your membership has been canceled. You will have access to this club's resources until ${formatDate(
-            membership?.nextBillingAt
-          )}.`,
+          message: `Your membership has been canceled.`,
         });
       } catch {
         // Do nothing. Handled in the hook.
@@ -407,12 +495,18 @@ export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number
             <Text align="center" weight={800}>
               {clubTier.name}
             </Text>
-            <Text align="center">
-              {' '}
-              Your membership will be canceled at the end of your current billing period on{' '}
-              {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
-              made.
-            </Text>
+            {clubTier.unitAmount > 0 ? (
+              <Text align="center">
+                Your membership will be canceled at the end of your current billing period on{' '}
+                {formatDate(membership?.nextBillingAt)} and no more charges to your account will be
+                made.
+              </Text>
+            ) : (
+              <Text align="center">
+                Your membership will be canceled right away and you will lose access to this
+                club&rsquo;s resources
+              </Text>
+            )}
           </Stack>
         </Center>
       ),

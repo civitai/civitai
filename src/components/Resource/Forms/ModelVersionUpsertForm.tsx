@@ -42,6 +42,7 @@ import {
 import { ClubResourceSchema } from '~/server/schema/club.schema';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { useRouter } from 'next/router';
+import { useQueryUserContributingClubs } from '../../Club/club.utils';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -87,6 +88,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const { hasClubs } = useQueryUserContributingClubs();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -579,7 +581,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               }
             />
           </Stack>
-          {features.clubs && (
+          {features.clubs && hasClubs && (
             <>
               <Divider label="Club options" />
               <InputClubResourceManagementInput

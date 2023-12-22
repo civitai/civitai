@@ -51,6 +51,21 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         },
       },
 
+      blurHash: {
+        opacity: 0.7,
+      },
+
+      content: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        zIndex: 2,
+        opacity: 0,
+        transition: theme.other.fadeIn,
+      },
+
       noImage: {
         backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[3],
         position: 'relative',
@@ -103,6 +118,26 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
           borderRightWidth: 1,
           borderRightStyle: 'solid',
         },
+      },
+
+      reactions: {
+        borderRadius: theme.radius.sm,
+        backgroundColor: theme.fn.rgba('#000', 0.31),
+        boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+        height: 28,
+        paddingRight: 3,
+      },
+
+      statChip: {
+        borderRadius: theme.radius.sm,
+        backgroundColor: theme.fn.rgba('#000', 0.31),
+        alignSelf: 'flex-start',
+        [`.mantine-Badge-inner`]: {
+          display: 'flex',
+          overflow: 'visible',
+          gap: theme.spacing.xs,
+        },
+        color: theme.white,
       },
 
       chip: {

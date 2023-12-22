@@ -25,7 +25,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 const resetTime = dayjs().endOf('hour').toDate();
 const startTime = dayjs().startOf('hour').toDate();
 
-export function EventContributors({ event }: { event: string }) {
+export function EventContributors({ event, endDate }: { event: string; endDate: Date }) {
   const { contributors, loading } = useQueryEventContributors({ event });
   const { classes } = useStyles();
 
@@ -34,6 +34,8 @@ export function EventContributors({ event }: { event: string }) {
   const topTeamContributors = Object.entries(contributors?.teams ?? {}).map(
     ([team, users]) => [team, users.slice(0, 4)] as const
   );
+
+  const ended = resetTime > endDate;
 
   return (
     <Grid gutter={48}>
@@ -44,10 +46,12 @@ export function EventContributors({ event }: { event: string }) {
               <Text size={32} weight="bold">
                 Top Donors All Time
               </Text>
-              <Text size="xs" color="dimmed">
-                As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
-                <Countdown endTime={resetTime} format="short" />
-              </Text>
+              {!ended && (
+                <Text size="xs" color="dimmed">
+                  As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                  <Countdown endTime={resetTime} format="short" />
+                </Text>
+              )}
             </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
@@ -94,61 +98,65 @@ export function EventContributors({ event }: { event: string }) {
           </Stack>
         </Card>
       </Grid.Col>
-      <Grid.Col xs={12} sm="auto">
-        <Card p={32} radius="lg" h="100%" className={classes.card}>
-          <Stack spacing="xl">
-            <Stack spacing={0}>
-              <Text size={32} weight="bold">
-                Top Donors Today
-              </Text>
-              <Text size="xs" color="dimmed">
-                As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
-                <Countdown endTime={resetTime} format="short" />
-              </Text>
-            </Stack>
-            {loading ? (
-              Array.from({ length: 4 }).map((_, index) => (
-                <Group key={index} spacing={8} noWrap>
-                  <Skeleton height={40} circle />
-                  <Skeleton height={44} />
-                </Group>
-              ))
-            ) : topDayContributors.length > 0 ? (
-              topDayContributors.map((contributor) => (
-                <Group key={contributor.userId} spacing="md" position="apart">
-                  <UserAvatar
-                    userId={contributor.userId}
-                    user={contributor.user}
-                    indicatorProps={{ color: contributor.team.toLowerCase() }}
-                    avatarSize="md"
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing={4}>
-                    <CurrencyIcon currency={Currency.BUZZ} />
-                    <Text size="xl" weight={500} color="dimmed">
-                      {abbreviateNumber(contributor.amount ?? 0)}
-                    </Text>
+      {!ended && (
+        <Grid.Col xs={12} sm="auto">
+          <Card p={32} radius="lg" h="100%" className={classes.card}>
+            <Stack spacing="xl">
+              <Stack spacing={0}>
+                <Text size={32} weight="bold">
+                  Top Donors Today
+                </Text>
+                {!ended && (
+                  <Text size="xs" color="dimmed">
+                    As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
+                    <Countdown endTime={resetTime} format="short" />
+                  </Text>
+                )}
+              </Stack>
+              {loading ? (
+                Array.from({ length: 4 }).map((_, index) => (
+                  <Group key={index} spacing={8} noWrap>
+                    <Skeleton height={40} circle />
+                    <Skeleton height={44} />
                   </Group>
-                </Group>
-              ))
-            ) : (
-              <Paper p="xl">
-                <Center>
-                  <Text color="dimmed">No donors yet</Text>
-                </Center>
-              </Paper>
-            )}
-            <Group position="right">
-              <Link href={`/leaderboard/${event}:day`}>
-                <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
-                  View All
-                </Button>
-              </Link>
-            </Group>
-          </Stack>
-        </Card>
-      </Grid.Col>
+                ))
+              ) : topDayContributors.length > 0 ? (
+                topDayContributors.map((contributor) => (
+                  <Group key={contributor.userId} spacing="md" position="apart">
+                    <UserAvatar
+                      userId={contributor.userId}
+                      user={contributor.user}
+                      indicatorProps={{ color: contributor.team.toLowerCase() }}
+                      avatarSize="md"
+                      withUsername
+                      linkToProfile
+                    />
+                    <Group spacing={4}>
+                      <CurrencyIcon currency={Currency.BUZZ} />
+                      <Text size="xl" weight={500} color="dimmed">
+                        {abbreviateNumber(contributor.amount ?? 0)}
+                      </Text>
+                    </Group>
+                  </Group>
+                ))
+              ) : (
+                <Paper p="xl">
+                  <Center>
+                    <Text color="dimmed">No donors yet</Text>
+                  </Center>
+                </Paper>
+              )}
+              <Group position="right">
+                <Link href={`/leaderboard/${event}:day`}>
+                  <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                    View All
+                  </Button>
+                </Link>
+              </Group>
+            </Stack>
+          </Card>
+        </Grid.Col>
+      )}
       <Grid.Col span={12}>
         <Card p={32} radius="lg" className={classes.card}>
           <Grid gutter="xl">

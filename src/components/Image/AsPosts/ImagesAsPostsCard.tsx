@@ -17,6 +17,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 
@@ -31,6 +32,7 @@ export function ImagesAsPostsCard({
 }) {
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes } = useStyles();
+  const currentUser = useCurrentUser();
 
   const { modelVersions, showModerationOptions, model } = useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
@@ -84,244 +86,258 @@ export function ImagesAsPostsCard({
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} className={classes.card}>
-      {inView && (
-        <>
-          <Paper radius={0}>
-            <Group p="xs" align="flex-start" noWrap maw="100%">
-              <UserAvatar
-                user={data.user}
-                subText={
-                  <>
-                    <DaysFromNow date={data.createdAt} /> - {modelVersionName ?? 'Cross-post'}
-                  </>
-                }
-                subTextForce
-                size="md"
-                spacing="xs"
-                withUsername
-                linkToProfile
-              />
-              <Group ml="auto" noWrap>
-                {!data.publishedAt && (
-                  <Tooltip label="Post not Published" withArrow>
-                    <Link href={`/posts/${data.postId}/edit`}>
-                      <ActionIcon color="red" variant="outline">
-                        <IconExclamationMark />
-                      </ActionIcon>
-                    </Link>
-                  </Tooltip>
-                )}
-                {data.review ? (
-                  <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
-                    <IconBadge
-                      className={classes.statBadge}
-                      sx={{
-                        userSelect: 'none',
-                        paddingTop: 4,
-                        paddingBottom: 4,
-                        height: 'auto',
-                      }}
-                      style={{ paddingRight: data.review?.details ? undefined : 0 }}
-                      icon={
-                        <Group spacing={2} align="center" noWrap>
-                          <StarRating size={14} value={data.review.rating / 5} count={1} />
-                          <Text size="xs" sx={{ lineHeight: 1.2 }}>
-                            {`${data.review.rating}.0`}
-                          </Text>
-                        </Group>
-                      }
-                    >
-                      {data.review?.details && (
-                        <Center>
-                          <IconMessage size={18} strokeWidth={2.5} />
-                        </Center>
-                      )}
-                    </IconBadge>
-                  </RoutedDialogLink>
-                ) : null}
-              </Group>
-            </Group>
-          </Paper>
-          {data.images.length === 1 ? (
-            <ImageGuard
-              images={[cover]}
-              render={(image) => (
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <div className={classes.imageContainer}>
-                      {image.meta && 'civitaiResources' in (image.meta as object) && (
-                        <OnsiteIndicator />
-                      )}
-                      <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
-                      <ImageGuard.ToggleImage position="top-left" />
-                      <RoutedDialogLink
-                        name="imageDetail"
-                        state={{ imageId: image.id, images: [image] }}
-                        className={classes.link}
-                      >
-                        <>
-                          <MediaHash {...image} />
-                          {safe && (
-                            <EdgeMedia
-                              src={image.url}
-                              name={image.name ?? image.id.toString()}
-                              alt={image.name ?? undefined}
-                              type={image.type}
-                              width={450}
-                              placeholder="empty"
-                              className={classes.image}
-                            />
-                          )}
-                        </>
-                      </RoutedDialogLink>
-
-                      <Reactions
-                        entityId={image.id}
-                        entityType="image"
-                        reactions={image.reactions}
-                        metrics={{
-                          likeCount: image.stats?.likeCountAllTime,
-                          dislikeCount: image.stats?.dislikeCountAllTime,
-                          heartCount: image.stats?.heartCountAllTime,
-                          laughCount: image.stats?.laughCountAllTime,
-                          cryCount: image.stats?.cryCountAllTime,
-                        }}
-                        readonly={!safe}
-                        className={classes.reactions}
-                        targetUserId={image.user.id}
-                      />
-                      {!image.hideMeta && image.meta && (
-                        <ImageMetaPopover
-                          meta={image.meta}
-                          generationProcess={image.generationProcess ?? undefined}
-                          imageId={image.id}
-                        >
-                          <ActionIcon className={classes.info} variant="transparent" size="lg">
-                            <IconInfoCircle
-                              color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
-                              strokeWidth={2.5}
-                              size={26}
-                            />
-                          </ActionIcon>
-                        </ImageMetaPopover>
-                      )}
-                    </div>
-                  )}
-                </ImageGuard.Content>
-              )}
+      <Paper radius={0} h={58}>
+        {inView && (
+          <Group p="xs" align="flex-start" noWrap maw="100%">
+            <UserAvatar
+              user={data.user}
+              subText={
+                <>
+                  <DaysFromNow date={data.createdAt} /> - {modelVersionName ?? 'Cross-post'}
+                </>
+              }
+              subTextForce
+              size="md"
+              spacing="xs"
+              withUsername
+              linkToProfile
             />
-          ) : (
-            <Carousel
-              key={carouselKey}
-              withControls
-              draggable
-              loop
-              style={{ flex: 1 }}
-              withIndicators
-              controlSize={32}
-              height={carouselHeight}
-              getEmblaApi={setEmbla}
-              styles={{
-                indicators: {
-                  bottom: 0,
-                  zIndex: 5,
-                  display: 'flex',
-                  gap: 1,
-                },
-                indicator: {
-                  width: 'auto',
-                  height: 8,
-                  flex: 1,
-                  transition: 'width 250ms ease',
-                  borderRadius: 0,
-                  boxShadow: '0 0 3px rgba(0, 0, 0, .3)',
-                },
-              }}
-            >
-              <ImageGuard
-                images={data.images}
-                connect={postId ? { entityType: 'post', entityId: postId } : undefined}
-                render={(image, index) => (
-                  <Carousel.Slide className={classes.slide} sx={{ height: carouselHeight }}>
-                    {slidesInView.includes(index) && (
-                      <ImageGuard.Content>
-                        {({ safe }) => (
-                          <div className={classes.imageContainer}>
-                            {image.meta && 'civitaiResources' in (image.meta as object) && (
-                              <OnsiteIndicator />
-                            )}
-                            <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
-                            <ImageGuard.ToggleConnect position="top-left" />
-                            <RoutedDialogLink
-                              name="imageDetail"
-                              state={{ imageId: image.id, images: data.images }}
-                              className={classes.link}
-                            >
-                              <>
-                                <MediaHash {...image} />
-                                {safe && (
-                                  <EdgeMedia
-                                    src={image.url}
-                                    name={image.name ?? image.id.toString()}
-                                    alt={image.name ?? undefined}
-                                    type={image.type}
-                                    width={450}
-                                    placeholder="empty"
-                                    className={classes.image}
-                                  />
-                                )}
-                              </>
-                            </RoutedDialogLink>
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                                tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                              }}
-                              readonly={!safe}
-                              className={classes.reactions}
-                              targetUserId={image.user.id}
-                            />
-                            {!image.hideMeta && image.meta && (
-                              <ImageMetaPopover
-                                meta={image.meta}
-                                generationProcess={image.generationProcess ?? undefined}
-                                imageId={image.id}
-                              >
-                                <ActionIcon
-                                  className={classes.info}
-                                  variant="transparent"
-                                  size="lg"
-                                >
-                                  <IconInfoCircle
-                                    color="white"
-                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                    opacity={0.8}
-                                    strokeWidth={2.5}
-                                    size={26}
-                                  />
-                                </ActionIcon>
-                              </ImageMetaPopover>
-                            )}
-                          </div>
-                        )}
-                      </ImageGuard.Content>
+            <Group ml="auto" noWrap>
+              {!data.publishedAt && (
+                <Tooltip label="Post not Published" withArrow>
+                  <Link href={`/posts/${data.postId}/edit`}>
+                    <ActionIcon color="red" variant="outline">
+                      <IconExclamationMark />
+                    </ActionIcon>
+                  </Link>
+                </Tooltip>
+              )}
+              {data.review ? (
+                <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
+                  <IconBadge
+                    className={classes.statBadge}
+                    sx={{
+                      userSelect: 'none',
+                      paddingTop: 4,
+                      paddingBottom: 4,
+                      height: 'auto',
+                    }}
+                    style={{ paddingRight: data.review?.details ? undefined : 0 }}
+                    icon={
+                      <Group spacing={2} align="center" noWrap>
+                        <StarRating size={14} value={data.review.rating / 5} count={1} />
+                        <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                          {`${data.review.rating}.0`}
+                        </Text>
+                      </Group>
+                    }
+                  >
+                    {data.review?.details && (
+                      <Center>
+                        <IconMessage size={18} strokeWidth={2.5} />
+                      </Center>
                     )}
-                  </Carousel.Slide>
+                  </IconBadge>
+                </RoutedDialogLink>
+              ) : currentUser?.id === data.user.id ? (
+                <>{/* <Button compact>Add Review</Button> */}</>
+              ) : null}
+            </Group>
+          </Group>
+        )}
+      </Paper>
+      <div className={classes.container}>
+        <div className={classes.blurHash}>
+          <MediaHash {...data.images[0]} />
+        </div>
+        {inView && (
+          <div className={classes.content} style={{ opacity: 1 }}>
+            {data.images.length === 1 ? (
+              <ImageGuard
+                images={[cover]}
+                render={(image) => (
+                  <ImageGuard.Content>
+                    {({ safe }) => (
+                      <div className={classes.imageContainer}>
+                        {image.meta && 'civitaiResources' in (image.meta as object) && (
+                          <OnsiteIndicator />
+                        )}
+                        <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
+                        <ImageGuard.ToggleImage position="top-left" />
+                        <RoutedDialogLink
+                          name="imageDetail"
+                          state={{ imageId: image.id, images: [image] }}
+                          className={classes.link}
+                        >
+                          <>
+                            {safe && (
+                              <EdgeMedia
+                                src={image.url}
+                                name={image.name ?? image.id.toString()}
+                                alt={image.name ?? undefined}
+                                type={image.type}
+                                width={450}
+                                placeholder="empty"
+                                className={classes.image}
+                                fadeIn
+                              />
+                            )}
+                          </>
+                        </RoutedDialogLink>
+
+                        <Reactions
+                          entityId={image.id}
+                          entityType="image"
+                          reactions={image.reactions}
+                          metrics={{
+                            likeCount: image.stats?.likeCountAllTime,
+                            dislikeCount: image.stats?.dislikeCountAllTime,
+                            heartCount: image.stats?.heartCountAllTime,
+                            laughCount: image.stats?.laughCountAllTime,
+                            cryCount: image.stats?.cryCountAllTime,
+                          }}
+                          readonly={!safe}
+                          className={classes.reactions}
+                          targetUserId={image.user.id}
+                        />
+                        {!image.hideMeta && image.meta && (
+                          <ImageMetaPopover
+                            meta={image.meta}
+                            generationProcess={image.generationProcess ?? undefined}
+                            imageId={image.id}
+                          >
+                            <ActionIcon className={classes.info} variant="transparent" size="lg">
+                              <IconInfoCircle
+                                color="white"
+                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                opacity={0.8}
+                                strokeWidth={2.5}
+                                size={26}
+                              />
+                            </ActionIcon>
+                          </ImageMetaPopover>
+                        )}
+                      </div>
+                    )}
+                  </ImageGuard.Content>
                 )}
               />
-            </Carousel>
-          )}
-        </>
-      )}
+            ) : (
+              <Carousel
+                key={carouselKey}
+                withControls
+                draggable
+                loop
+                style={{ flex: 1 }}
+                withIndicators
+                controlSize={32}
+                height={carouselHeight}
+                getEmblaApi={setEmbla}
+                styles={{
+                  indicators: {
+                    bottom: 0,
+                    zIndex: 5,
+                    display: 'flex',
+                    gap: 1,
+                  },
+                  indicator: {
+                    width: 'auto',
+                    height: 8,
+                    flex: 1,
+                    transition: 'width 250ms ease',
+                    borderRadius: 0,
+                    boxShadow: '0 0 3px rgba(0, 0, 0, .3)',
+                  },
+                }}
+              >
+                <ImageGuard
+                  images={data.images}
+                  connect={postId ? { entityType: 'post', entityId: postId } : undefined}
+                  render={(image, index) => (
+                    <Carousel.Slide className={classes.slide}>
+                      {slidesInView.includes(index) && (
+                        <ImageGuard.Content>
+                          {({ safe }) => (
+                            <div className={classes.imageContainer}>
+                              {image.meta && 'civitaiResources' in (image.meta as object) && (
+                                <OnsiteIndicator />
+                              )}
+                              <ImageGuard.Report
+                                additionalMenuItems={moderationOptions(image.id)}
+                              />
+                              <ImageGuard.ToggleConnect position="top-left" />
+                              <RoutedDialogLink
+                                name="imageDetail"
+                                state={{ imageId: image.id, images: data.images }}
+                                className={classes.link}
+                              >
+                                <>
+                                  <div className={classes.blurHash}>
+                                    <MediaHash {...image} />
+                                  </div>
+                                  {safe && (
+                                    <EdgeMedia
+                                      src={image.url}
+                                      name={image.name ?? image.id.toString()}
+                                      alt={image.name ?? undefined}
+                                      type={image.type}
+                                      width={450}
+                                      placeholder="empty"
+                                      className={classes.image}
+                                      fadeIn
+                                    />
+                                  )}
+                                </>
+                              </RoutedDialogLink>
+                              <Reactions
+                                entityId={image.id}
+                                entityType="image"
+                                reactions={image.reactions}
+                                metrics={{
+                                  likeCount: image.stats?.likeCountAllTime,
+                                  dislikeCount: image.stats?.dislikeCountAllTime,
+                                  heartCount: image.stats?.heartCountAllTime,
+                                  laughCount: image.stats?.laughCountAllTime,
+                                  cryCount: image.stats?.cryCountAllTime,
+                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                }}
+                                readonly={!safe}
+                                className={classes.reactions}
+                                targetUserId={image.user.id}
+                              />
+                              {!image.hideMeta && image.meta && (
+                                <ImageMetaPopover
+                                  meta={image.meta}
+                                  generationProcess={image.generationProcess ?? undefined}
+                                  imageId={image.id}
+                                >
+                                  <ActionIcon
+                                    className={classes.info}
+                                    variant="transparent"
+                                    size="lg"
+                                  >
+                                    <IconInfoCircle
+                                      color="white"
+                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                      opacity={0.8}
+                                      strokeWidth={2.5}
+                                      size={26}
+                                    />
+                                  </ActionIcon>
+                                </ImageMetaPopover>
+                              )}
+                            </div>
+                          )}
+                        </ImageGuard.Content>
+                      )}
+                    </Carousel.Slide>
+                  )}
+                />
+              </Carousel>
+            )}
+          </div>
+        )}
+      </div>
     </MasonryCard>
   );
 }
@@ -370,6 +386,17 @@ const useStyles = createStyles((theme) => ({
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
     zIndex: 1,
+  },
+  blurHash: {
+    opacity: 0.7,
+  },
+  container: {
+    position: 'relative',
+    flex: 1,
+  },
+  content: {
+    transition: theme.other.fadeIn,
+    opacity: 0,
   },
   info: {
     position: 'absolute',
