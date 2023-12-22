@@ -50,6 +50,7 @@ type CachedLookupOptions<T extends object> = {
   idKey: keyof T;
   lookupFn: (ids: number[]) => Promise<Record<string, object>>;
   ttl?: number;
+  debounceTime?: number;
   cacheNotFound?: boolean;
 };
 export async function cachedArray<T extends object>({
@@ -58,6 +59,7 @@ export async function cachedArray<T extends object>({
   idKey,
   lookupFn,
   ttl = CacheTTL.xs,
+  debounceTime = 10,
   cacheNotFound = true,
 }: CachedLookupOptions<T>) {
   if (!ids.length) return [];
@@ -67,18 +69,28 @@ export async function cachedArray<T extends object>({
   const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
   const cacheCutoff = Date.now() - ttl * 1000; // convert to ms (keeping ttl in seconds for redis similarity)
-  const cacheMisses = new Set<(typeof ids)[0]>();
-  for (const id of ids) {
+  const cacheDebounceCutoff = Date.now() - debounceTime * 1000;
+  const cacheMisses = new Set<number>();
+  const dontCache = new Set<number>();
+  for (const id of [...new Set(ids)]) {
     const cached = cache[id];
     if (cached && cached.cachedAt > cacheCutoff) {
       if (cached.notFound) continue;
+      if (cached.debounce) {
+        if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
+        cacheMisses.add(id);
+        continue;
+      }
       results.add(cached);
     } else cacheMisses.add(id);
   }
 
+  if (dontCache.size > 0)
+    log(`${key}: Cache debounce - ${dontCache.size} items: ${[...dontCache].join(', ')}`);
+
   // If we have cache misses, we need to fetch from the DB
   if (cacheMisses.size > 0) {
-    log(`Cache miss for ${cacheMisses.size} ${key} items`);
+    log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
     const dbResults = await lookupFn([...cacheMisses] as typeof ids);
 
     const toCache: Record<string, string> = {};
@@ -92,20 +104,28 @@ export async function cachedArray<T extends object>({
         continue;
       }
       results.add(result as T);
-      toCache[id] = JSON.stringify({ ...result, cachedAt });
+      if (!dontCache.has(id)) toCache[id] = JSON.stringify({ ...result, cachedAt });
     }
 
     // then cache the results
     if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
 
     // Use NX to avoid overwriting a value with a not found...
-    if (Object.keys(toCacheNotFound).length > 0) {
-      for (const [key, value] of Object.entries(toCacheNotFound))
-        await redis.hSetNX(key, key, value);
-    }
+    if (Object.keys(toCacheNotFound).length > 0)
+      for (const [id, value] of Object.entries(toCacheNotFound)) await redis.hSetNX(key, id, value);
   }
 
   return [...results];
+}
+
+export async function bustCachedArray(key: string, idKey: string, id: number | number[]) {
+  const ids = Array.isArray(id) ? id : [id];
+  const cachedAt = Date.now();
+  const toCache = Object.fromEntries(
+    ids.map((id) => [id, JSON.stringify({ [idKey]: id, cachedAt, debounce: true })])
+  ) as Record<string, string>;
+  await redis.hSet(key, toCache);
+  log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
 }
 
 export async function cachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {

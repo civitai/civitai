@@ -54,8 +54,7 @@ import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { ProfileImage } from '../selectors/image.selector';
-import { redis } from '~/server/redis/client';
-import { cachedObject } from '~/server/utils/cache-helpers';
+import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -660,7 +659,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
   return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
 }
 export async function deleteUserCosmeticCache(userId: number) {
-  await redis.hDel('cosmetics', userId.toString());
+  await bustCachedArray('cosmetics', 'userId', userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
@@ -692,7 +691,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
   });
 }
 export async function deleteUserProfilePictureCache(userId: number) {
-  await redis.hDel('profile-pictures', userId.toString());
+  await bustCachedArray('profile-pictures', 'userId', userId);
 }
 
 // #region [article engagement]
@@ -1003,7 +1002,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
   let available = true;
-  const userCosmetic = await dbRead.userCosmetic.findFirst({
+  const userCosmetic = await dbWrite.userCosmetic.findFirst({
     where: { userId, cosmeticId: id },
     select: { obtainedAt: true, equippedAt: true, data: true },
   });
