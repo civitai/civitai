@@ -20,6 +20,9 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
+import { ReportReason } from '@prisma/client';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useCreateReport, useReportCsam } from '~/components/Report/report.utils';
 
 /*
 TODO.gallery
@@ -118,17 +121,14 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
                 </Menu.Item>
               )}
             </TosViolationButton>
-            <Menu.Item
-              icon={
-                <IconAlertTriangle size={14} stroke={1.5} />
-                // <Text size={14} mx={-2.5}>
-                //   &#128528;
-                // </Text>
-              }
-              onClick={() => router.push(`/moderator/csam/${image.user.id}?imageId=${image.id}`)}
-            >
-              Report CSAM
-            </Menu.Item>
+            <ReportCsamButton>
+              {({ onClick }) => (
+                <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={onClick}>
+                  Report CSAM
+                </Menu.Item>
+              )}
+            </ReportCsamButton>
+
             <RescanImageButton>
               {({ onClick, isLoading }) => (
                 <Menu.Item
@@ -228,3 +228,24 @@ type ButtonCallbackProps = {
   }) => React.ReactElement;
   onSuccess?: () => void;
 };
+
+function ReportCsamButton({ children, onSuccess }: ButtonCallbackProps) {
+  const router = useRouter();
+  const { image } = useImageDetailContext();
+
+  const { csamReports } = useFeatureFlags();
+
+  const { mutate, isLoading } = useReportCsam({
+    async onSuccess() {
+      onSuccess?.();
+    },
+  });
+
+  const onClick = () => {
+    if (!image) return;
+    if (csamReports) router.push(`/moderator/csam/${image.user.id}?imageId=${image.id}`);
+    else mutate([{ type: ReportEntity.Image, id: image.id, reason: ReportReason.CSAM }]);
+  };
+
+  return children({ onClick, isLoading });
+}

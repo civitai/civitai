@@ -172,11 +172,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               );
               await queryUtils.model.getAll.invalidate();
               break;
-            case ReportEntity.Comment:
-              // Nothing changes here so nothing to invalidate...
-              break;
-            case ReportEntity.CommentV2:
-              break;
+
             case ReportEntity.Image:
               if (variables.reason === ReportReason.NSFW) {
                 const { tags } = variables.details;
@@ -210,6 +206,9 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               }
               await queryUtils.bounty.getInfinite.invalidate();
               break;
+            // Nothing changes here so nothing to invalidate...
+            case ReportEntity.Comment:
+            case ReportEntity.CommentV2:
             default:
               break;
           }

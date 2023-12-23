@@ -49,7 +49,7 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
 const baseSchema = z.object({
   type: z.nativeEnum(ReportEntity),
   id: z.number(),
-  details: baseDetailSchema,
+  details: baseDetailSchema.default({}),
 });
 
 export const reportNsfwSchema = baseSchema.extend({
@@ -76,6 +76,10 @@ export const reportAdminAttentionSchema = baseSchema.extend({
   reason: z.literal(ReportReason.AdminAttention),
   details: reportAdminAttentionDetailsSchema,
 });
+
+export const reportCsamSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.CSAM),
+});
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
@@ -85,6 +89,7 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportOwnershipSchema,
   reportClaimSchema,
   reportAdminAttentionSchema,
+  reportCsamSchema,
 ]);
 
 export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;

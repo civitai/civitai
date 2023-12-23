@@ -780,6 +780,7 @@ enum ReportReason {
   Ownership
   AdminAttention
   Claim
+  CSAM
 }
 
 enum ReportStatus {

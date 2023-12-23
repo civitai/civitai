@@ -11,6 +11,8 @@ export type JobOptions = {
   shouldWait: boolean;
   lockExpiration: number;
   queue?: string;
+  /** restrict job to only run on a single pod */
+  dedicated?: boolean;
 };
 
 export function createJob(

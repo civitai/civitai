@@ -10,6 +10,7 @@ import {
 } from '~/server/schema/report.schema';
 import { addTagVotes } from '~/server/services/tag.service';
 import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -112,6 +113,9 @@ export const createReport = async ({
   if (!data.details) data.details = {};
   (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
+  // only mods can create csam reports
+  if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
+
   const validReport =
     data.reason !== ReportReason.NSFW
       ? await validateReportCreation({
@@ -173,6 +177,20 @@ export const createReport = async ({
           refreshHiddenImagesForUser({ userId });
           break;
       }
+
+    if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
+      await dbWrite.report.updateMany({
+        where: {
+          reason: { not: ReportReason.CSAM },
+          image: { imageId: id },
+        },
+        data: { status: ReportStatus.Actioned },
+      });
+      await dbWrite.image.update({
+        where: { id },
+        data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
+      });
+    }
   });
 };
 

@@ -19,6 +19,7 @@ import {
 import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { showNotification } from '@mantine/notifications';
 import {
+  IconAlertTriangle,
   IconCheck,
   IconExternalLink,
   IconInfoCircle,
@@ -51,7 +52,8 @@ import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { Collection } from '~/components/Collection/Collection';
-
+import { useCreateReport, useReportCsam } from '~/components/Report/report.utils';
+import { ReportEntity } from '~/server/schema/report.schema';
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
 //   resolver: async ({ session }) => {
@@ -286,6 +288,12 @@ function ModerationControls({
     },
   });
 
+  const createCsamReport = useReportCsam({
+    async onSuccess() {
+      await queryUtils.image.getModeratorReviewQueue.invalidate();
+    },
+  });
+
   const reportMutation = trpc.report.bulkUpdateStatus.useMutation({
     async onMutate({ ids, status }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();
@@ -322,6 +330,13 @@ function ModerationControls({
       reviewAction: 'removeName',
       reviewType: view,
     });
+  };
+
+  const handleReportCsam = () => {
+    deselectAll();
+    createCsamReport.mutate(
+      selected.map((id) => ({ type: ReportEntity.Image, id, reason: 'CSAM' }))
+    );
   };
 
   const handleDeleteSelected = () => {
@@ -439,6 +454,16 @@ function ModerationControls({
           </ActionIcon>
         </ButtonTooltip>
       </PopConfirm>
+      <ButtonTooltip {...tooltipProps} label="Report CSAM">
+        <ActionIcon
+          variant="outline"
+          disabled={!selected.length}
+          onClick={handleReportCsam}
+          color="orange"
+        >
+          <IconAlertTriangle size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
         <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />

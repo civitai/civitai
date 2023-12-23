@@ -19,7 +19,6 @@ import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion
 import { Job } from '~/server/jobs/job';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
-import { csamJobs } from '~/server/jobs/process-csam';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -38,6 +37,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { csamJobs } from '~/server/jobs/process-csam';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -72,8 +72,8 @@ export const jobs: Job[] = [
   rewardsDailyReset,
   ...bountyJobs,
   ...Object.values(eventEngineJobs),
-  // ...csamJobs,
   processClubMembershipRecurringPayments,
+  // ...csamJobs,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -110,7 +110,10 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 const querySchema = z.object({
-  run: z.string().optional(),
+  run: z
+    .union([z.string(), z.string().array()])
+    .transform((x) => (Array.isArray(x) ? x[0] : x))
+    .optional(),
 });
 
 async function isLocked(name: string) {
