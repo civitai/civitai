@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 type VideoProps = React.DetailedHTMLProps<
   React.VideoHTMLAttributes<HTMLVideoElement>,
   HTMLVideoElement
-> & { wrapperProps?: React.ComponentPropsWithoutRef<'div'>; contain?: boolean };
+> & { wrapperProps?: React.ComponentPropsWithoutRef<'div'>; contain?: boolean; fadeIn?: boolean };
 
 export function EdgeVideo({
   src,
@@ -14,6 +14,7 @@ export function EdgeVideo({
   style,
   wrapperProps,
   contain,
+  fadeIn,
   ...props
 }: VideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null);
@@ -27,6 +28,7 @@ export function EdgeVideo({
     if (inSafari && ref.current && src) {
       ref.current.src = src;
     }
+    if (fadeIn && ref.current?.readyState === 4) ref.current.style.opacity = '1';
   }, [src]);
 
   return (
@@ -46,7 +48,14 @@ export function EdgeVideo({
           loop
           playsInline
           style={{ display: 'block', ...style }}
-          onLoadedData={controls ? (e) => setShowAudioControl(hasAudio(e.target)) : undefined}
+          onLoadedData={
+            controls
+              ? (e) => {
+                  setShowAudioControl(hasAudio(e.target));
+                  e.currentTarget.style.opacity = '1';
+                }
+              : (e) => (e.currentTarget.style.opacity = '1')
+          }
           {...props}
         >
           <source src={src?.replace('.mp4', '.webm')} type="video/webm" />

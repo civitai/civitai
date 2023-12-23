@@ -8,7 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { openConfirmModal } from '@mantine/modals';
 import {
   ActionIcon,
@@ -54,6 +54,7 @@ import {
   IconMicrophoneOff,
   IconPhoto,
   IconTrash,
+  IconUserMinus,
 } from '@tabler/icons-react';
 import { NextLink } from '@mantine/next';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -79,6 +80,15 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       invalidateModeratedContent(queryUtils);
     },
   });
+  const deleteAccountMutation = trpc.user.delete.useMutation({
+    onSuccess() {
+      showSuccessNotification({
+        title: 'Account Deleted',
+        message: 'This account has been deleted.',
+      });
+    },
+  });
+
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
       await queryUtils.user.getCreator.cancel({ username });
@@ -155,6 +165,16 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       onConfirm: () => removeContentMutation.mutate({ id: user.id }),
     });
   };
+  const handleDeleteAccount = () => {
+    if (!user) return;
+    openConfirmModal({
+      title: 'Delete Account',
+      children: `Are you sure you want to delete this account? This action cannot be undone.`,
+      labels: { confirm: 'Yes, delete account', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
+    });
+  };
 
   if (userLoading || !user) {
     return null;
@@ -207,6 +227,13 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 onClick={handleRemoveContent}
               >
                 Remove all content
+              </Menu.Item>
+              <Menu.Item
+                color="red"
+                icon={<IconUserMinus size={14} stroke={1.5} />}
+                onClick={handleDeleteAccount}
+              >
+                Delete Account
               </Menu.Item>
               <Menu.Item
                 icon={

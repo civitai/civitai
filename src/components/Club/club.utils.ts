@@ -167,7 +167,8 @@ export const useMutateClub = () => {
   const createClubMembershipMutation = trpc.clubMembership.createClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
-      await queryUtils.club.userContributingClubs.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
@@ -190,7 +191,8 @@ export const useMutateClub = () => {
   const updateClubMembershipMutation = trpc.clubMembership.updateClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
-      await queryUtils.club.userContributingClubs.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
@@ -572,6 +574,16 @@ export const useQueryClubPosts = (
   }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
 
   return { data, clubPosts, ...rest };
+};
+
+export const useQueryUserContributingClubs = () => {
+  const { data: userClubs = [], ...rest } = trpc.club.userContributingClubs.useQuery();
+
+  return {
+    userClubs,
+    hasClubs: userClubs.length > 0,
+    ...rest,
+  };
 };
 
 export const useClubContributorStatus = ({ clubId }: { clubId?: number }) => {

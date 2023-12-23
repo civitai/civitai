@@ -16,7 +16,7 @@ export function InViewLoader({
   className?: string;
   style?: CSSProperties;
 }) {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({ rootMargin: '1200px 0px' });
   const [initialCanLoad, setInitialCanLoad] = useState(false);
   const [canLoad, setCanLoad] = useState(true);
 

@@ -19,7 +19,7 @@ const logJob = (data: MixedObject) => {
 type JobStatus =
   | { status: 'Failed' }
   | {
-      status: 'Succeeded' | 'Deleted' | 'Expired' | 'Processing';
+      status: 'Succeeded' | 'Deleted' | 'Expired' | 'Processing' | 'Rejected';
       date: Date;
     };
 const failedState: JobStatus = { status: 'Failed' };
@@ -72,16 +72,22 @@ const handleJob = async (
     (job as JobStatus).status = 'Failed';
   }
 
-  if (['Failed', 'Deleted', 'Expired'].includes(job.status)) {
+  if (job.status === 'Failed' || job.status === 'Deleted' || job.status === 'Expired') {
     await updateStatus('Failed');
     return await refund();
   }
 
-  // Otherwise we're still processing
-  if (job.status !== 'Processing') return true; // Should never run...
-
   const jobUpdated = job.date.getTime();
   const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
+  // Treat rejected as processing
+  if (job.status === 'Rejected') {
+    if (minsDiff > PROCESSING_CHECK_INTERVAL) {
+      log(`Job stuck in Rejected status - resubmitting`);
+      return await requeueTraining();
+      // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
+    }
+  }
+
   if (trainingStatus === 'Submitted') {
     // - if it's not in the queue after 10 minutes, resubmit it
     if (minsDiff > SUBMITTED_CHECK_INTERVAL) {

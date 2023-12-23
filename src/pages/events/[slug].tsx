@@ -1,6 +1,4 @@
 import {
-  Alert,
-  Anchor,
   Button,
   Card,
   Center,
@@ -9,34 +7,31 @@ import {
   Divider,
   Grid,
   Group,
-  Image,
   Loader,
   NumberInput,
   Paper,
-  SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
-import { IconBolt, IconBulb, IconChevronRight, IconClipboard } from '@tabler/icons-react';
+import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
   ChartOptions,
   Tooltip as ChartTooltip,
-  LineElement,
   LinearScale,
-  TimeScale,
+  LineElement,
   PointElement,
+  TimeScale,
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
-import { Fragment, forwardRef, useMemo, useRef, useState } from 'react';
+import { forwardRef, Fragment, useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -48,9 +43,10 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EventContributors } from '~/components/Events/EventContributors';
+import { EventRewards } from '~/components/Events/EventRewards';
+import { EventPartners, useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
-import { EventPartners, useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { JdrfLogo } from '~/components/Logo/JdrfLogo';
 import { Meta } from '~/components/Meta/Meta';
@@ -59,10 +55,9 @@ import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { formatDate, stripTime } from '~/utils/date-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
-import { NextLink } from '@mantine/next';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -100,7 +95,6 @@ const options: ChartOptions<'line'> = {
 };
 
 const resetTime = dayjs().utc().endOf('day').toDate();
-const startTime = dayjs().utc().startOf('day').toDate();
 
 const aboutText =
   "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
@@ -108,7 +102,7 @@ const aboutText =
 export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { theme, classes, cx } = useStyles();
+  const { theme, classes } = useStyles();
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -117,13 +111,9 @@ export default function EventPageDetails({
     teamScores,
     teamScoresHistory,
     eventCosmetic,
-    rewards,
-    userRank,
     partners,
     loading,
     loadingHistory,
-    loadingRewards,
-    loadingUserRank,
   } = useQueryEvent({ event });
 
   const userTeam = (eventCosmetic?.cosmetic?.data as { type: string; color: string })?.color;
@@ -156,7 +146,7 @@ export default function EventPageDetails({
     });
 
     return datasets;
-  }, [teamScoresHistory]);
+  }, [teamScoresHistory, theme.colors, theme.fn]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
@@ -164,6 +154,7 @@ export default function EventPageDetails({
   const handleFocusDonateInput = () => inputRef.current?.focus();
 
   const equipped = eventCosmetic?.obtained && eventCosmetic?.equipped;
+  const ended = eventData.endDate < new Date();
 
   return (
     <>
@@ -176,7 +167,7 @@ export default function EventPageDetails({
           <Paper
             radius="md"
             sx={(theme) => ({
-              backgroundImage: eventData?.coverImage
+              backgroundImage: eventData.coverImage
                 ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
                 : undefined,
               backgroundRepeat: 'no-repeat',
@@ -203,14 +194,14 @@ export default function EventPageDetails({
               }}
             >
               <Title color="white" className="hide-mobile">
-                {eventData?.title}
+                {eventData.title}
               </Title>
               <Group spacing="xs" position="apart">
                 <Text color="white" size="sm" className="hide-mobile">
-                  {formatDate(eventData?.startDate, 'MMMM D, YYYY')} -{' '}
-                  {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
+                  {formatDate(eventData.startDate, 'MMMM D, YYYY')} -{' '}
+                  {formatDate(eventData.endDate, 'MMMM D, YYYY')}
                 </Text>
-                {eventData?.coverImageUser && (
+                {eventData.coverImageUser && (
                   <Text color="white" size="xs">
                     Banner created by{' '}
                     <Text
@@ -226,10 +217,10 @@ export default function EventPageDetails({
             </Stack>
           </Paper>
           <Stack className="show-mobile" spacing={0} mt={-40}>
-            <Title sx={{ fontSize: '28px' }}>{eventData?.title}</Title>
+            <Title sx={{ fontSize: '28px' }}>{eventData.title}</Title>
             <Text size="sm">
-              {formatDate(eventData?.startDate, 'MMMM D, YYYY')} -{' '}
-              {formatDate(eventData?.endDate, 'MMMM D, YYYY')}
+              {formatDate(eventData.startDate, 'MMMM D, YYYY')} -{' '}
+              {formatDate(eventData.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
           {!equipped && <WelcomeCard event={event} about={aboutText} />}
@@ -237,7 +228,7 @@ export default function EventPageDetails({
           <Grid gutter={48}>
             {eventCosmetic?.cosmetic && equipped && (
               <>
-                <Grid.Col xs={12} sm="auto">
+                <Grid.Col xs={12} sm="auto" order={ended ? 3 : undefined}>
                   <Card className={classes.card} py="xl" px="lg" radius="lg" h="100%">
                     <HolidayFrame
                       cosmetic={eventCosmetic.cosmetic}
@@ -245,7 +236,7 @@ export default function EventPageDetails({
                       force
                       animated
                     />
-                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg * 2}>
+                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg}>
                       <Text size="xl" weight={590}>
                         Your Garland
                       </Text>
@@ -263,9 +254,12 @@ export default function EventPageDetails({
                           / 31
                         </Text>
                       </div>
+                      <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
+                        {userTeam} Team
+                      </Text>
                     </Stack>
-                    {eventCosmetic.available && (
-                      <Stack spacing="sm">
+                    {eventCosmetic.available && !ended && (
+                      <Stack spacing="sm" w="100%">
                         <Button
                           component={NextLink}
                           href="/posts/create"
@@ -295,7 +289,7 @@ export default function EventPageDetails({
                     )}
                   </Card>
                 </Grid.Col>
-                <Grid.Col xs={12} sm="auto">
+                <Grid.Col xs={12} sm="auto" order={ended ? 3 : undefined}>
                   <Card
                     py="xl"
                     px="lg"
@@ -343,6 +337,9 @@ export default function EventPageDetails({
                                     size={32}
                                     animated
                                   />
+                                  <Text size="xl" weight={590} tt="capitalize" color={color}>
+                                    {color} Team
+                                  </Text>
                                 </Group>
                                 <Group spacing={4} noWrap>
                                   <CurrencyIcon currency={Currency.BUZZ} />
@@ -362,15 +359,17 @@ export default function EventPageDetails({
                     </Stack>
                   </Card>
                 </Grid.Col>
-                <Grid.Col span={12} mt={-40}>
-                  <Text size="md" color="dimmed" ta="center">
-                    You have{' '}
-                    <Text component="span" weight={500} td="underline">
-                      <Countdown endTime={resetTime} />
-                    </Text>{' '}
-                    to earn your light and to claim the top position for your team for the day.
-                  </Text>
-                </Grid.Col>
+                {!ended && (
+                  <Grid.Col span={12} mt={-40}>
+                    <Text size="md" color="dimmed" ta="center">
+                      You have{' '}
+                      <Text component="span" weight={500} td="underline">
+                        <Countdown endTime={resetTime} />
+                      </Text>{' '}
+                      to earn your light and to claim the top position for your team for the day.
+                    </Text>
+                  </Grid.Col>
+                )}
                 {/* <Grid.Col xs={12} sm="auto">
                   <Card
                     className={classes.card}
@@ -423,12 +422,27 @@ export default function EventPageDetails({
                 </Grid.Col> */}
               </>
             )}
-            <Grid.Col span={12}>
+            <Grid.Col span={12} order={ended ? 1 : undefined}>
               <SectionCard
-                title="Spirit Bank History"
-                subtitle="See how your team is doing. Have the most Buzz banked at the end to get a shiny new badge!"
+                title={
+                  ended ? (
+                    <Group spacing={4}>
+                      <CurrencyIcon currency={Currency.BUZZ} size={32} />
+                      <Text>
+                        {abbreviateNumber(totalTeamScores).toUpperCase()} Buzz donated to charity!
+                      </Text>
+                    </Group>
+                  ) : (
+                    'Spirit Bank History'
+                  )
+                }
+                subtitle={
+                  ended
+                    ? `Thank you to everybody who participated in the ${eventData.title} event! Here are the final results`
+                    : 'See how your team is doing. Have the most Buzz banked at the end to get a shiny new badge!'
+                }
               >
-                {equipped && <DonateInput event={event} ref={inputRef} />}
+                {equipped && !ended && <DonateInput event={event} ref={inputRef} />}
                 {loadingHistory ? (
                   <Center py="xl">
                     <Loader variant="bars" />
@@ -445,6 +459,15 @@ export default function EventPageDetails({
                             </ThemeIcon>
                             <Text
                               size="xs"
+                              color={teamScore.team.toLowerCase()}
+                              transform="uppercase"
+                              weight={500}
+                              lineClamp={1}
+                            >
+                              {teamScore.team}
+                            </Text>
+                            <Text
+                              size="xs"
                               color="dimmed"
                               transform="uppercase"
                               weight={500}
@@ -459,47 +482,11 @@ export default function EventPageDetails({
                 )}
               </SectionCard>
             </Grid.Col>
-            <Grid.Col span={12}>
-              <SectionCard
-                title="Event Rewards"
-                subtitle="Earn special badges for completing a variety of challenges during the event."
-              >
-                {loadingRewards ? (
-                  <Center py="xl">
-                    <Loader variant="bars" />
-                  </Center>
-                ) : rewards.length === 0 ? (
-                  <Alert color="red" radius="xl" ta="center" w="100%" py={8}>
-                    No rewards available
-                  </Alert>
-                ) : (
-                  <SimpleGrid
-                    spacing={40}
-                    cols={2}
-                    breakpoints={[
-                      { minWidth: 'sm', cols: 3 },
-                      { minWidth: 'md', cols: 5 },
-                    ]}
-                  >
-                    {rewards.map((reward) => (
-                      <div key={reward.id}>
-                        <div className={classes.badge}>
-                          <EdgeMedia src={(reward.data as { url: string })?.url} width="original" />
-                        </div>
-                        <Text align="center" size="lg" weight={590} w="100%" tt="capitalize">
-                          {reward.name}
-                        </Text>
-                        <Text size="xs" color="dimmed" align="center">
-                          {reward.description}
-                        </Text>
-                      </div>
-                    ))}
-                  </SimpleGrid>
-                )}
-              </SectionCard>
+            <Grid.Col span={12} order={ended ? 2 : undefined}>
+              <EventRewards event={event} />
             </Grid.Col>
           </Grid>
-          <EventContributors event={event} />
+          <EventContributors event={event} endDate={eventData.endDate} />
           {equipped && (
             <>
               <Divider w="80px" mx="auto" />
@@ -539,12 +526,11 @@ export default function EventPageDetails({
 
 const useStyles = createStyles((theme) => ({
   card: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
     background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-  },
-  badge: {
-    width: 96,
-    height: 96,
-    margin: `0 auto ${theme.spacing.md}px`,
   },
 }));
 

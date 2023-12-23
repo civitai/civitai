@@ -1,18 +1,14 @@
-import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import {
   GetUserNotificationsSchema,
-  MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
-import { getAllNotificationsSelect } from '~/server/selectors/notification.selector';
 import {
   createUserNotificationSetting,
   deleteUserNotificationSetting,
   getUserNotifications,
-  updateUserNoticationById,
 } from '~/server/services/notification.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getUserNotificationsInfiniteHandler = async ({
@@ -30,13 +26,12 @@ export const getUserNotificationsInfiniteHandler = async ({
       ...input,
       limit: limit + 1,
       userId,
-      select: getAllNotificationsSelect,
     });
 
-    let nextCursor: string | undefined;
+    let nextCursor: Date | undefined;
     if (items.length > limit) {
       const nextItem = items.pop();
-      nextCursor = nextItem?.id;
+      nextCursor = nextItem?.createdAt;
     }
 
     return { items, nextCursor };
@@ -60,25 +55,5 @@ export const upsertUserNotificationSettingsHandler = async ({
     return { notificationSetting };
   } catch (error) {
     throw throwDbError(error);
-  }
-};
-
-export const markReadNotificationHandler = async ({
-  input,
-}: {
-  input: MarkReadNotificationInput;
-}) => {
-  try {
-    const notification = await updateUserNoticationById({
-      ...input,
-      data: { viewedAt: new Date() },
-    });
-
-    if (!notification) throw throwNotFoundError(`No notification with id ${input.id}`);
-
-    return { notification };
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
   }
 };

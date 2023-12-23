@@ -231,7 +231,7 @@ export function QueueItem({ request }: Props) {
           <Alert color="yellow">
             <Stack spacing="xs">
               <Text>
-                <strong>Blocked by OctoML?</strong>{' '}
+                <strong>Blocked by Provider?</strong>{' '}
                 {`We're currently adding new providers. Select an
               option below to swap to one of the current Full Coverage models.`}
               </Text>

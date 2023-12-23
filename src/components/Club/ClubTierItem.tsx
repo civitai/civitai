@@ -1,5 +1,5 @@
 import React from 'react';
-import { Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { ClubMembershipOnClub, ClubTier } from '~/types/router';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';
@@ -24,6 +24,78 @@ import { useRouter } from 'next/router';
 import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { Currency } from '@prisma/client';
+
+export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
+  const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
+    clubId,
+  });
+  const { isCancelled, isToggling, toggleCancelStatus } = useToggleClubMembershipCancelStatus({
+    clubId,
+  });
+
+  if (!membership) {
+    return null;
+  }
+
+  return (
+    <>
+      {membership?.cancelledAt ? (
+        <Alert color="yellow">
+          <Stack>
+            <Text size="sm">
+              Your membership was cancelled on {formatDate(membership.cancelledAt)} and will be
+              active until{' '}
+              <Text weight="bold" component="span">
+                {formatDate(membership.expiresAt)}
+              </Text>
+              .
+            </Text>
+            <Button
+              size="xs"
+              onClick={toggleCancelStatus}
+              loading={isToggling}
+              variant="subtle"
+              color="yellow"
+            >
+              {isCancelled ? 'Restore membership' : 'Cancel membership'}
+            </Button>
+          </Stack>
+        </Alert>
+      ) : membership?.nextBillingAt ? (
+        <Alert color="yellow">
+          <Stack spacing={4}>
+            <Text size="sm">You are a member of this club.</Text>
+            {membership?.unitAmount > 0 && (
+              <>
+                <Text size="sm">
+                  Your next billing date is{' '}
+                  <Text weight="bold" component="span">
+                    {formatDate(membership.nextBillingAt)}
+                  </Text>
+                  .
+                </Text>
+                <Text>
+                  Your monthly fee is{' '}
+                  <CurrencyBadge unitAmount={membership.unitAmount} currency={Currency.BUZZ} />.
+                </Text>
+              </>
+            )}
+            <Button
+              size="xs"
+              onClick={toggleCancelStatus}
+              loading={isToggling}
+              variant="subtle"
+              color="yellow"
+              mt="md"
+            >
+              {isCancelled ? 'Restore membership' : 'Cancel membership'}
+            </Button>
+          </Stack>
+        </Alert>
+      ) : null}
+    </>
+  );
+};
 
 export const TierCoverImage = ({
   clubTier,
@@ -165,7 +237,13 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                     </Text>
                     <Text weight="bold">
                       Your card will only be charged if you do not have the amount of buzz at the
-                      time of renewal to continue your membership
+                      time of renewal to continue your membership. A minimum of{' '}
+                      <CurrencyBadge
+                        unitAmount={constants.clubs.minStripeCharge / 10}
+                        currency={Currency.USD}
+                      />{' '}
+                      will be charged to your card only in the case that you do not have enough buzz
+                      to
                     </Text>
                     <Text>
                       You can always add a payment method later in your{' '}

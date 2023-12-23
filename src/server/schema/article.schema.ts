@@ -58,6 +58,7 @@ export type GetInfiniteArticlesSchema = z.infer<typeof getInfiniteArticlesSchema
 // });
 
 export const getInfiniteArticlesSchema = infiniteQuerySchema
+  .extend({ cursor: z.preprocess((val) => Number(val), z.number()).optional() })
   .merge(userPreferencesForArticlesSchema)
   .merge(articleWhereSchema);
 

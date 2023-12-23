@@ -19,6 +19,7 @@ export function Username({
   cosmetics = [],
   size = 'sm',
   inherit = false,
+  badgeSize,
 }: Props) {
   if (deletedAt) return <Text size={size}>[deleted]</Text>;
 
@@ -29,7 +30,7 @@ export function Username({
     cosmetic ? cosmetic.type === 'Badge' : undefined
   )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
   const additionalTextProps = nameplate?.data;
-  const badgeSize = mapSizeToImageWidth[size];
+  badgeSize ??= mapSizeToImageWidth[size];
 
   return (
     <Group spacing={8} noWrap align="center">
@@ -66,4 +67,5 @@ type Props = {
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
   size?: MantineSize;
   inherit?: boolean;
+  badgeSize?: number;
 };

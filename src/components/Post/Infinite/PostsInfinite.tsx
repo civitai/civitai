@@ -3,7 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -13,7 +13,7 @@ import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
-type PostsInfiniteState = {
+export type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
   modelVersionId?: number; // not hooked up to service/schema yet
   tags?: number[];

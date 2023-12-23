@@ -153,7 +153,7 @@ export const imageModerationSchema = z.object({
   nsfw: z.nativeEnum(NsfwLevel).optional(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported']),
+  reviewType: z.enum(['minor', 'poi', 'reported', 'blocked']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
@@ -190,14 +190,22 @@ export const ingestImageSchema = z.object({
 });
 
 // #region [new schemas]
-const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report', 'meta', 'tagIds']);
+const imageInclude = z.enum([
+  'tags',
+  'count',
+  'cosmetics',
+  'report',
+  'meta',
+  'tagIds',
+  'profilePictures',
+]);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 
 export const getInfiniteImagesSchema = z
   .object({
     limit: z.number().min(0).max(200).default(100),
-    cursor: z.union([z.bigint(), z.number()]).optional(),
+    cursor: z.union([z.bigint(), z.number(), z.string()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
     collectionId: z.number().optional(),

@@ -8,7 +8,6 @@ import {
   Divider,
   Group,
   Menu,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -17,8 +16,6 @@ import {
   Center,
   Box,
   Loader,
-  List,
-  Anchor,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -49,7 +46,6 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
-  IconClubs,
   IconBrush,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -118,6 +114,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
 import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
+import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -436,7 +433,7 @@ export default function ModelDetailsV2({
     }
   }, [publishedVersions, selectedVersion, modelVersionId]);
 
-  if (loadingModel || isLoadingAccess) return <PageLoader />;
+  if (loadingModel) return <PageLoader />;
 
   if (!hasAccess && model?.unlisted) {
     return <NotFound />;
@@ -813,7 +810,7 @@ export default function ModelDetailsV2({
                         )}
                       </ToggleLockModel>
                     )}
-                    {isCreator && selectedVersion && (
+                    {isCreator && features.clubs && selectedVersion && (
                       <AddToClubMenuItem
                         entityId={selectedVersion.id}
                         entityType="ModelVersion"
@@ -833,6 +830,13 @@ export default function ModelDetailsV2({
                           version: selectedVersion,
                           versions: model.modelVersions,
                         }}
+                      />
+                    )}
+
+                    {features.clubs && selectedVersion && (
+                      <ClubPostFromResourceMenuItem
+                        entityType="ModelVersion"
+                        entityId={selectedVersion.id}
                       />
                     )}
                   </Menu.Dropdown>
@@ -1056,9 +1060,10 @@ export default function ModelDetailsV2({
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
-            modelId={model.id}
+            model={model}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
+            showModerationOptions={isOwner}
             generationOptions={{
               generationModelId: selectedVersion?.meta.picFinderModelId,
               includeEditingActions: isOwner,

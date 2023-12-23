@@ -79,7 +79,6 @@ export function Reactions({
   Omit<GroupProps, 'children' | 'onClick'> & {
     targetUserId?: number;
   }) {
-  const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -88,23 +87,36 @@ export function Reactions({
   });
 
   const ignoredKeys = ['tippedAmountCount'];
-  const hasAllReactions =
-    !!metrics &&
-    Object.entries(metrics).every(([key, value]) => {
-      if (ignoredKeys.includes(key)) {
-        return true;
-      }
+  const available = availableReactions[entityType];
+  let hasReactions = false;
+  let hasAllReactions = true;
+  if (metrics) {
+    for (const [key, value] of Object.entries(metrics)) {
       // ie. converts the key `likeCount` to `Like`
       const reactionType = capitalize(key).replace(/count/, '');
+      if (available && !available.includes(reactionType as ReviewReactions)) {
+        continue;
+      }
+      if (ignoredKeys.includes(key)) {
+        continue;
+      }
+
       const hasReaction =
         storedReactions[reactionType] !== undefined
           ? storedReactions[reactionType]
           : !!reactions.find((x) => x.reaction === reactionType);
 
-      return value > 0 || !!storedReactions[reactionType] || hasReaction;
-    });
+      if (value > 0 || !!storedReactions[reactionType] || hasReaction) {
+        hasReactions = true;
+      } else {
+        hasAllReactions = false;
+      }
+    }
+  } else hasAllReactions = false;
 
   const supportsBuzzTipping = ['image'].includes(entityType);
+
+  if (readonly && !hasReactions) return null;
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -144,6 +156,7 @@ export function Reactions({
           entityId={entityId}
           noEmpty={!showAll}
           readonly={readonly}
+          available={available}
         />
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge

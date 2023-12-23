@@ -23,7 +23,6 @@ export function NotificationList({
           type: notification.type,
           details: notificationDetails,
         });
-        const read = !!notification.viewedAt;
         const systemNotification = notification.type === 'system-announcement';
 
         if (!details) return null;
@@ -62,11 +61,11 @@ export function NotificationList({
             href={details.url ?? ''}
             key={notification.id}
             variant="text"
-            sx={{ opacity: read ? 0.6 : 1 }}
+            sx={{ opacity: notification.read ? 0.6 : 1 }}
             onClick={handleClick}
           >
             <List.Item
-              onClick={() => (!read ? onItemClick(notification) : undefined)}
+              onClick={() => (!notification.read ? onItemClick(notification) : undefined)}
               sx={(theme) => ({
                 cursor: 'pointer',
                 borderTop:
@@ -75,11 +74,11 @@ export function NotificationList({
                         theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
                       }`
                     : undefined,
-                borderLeft: !read
+                borderLeft: !notification.read
                   ? `3px solid ${theme.colors[systemNotification ? 'red' : 'blue'][8]}`
                   : undefined,
                 padding: theme.spacing.sm,
-                paddingLeft: !read ? theme.spacing.sm - 3 : theme.spacing.sm,
+                paddingLeft: !notification.read ? theme.spacing.sm - 3 : theme.spacing.sm,
 
                 ':hover': {
                   backgroundColor:

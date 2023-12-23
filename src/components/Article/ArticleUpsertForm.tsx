@@ -46,6 +46,7 @@ import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useQueryUserContributingClubs } from '../Club/club.utils';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -80,6 +81,7 @@ export function ArticleUpsertForm({ article }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const features = useFeatureFlags();
+  const { hasClubs } = useQueryUserContributingClubs();
 
   const defaultCategory = result.success ? result.data.category : -1;
   const defaultValues: z.infer<typeof schema> = {
@@ -179,7 +181,7 @@ export function ArticleUpsertForm({ article }: Props) {
               withAsterisk
               stickyToolbar
             />
-            {features.clubs && (
+            {features.clubs && hasClubs && (
               <>
                 <Divider label="Club options" />
                 <InputClubResourceManagementInput

@@ -7,6 +7,9 @@ import {
   HoverCard,
   MantineSize,
   Menu,
+  MenuDividerProps,
+  MenuItemProps,
+  MenuLabelProps,
   Popover,
   Stack,
   Sx,
@@ -51,6 +54,8 @@ import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { AddToClubMenuItem } from '../Club/AddToClubMenuItem';
+import { ClubPostFromResourceMenuItem } from '../Club/ClubPostFromResourceMenuItem';
 
 export type ImageGuardConnect = {
   entityType:
@@ -300,10 +305,14 @@ ImageGuard.Report = function ReportImage({
   position = 'top-right',
   withinPortal = false,
   context = 'image',
+  additionalMenuItems,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
   context?: 'post' | 'image';
+  additionalMenuItems?:
+    | React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[]
+    | null;
 }) {
   const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();
@@ -462,6 +471,26 @@ ImageGuard.Report = function ReportImage({
       ),
     });
 
+  if (isOwner && features.clubs && image.postId) {
+    defaultMenuItems.push({
+      key: 'add-to-club',
+      component: <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={image.postId} />,
+    });
+  }
+
+  if (features.clubs && image.postId) {
+    defaultMenuItems.push({
+      key: 'create-club-post-from-resource',
+      component: (
+        <ClubPostFromResourceMenuItem
+          key="create-club-post-from-resource"
+          entityType="Post"
+          entityId={image.postId}
+        />
+      ),
+    });
+  }
+
   const postId = image.postId;
   if (postId && !router.query.postId)
     defaultMenuItems.push({
@@ -542,7 +571,10 @@ ImageGuard.Report = function ReportImage({
               />
             </ActionIcon>
           </Menu.Target>
-          <Menu.Dropdown>{menuItems}</Menu.Dropdown>
+          <Menu.Dropdown>
+            {menuItems}
+            {additionalMenuItems}
+          </Menu.Dropdown>
         </Menu>
       )}
     </Group>
