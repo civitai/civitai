@@ -150,12 +150,12 @@ export default function Images() {
 
   useEffect(deselectAll, [type, deselectAll]);
 
-  const segments = Object.entries(ImageReviewType).map(([key, value]) => ({
-    value: key,
-    label: value,
-  }));
-
-  if (!csamReports) segments.filter((x) => x.value !== 'csam');
+  const segments = Object.entries(ImageReviewType)
+    .map(([key, value]) => ({
+      value: key,
+      label: value,
+    }))
+    .filter((x) => (!csamReports ? x.value !== 'csam' : true));
 
   return (
     <Container size="xl" py="xl">
