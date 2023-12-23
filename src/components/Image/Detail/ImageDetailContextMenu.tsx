@@ -22,7 +22,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { ReportReason } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useCreateReport, useReportCsam } from '~/components/Report/report.utils';
+import { useReportCsam } from '~/components/Report/report.utils';
 
 /*
 TODO.gallery
@@ -35,6 +35,7 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const { csamReports } = useFeatureFlags();
 
   const handleClose = () => {
     setLoading(false);
@@ -121,13 +122,15 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
                 </Menu.Item>
               )}
             </TosViolationButton>
-            <ReportCsamButton>
-              {({ onClick }) => (
-                <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={onClick}>
-                  Report CSAM
-                </Menu.Item>
-              )}
-            </ReportCsamButton>
+            {csamReports && (
+              <ReportCsamButton>
+                {({ onClick }) => (
+                  <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={onClick}>
+                    Report CSAM
+                  </Menu.Item>
+                )}
+              </ReportCsamButton>
+            )}
 
             <RescanImageButton>
               {({ onClick, isLoading }) => (

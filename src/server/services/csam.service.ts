@@ -1,3 +1,4 @@
+import { ReportType } from './../clickhouse/client';
 import { CsamReport, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -82,6 +83,12 @@ export async function createCsamReport({
       },
     });
   }
+
+  // Resolve reports concerning csam images
+  await dbWrite.report.updateMany({
+    where: { image: { imageId: { in: images.map((x) => x.id) } } },
+    data: { status: 'Actioned' },
+  });
 
   if (!isInternalReport) {
     // hide user content

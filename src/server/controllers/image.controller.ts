@@ -406,28 +406,6 @@ export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntiti
 
 // #endregion
 
-// export const getReportedImages = async ({
-//   input,
-//   ctx,
-// }: {
-//   input: any;
-//   ctx: DeepNonNullable<Context>;
-// }) => {
-//   try {
-//     const images = await dbRead.image.findMany({
-//       where: {
-//         reports: { some: { report: { status: 'Pending' } } },
-//       },
-//       select: {
-
-//       }
-//     });
-
-//     return images;
-//   } catch (error) {
-//     throw throwDbError(error);
-//   }
-// };
 export const getModeratorReviewQueueHandler = async ({
   input,
   ctx,

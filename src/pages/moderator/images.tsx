@@ -54,6 +54,7 @@ import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { Collection } from '~/components/Collection/Collection';
 import { useCreateReport, useReportCsam } from '~/components/Report/report.utils';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
 //   resolver: async ({ session }) => {
@@ -110,6 +111,8 @@ const useStore = create<StoreState>()(
 const ImageReviewType = {
   minor: 'Minors',
   poi: 'POI',
+  reported: 'Reported',
+  csam: 'CSAM',
 } as const;
 
 type ImageReviewType = keyof typeof ImageReviewType;
@@ -118,8 +121,9 @@ export default function Images() {
   // const queryUtils = trpc.useContext();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
-  const [type, setType] = useState<ImageReviewType | 'reported'>('minor');
+  const [type, setType] = useState<ImageReviewType>('minor');
   const [activeTag, setActiveNameTag] = useState<number | null>(null);
+  const { csamReports } = useFeatureFlags();
 
   const viewingReported = type === 'reported';
 
@@ -140,16 +144,18 @@ export default function Images() {
     });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
-  const handleTypeChange = (value: ImageReviewType | 'reported') => {
+  const handleTypeChange = (value: ImageReviewType) => {
     setType(value);
   };
 
   useEffect(deselectAll, [type, deselectAll]);
 
-  const segments = [
-    ...Object.entries(ImageReviewType).map(([key, value]) => ({ value: key, label: value })),
-    { value: 'reported', label: 'Reported' },
-  ];
+  const segments = Object.entries(ImageReviewType).map(([key, value]) => ({
+    value: key,
+    label: value,
+  }));
+
+  if (!csamReports) segments.filter((x) => x.value !== 'csam');
 
   return (
     <Container size="xl" py="xl">
@@ -245,7 +251,7 @@ function ModerationControls({
 }: {
   images: ImageModerationReviewQueueImage[];
   filters: any;
-  view: ImageReviewType | 'reported';
+  view: ImageReviewType;
 }) {
   const queryUtils = trpc.useContext();
   const viewingReported = view === 'reported';
