@@ -185,7 +185,7 @@ export const updatePostHandler = async ({
         });
       }
 
-      if (input.clubs && !isScheduled) {
+      if (input.clubs && !isScheduled && !updatedPost.modelVersionId) {
         // Get user clubs:
         const userClubs = await userContributingClubs({
           userId: ctx.user.id,
