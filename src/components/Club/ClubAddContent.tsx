@@ -1,11 +1,12 @@
 import { Group, Modal, Stack, UnstyledButton, Text, createStyles } from '@mantine/core';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
-import { IconFile, IconPencilMinus } from '@tabler/icons-react';
+import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
 import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { ClubAdminPermission } from '@prisma/client';
 import { useClubContributorStatus } from './club.utils';
+import Link from 'next/link';
 
 const useStyles = createStyles((theme) => ({
   button: {
@@ -51,9 +52,19 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
             >
               <Stack align="center">
                 <IconPencilMinus />
-                <Text size="sm">Add Post</Text>
+                <Text size="sm">Text Post</Text>
               </Stack>
             </UnstyledButton>
+          )}
+          {canCreatePosts && (
+            <Link href={`/posts/create?clubId=${clubId}`} passHref>
+              <UnstyledButton className={classes.button}>
+                <Stack align="center">
+                  <IconPictureInPicture />
+                  <Text size="sm">Image Post</Text>
+                </Stack>
+              </UnstyledButton>
+            </Link>
           )}
           {canCreateResources && (
             <UnstyledButton

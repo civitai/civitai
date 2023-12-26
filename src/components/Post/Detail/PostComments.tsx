@@ -1,5 +1,6 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 type PostCommentsProps = {
   postId: number;
@@ -7,12 +8,15 @@ type PostCommentsProps = {
 };
 
 export function PostComments({ postId, userId }: PostCommentsProps) {
+  const { hasAccess } = useEntityAccessRequirement({ entityType: 'Post', entityId: postId });
+
   return (
     <CommentsProvider
       entityType="post"
       entityId={postId}
       limit={3}
       badges={[{ userId, label: 'op', color: 'violet' }]}
+      forceLocked={!hasAccess}
     >
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
         isLoading ? (

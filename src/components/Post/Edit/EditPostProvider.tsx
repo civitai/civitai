@@ -94,6 +94,7 @@ const processPost = (post?: PostEditDetail) => {
     images: post?.images ? prepareImages(post.images) : [],
     modelVersionId: post?.modelVersionId ?? undefined,
     clubs: post?.clubs ?? [],
+    unlisted: post?.unlisted ?? false,
   };
 };
 

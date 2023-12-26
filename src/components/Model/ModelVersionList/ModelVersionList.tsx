@@ -34,6 +34,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ModelById } from '~/types/router';
 import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
+import { ClubRequirementIndicator } from '../../Club/ClubRequirementNotice';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -206,6 +207,14 @@ export function ModelVersionList({
               compact
             >
               <Group spacing={8} noWrap>
+                <ClubRequirementIndicator
+                  entityId={version.id}
+                  entityType="ModelVersion"
+                  size="sm"
+                  variant="light"
+                  title="This version is only available to club members"
+                  radius="xl"
+                />
                 {features.imageGeneration && version.canGenerate && (
                   <ThemeIcon
                     title="This version is available for image generation"

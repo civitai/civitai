@@ -11,6 +11,7 @@ import { useRouter } from 'next/router';
 export function EditPostClubs() {
   const features = useFeatureFlags();
   const id = useEditPostContext((state) => state.id);
+  const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const router = useRouter();
   const clubId = router.query.clubId ? Number(router.query.clubId) : undefined;
 
@@ -22,16 +23,16 @@ export function EditPostClubs() {
   const publishedAt = useEditPostContext((state) => state.publishedAt);
 
   useEffect(() => {
-    if (clubId && userClubs?.find((c) => c.id === clubId)) {
+    if (!modelVersionId && clubId && userClubs?.find((c) => c.id === clubId)) {
       setClubs([{ clubId, clubTierIds: [] }]);
     }
-  }, [clubId, userClubs]);
+  }, [clubId, userClubs, modelVersionId]);
 
   const onSave = async () => {
     await upsertClubResource({ clubs: clubs ?? [], entityId: id, entityType: 'Post' });
   };
 
-  if (!features.clubs || !hasClubs) return null;
+  if (!features.clubs || !hasClubs || modelVersionId) return null;
 
   return (
     <Stack mt="lg">

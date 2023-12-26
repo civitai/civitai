@@ -370,6 +370,20 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       isModerator: ctx.user?.isModerator,
     });
 
+    if (result.postId) {
+      const [access] = await hasEntityAccess({
+        userId: ctx?.user?.id,
+        isModerator: ctx?.user?.isModerator,
+        entityIds: [result.postId],
+        entityType: 'Post',
+      });
+
+      // Cannot get images by ID without access
+      if (!access?.hasAccess) {
+        return null;
+      }
+    }
+
     return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

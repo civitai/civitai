@@ -524,7 +524,7 @@ export const useEntityAccessRequirement = ({
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityId && !!entityType && !hasAccess && !isLoadingAccess,
+      enabled: !!entityId && !!entityType && !isLoadingAccess,
     }
   );
 

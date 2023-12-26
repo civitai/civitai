@@ -6,7 +6,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
-import { IconLock } from '@tabler/icons-react';
+import { IconClubs, IconLock } from '@tabler/icons-react';
 
 type CreateCommentProps = {
   onCancel?: () => void;
@@ -16,7 +16,7 @@ type CreateCommentProps = {
 
 export function CreateComment({ onCancel, autoFocus, replyTo }: CreateCommentProps) {
   const currentUser = useCurrentUser();
-  const { isLocked, isMuted } = useCommentsContext();
+  const { isLocked, isMuted, forceLocked } = useCommentsContext();
 
   if (!currentUser)
     return (
@@ -38,6 +38,17 @@ export function CreateComment({ onCancel, autoFocus, replyTo }: CreateCommentPro
         </Group>
       </Alert>
     );
+
+  if (forceLocked) {
+    return (
+      <Alert color="yellow" icon={<IconClubs />}>
+        <Center>
+          You cannot add comments because you are not a member of any of the clubs that own this
+          resource
+        </Center>
+      </Alert>
+    );
+  }
 
   if (isLocked || isMuted)
     return (

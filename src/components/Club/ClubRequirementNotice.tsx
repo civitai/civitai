@@ -1,6 +1,15 @@
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
-import { Alert, Anchor, List, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  List,
+  Stack,
+  Text,
+  ThemeIcon,
+  ThemeIconProps,
+  Tooltip,
+} from '@mantine/core';
 import { IconClubs } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -130,5 +139,39 @@ export const ClubRequirementNotice = ({
         )}
       </Stack>
     </Alert>
+  );
+};
+
+export const ClubRequirementIndicator = ({
+  entityId,
+  entityType,
+  ...themeIconProps
+}: {
+  entityId: number;
+  entityType: SupportedClubEntities;
+} & Omit<ThemeIconProps, 'children'>) => {
+  const features = useFeatureFlags();
+  const { requiresClub, isLoadingAccess } = useEntityAccessRequirement({
+    entityType,
+    entityId,
+  });
+
+  if (isLoadingAccess) {
+    return null;
+  }
+
+  if (!features.clubs || !requiresClub) {
+    // This is a user that can't see clubs yet, so we don't want to show them the club requirement notice
+    return null;
+  }
+
+  return (
+    <ThemeIcon
+      radius="xl"
+      title={`This ${getDisplayName(entityType)} is only available to club members`}
+      {...themeIconProps}
+    >
+      <IconClubs stroke={2.5} size={16} />
+    </ThemeIcon>
   );
 };

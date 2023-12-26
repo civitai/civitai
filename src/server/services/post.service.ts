@@ -567,6 +567,11 @@ export const deletePost = async ({ id }: GetByIdInput) => {
   if (images.length) {
     for (const image of images) await deleteImageById({ id: image.id });
   }
+
+  await dbWrite.clubPost.deleteMany({
+    where: { entityId: id, entityType: 'Post' },
+  });
+
   await dbWrite.post.delete({ where: { id } });
 };
 

@@ -17,10 +17,12 @@ import { ReportEntity } from '~/server/schema/report.schema';
 export function PostControls({
   postId,
   userId,
+  isModelVersionPost,
   children,
 }: {
   postId: number;
   userId: number;
+  isModelVersionPost?: number | null;
   children: React.ReactElement;
 }) {
   const router = useRouter();
@@ -55,7 +57,9 @@ export function PostControls({
             >
               Edit Post
             </Menu.Item>
-            {isOwner && features.clubs && <AddToClubMenuItem entityType="Post" entityId={postId} />}
+            {isOwner && features.clubs && isModelVersionPost && (
+              <AddToClubMenuItem entityType="Post" entityId={postId} />
+            )}
           </>
         )}
         {features.clubs && <ClubPostFromResourceMenuItem entityType="Post" entityId={postId} />}

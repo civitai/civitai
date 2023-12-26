@@ -42,7 +42,7 @@ import { env } from '~/env/client.mjs';
 import { toStringList } from '~/utils/array-helpers';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ClubRequirementNotice } from '../../Club/ClubRequirementNotice';
+import { ClubRequirementIndicator, ClubRequirementNotice } from '../../Club/ClubRequirementNotice';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -159,6 +159,12 @@ export function PostDetail({ postId }: { postId: number }) {
                 )}
               </Group>
               <Group spacing="xs" position="right" sx={{ flex: '1 0 !important' }} noWrap>
+                <ClubRequirementIndicator
+                  entityId={post.id}
+                  entityType="Post"
+                  radius="xl"
+                  size="md"
+                />
                 <Button
                   size="md"
                   radius="xl"
@@ -191,7 +197,11 @@ export function PostDetail({ postId }: { postId: number }) {
                     <Text size="xs">Share</Text>
                   </Button>
                 </ShareButton>
-                <PostControls postId={post.id} userId={post.user.id}>
+                <PostControls
+                  postId={post.id}
+                  userId={post.user.id}
+                  isModelVersionPost={post.modelVersionId}
+                >
                   <ActionIcon
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                     size={30}

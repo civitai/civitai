@@ -29,7 +29,7 @@ export function CommentProvider({
   children: React.ReactNode;
   resourceOwnerId?: number;
 }) {
-  const { isLocked, isMuted, badges } = useCommentsContext();
+  const { isLocked, isMuted, badges, forceLocked } = useCommentsContext();
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === comment.user.id;
   const isMod = currentUser?.isModerator ?? false;
@@ -37,7 +37,8 @@ export function CommentProvider({
   const canDelete = isOwner || currentUser?.isModerator;
   const canEdit = (!isLocked && !isMuted) || isMod;
   const canReply =
-    (currentUser && !isOwner && !isLocked && !isMuted && !comment.hidden) ?? undefined;
+    (currentUser && !isOwner && !isLocked && !isMuted && !forceLocked && !comment.hidden) ??
+    undefined;
   const canHide = currentUser?.id === resourcerOwnerId || isMod;
   const badge = badges?.find((x) => x.userId === comment.user.id);
   return (

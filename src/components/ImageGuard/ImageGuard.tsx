@@ -464,13 +464,6 @@ ImageGuard.Report = function ReportImage({
       ),
     });
 
-  if (isOwner && features.clubs && image.postId) {
-    defaultMenuItems.push({
-      key: 'add-to-club',
-      component: <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={image.postId} />,
-    });
-  }
-
   if (features.clubs && image.postId) {
     defaultMenuItems.push({
       key: 'create-club-post-from-resource',
