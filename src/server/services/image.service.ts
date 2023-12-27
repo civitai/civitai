@@ -668,7 +668,7 @@ export const getAllImages = async ({
       if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     else {
-      if (from.indexOf(`irr`)) {
+      if (from.indexOf(`irr`) !== -1) {
         // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
         orderBy = `irr."imageId" DESC`;
       } else {
