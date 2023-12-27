@@ -50,7 +50,7 @@ export const hasEntityAccess = async ({
     ${
       entityType === 'ModelVersion'
         ? Prisma.raw(`
-      mmv.id as "entityId",
+      mv.id as "entityId",
       mmv."userId" as "userId",
       mv."availability" as "availability"
     `)

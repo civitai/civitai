@@ -3,7 +3,10 @@ import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import {
   Alert,
   Anchor,
+  Button,
+  ButtonProps,
   List,
+  Menu,
   Stack,
   Text,
   ThemeIcon,
@@ -27,10 +30,16 @@ export const ClubRequirementNotice = ({
   entityType: SupportedClubEntities;
 }) => {
   const features = useFeatureFlags();
-  const { hasAccess, requiresClub, clubRequirement, isLoadingAccess } = useEntityAccessRequirement({
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
     entityType,
-    entityId,
+    entityIds: [entityId],
   });
+
+  const [access] = entities;
+
+  const hasAccess = access?.hasAccess ?? false;
+  const clubRequirement = access?.clubRequirement;
+  const requiresClub = access?.requiresClub;
 
   const { data, isLoading: isLoadingClubs } = trpc.club.getInfinite.useQuery(
     {
@@ -151,10 +160,13 @@ export const ClubRequirementIndicator = ({
   entityType: SupportedClubEntities;
 } & Omit<ThemeIconProps, 'children'>) => {
   const features = useFeatureFlags();
-  const { requiresClub, isLoadingAccess } = useEntityAccessRequirement({
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
     entityType,
-    entityId,
+    entityIds: [entityId],
   });
+
+  const [access] = entities;
+  const requiresClub = access?.requiresClub;
 
   if (isLoadingAccess) {
     return null;
@@ -173,5 +185,102 @@ export const ClubRequirementIndicator = ({
     >
       <IconClubs stroke={2.5} size={16} />
     </ThemeIcon>
+  );
+};
+
+export const ClubRequirementButton = ({
+  entityId,
+  entityType,
+  label,
+  ...actionBtnProps
+}: {
+  entityId: number;
+  entityType: SupportedClubEntities;
+} & { label: string } & ButtonProps) => {
+  const features = useFeatureFlags();
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
+    entityType,
+    entityIds: [entityId],
+  });
+
+  const [access] = entities ?? [];
+
+  const requiresClub = access?.requiresClub;
+  const clubRequirement = access?.clubRequirement;
+
+  const { data, isLoading: isLoadingClubs } = trpc.club.getInfinite.useQuery(
+    {
+      clubIds: clubRequirement?.clubs?.map((c) => c.clubId),
+      include: ['tiers'],
+    },
+    {
+      enabled: requiresClub && (clubRequirement?.clubs?.length ?? 0) > 0 && features.clubs,
+    }
+  );
+
+  const clubs = data?.items;
+
+  if (isLoadingAccess || isLoadingClubs) {
+    return null;
+  }
+
+  if (!requiresClub || !clubs || !clubRequirement) {
+    return null;
+  }
+
+  return (
+    <Menu position="bottom" shadow="md">
+      <Menu.Target>
+        <Button radius="md" leftIcon={<IconClubs size={16} />} {...actionBtnProps}>
+          {label}
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Clubs</Menu.Label>
+        {clubs.map((club) => {
+          const requirement = clubRequirement.clubs.find((c) => c.clubId === club.id);
+
+          if (!requirement) {
+            return null;
+          }
+
+          const requiredTiers = requirement.clubTierIds
+            ?.map((id) => club.tiers.find((t) => t.id === id))
+            .filter(isDefined);
+
+          return (
+            <Menu.Item
+              key={club.id}
+              onClick={(e) => {
+                dialogStore.trigger({
+                  component: ManageClubMembershipModal,
+                  props: {
+                    clubId: club.id,
+                    clubTierIds:
+                      requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
+                  },
+                });
+              }}
+            >
+              <Stack spacing={0}>
+                <Text>
+                  {club.name} by {club.user.username}{' '}
+                </Text>
+                {requiredTiers.length > 0 && (
+                  <Text size="xs">
+                    Only available on tiers:{' '}
+                    {requiredTiers.map((tier, idx) => (
+                      <Text key={tier.id} component="span">
+                        {idx !== 0 && ', '} {tier.name}
+                      </Text>
+                    ))}
+                  </Text>
+                )}
+              </Stack>
+            </Menu.Item>
+          );
+        })}
+      </Menu.Dropdown>
+    </Menu>
   );
 };

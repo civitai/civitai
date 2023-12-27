@@ -12,7 +12,12 @@ type ArticleDetailCommentsProps = {
 
 export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommentsProps) {
   const [opened, setOpened] = useState(false);
-  const { hasAccess } = useEntityAccessRequirement({ entityType: 'Article', entityId: articleId });
+  const { entities } = useEntityAccessRequirement({
+    entityType: 'Article',
+    entityIds: [articleId],
+  });
+  const [access] = entities;
+  const hasAccess = access?.hasAccess ?? false;
 
   return (
     <>

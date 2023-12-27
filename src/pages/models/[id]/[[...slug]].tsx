@@ -222,10 +222,15 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
-  const { hasAccess, requiresClub, isLoadingAccess } = useEntityAccessRequirement({
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
     entityType: 'ModelVersion',
-    entityId: modelVersionId,
+    entityIds: [modelVersionId],
   });
+
+  const [access] = entities;
+  const hasAccess = access?.hasAccess;
+  const requiresClub = access?.requiresClub;
+
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(

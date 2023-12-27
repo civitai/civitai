@@ -16,8 +16,8 @@ export const getEntityAccessHandler = async ({
       throw throwBadRequestError(`Unsupported entity type: ${entityType}`);
     }
 
-    const [entityAccess] = await hasEntityAccess({
-      entityIds: [entityId],
+    const entityAccess = await hasEntityAccess({
+      entityIds: entityId,
       entityType: entityType as SupportedClubEntities,
       userId: ctx.user?.id,
       isModerator: !!ctx.user?.isModerator,
@@ -40,8 +40,8 @@ export const getEntityClubRequirementHandler = async ({
       throw throwBadRequestError(`Unsupported entity type: ${entityType}`);
     }
 
-    const [clubRequirement] = await entityRequiresClub({
-      entityIds: [entityId],
+    const clubRequirement = await entityRequiresClub({
+      entityIds: entityId,
       entityType: entityType as SupportedClubEntities,
     });
 

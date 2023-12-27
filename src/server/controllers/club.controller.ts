@@ -184,7 +184,7 @@ export async function getClubResourceDetailsHandler({ input }: { input: GetByEnt
 
     const [details] = await getClubDetailsForResource({
       entityType: input.entityType as SupportedClubEntities,
-      entityIds: [input.entityId],
+      entityIds: input.entityId,
     });
 
     return details;

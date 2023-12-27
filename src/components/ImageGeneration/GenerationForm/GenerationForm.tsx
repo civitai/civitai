@@ -58,6 +58,7 @@ import {
   Badge,
   Alert,
   ThemeIcon,
+  List,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -75,6 +76,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -113,6 +115,16 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     });
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line
+
+  const [resources, model] = form.watch(['resources', 'model']);
+  const items = [model, ...(resources ?? [])];
+
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
+    entityType: 'ModelVersion',
+    entityIds: items?.map((x) => x?.id).filter(isDefined),
+  });
+
+  const unavailableResources = entities.filter((e) => !e.hasAccess);
 
   const {
     totalCost,
@@ -184,7 +196,6 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     const promptError = (e as any)?.prompt as any;
     if (promptError?.type === 'custom') {
       const status = blockedRequest.status();
-      console.log(status);
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
         const isBlocked = await reportProhibitedRequest({ prompt });
@@ -231,7 +242,8 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit =
     pendingProcessingCount >= constants.imageGeneration.maxConcurrentRequests;
-  const disableGenerateButton = reachedRequestLimit;
+  const disableGenerateButton =
+    reachedRequestLimit || isLoadingAccess || unavailableResources.length > 0;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -714,6 +726,31 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Text>
               }
             />
+          )}
+          {unavailableResources.length > 0 && !isLoadingAccess && (
+            <AlertWithIcon
+              color="red"
+              title="You do not have access to some of these resources"
+              icon={<IconAlertTriangle size={20} />}
+              iconColor="red"
+            >
+              <List>
+                {unavailableResources.map((resource) => {
+                  const data = items.find((i) => i.id === resource.entityId);
+                  if (!data) {
+                    return null;
+                  }
+
+                  return (
+                    <List.Item key={data.id}>
+                      <Anchor href={`/models/${data.modelId}?modelVersionId=${data.id}`} size="xs">
+                        {data.modelName} {data.name}
+                      </Anchor>
+                    </List.Item>
+                  );
+                })}
+              </List>
+            </AlertWithIcon>
           )}
           {isLCM && (
             <DismissibleAlert

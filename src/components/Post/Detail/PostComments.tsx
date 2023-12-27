@@ -8,7 +8,13 @@ type PostCommentsProps = {
 };
 
 export function PostComments({ postId, userId }: PostCommentsProps) {
-  const { hasAccess } = useEntityAccessRequirement({ entityType: 'Post', entityId: postId });
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
+    entityType: 'Post',
+    entityIds: [postId],
+  });
+
+  const [access] = entities;
+  const hasAccess = access?.hasAccess;
 
   return (
     <CommentsProvider
