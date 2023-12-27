@@ -85,6 +85,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
+import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 
 export function ModelVersionDetails({
   model,
@@ -782,16 +783,18 @@ export function ModelVersionDetails({
                         count={version.rank?.ratingCountAllTime}
                       />
                       <Stack spacing={4} ml="auto">
-                        <Button
-                          component={NextLink}
-                          href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
-                          variant="outline"
-                          size="xs"
-                          onClick={(e) => e.stopPropagation()}
-                          compact
-                        >
-                          Add Review
-                        </Button>
+                        <ResourceAccessWrap entityId={version.id} entityType="ModelVersion">
+                          <Button
+                            component={NextLink}
+                            href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
+                            variant="outline"
+                            size="xs"
+                            onClick={(e) => e.stopPropagation()}
+                            compact
+                          >
+                            Add Review
+                          </Button>
+                        </ResourceAccessWrap>
                         <Text
                           component={NextLink}
                           href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}

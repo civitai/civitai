@@ -42,6 +42,7 @@ import {
   userContributingClubs,
 } from '../services/club.service';
 import { ClubAdminPermission } from '@prisma/client';
+import { hasEntityAccess } from '../services/common.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -66,6 +67,19 @@ export const createPostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    if (input.modelVersionId) {
+      // Confirmt he user has access to this modelVersion:
+      const [access] = await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: [input.modelVersionId],
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      if (!access?.hasAccess) {
+        throw throwAuthorizationError('You do not have access to this model version.');
+      }
+    }
     const post = await createPost({ userId: ctx.user.id, ...input });
     const isScheduled = dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
     const tags = post.tags.map((x) => x.name);
