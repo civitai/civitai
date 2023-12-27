@@ -87,15 +87,8 @@ export default function ModelsPage() {
                 },
               })}
             />
-            <Group position="left">
-              {features.alternateHome ? (
-                <FullHomeContentToggle />
-              ) : (
-                <HomeContentToggle sx={showMobile} />
-              )}
-            </Group>
-            <Group position="apart" spacing={0}>
-              <Group>{!features.alternateHome && <HomeContentToggle sx={hideMobile} />}</Group>
+            <Group position="apart" spacing={8}>
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
               <Group className={classes.filtersWrapper} spacing={4}>
                 {periodMode && (
                   <Popover>
