@@ -28,16 +28,7 @@ export function EditPostTags() {
   const tags = useEditPostContext((state) => state.tags);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   return (
-    <Input.Wrapper
-      label="Post Tags"
-      description={
-        tags.length === 0 && (
-          <Text color="red" size="sm" lh={1.1}>
-            At least one tag must be selected to publish your post
-          </Text>
-        )
-      }
-    >
+    <Input.Wrapper label="Post Tags">
       <Group mt={5} spacing="xs">
         {tags.map((tag, index) => (
           <PostTag key={index} tag={tag} canRemove={publishedAt ? tags.length > 1 : true} />

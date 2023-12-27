@@ -3,21 +3,23 @@ import { useEffect } from 'react';
 
 type Props = { unsavedChanges?: boolean; message?: string; eval?: () => boolean };
 
-export function useCatchNavigation({ unsavedChanges = false }: Props) {
+export function useCatchNavigation({
+  unsavedChanges = false,
+  message = 'All unsaved changes will be lost. Are you sure you want to exit?',
+}: Props) {
   // Display alert when closing tab/window or navigating out,
   // if there are unsaved changes
   useEffect(() => {
-    const warningMessage = 'All unsaved changes will be lost. Are you sure you want to exit?';
     function handleWindowClose(event: BeforeUnloadEvent) {
       if (!unsavedChanges) return;
       event.preventDefault();
 
-      return (event.returnValue = warningMessage);
+      return (event.returnValue = message);
     }
 
     function handleBrowsingAway() {
       if (!unsavedChanges) return;
-      if (window.confirm(warningMessage)) return;
+      if (window.confirm(message)) return;
       Router.events.emit('routeChangeError');
 
       // Push state, because browser back action changes link and changes history state
@@ -44,5 +46,5 @@ export function useCatchNavigation({ unsavedChanges = false }: Props) {
       window.removeEventListener('beforeunload', handleWindowClose);
       Router.events.off('routeChangeStart', handleBrowsingAway);
     };
-  }, [unsavedChanges]);
+  }, [message, unsavedChanges]);
 }

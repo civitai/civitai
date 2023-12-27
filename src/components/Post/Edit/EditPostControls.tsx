@@ -54,7 +54,6 @@ export function ManagePostStatus() {
   const queryUtils = trpc.useContext();
 
   const id = useEditPostContext((state) => state.id);
-  const tags = useEditPostContext((state) => state.tags);
   const title = useEditPostContext((state) => state.title);
   const images = useEditPostContext((state) => state.images);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
@@ -70,10 +69,7 @@ export function ManagePostStatus() {
     },
   });
 
-  const canPublish =
-    tags.filter((x) => !!x.id).length > 0 &&
-    images.filter((x) => x.discriminator === 'image').length > 0 &&
-    !isReordering;
+  const canPublish = images.filter((x) => x.discriminator === 'image').length > 0 && !isReordering;
 
   const handlePublish = () => {
     if (!currentUser) return;
@@ -98,7 +94,7 @@ export function ManagePostStatus() {
         {!publishedAt && (
           <Tooltip
             disabled={canPublish}
-            label="At least one tag is required in order to publish this post to the community"
+            label="At least one image is required in order to publish this post to the community"
             multiline
             width={260}
             withArrow
