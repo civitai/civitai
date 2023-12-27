@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Chip,
   ChipProps,
@@ -8,13 +7,15 @@ import {
   Group,
   Indicator,
   Popover,
-  SegmentedControl,
   Stack,
+  Drawer,
+  PopoverProps,
 } from '@mantine/core';
-import { CheckpointType, ModelStatus, ModelType } from '@prisma/client';
-import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react';
+import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
+import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PeriodFilter } from '~/components/Filters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
@@ -22,6 +23,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
@@ -30,12 +33,19 @@ const availableStatus = Object.values(ModelStatus).filter((status) =>
 // to be able to apply the relevant filters.
 const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[] = [
   'baseModels',
-  'period',
+  // 'period',
 ];
 
 const availableFileFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
 
-export function ModelFiltersDropdown() {
+const ckptTypeOptions = [{ label: 'All', value: 'all' }].concat(
+  Object.values(CheckpointType).map((type) => ({
+    label: splitUppercase(type),
+    value: type,
+  }))
+);
+
+export function ModelFiltersDropdown(props: Props) {
   const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
 
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -61,6 +71,7 @@ export function ModelFiltersDropdown() {
         earlyAccess: false,
         supportsGeneration: false,
         followed: false,
+        period: MetricTimeframe.AllTime,
       }),
     [setFilters]
   );
@@ -86,228 +97,316 @@ export function ModelFiltersDropdown() {
     }
   }, [shouldClearFilters, clearFilters, queryFilters, setFilters, setQueryFilters]);
 
-  return <DumbModelFiltersDropdown filters={filters} setFilters={setFilters} />;
+  return <DumbModelFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
 }
 
 export function DumbModelFiltersDropdown({
   filters,
   setFilters,
-}: {
+  filterMode = 'local',
+  position = 'bottom-end',
+}: Props & {
   filters: Partial<ModelFilterSchema>;
   setFilters: (filters: Partial<ModelFilterSchema>) => void;
 }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isSameUser = useIsSameUser(router.query.username);
-  const { classes } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const flags = useFeatureFlags();
-  const showCheckpointType = !filters.types?.length || filters.types.includes('Checkpoint');
+  const mobile = useIsMobile();
+  const { set: setQueryFilters, period = MetricTimeframe.AllTime } = useModelQueryParams();
+
+  const [opened, setOpened] = useState(false);
+
+  const localMode = filterMode === 'local';
+  const mergedFilters = localMode ? filters : { ...filters, period };
+  const showCheckpointType =
+    !mergedFilters.types?.length || mergedFilters.types.includes('Checkpoint');
 
   const filterLength =
-    (filters.types?.length ?? 0) +
-    (filters.baseModels?.length ?? 0) +
-    (filters.status?.length ?? 0) +
-    (showCheckpointType && filters.checkpointType ? 1 : 0) +
-    (filters.earlyAccess ? 1 : 0) +
-    (filters.supportsGeneration ? 1 : 0) +
-    (filters.followed ? 1 : 0) +
-    (filters.fileFormats?.length ?? 0);
+    (mergedFilters.types?.length ?? 0) +
+    (mergedFilters.baseModels?.length ?? 0) +
+    (mergedFilters.status?.length ?? 0) +
+    (showCheckpointType && mergedFilters.checkpointType ? 1 : 0) +
+    (mergedFilters.earlyAccess ? 1 : 0) +
+    (mergedFilters.supportsGeneration ? 1 : 0) +
+    (mergedFilters.followed ? 1 : 0) +
+    (mergedFilters.fileFormats?.length ?? 0) +
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
-  const clearFilters = useCallback(
-    () =>
-      setFilters({
-        types: undefined,
-        baseModels: undefined,
-        status: undefined,
-        checkpointType: undefined,
-        earlyAccess: false,
-        supportsGeneration: false,
-        followed: false,
-        fileFormats: undefined,
-      }),
-    [setFilters]
-  );
+  const clearFilters = useCallback(() => {
+    const reset = {
+      types: undefined,
+      baseModels: undefined,
+      status: undefined,
+      checkpointType: undefined,
+      earlyAccess: false,
+      supportsGeneration: false,
+      followed: false,
+      fileFormats: undefined,
+      period: MetricTimeframe.AllTime,
+    };
+
+    if (!localMode) setQueryFilters({ period: MetricTimeframe.AllTime });
+    setFilters(reset);
+  }, [localMode, setFilters, setQueryFilters]);
 
   const chipProps: Partial<ChipProps> = {
-    radius: 'sm',
     size: 'sm',
+    radius: 'xl',
+    variant: 'filled',
     classNames: classes,
+    tt: 'capitalize',
   };
+
+  const target = (
+    <Indicator
+      offset={4}
+      label={filterLength ? filterLength : undefined}
+      size={16}
+      zIndex={10}
+      showZero={false}
+      dot={false}
+      inline
+    >
+      <Button
+        className={classes.actionButton}
+        color="gray"
+        radius="xl"
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        onClick={() => setOpened((o) => !o)}
+      >
+        <Group spacing={4} noWrap>
+          <IconFilter size={16} />
+          Filters
+        </Group>
+      </Button>
+    </Indicator>
+  );
+
+  const dropdown = (
+    <Stack spacing={8}>
+      <Stack spacing={0}>
+        <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        {!localMode ? (
+          <PeriodFilter
+            type="models"
+            variant="chips"
+            value={period}
+            onChange={(period) => setQueryFilters({ period })}
+          />
+        ) : (
+          <PeriodFilter type="models" variant="chips" />
+        )}
+      </Stack>
+      <Stack spacing={0}>
+        <Divider label="Model status" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        {currentUser?.isModerator && (
+          <Chip.Group
+            spacing={8}
+            value={mergedFilters.status ?? []}
+            mb={8}
+            onChange={(status: ModelStatus[]) => setFilters({ status })}
+            multiple
+          >
+            {availableStatus.map((status) => (
+              <Chip key={status} value={status} {...chipProps}>
+                {status}
+              </Chip>
+            ))}
+          </Chip.Group>
+        )}
+        <Group spacing={8} mb={4}>
+          <Chip
+            checked={mergedFilters.earlyAccess}
+            onChange={(checked) => setFilters({ earlyAccess: checked })}
+            {...chipProps}
+          >
+            Early Access
+          </Chip>
+          {flags.imageGeneration && (
+            <Chip
+              checked={mergedFilters.supportsGeneration}
+              onChange={(checked) => setFilters({ supportsGeneration: checked })}
+              {...chipProps}
+            >
+              Onsite Generation
+            </Chip>
+          )}
+        </Group>
+      </Stack>
+      <Stack spacing={0}>
+        <Divider label="Model types" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={mergedFilters.types ?? []}
+          onChange={(types: ModelType[]) => setFilters({ types })}
+          multiple
+          my={4}
+        >
+          {Object.values(ModelType).map((type, index) => (
+            <Chip key={index} value={type} {...chipProps}>
+              {getDisplayName(type)}
+            </Chip>
+          ))}
+        </Chip.Group>
+      </Stack>
+      {showCheckpointType ? (
+        <>
+          <Stack spacing={0}>
+            <Divider label="Checkpoint type" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Chip.Group
+              my={4}
+              spacing={8}
+              value={mergedFilters.checkpointType ?? 'all'}
+              onChange={(value: CheckpointType | 'all') =>
+                setFilters({ checkpointType: value !== 'all' ? value : undefined })
+              }
+            >
+              {ckptTypeOptions.map((option, index) => (
+                <Chip key={index} value={option.value} {...chipProps}>
+                  {option.label}
+                </Chip>
+              ))}
+            </Chip.Group>
+          </Stack>
+          <Stack spacing={0}>
+            <Divider label="File format" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Chip.Group
+              spacing={8}
+              value={mergedFilters.fileFormats ?? []}
+              onChange={(fileFormats: typeof availableFileFormats) => setFilters({ fileFormats })}
+              multiple
+              my={4}
+            >
+              {availableFileFormats.map((format, index) => (
+                <Chip key={index} value={format} {...chipProps}>
+                  {format}
+                </Chip>
+              ))}
+            </Chip.Group>
+          </Stack>
+        </>
+      ) : null}
+      <Stack spacing={0}>
+        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={(mergedFilters.baseModels as string[]) ?? []}
+          onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
+          multiple
+          my={4}
+        >
+          {constants.baseModels.map((baseModel, index) => (
+            <Chip key={index} value={baseModel} {...chipProps}>
+              {baseModel}
+            </Chip>
+          ))}
+        </Chip.Group>
+      </Stack>
+
+      {currentUser && !isSameUser && (
+        <Stack spacing={0}>
+          <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+          <Group>
+            <Chip
+              checked={mergedFilters.followed}
+              onChange={(checked) => setFilters({ followed: checked })}
+              {...chipProps}
+            >
+              Followed Only
+            </Chip>
+          </Group>
+        </Stack>
+      )}
+      {filterLength > 0 && (
+        <Button
+          color="gray"
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          onClick={clearFilters}
+          fullWidth
+        >
+          Clear all filters
+        </Button>
+      )}
+    </Stack>
+  );
+
+  if (mobile)
+    return (
+      <>
+        {target}
+        <Drawer
+          opened={opened}
+          onClose={() => setOpened(false)}
+          withCloseButton={false}
+          size="90%"
+          position="bottom"
+          styles={{
+            body: { padding: 16, overflowY: 'auto' },
+            drawer: {
+              height: 'auto',
+              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
+            },
+          }}
+        >
+          {dropdown}
+        </Drawer>
+      </>
+    );
 
   return (
     <IsClient>
-      <Popover withArrow zIndex={200} withinPortal>
-        <Popover.Target>
-          <Indicator
-            offset={4}
-            label={filterLength ? filterLength : undefined}
-            showZero={false}
-            dot={false}
-            size={16}
-            inline
-            zIndex={10}
-          >
-            <ActionIcon color="dark" variant="transparent" sx={{ width: 40 }}>
-              <IconFilter size={20} stroke={2.5} />
-              <IconChevronDown size={16} stroke={3} />
-            </ActionIcon>
-          </Indicator>
-        </Popover.Target>
-        <Popover.Dropdown maw={350} w="100%">
-          <Stack spacing={0}>
-            <Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
-            {currentUser?.isModerator && (
-              <Chip.Group
-                spacing={4}
-                value={filters.status ?? []}
-                // TODO: fix type issues
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                onChange={(status: ModelStatus[]) => setFilters({ status: status as any })}
-                multiple
-              >
-                {availableStatus.map((status) => (
-                  <Chip key={status} value={status} {...chipProps}>
-                    {status}
-                  </Chip>
-                ))}
-              </Chip.Group>
-            )}
-            <Group spacing={4} mb={4}>
-              <Chip
-                checked={filters.earlyAccess}
-                onChange={(checked) => setFilters({ earlyAccess: checked })}
-                mt={currentUser?.isModerator ? 4 : undefined}
-                {...chipProps}
-              >
-                Early Access
-              </Chip>
-              {flags.imageGeneration && (
-                <Chip
-                  checked={filters.supportsGeneration}
-                  onChange={(checked) => setFilters({ supportsGeneration: checked })}
-                  mt={currentUser?.isModerator ? 4 : undefined}
-                  {...chipProps}
-                >
-                  Onsite Generation
-                </Chip>
-              )}
-            </Group>
-            <Divider label="Model types" labelProps={{ weight: 'bold' }} />
-            <Chip.Group
-              spacing={4}
-              value={filters.types ?? []}
-              onChange={(types: ModelType[]) => setFilters({ types })}
-              multiple
-              my={4}
-            >
-              {Object.values(ModelType).map((type, index) => (
-                <Chip key={index} value={type} {...chipProps}>
-                  {getDisplayName(type)}
-                </Chip>
-              ))}
-            </Chip.Group>
-            {showCheckpointType ? (
-              <>
-                <Divider label="Checkpoint type" labelProps={{ weight: 'bold' }} />
-                <SegmentedControl
-                  my={5}
-                  value={filters.checkpointType ?? 'all'}
-                  size="xs"
-                  color="blue"
-                  styles={(theme) => ({
-                    root: {
-                      border: `1px solid ${
-                        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                      }`,
-                      background: 'none',
-                    },
-                  })}
-                  data={[{ label: 'All', value: 'all' }].concat(
-                    Object.values(CheckpointType).map((type) => ({
-                      label: splitUppercase(type),
-                      value: type,
-                    }))
-                  )}
-                  onChange={(value: CheckpointType | 'all') => {
-                    setFilters({ checkpointType: value !== 'all' ? value : undefined });
-                  }}
-                />
-                <Divider label="File format" labelProps={{ weight: 'bold' }} />
-                <Chip.Group
-                  spacing={4}
-                  value={filters.fileFormats ?? []}
-                  onChange={(fileFormats: typeof availableFileFormats) =>
-                    setFilters({ fileFormats })
-                  }
-                  multiple
-                  my={4}
-                >
-                  {availableFileFormats.map((format, index) => (
-                    <Chip key={index} value={format} {...chipProps}>
-                      {format}
-                    </Chip>
-                  ))}
-                </Chip.Group>
-              </>
-            ) : null}
-            <Divider label="Base model" labelProps={{ weight: 'bold' }} />
-            <Chip.Group
-              spacing={4}
-              value={filters.baseModels ?? []}
-              onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
-              multiple
-              my={4}
-            >
-              {constants.baseModels.map((baseModel, index) => (
-                <Chip key={index} value={baseModel} {...chipProps}>
-                  {baseModel}
-                </Chip>
-              ))}
-            </Chip.Group>
-
-            {currentUser && !isSameUser && (
-              <>
-                <Divider label="Modifiers" labelProps={{ weight: 'bold' }} mb={4} />
-                <Group>
-                  <Chip
-                    checked={filters.followed}
-                    onChange={(checked) => setFilters({ followed: checked })}
-                    {...chipProps}
-                  >
-                    Followed Only
-                  </Chip>
-                </Group>
-              </>
-            )}
-            {filterLength > 0 && (
-              <Button mt="xs" compact onClick={clearFilters} leftIcon={<IconFilterOff size={20} />}>
-                Clear Filters
-              </Button>
-            )}
-          </Stack>
+      <Popover
+        zIndex={200}
+        position={position}
+        shadow="md"
+        onClose={() => setOpened(false)}
+        middlewares={{ flip: true, shift: true }}
+        withinPortal
+        withArrow
+      >
+        <Popover.Target>{target}</Popover.Target>
+        <Popover.Dropdown maw={576} w="100%">
+          {dropdown}
         </Popover.Dropdown>
       </Popover>
     </IsClient>
   );
 }
 
+type Props = { filterMode?: 'local' | 'query'; position?: PopoverProps['position'] };
+
 const useStyles = createStyles((theme, _params, getRef) => ({
   label: {
     fontSize: 12,
-    fontWeight: 500,
+    fontWeight: 600,
+
     '&[data-checked]': {
       '&, &:hover': {
-        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-        color: theme.white,
+        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
       },
 
-      [`& .${getRef('iconWrapper')}`]: {
-        color: theme.white,
+      '&[data-variant="filled"]': {
+        backgroundColor: 'transparent',
       },
     },
   },
 
   iconWrapper: {
     ref: getRef('iconWrapper'),
+  },
+  opened: {
+    transform: 'rotate(180deg)',
+    transition: 'transform 200ms ease',
+  },
+
+  actionButton: {
+    [containerQuery.smallerThan('sm')]: {
+      width: '100%',
+    },
   },
 }));
