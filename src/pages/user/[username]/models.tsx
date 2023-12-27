@@ -1,10 +1,18 @@
-import { Box, Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
+import {
+  Box,
+  Group,
+  SegmentedControl,
+  SegmentedControlProps,
+  Stack,
+  Tabs,
+  createStyles,
+} from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import React, { useMemo, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
@@ -23,9 +31,20 @@ import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
+const useStyles = createStyles(() => ({
+  filtersWrapper: {
+    [containerQuery.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
+}));
+
 export default function UserModelsPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const { classes } = useStyles();
   const { set, section: querySection, ...queryFilters } = useModelQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ModelSort.Newest;
@@ -41,12 +60,13 @@ export default function UserModelsPage() {
   const viewingTraining = section === 'training' && features.imageTrainingResults;
   const Wrapper = useMemo(
     () =>
-      ({ children }: { children: React.ReactNode }) =>
-        features.profileOverhaul ? (
+      function Wrapper({ children }: { children: React.ReactNode }) {
+        return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
           <Tabs.Panel value="/models">{children}</Tabs.Panel>
-        ),
+        );
+      },
     [features.profileOverhaul]
   );
 
@@ -75,18 +95,14 @@ export default function UserModelsPage() {
               )}
               {viewingPublished && (
                 <>
-                  <SortFilter
-                    type="models"
-                    value={sort}
-                    onChange={(x) => set({ sort: x as ModelSort })}
-                  />
-                  <Group spacing="xs" ml="auto">
-                    <PeriodFilter
+                  <Group className={classes.filtersWrapper} spacing="xs" ml="auto">
+                    <SortFilter
                       type="models"
-                      value={period}
-                      onChange={(x) => set({ period: x })}
+                      variant="button"
+                      value={sort}
+                      onChange={(x) => set({ sort: x as ModelSort })}
                     />
-                    <ModelFiltersDropdown />
+                    <ModelFiltersDropdown filterMode="query" position="left" />
                   </Group>
                 </>
               )}
@@ -137,7 +153,7 @@ function ContentToggle({
       value={value}
       onChange={onChange}
       data={tabs}
-      sx={(theme) => ({
+      sx={() => ({
         [containerQuery.smallerThan('sm')]: {
           // flex: 1,
           width: '100%',

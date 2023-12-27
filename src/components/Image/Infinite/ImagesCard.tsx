@@ -35,7 +35,6 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
-  console.count('ImagesCard');
   const { classes, cx } = useStyles();
   const { images } = useImagesContext();
   const features = useFeatureFlags();

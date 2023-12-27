@@ -72,6 +72,14 @@ const useChipStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  filtersWrapper: {
+    [containerQuery.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
 }));
 export function UserImagesPage() {
   const currentUser = useCurrentUser();
@@ -100,12 +108,13 @@ export function UserImagesPage() {
 
   const Wrapper = useMemo(
     () =>
-      ({ children }: { children: React.ReactNode }) =>
-        features.profileOverhaul ? (
+      function Wrapper({ children }: { children: React.ReactNode }) {
+        return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
           <Tabs.Panel value="/images">{children}</Tabs.Panel>
-        ),
+        );
+      },
     [features.profileOverhaul]
   );
 
@@ -154,7 +163,7 @@ export function UserImagesPage() {
                   </Chip.Group>
                 )}
               </Group>
-              <Group spacing={8} noWrap>
+              <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter
                   type="images"
                   variant="button"
@@ -200,7 +209,7 @@ function ContentToggle({
       value={value}
       onChange={onChange}
       data={segments as unknown as SegmentedControlItem[]}
-      sx={(theme) => ({
+      sx={() => ({
         [containerQuery.smallerThan('sm')]: {
           width: '100%',
         },

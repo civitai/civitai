@@ -126,7 +126,7 @@ export function ArticleFiltersDropdown({ query, onChange }: Props) {
             onChange={(period) => onChange({ period })}
           />
         ) : (
-          <PeriodFilter type="images" variant="chips" />
+          <PeriodFilter type="articles" variant="chips" />
         )}
         {currentUser && !isSameUser && (
           <>
