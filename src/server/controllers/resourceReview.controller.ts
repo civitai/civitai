@@ -5,7 +5,11 @@ import {
   UpdateResourceReviewInput,
   UpsertResourceReviewInput,
 } from '../schema/resourceReview.schema';
-import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+} from '~/server/utils/errorHandling';
 import {
   deleteResourceReview,
   upsertResourceReview,
@@ -18,6 +22,7 @@ import {
 import { Context } from '~/server/createContext';
 import { GetByUsernameSchema } from '~/server/schema/user.schema';
 import { dbRead } from '~/server/db/client';
+import { hasEntityAccess } from '../services/common.service';
 
 export const upsertResourceReviewHandler = async ({
   input,
@@ -27,6 +32,17 @@ export const upsertResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const [access] = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: [input.modelVersionId],
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+
+    if (!access?.hasAccess) {
+      throw throwAuthorizationError('You do not have access to this model version.');
+    }
+
     return await upsertResourceReview({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
@@ -41,6 +57,17 @@ export const createResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const [access] = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: [input.modelVersionId],
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+
+    if (!access?.hasAccess) {
+      throw throwAuthorizationError('You do not have access to this model version.');
+    }
+
     const result = await createResourceReview({ ...input, userId: ctx.user.id });
     await ctx.track.resourceReview({
       type: 'Create',
