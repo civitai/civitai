@@ -116,7 +116,7 @@ export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
   if (!isProd) return cacheIt({ ttl });
 
   return middleware(async ({ next, ctx, input }) => {
-    let reqTTL = ttl as number;
+    let reqTTL = ctx.cache.skip ? 0 : (ttl as number);
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();

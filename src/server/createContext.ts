@@ -24,6 +24,7 @@ type CacheSettings = {
   staleWhileRevalidate?: number;
   tags?: string[];
   canCache?: boolean;
+  skip: boolean;
 };
 
 const origins = [env.NEXTAUTH_URL, ...(env.TRPC_ORIGINS ?? [])];
@@ -46,6 +47,7 @@ export const createContext = async ({
     edgeTTL: session?.user ? 0 : 60,
     staleWhileRevalidate: session?.user ? 0 : 30,
     canCache: true,
+    skip: false,
   };
 
   return {

@@ -376,6 +376,7 @@ const useStyles = createStyles((theme) => ({
     // paddingBottom: 42,
     // background: theme.colors.dark[9],
     flexDirection: 'column',
+    overflow: 'hidden',
   },
   reactions: {
     position: 'absolute',
