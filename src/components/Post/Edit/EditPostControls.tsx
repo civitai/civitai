@@ -84,6 +84,9 @@ export function ManagePostStatus() {
         onSuccess: async () => {
           setPublishedAt(publishedAt);
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
+          if (clubs?.length) {
+            await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
+          }
 
           if (returnUrl) router.push(returnUrl);
           else router.push(`/user/${currentUser.username}/posts`);
