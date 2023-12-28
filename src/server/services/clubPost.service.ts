@@ -161,6 +161,7 @@ export const upsertClubPost = async ({
     }
   }
 
+  console.log(coverImage);
   const [createdCoverImage] =
     coverImage && !coverImage.id
       ? await createEntityImages({

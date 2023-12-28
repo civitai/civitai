@@ -334,7 +334,7 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
         onClick={(image) => {
           triggerRoutedDialog({
             name: 'imageDetail',
-            state: { imageId: image.id, filters: { postId: resourceData.data.id } },
+            state: { imageId: image.id, filters: { postId: resourceData.data?.id } },
           });
         }}
       />
