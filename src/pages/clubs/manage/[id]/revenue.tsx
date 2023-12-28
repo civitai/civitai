@@ -1,4 +1,4 @@
-import { Button, Group, Stack, Title } from '@mantine/core';
+import { Anchor, Button, Group, Stack, Title } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -13,6 +13,7 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { ClubAdminPermission } from '@prisma/client';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ClubWithdrawFunds } from '~/components/Club/ClubWithdrawFunds';
+import { NextLink } from '@mantine/next';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -97,6 +98,9 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
           </Button>
         )}
       </Group>
+      <Anchor size="sm" target="_blank" href="/content/buzz/terms">
+        Buzz Agreement
+      </Anchor>
       <BuzzDashboardOverview accountId={club.id} accountType="Club" />
     </Stack>
   );

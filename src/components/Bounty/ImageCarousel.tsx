@@ -309,7 +309,7 @@ export function ImageCarousel({
 
 type Props = {
   images: ImageProps[];
-  nsfw: boolean;
+  nsfw?: boolean;
   mobile?: boolean;
   onClick?: (image: ImageProps) => void;
   isLoading?: boolean;

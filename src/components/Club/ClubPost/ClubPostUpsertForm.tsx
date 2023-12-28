@@ -48,7 +48,19 @@ import { useCurrentUser } from '../../../hooks/useCurrentUser';
 import { ClubAdminPermission } from '@prisma/client';
 import { ClubPostResourceCard } from './ClubFeed';
 
-const formSchema = upsertClubPostInput;
+const formSchema = upsertClubPostInput.refine(
+  (data) => {
+    if (data.entityType !== 'Post' && !(data.title && data.description)) {
+      return false;
+    }
+
+    return true;
+  },
+  {
+    message: 'Title and description are required',
+    path: ['title'],
+  }
+);
 
 type Props = {
   resource?: {
@@ -119,9 +131,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
           <InputSimpleImageUpload
             name="coverImage"
             label="Post cover image"
-            description={`Suggested resolution: ${constants.clubs.coverImageWidth}x${constants.clubs.coverImageHeight}px`}
-            aspectRatio={constants.clubs.postCoverImageAspectRatio}
-            previewWidth={1250}
+            previewWidth={300}
             style={{ maxWidth: '100%' }}
           />
           <InputText
@@ -139,12 +149,16 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
             stickyToolbar
           />
           <Input.Wrapper
-            label="Link a resources to this post"
-            description="By linking a resource, the resource card will be displayed in your club feed and post. This will not affect the resource permisisons or access. Your post title will be overwritten by the resource title if possible."
+            label={
+              resource
+                ? 'This resource will be linked to the club post'
+                : 'Link a resources to this post'
+            }
+            description="By linking a resource to the club post, the resource card will be displayed in your club feed and post. This will not affect the resource permisisons or access. If someone with no access to this resource happens unpon your club post, they will not be able to see it."
           >
             <Divider mt="md" size={0} />
             <Stack>
-              {currentUser?.username && (
+              {currentUser?.username && !resource && !entityId && !entityType && (
                 <QuickSearchDropdown
                   // Match SupportedClubEntities here.
                   supportedIndexes={['models', 'articles']}
@@ -155,13 +169,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
                   dropdownItemLimit={25}
                 />
               )}
-              {resourceData && (
-                <Center>
-                  <Box style={{ maxWidth: 250, width: '100%' }}>
-                    <ClubPostResourceCard resourceData={resourceData} />
-                  </Box>
-                </Center>
-              )}
+              {resourceData && <ClubPostResourceCard resourceData={resourceData} />}
               {entityId && entityType && isLoadingResource && (
                 <Center>
                   <Loader />
@@ -289,7 +297,13 @@ export const ClubPostFromResourceModal = ({
   );
 };
 
-export const ClubPostUpsertFormModal = (props: { clubId: number }) => {
+export const ClubPostUpsertFormModal = (props: {
+  clubId: number;
+  resource?: {
+    entityId: number;
+    entityType: SupportedClubPostEntities;
+  };
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const handleSuccess = () => {

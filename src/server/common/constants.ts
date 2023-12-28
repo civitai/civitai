@@ -108,7 +108,7 @@ export const constants = {
   cardSizes: {
     model: 320,
     image: 320,
-    articles: 450,
+    articles: 320,
     bounty: 332,
     club: 320,
   },

@@ -19,6 +19,7 @@ import { ClubResourcesPaged } from '~/components/Club/Infinite/ClubResourcesPage
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { AddResourceToClubModal } from '~/components/Club/AddResourceToClubModal';
 import { ClubAdminPermission } from '@prisma/client';
+import { ClubAddContent } from '../../../../components/Club/ClubAddContent';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -93,7 +94,10 @@ export default function ManageClubMembers({
         <Button
           onClick={() => {
             dialogStore.trigger({
-              component: AddResourceToClubModal,
+              component: ClubAddContent,
+              props: {
+                clubId: id,
+              },
             });
           }}
         >

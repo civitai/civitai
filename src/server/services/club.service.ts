@@ -25,7 +25,9 @@ import {
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { TierCoverImage } from '../../components/Club/ClubTierItem';
+import { userWithCosmeticsSelect } from '../selectors/user.selector';
+import { bustCacheTag } from '../utils/cache-helpers';
+import { isEqual } from 'lodash-es';
 
 export const userContributingClubs = async ({
   userId,
@@ -95,11 +97,26 @@ export const getClub = async ({
       billing: true,
       unlisted: true,
       userId: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+      tiers: {
+        take: 1,
+        where: {
+          unlisted: false,
+          joinable: true,
+        },
+      },
+      posts: {
+        take: 1,
+      },
     },
   });
 
+  const { tiers, posts, ...data } = club;
+
   return {
-    ...club,
+    ...data,
     avatar: club.avatar
       ? {
           ...club.avatar,
@@ -121,6 +138,8 @@ export const getClub = async ({
           metadata: club.headerImage.metadata as MixedObject,
         }
       : club.headerImage,
+    hasTiers: tiers.length > 0,
+    hasPosts: posts.length > 0,
   };
 };
 
@@ -674,8 +693,18 @@ export const upsertClubResource = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
+  const [clubRequirement] = await entityRequiresClub({
+    entityType,
+    entityIds: [entityId],
+  });
+
+  if (isEqual(clubRequirement?.clubs ?? [], clubs)) {
+    // No change:
+    return;
+  }
+
   // First, check that the person is
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityIds: [entityId], entityType });
 
   if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
@@ -705,12 +734,8 @@ export const upsertClubResource = async ({
   if (clubIds.length === 0) {
     // this resource will be made public:
     const [details] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityId,
-          entityType,
-        },
-      ],
+      entityIds: [entityId],
+      entityType,
     });
 
     await dbWrite.entityAccess.deleteMany({
@@ -745,6 +770,10 @@ export const upsertClubResource = async ({
       },
     });
 
+    if (entityType === 'Post') {
+      await Promise.all(clubs.map((c) => bustCacheTag(`posts-club:${c.clubId}`)));
+    }
+
     if (access) {
       // Some access type - i.e, user access, is still there.
       return;
@@ -760,68 +789,74 @@ export const upsertClubResource = async ({
   }
 
   // Now, add and/or remove it from clubs:
-  await dbWrite.$transaction(async (tx) => {
-    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
-    await tx.entityAccess.deleteMany({
-      where: {
-        accessToId: entityId,
-        accessToType: entityType,
+  // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessToId: entityId,
+      accessToType: entityType,
 
-        accessorType: {
-          // Do not delete user access:
-          in: ['Club', 'ClubTier'],
-        },
+      accessorType: {
+        // Do not delete user access:
+        in: ['Club', 'ClubTier'],
       },
-    });
-
-    const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
-    const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
-    const clubAccessIds = generalClubAccess.map((c) => c.clubId);
-    const tierAccessIds = tierClubAccess
-      .map((c) => c.clubTierIds)
-      .filter(isDefined)
-      .flat();
-
-    // Add general club access:
-    await tx.entityAccess.createMany({
-      data: clubAccessIds.map((clubId) => ({
-        accessToId: entityId,
-        accessToType: entityType,
-        accessorId: clubId,
-        accessorType: 'Club',
-        addedById: userId,
-      })),
-    });
-
-    // Add tier club access:
-    await tx.entityAccess.createMany({
-      data: tierAccessIds.map((clubTierId) => ({
-        accessToId: entityId,
-        accessToType: entityType,
-        accessorId: clubTierId,
-        accessorType: 'ClubTier',
-        addedById: userId,
-      })),
-    });
-
-    await entityAvailabilityUpdate({
-      entityType,
-      entityIds: [entityId],
-      availability: Availability.Private,
-    });
+    },
   });
+
+  const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
+  const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
+  const clubAccessIds = generalClubAccess.map((c) => c.clubId);
+  const tierAccessIds = tierClubAccess
+    .map((c) => c.clubTierIds)
+    .filter(isDefined)
+    .flat();
+
+  // Add general club access:
+  await dbWrite.entityAccess.createMany({
+    data: clubAccessIds.map((clubId) => ({
+      accessToId: entityId,
+      accessToType: entityType,
+      accessorId: clubId,
+      accessorType: 'Club',
+      addedById: userId,
+    })),
+  });
+
+  // Add tier club access:
+  await dbWrite.entityAccess.createMany({
+    data: tierAccessIds.map((clubTierId) => ({
+      accessToId: entityId,
+      accessToType: entityType,
+      accessorId: clubTierId,
+      accessorType: 'ClubTier',
+      addedById: userId,
+    })),
+  });
+
+  await entityAvailabilityUpdate({
+    entityType,
+    entityIds: [entityId],
+    availability: Availability.Private,
+  });
+
+  // Bust caches when items are added to clubs:
+  if (entityType === 'Post') {
+    await Promise.all(clubs.map((c) => bustCacheTag(`posts-club:${c.clubId}`)));
+  }
 };
 
 export const getClubDetailsForResource = async ({
-  entities,
+  entityIds,
+  entityType,
 }: {
-  entities: {
-    entityType: SupportedClubEntities;
-    entityId: number;
-  }[];
+  entityType: SupportedClubEntities;
+  entityIds: number[];
 }) => {
-  const clubRequirements = await entityRequiresClub({ entities });
-  return clubRequirements;
+  const clubRequirement = await entityRequiresClub({
+    entityType,
+    entityIds,
+  });
+
+  return clubRequirement;
 };
 
 export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
@@ -997,7 +1032,7 @@ export const getPaginatedClubResources = async ({
         )
         WHEN ea."accessToType" = 'Post' THEN jsonb_build_object(
           'id', p."id",
-          'title', COALESCE(p."title", 'N/A')
+          'title', COALESCE(p."title", 'Image Post')
         )
         ELSE '{}'::jsonb
       END
@@ -1024,7 +1059,7 @@ export const updateClubResource = async ({
   isModerator?: boolean;
 }) => {
   // First, check that the person is
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityType, entityIds: [entityId] });
 
   if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
@@ -1106,7 +1141,7 @@ export const removeClubResource = async ({
   isModerator?: boolean;
 }) => {
   const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityType, entityIds: [entityId] });
   const canRemoveResource =
     isModerator ||
     ownership.isOwner ||

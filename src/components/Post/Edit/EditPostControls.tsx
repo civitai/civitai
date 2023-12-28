@@ -21,6 +21,8 @@ import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
 import { IconClock } from '@tabler/icons-react';
 import { showErrorNotification } from '~/utils/notifications';
+import { useFeatureFlags } from '../../../providers/FeatureFlagsProvider';
+import { useQueryUserContributingClubs } from '../../Club/club.utils';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -59,6 +61,8 @@ export function ManagePostStatus() {
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
   const isReordering = useEditPostContext((state) => state.reorder);
+  const clubs = useEditPostContext((state) => state.clubs);
+  const unlisted = useEditPostContext((state) => state.unlisted);
 
   const { mutate, isLoading } = trpc.post.update.useMutation({
     onError(error) {
@@ -75,11 +79,14 @@ export function ManagePostStatus() {
     if (!currentUser) return;
     const publishedAt = new Date();
     mutate(
-      { id, publishedAt },
+      { id, publishedAt, clubs, unlisted },
       {
         onSuccess: async () => {
           setPublishedAt(publishedAt);
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
+          if (clubs?.length) {
+            await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
+          }
 
           if (returnUrl) router.push(returnUrl);
           else router.push(`/user/${currentUser.username}/posts`);

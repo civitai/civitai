@@ -359,7 +359,8 @@ async function checkResourcesAccess(
   if (hasPrivateResources) {
     // Check for permission:
     const entityAccess = await hasEntityAccess({
-      entities: data.map((d) => ({ entityType: 'ModelVersion', entityId: d.id })),
+      entityIds: data.map((d) => d.id),
+      entityType: 'ModelVersion',
       userId,
     });
 

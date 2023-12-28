@@ -42,6 +42,8 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
+import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
@@ -202,22 +204,27 @@ export default function ImagesAsPostsInfinite({
             <Group spacing="xs">
               <Title order={2}>Gallery</Title>
               {!isMuted && (
-                <Group>
-                  <LoginRedirect reason="create-review">
-                    <Link href={addPostLink}>
-                      <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
-                        Add Post
-                      </Button>
-                    </Link>
-                  </LoginRedirect>
-                  <LoginRedirect reason="create-review">
-                    <Link href={addPostLink + '&reviewing=true'}>
-                      <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
-                        Add Review
-                      </Button>
-                    </Link>
-                  </LoginRedirect>
-                </Group>
+                <ResourceAccessWrap
+                  entityId={selectedVersionId as number}
+                  entityType="ModelVersion"
+                >
+                  <Group>
+                    <LoginRedirect reason="create-review">
+                      <Link href={addPostLink}>
+                        <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
+                          Add Post
+                        </Button>
+                      </Link>
+                    </LoginRedirect>
+                    <LoginRedirect reason="create-review">
+                      <Link href={addPostLink + '&reviewing=true'}>
+                        <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
+                          Add Review
+                        </Button>
+                      </Link>
+                    </LoginRedirect>
+                  </Group>
+                </ResourceAccessWrap>
               )}
               {showModerationOptions && (
                 <Group ml="auto" spacing={8}>

@@ -83,6 +83,9 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
+import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
+import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 
 export function ModelVersionDetails({
   model,
@@ -100,6 +103,14 @@ export function ModelVersionDetails({
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
+
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
+    entityType: 'ModelVersion',
+    entityIds: [version.id],
+  });
+
+  const [access] = entities;
+  const requiresClub = access?.requiresClub;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -187,6 +198,7 @@ export function ModelVersionDetails({
   const archived = model.mode === ModelModifier.Archived;
 
   const modelDetails: DescriptionTableProps['items'] = [
+    { label: 'Access', value: 'Club membership', visible: features.clubs && requiresClub },
     {
       label: 'Type',
       value: (
@@ -393,7 +405,7 @@ export function ModelVersionDetails({
             >
               Download
             </Button>
-          )}          
+          )}
         </Group>
         {getFileDetails(file)}
       </Stack>
@@ -514,11 +526,11 @@ export function ModelVersionDetails({
                     {/* {primaryFileDetails} */}
                   </Stack>
                 )}
-                {canGenerate && (
-                  <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
-                )}
-                {hasAccess && (
+                {hasAccess ? (
                   <>
+                    {canGenerate && (
+                      <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
+                    )}
                     {displayCivitaiLink || canGenerate ? (
                       <Menu position="bottom-end">
                         <Menu.Target>
@@ -543,7 +555,7 @@ export function ModelVersionDetails({
                       >
                         <Text align="center">
                           {primaryFile
-                            ? `Download (${formatKBytes(primaryFile.sizeKB)})`
+                            ? `Download (${formatKBytes(primaryFile?.sizeKB)})`
                             : 'No file'}
                         </Text>
                       </DownloadButton>
@@ -552,6 +564,13 @@ export function ModelVersionDetails({
                       <RunButton variant="light" modelVersionId={version.id} />
                     )}
                   </>
+                ) : (
+                  <ClubRequirementButton
+                    entityId={version.id}
+                    entityType="ModelVersion"
+                    label="Join club"
+                    sx={{ flex: 1 }}
+                  />
                 )}
                 <Tooltip label="Share" position="top" withArrow>
                   <div>
@@ -764,16 +783,18 @@ export function ModelVersionDetails({
                         count={version.rank?.ratingCountAllTime}
                       />
                       <Stack spacing={4} ml="auto">
-                        <Button
-                          component={NextLink}
-                          href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
-                          variant="outline"
-                          size="xs"
-                          onClick={(e) => e.stopPropagation()}
-                          compact
-                        >
-                          Add Review
-                        </Button>
+                        <ResourceAccessWrap entityId={version.id} entityType="ModelVersion">
+                          <Button
+                            component={NextLink}
+                            href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
+                            variant="outline"
+                            size="xs"
+                            onClick={(e) => e.stopPropagation()}
+                            compact
+                          >
+                            Add Review
+                          </Button>
+                        </ResourceAccessWrap>
                         <Text
                           component={NextLink}
                           href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}

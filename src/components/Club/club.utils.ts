@@ -501,39 +501,47 @@ export const useMutateClub = () => {
 
 export const useEntityAccessRequirement = ({
   entityType,
-  entityId,
+  entityIds,
 }: {
   entityType?: SupportedClubEntities;
-  entityId?: number;
+  entityIds?: number[];
 }) => {
-  const { data: entityAccess, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
+  const { data: entitiesAccess, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
-      entityId: entityId as number,
+      entityId: entityIds as number[],
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityId && !!entityType,
+      enabled: !!entityIds && !!entityType && entityIds?.length > 0,
     }
   );
 
-  const hasAccess = isLoadingAccess ? false : entityAccess?.hasAccess ?? false;
-
-  const { data: clubRequirement } = trpc.common.getEntityClubRequirement.useQuery(
+  const { data: clubRequirements } = trpc.common.getEntityClubRequirement.useQuery(
     {
-      entityId: entityId as number,
+      entityId: entityIds as number[],
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityId && !!entityType && !hasAccess && !isLoadingAccess,
+      enabled: !!entityIds && !!entityType && !isLoadingAccess,
     }
   );
 
-  const requiresClub = clubRequirement?.requiresClub ?? false;
+  const entities = (entityIds ?? []).map((id) => {
+    const entityAccess = entitiesAccess?.find((x) => x.entityId === id);
+    const clubRequirement = clubRequirements?.find((x) => x.entityId === id);
+    const hasAccess = isLoadingAccess ? false : entityAccess?.hasAccess ?? false;
+    const requiresClub = clubRequirement?.requiresClub ?? false;
+    return {
+      entityId: id,
+      entityType: entityType as SupportedClubEntities,
+      hasAccess,
+      requiresClub,
+      clubRequirement,
+    };
+  });
 
   return {
-    clubRequirement,
-    hasAccess,
-    requiresClub,
+    entities,
     isLoadingAccess,
   };
 };

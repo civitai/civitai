@@ -142,8 +142,12 @@ export const modelNotifications = createNotificationProcessor({
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Favorite'
-        WHERE (mv."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND mv.status = 'Published')
-        OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
+        WHERE 
+            mv."availability" = 'Public'::"Availability" 
+            AND (
+              (mv."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND mv.status = 'Published')
+              OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
+            )
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT

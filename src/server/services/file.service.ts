@@ -170,12 +170,8 @@ export const getFileForModelVersion = async ({
   if (!modelVersion) return { status: 'not-found' };
 
   const [entityAccess] = await hasEntityAccess({
-    entities: [
-      {
-        entityType: 'ModelVersion',
-        entityId: modelVersion?.id,
-      },
-    ],
+    entityIds: [modelVersion?.id],
+    entityType: 'ModelVersion',
     userId: user?.id,
     isModerator: user?.isModerator,
   });

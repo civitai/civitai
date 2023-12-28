@@ -12,6 +12,7 @@ import { ImageGetById, ImageGetInfinite } from '~/types/router';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { removeEmpty } from '../../../utils/object-helpers';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -65,8 +66,9 @@ export function ImageDetailProvider({
   const active = browserRouter.query.active;
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId } = browserRouter.query;
-  const { modelId, modelVersionId, username, reactions } = filters;
+  const { postId: queryPostId } = browserRouter.query;
+  const { modelId, modelVersionId, username, reactions, postId: filterPostId } = filters;
+  const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
@@ -88,7 +90,12 @@ export function ImageDetailProvider({
   useEffect(() => {
     if (prefetchedImage && shouldFetchImage) {
       browserRouter.replace(
-        { query: { ...browserRouter.query, postId: prefetchedImage.postId } },
+        {
+          query: removeEmpty({
+            ...browserRouter.query,
+            postId: prefetchedImage.postId || undefined,
+          }),
+        },
         `/images/${imageId}`
       );
     }

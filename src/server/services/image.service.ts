@@ -487,15 +487,7 @@ export const getAllImages = async ({
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
 
-  const showClubPosts = !!(
-    postId ||
-    imageId ||
-    collectionId ||
-    modelId ||
-    modelVersionId ||
-    reviewId ||
-    username
-  );
+  const showClubPosts = !!postId || !!collectionId || !!modelId || !!modelVersionId || !!reviewId;
 
   if (hidden && !userId) throw throwAuthorizationError();
   if (hidden && (excludedImageIds ?? []).length === 0) {
@@ -1004,6 +996,7 @@ export async function updateImageTagIdsForImages(imageId: number | number[]) {
 
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
+  postId?: number | null;
 };
 export const getImage = async ({
   id,
@@ -1279,18 +1272,16 @@ export const getImagesForModelVersion = async ({
 
 export const getImagesForPosts = async ({
   postIds,
-  excludedTagIds,
   excludedIds,
-  excludedUserIds,
   userId,
   isOwnerRequest,
+  coverOnly = true,
 }: {
   postIds: number | number[];
-  excludedTagIds?: number[];
   excludedIds?: number[];
-  excludedUserIds?: number[];
   userId?: number;
   isOwnerRequest?: boolean;
+  coverOnly?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [
@@ -1304,17 +1295,10 @@ export const getImagesForPosts = async ({
       Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
 
-    if (!!excludedTagIds?.length)
-      imageWhere.push(
-        Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
-          excludedTagIds
-        )}) )`
-      );
     if (!!excludedIds?.length)
       imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
-    if (!!excludedUserIds?.length)
-      imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
+
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -1325,6 +1309,8 @@ export const getImagesForPosts = async ({
       width: number;
       height: number;
       hash: string;
+      createdAt: Date;
+      generationProcess: ImageGenerationProcess | null;
       postId: number;
       imageCount: number;
       cryCount: number;
@@ -1343,7 +1329,7 @@ export const getImagesForPosts = async ({
     WITH targets AS (
       SELECT
         i."postId",
-        MIN(i.index) "index",
+        ${Prisma.raw(coverOnly ? 'MIN(i.index) "index",' : '')}
         COUNT(*) "count"
       FROM "Image" i
       WHERE ${Prisma.join(imageWhere, ' AND ')}
@@ -1361,6 +1347,8 @@ export const getImagesForPosts = async ({
       i.type,
       i.metadata,
       i.meta,
+      i."createdAt",
+      i."generationProcess",
       t."postId",
       t.count "imageCount",
       COALESCE(im."cryCount", 0) "cryCount",
@@ -1377,12 +1365,27 @@ export const getImagesForPosts = async ({
         AND "userId" = ${userId}
       ) reactions
     FROM targets t
-    JOIN "Image" i ON i."postId" = t."postId" AND i.index = t.index
+    JOIN "Image" i ON i."postId" = t."postId" ${Prisma.raw(
+      coverOnly ? 'AND i.index = t.index' : ''
+    )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
   `;
+  const imageIds = images.map((i) => i.id);
+  const rawTags =
+    imageIds?.length > 0
+      ? await dbRead.imageTag.findMany({
+          where: { imageId: { in: imageIds } },
+          select: {
+            imageId: true,
+            tagId: true,
+          },
+        })
+      : [];
 
   return images.map(({ reactions, ...i }) => ({
     ...i,
+    meta: (i.meta ?? {}) as ImageMetaProps,
+    tagIds: rawTags.filter((t) => t.imageId === i.id).map((t) => t.tagId),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   }));
 };

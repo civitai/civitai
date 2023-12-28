@@ -1,5 +1,6 @@
 import {
   ArticleEngagementType,
+  Availability,
   CosmeticSource,
   CosmeticType,
   MetricTimeframe,
@@ -31,7 +32,11 @@ import {
 } from '~/server/services/collection.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
@@ -40,6 +45,7 @@ import { getFilesByEntity } from './file.service';
 import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
 import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { getPrivateEntityAccessForUser } from './user-cache.service';
 
 type ArticleRaw = {
   id: number;
@@ -47,6 +53,9 @@ type ArticleRaw = {
   title: string;
   publishedAt: Date | null;
   nsfw: boolean;
+  unlisted: boolean;
+  availability: Availability;
+  userId: number | null;
   stats:
     | {
         favoriteCount: number;
@@ -293,6 +302,7 @@ export const getArticles = async ({
       )
     `);
     }
+
     const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
@@ -313,6 +323,9 @@ export const getArticles = async ({
         a."userId",
         a."createdAt",
         a."updatedAt",
+        a."unlisted",
+        a."availability",
+        a."userId",
         ${Prisma.raw(`
         jsonb_build_object(
           'favoriteCount', stats."favoriteCount${period}",
@@ -381,10 +394,8 @@ export const getArticles = async ({
     }
 
     const clubRequirement = await entityRequiresClub({
-      entities: articles.map((article) => ({
-        entityId: article.id,
-        entityType: 'Article',
-      })),
+      entityIds: articles.map((article) => article.id),
+      entityType: 'Article',
     });
 
     const profilePictures = await dbRead.image.findMany({
@@ -393,27 +404,47 @@ export const getArticles = async ({
     });
 
     const articleCategories = await getCategoryTags('article');
-    const items = articles.map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
-      const requiresClub =
-        clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? undefined;
-      const { profilePictureId, ...u } = user;
-      const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
+    const userEntityAccess = await getPrivateEntityAccessForUser({ userId: sessionUser?.id });
+    const privateArticleAccessIds = userEntityAccess
+      .filter((x) => x.entityType === 'Article')
+      .map((x) => x.entityId);
 
-      return {
-        ...article,
-        requiresClub,
-        tags: tags.map(({ tag }) => ({
-          ...tag,
-          isCategory: articleCategories.some((c) => c.id === tag.id),
-        })),
-        stats,
-        user: {
-          ...u,
-          profilePicture,
-          cosmetics: userCosmetics,
-        },
-      };
-    });
+    const items = articles
+      .filter((a) => {
+        if (sessionUser?.isModerator || a.userId === sessionUser?.id) return true;
+
+        // Hide posts where the user does not have permission.
+        if (
+          a.unlisted &&
+          a.availability === Availability.Private &&
+          !privateArticleAccessIds.includes(a.id)
+        ) {
+          return false;
+        }
+
+        return true;
+      })
+      .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
+        const requiresClub =
+          clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? undefined;
+        const { profilePictureId, ...u } = user;
+        const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
+
+        return {
+          ...article,
+          requiresClub,
+          tags: tags.map(({ tag }) => ({
+            ...tag,
+            isCategory: articleCategories.some((c) => c.id === tag.id),
+          })),
+          stats,
+          user: {
+            ...u,
+            profilePicture,
+            cosmetics: userCosmetics,
+          },
+        };
+      });
 
     return { nextCursor, items };
   } catch (error) {
@@ -494,12 +525,8 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     const [access] = await hasEntityAccess({
       userId: user?.id,
       isModerator: isMod,
-      entities: [
-        {
-          entityType: 'Article',
-          entityId: id,
-        },
-      ],
+      entityIds: [id],
+      entityType: 'Article',
     });
 
     const article = await dbRead.article.findFirst({
@@ -511,14 +538,11 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (!access.hasAccess && article.unlisted) throw throwAuthorizationError();
 
     const [entityClubDetails] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityType: 'Article',
-          entityId: article.id,
-        },
-      ],
+      entityType: 'Article',
+      entityIds: [article.id],
     });
 
     const articleCategories = await getCategoryTags('article');

@@ -32,10 +32,18 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
+import {
+  getClubDetailsForResource,
+  upsertClubResource,
+  userContributingClubs,
+} from '../services/club.service';
+import { ClubAdminPermission } from '@prisma/client';
+import { hasEntityAccess } from '../services/common.service';
+import { bustCacheTag } from '../utils/cache-helpers';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -60,6 +68,19 @@ export const createPostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    if (input.modelVersionId) {
+      // Confirmt he user has access to this modelVersion:
+      const [access] = await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: [input.modelVersionId],
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      if (!access?.hasAccess) {
+        throw throwAuthorizationError('You do not have access to this model version.');
+      }
+    }
     const post = await createPost({ userId: ctx.user.id, ...input });
     const isScheduled = dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
     const tags = post.tags.map((x) => x.name);
@@ -118,7 +139,12 @@ export const updatePostHandler = async ({
         publishedAt: true,
       },
     });
-    const updatedPost = await updatePost(input);
+
+    const updatedPost = await updatePost({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
 
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
@@ -172,6 +198,34 @@ export const updatePostHandler = async ({
           entityType: 'post',
           entityId: updatedPost.id,
         });
+      }
+
+      if (input.clubs && !isScheduled && !updatedPost.modelVersionId) {
+        // Get user clubs:
+        const userClubs = await userContributingClubs({
+          userId: ctx.user.id,
+          clubIds: input.clubs.map((c) => c.clubId),
+        });
+
+        const canCreatePostClubs = userClubs.filter(
+          (c) =>
+            c.userId === ctx.user.id ||
+            ctx.user.isModerator ||
+            c.admin?.permissions?.includes(ClubAdminPermission.ManagePosts)
+        );
+
+        if (canCreatePostClubs.length > 0) {
+          // Now create the clubPost based off of the image post:
+          await dbWrite.clubPost.createMany({
+            data: canCreatePostClubs.map((c) => ({
+              clubId: c.id,
+              entityId: updatedPost.id,
+              entityType: 'Post',
+              membersOnly: updatedPost.unlisted ?? input.unlisted ?? false,
+              createdById: updatedPost.userId,
+            })),
+          });
+        }
       }
     }
   } catch (error) {

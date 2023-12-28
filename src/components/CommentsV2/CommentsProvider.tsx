@@ -22,6 +22,7 @@ type Props = CommentConnectorInput & {
   badges?: CommentV2BadgeProps[];
   hidden?: boolean;
   children: (args: ChildProps) => React.ReactNode;
+  forceLocked?: boolean;
 };
 
 type ChildProps = {
@@ -37,6 +38,7 @@ type ChildProps = {
   toggleShowMore: () => void;
   highlighted?: number;
   hiddenCount: number;
+  forceLocked?: boolean;
 };
 
 type CommentsContext = CommentConnectorInput & ChildProps;
@@ -48,6 +50,12 @@ export const useCommentsContext = () => {
   return context;
 };
 
+const entityAccessEntityTypeMap = {
+  post: 'Post',
+  article: 'Article',
+  clubPost: 'ClubPost',
+};
+
 export function CommentsProvider({
   entityType,
   entityId,
@@ -56,6 +64,7 @@ export function CommentsProvider({
   limit: initialLimit = 5,
   badges,
   hidden,
+  forceLocked,
 }: Props) {
   const router = useRouter();
 
@@ -127,6 +136,7 @@ export function CommentsProvider({
         toggleShowMore,
         highlighted,
         hiddenCount,
+        forceLocked,
       }}
     >
       {children({
@@ -142,6 +152,7 @@ export function CommentsProvider({
         toggleShowMore,
         highlighted,
         hiddenCount,
+        forceLocked,
       })}
     </CommentsCtx.Provider>
   );

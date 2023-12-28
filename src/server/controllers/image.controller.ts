@@ -295,10 +295,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const entityAccess = await hasEntityAccess({
       userId: ctx?.user?.id,
       isModerator: ctx?.user?.isModerator,
-      entities: postIds.map((id) => ({
-        entityType: 'Post',
-        entityId: id,
-      })),
+      entityIds: postIds,
+      entityType: 'Post',
     });
 
     // Prepare the results
@@ -371,6 +369,20 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
     });
+
+    if (result.postId) {
+      const [access] = await hasEntityAccess({
+        userId: ctx?.user?.id,
+        isModerator: ctx?.user?.isModerator,
+        entityIds: [result.postId],
+        entityType: 'Post',
+      });
+
+      // Cannot get images by ID without access
+      if (!access?.hasAccess) {
+        return null;
+      }
+    }
 
     return result;
   } catch (error) {

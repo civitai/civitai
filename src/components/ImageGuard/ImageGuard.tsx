@@ -509,6 +509,28 @@ ImageGuard.Report = function ReportImage({
       ),
     });
 
+  if (!postId && isModerator)
+    defaultMenuItems.push({
+      key: 'view-image-detail',
+      component: (
+        <Menu.Item
+          key="view-image-detail"
+          icon={<IconEye size={14} stroke={1.5} />}
+          onClick={(e) => {
+            e.stopPropagation();
+            triggerRoutedDialog({
+              name: 'imageDetail',
+              state: {
+                imageId: image.id,
+              },
+            });
+          }}
+        >
+          View image detail
+        </Menu.Item>
+      ),
+    });
+
   if (!isOwner && context === 'image') {
     defaultMenuItems.push({
       key: 'hide-image-button',

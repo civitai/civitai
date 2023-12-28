@@ -137,10 +137,8 @@ const onFetchItemsToIndex = async ({
   }
 
   const clubRequirement = await entityRequiresClub({
-    entities: articles.map((article) => ({
-      entityId: article.id,
-      entityType: 'Article',
-    })),
+    entityIds: articles.map(({ id }) => id),
+    entityType: 'Article',
   });
 
   const indexReadyRecords = articles.map(({ tags, stats, ...articleRecord }) => {
