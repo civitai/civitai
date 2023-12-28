@@ -153,11 +153,20 @@ const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   });
 });
 
+const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
+  const _input = input as GetAllModelsOutput;
+
+  return next({
+    ctx: { user: ctx.user, cache: { ...ctx.cache, skip: _input.favorites || _input.hidden } },
+  });
+});
+
 export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     // .use(applyUserPreferences)
+    .use(skipEdgeCache)
     .use(edgeCacheIt({ ttl: 60, tags: () => ['models'] }))
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
