@@ -44,7 +44,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
     ModelSearchIndexRecord | ArticleSearchIndexRecord | null
   >(props?.resource ?? null);
   const currentUser = useCurrentUser();
-  const [createClubPost, setCreateClubPost] = React.useState<boolean>(false);
+  const [createClubPost, setCreateClubPost] = React.useState<boolean>(true);
 
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -218,7 +218,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
                 onChange={() => {
                   setCreateClubPost(!createClubPost);
                 }}
-                label={<Text>I want to create a club post for this resource</Text>}
+                label={<Text>Also create Club Feed post</Text>}
               />
             </Stack>
           )}
