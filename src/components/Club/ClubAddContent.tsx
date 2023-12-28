@@ -61,7 +61,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
           {canCreatePosts && (
             <UnstyledButton
               onClick={() => {
-                router.push(`/posts/create?clubId=${clubId}`);
+                router.push(`/posts/create?clubId=${clubId}&returnUrl=${router.asPath}`);
                 handleClose();
               }}
               className={classes.button}
@@ -78,6 +78,9 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
               onClick={() => {
                 dialogStore.trigger({
                   component: AddResourceToClubModal,
+                  props: {
+                    clubId,
+                  },
                 });
 
                 handleClose();

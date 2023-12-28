@@ -27,6 +27,7 @@ import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buz
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { bustCacheTag } from '../utils/cache-helpers';
+import { isEqual } from 'lodash-es';
 
 export const userContributingClubs = async ({
   userId,
@@ -692,6 +693,16 @@ export const upsertClubResource = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
+  const [clubRequirement] = await entityRequiresClub({
+    entityType,
+    entityIds: [entityId],
+  });
+
+  if (isEqual(clubRequirement?.clubs ?? [], clubs)) {
+    // No change:
+    return;
+  }
+
   // First, check that the person is
   const [ownership] = await entityOwnership({ userId, entityIds: [entityId], entityType });
 
@@ -1021,7 +1032,7 @@ export const getPaginatedClubResources = async ({
         )
         WHEN ea."accessToType" = 'Post' THEN jsonb_build_object(
           'id', p."id",
-          'title', COALESCE(p."title", 'N/A')
+          'title', COALESCE(p."title", 'Image Post')
         )
         ELSE '{}'::jsonb
       END

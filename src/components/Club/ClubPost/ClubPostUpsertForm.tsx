@@ -297,7 +297,13 @@ export const ClubPostFromResourceModal = ({
   );
 };
 
-export const ClubPostUpsertFormModal = (props: { clubId: number }) => {
+export const ClubPostUpsertFormModal = (props: {
+  clubId: number;
+  resource?: {
+    entityId: number;
+    entityType: SupportedClubPostEntities;
+  };
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const handleSuccess = () => {
