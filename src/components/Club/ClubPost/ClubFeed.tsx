@@ -55,6 +55,15 @@ export const useClubFeedStyles = createStyles((theme) => ({
     borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
   },
+  clubPost: {
+    maxWidth: 700,
+    width: '100%',
+  },
+  feedContainerWithCover: {
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    padding: 0,
+  },
   title: {
     [theme.fn.smallerThan('sm')]: {
       fontSize: '24px',
@@ -173,7 +182,7 @@ export function ClubPostContextMenu({
 }
 
 export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] }) => {
-  const { classes } = useClubFeedStyles();
+  const { classes, cx } = useClubFeedStyles();
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({
     triggerOnce: true,
@@ -195,41 +204,43 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
   }, [clubPost]);
 
   return (
-    <Paper className={classes.feedContainer}>
-      <Stack>
-        {clubPost.coverImage && (
-          <ImageCSSAspectRatioWrap aspectRatio={constants.clubs.postCoverImageAspectRatio}>
-            <ImageGuard
-              images={[clubPost.coverImage]}
-              connect={{ entityId: clubPost.coverImage.id, entityType: 'club' }}
-              render={(image) => {
-                return (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        {!safe ? (
-                          <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                        ) : (
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{ width: 450 }}
-                            radius="md"
-                            style={{ width: '100%', height: '100%' }}
-                            aspectRatio={0}
-                          />
-                        )}
-                        <div style={{ width: '100%', height: '100%' }}>
-                          <ImageGuard.ToggleConnect position="top-left" />
-                          <ImageGuard.Report withinPortal />
-                        </div>
-                      </>
+    <Paper
+      className={cx(classes.feedContainer, classes.clubPost, {
+        [classes.feedContainerWithCover]: !!clubPost.coverImage,
+      })}
+    >
+      {clubPost.coverImage && (
+        <ImageGuard
+          images={[clubPost.coverImage]}
+          connect={{ entityId: clubPost.coverImage.id, entityType: 'club' }}
+          render={(image) => {
+            return (
+              <ImageGuard.Content>
+                {({ safe }) => (
+                  <>
+                    {!safe ? (
+                      <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 1600 }}
+                        radius="md"
+                        style={{ width: '100%', height: '100%' }}
+                        aspectRatio={0}
+                      />
                     )}
-                  </ImageGuard.Content>
-                );
-              }}
-            />
-          </ImageCSSAspectRatioWrap>
-        )}
+                    <div style={{ width: '100%', height: '100%' }}>
+                      <ImageGuard.ToggleConnect position="top-left" />
+                      <ImageGuard.Report withinPortal />
+                    </div>
+                  </>
+                )}
+              </ImageGuard.Content>
+            );
+          }}
+        />
+      )}
+      <Stack p="md">
         <Title order={3} className={classes.title} ref={ref}>
           {title}
         </Title>

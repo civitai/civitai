@@ -50,13 +50,16 @@ import { ClubPostResourceCard } from './ClubFeed';
 
 const formSchema = upsertClubPostInput.refine(
   (data) => {
+    console.log(data, data.entityType !== 'Post' && !(data.title && data.description));
     if (data.entityType !== 'Post' && !(data.title && data.description)) {
       return false;
     }
+
+    return true;
   },
   {
     message: 'Title and description are required',
-    path: ['title', 'description'],
+    path: ['title'],
   }
 );
 

@@ -55,7 +55,7 @@ const Feed = () => {
       ) : !!clubPosts.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <Stack spacing="md" mt="md">
+          <Stack spacing="md" mt="md" align="center">
             {clubPosts.map((clubPost) => (
               <ClubPostItem key={clubPost.id} clubPost={clubPost} />
             ))}
