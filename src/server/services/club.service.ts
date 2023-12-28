@@ -25,7 +25,7 @@ import {
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { TierCoverImage } from '../../components/Club/ClubTierItem';
+import { userWithCosmeticsSelect } from '../selectors/user.selector';
 
 export const userContributingClubs = async ({
   userId,
@@ -95,6 +95,9 @@ export const getClub = async ({
       billing: true,
       unlisted: true,
       userId: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
       tiers: {
         take: 1,
         where: {

@@ -165,13 +165,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
                   dropdownItemLimit={25}
                 />
               )}
-              {resourceData && (
-                <Center>
-                  <Box style={{ maxWidth: 250, width: '100%' }}>
-                    <ClubPostResourceCard resourceData={resourceData} />
-                  </Box>
-                </Center>
-              )}
+              {resourceData && <ClubPostResourceCard resourceData={resourceData} />}
               {entityId && entityType && isLoadingResource && (
                 <Center>
                   <Loader />

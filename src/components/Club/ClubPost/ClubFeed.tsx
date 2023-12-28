@@ -14,7 +14,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ClubPostGetAll, ClubPostResource } from '~/types/router';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
@@ -35,11 +35,7 @@ import {
   IconReceiptRefund,
   IconTrash,
 } from '@tabler/icons-react';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import Link from 'next/link';
-import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { openConfirmModal } from '@mantine/modals';
 import { isDefined } from '~/utils/type-guards';
 import { NextLink } from '@mantine/next';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
@@ -49,8 +45,9 @@ import { trpc } from '~/utils/trpc';
 import { ClubAdminPermission } from '@prisma/client';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { PostCard } from '~/components/Cards/PostCard';
 import { SupportedClubPostEntities } from '~/server/schema/club.schema';
+import { ImageCarousel } from '../../Bounty/ImageCarousel';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -127,6 +124,19 @@ export function ClubPostContextMenu({
         Edit
       </Menu.Item>
     ) : null,
+    canUpdatePost &&
+    clubPost.entityType === 'Post' &&
+    'data' in clubPost &&
+    (clubPost.data?.user?.id === currentUser?.id || isModerator) ? (
+      <Menu.Item
+        key="edit"
+        icon={<IconPencilMinus size={14} stroke={1.5} />}
+        href={`/posts/${clubPost.entityId}/edit`}
+        component={NextLink}
+      >
+        Edit Image Post
+      </Menu.Item>
+    ) : null,
     canDeletePost ? (
       <Menu.Item
         key="edit"
@@ -169,6 +179,21 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
     triggerOnce: true,
   });
 
+  const { title, description } = useMemo(() => {
+    if (clubPost.title) {
+      return clubPost;
+    }
+
+    if (clubPost.entityType === 'Post' && 'data' in clubPost) {
+      return {
+        title: clubPost.data?.title ?? '',
+        description: clubPost.data?.detail ?? '',
+      };
+    }
+
+    return clubPost;
+  }, [clubPost]);
+
   return (
     <Paper className={classes.feedContainer}>
       <Stack>
@@ -206,7 +231,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
           </ImageCSSAspectRatioWrap>
         )}
         <Title order={3} className={classes.title} ref={ref}>
-          {clubPost.title}
+          {title}
         </Title>
         <Group position="apart">
           <UserAvatar
@@ -218,21 +243,17 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
           <ClubPostContextMenu clubPost={clubPost} />
         </Group>
         {!!clubPost.entityType && !!clubPost.entityId && (
-          <Center my="sm">
-            <Box style={{ maxWidth: 250, width: '100%' }}>
-              <ClubPostResourceCard
-                resourceData={{
-                  ...clubPost,
-                  entityId: clubPost.entityId as number,
-                  entityType: clubPost.entityType as SupportedClubPostEntities,
-                }}
-              />
-            </Box>
-          </Center>
+          <ClubPostResourceCard
+            resourceData={{
+              ...clubPost,
+              entityId: clubPost.entityId as number,
+              entityType: clubPost.entityType as SupportedClubPostEntities,
+            }}
+          />
         )}
-        {clubPost.description && (
+        {description && (
           <>
-            <RenderHtml html={clubPost.description} />
+            <RenderHtml html={description} />
             <Divider />
           </>
         )}
@@ -249,6 +270,8 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
 };
 
 export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostResource }) => {
+  const isMobile = useIsMobile();
+
   if (!('data' in resourceData)) {
     return null;
   }
@@ -258,18 +281,35 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
     resourceData.data
   ) {
     return (
-      <ModelCard
-        data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
-      />
+      <Center>
+        <Box style={{ maxWidth: 250, width: '100%' }}>
+          <ModelCard
+            data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
+          />
+        </Box>
+      </Center>
     );
   }
 
   if (resourceData.entityType === 'Article' && resourceData.data) {
-    return <ArticleCard data={resourceData.data} />;
+    return (
+      <Center>
+        <Box style={{ maxWidth: 250, width: '100%' }}>
+          <ArticleCard data={resourceData.data} />
+        </Box>
+      </Center>
+    );
   }
 
   if (resourceData.entityType === 'Post' && resourceData.data) {
-    return <PostCard data={resourceData.data} />;
+    return (
+      <ImageCarousel
+        mobile={isMobile}
+        images={resourceData.data.images}
+        entityId={resourceData.entityId}
+        entityType="post"
+      />
+    );
   }
 
   return null;

@@ -980,6 +980,7 @@ export async function updateImageTagIdsForImages(imageId: number | number[]) {
 
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
+  postId?: number | null;
 };
 export const getImage = async ({
   id,
@@ -1258,11 +1259,13 @@ export const getImagesForPosts = async ({
   excludedIds,
   userId,
   isOwnerRequest,
+  coverOnly = true,
 }: {
   postIds: number | number[];
   excludedIds?: number[];
   userId?: number;
   isOwnerRequest?: boolean;
+  coverOnly?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [
@@ -1290,6 +1293,8 @@ export const getImagesForPosts = async ({
       width: number;
       height: number;
       hash: string;
+      createdAt: Date;
+      generationProcess: ImageGenerationProcess | null;
       postId: number;
       imageCount: number;
       cryCount: number;
@@ -1308,7 +1313,7 @@ export const getImagesForPosts = async ({
     WITH targets AS (
       SELECT
         i."postId",
-        MIN(i.index) "index",
+        ${Prisma.raw(coverOnly ? 'MIN(i.index) "index",' : '')}
         COUNT(*) "count"
       FROM "Image" i
       WHERE ${Prisma.join(imageWhere, ' AND ')}
@@ -1326,6 +1331,8 @@ export const getImagesForPosts = async ({
       i.type,
       i.metadata,
       i.meta,
+      i."createdAt",
+      i."generationProcess",
       t."postId",
       t.count "imageCount",
       COALESCE(im."cryCount", 0) "cryCount",
@@ -1342,7 +1349,9 @@ export const getImagesForPosts = async ({
         AND "userId" = ${userId}
       ) reactions
     FROM targets t
-    JOIN "Image" i ON i."postId" = t."postId" AND i.index = t.index
+    JOIN "Image" i ON i."postId" = t."postId" ${Prisma.raw(
+      coverOnly ? 'AND i.index = t.index' : ''
+    )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
   `;
   const imageIds = images.map((i) => i.id);
@@ -1359,6 +1368,7 @@ export const getImagesForPosts = async ({
 
   return images.map(({ reactions, ...i }) => ({
     ...i,
+    meta: (i.meta ?? {}) as ImageMetaProps,
     tagIds: rawTags.filter((t) => t.imageId === i.id).map((t) => t.tagId),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   }));

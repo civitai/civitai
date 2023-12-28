@@ -12,6 +12,7 @@ import { ImageGetById, ImageGetInfinite } from '~/types/router';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { removeEmpty } from '../../../utils/object-helpers';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -88,7 +89,12 @@ export function ImageDetailProvider({
   useEffect(() => {
     if (prefetchedImage && shouldFetchImage) {
       browserRouter.replace(
-        { query: { ...browserRouter.query, postId: prefetchedImage.postId } },
+        {
+          query: removeEmpty({
+            ...browserRouter.query,
+            postId: prefetchedImage.postId || undefined,
+          }),
+        },
         `/images/${imageId}`
       );
     }

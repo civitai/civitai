@@ -5,8 +5,6 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import {
-  Alert,
-  Anchor,
   Button,
   Center,
   Container,
@@ -16,7 +14,6 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Paper,
   Stack,
   Text,
   Title,
@@ -26,45 +23,20 @@ import { constants } from '~/server/common/constants';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import {
-  IconAlertCircle,
-  IconClock,
-  IconClubs,
-  IconInfoCircle,
-  IconManualGearbox,
-  IconPencilMinus,
-  IconPlus,
-  IconSettings,
-} from '@tabler/icons-react';
-import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
+import { IconClock, IconClubs, IconPlus, IconSettings } from '@tabler/icons-react';
 import { ClubFeedNavigation } from '~/components/Club/ClubFeedNavigation';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useClubContributorStatus, useQueryClubPosts } from '~/components/Club/club.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { NoContent } from '~/components/NoContent/NoContent';
-import {
-  ClubPostUpsertForm,
-  ClubPostUpsertFormModal,
-} from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import {
-  ClubMembershipStatus,
-  ClubTierItem,
-  useToggleClubMembershipCancelStatus,
-} from '~/components/Club/ClubTierItem';
+import { ClubMembershipStatus, ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ClubAdminPermission, Currency } from '@prisma/client';
 import { ClubAddContent } from '~/components/Club/ClubAddContent';
-import { CurrencyBadge } from '../../../components/Currency/CurrencyBadge';
+import { Meta } from '../../../components/Meta/Meta';
 
 const Feed = () => {
-  const utils = trpc.useContext();
   const router = useRouter();
   const { id: stringId } = router.query as {
     id: string;
@@ -73,11 +45,6 @@ const Feed = () => {
   const { clubPosts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryClubPosts(id);
   const { data: userClubs = [], isLoading: isLoadingUserClubs } =
     trpc.club.userContributingClubs.useQuery();
-  const { classes } = useClubFeedStyles();
-
-  const canPost = useMemo(() => {
-    return userClubs.some((c) => c.id === id);
-  }, [userClubs, isLoadingUserClubs]);
 
   return (
     <>
@@ -205,6 +172,12 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <AppLayout>
+      {club && (
+        <Meta
+          title={`${club.name} - Club hosted by ${club.user.username}`}
+          description={club.description ?? undefined}
+        />
+      )}
       <Container fluid p={0} mt={club.headerImage ? '-md' : ''}>
         {club.headerImage && (
           <ImageCSSAspectRatioWrap
@@ -224,7 +197,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                         ) : (
                           <ImagePreview
                             image={image}
-                            edgeImageProps={{ width: 1200 }}
+                            edgeImageProps={{ width: 1600 }}
                             style={{ width: '100%', height: '100%' }}
                             aspectRatio={0}
                           />

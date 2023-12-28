@@ -68,6 +68,7 @@ type GetAllPostsRaw = {
   modelVersionId: number | null;
   collectionId: number | null;
   availability: Availability;
+  detail?: string | null;
   stats: {
     commentCount: number;
     likeCount: number;
@@ -97,9 +98,10 @@ export const getPostsInfinite = async ({
   followed,
   clubId,
   browsingMode,
-}: PostsQueryInput & {
+}: Omit<PostsQueryInput, 'include'> & {
   user?: { id: number; isModerator?: boolean; username?: string };
   ignoreListedStatus?: boolean;
+  include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const WITH: Prisma.Sql[] = [];
@@ -261,6 +263,7 @@ export const getPostsInfinite = async ({
       p."unlisted",
       p."modelVersionId",
       p."collectionId",
+      ${include?.includes('detail') ? Prisma.sql`p."detail",` : ''}
       p."availability",
       (
         SELECT jsonb_build_object(

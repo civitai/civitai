@@ -77,6 +77,7 @@ export const upsertArticleInput = z.object({
   // TODO.articles: check what's going to be stored on metadata
   // metadata: z.object({}).nullish(),
   clubs: z.array(clubResourceSchema).optional(),
+  unlisted: z.boolean().optional(),
 });
 
 export type GetArticlesByCategorySchema = z.infer<typeof getArticlesByCategorySchema>;
