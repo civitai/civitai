@@ -17,7 +17,7 @@ import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
-import { ImageScanType, ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -127,7 +127,12 @@ export const moderateImages = async ({
     if (reviewType !== 'reported') {
       await dbWrite.image.updateMany({
         where: { id: { in: ids }, needsReview: { not: null } },
-        data: { nsfw, needsReview: null, ingestion: 'Blocked', blockedFor: 'moderated' },
+        data: {
+          nsfw,
+          needsReview: null,
+          ingestion: 'Blocked',
+          blockedFor: BlockedReason.Moderated,
+        },
       });
     } else {
       const images = await dbRead.image.findMany({
@@ -147,7 +152,7 @@ export const moderateImages = async ({
   } else {
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { nsfw, needsReview },
+      data: { nsfw, needsReview, ingestion: 'Scanned' },
     });
 
     // Remove tags that triggered review
@@ -654,7 +659,14 @@ export const getAllImages = async ({
       orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
       if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
-    else orderBy = `i."id" DESC`;
+    else {
+      if (from.indexOf(`irr`) !== -1) {
+        // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
+        orderBy = `irr."imageId" DESC`;
+      } else {
+        orderBy = `i."id" DESC`;
+      }
+    }
   }
 
   if (hidden) {
@@ -680,7 +692,11 @@ export const getAllImages = async ({
   if (cursor && skip) throw new Error('Cannot use skip with cursor');
 
   // Handle cursor prop
-  const { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
+  let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
+  if (sort === ImageSort.Random) {
+    cursorProp = 'i."id"';
+    cursorClause = undefined;
+  }
   if (cursorClause) AND.push(cursorClause);
 
   if (prioritizeUser) {
@@ -2526,7 +2542,8 @@ async function removeNameReference(images: number[]) {
       )
       UPDATE "Image" i
         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
-          "needsReview" = null
+          "needsReview" = null,
+          ingestion = 'Scanned'::"ImageIngestionStatus"
       FROM updates t
       WHERE t.id = i.id;
     `;

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Button,
   Center,
   Group,
@@ -11,10 +12,17 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons-react';
+import {
+  IconArrowsCross,
+  IconCloudOff,
+  IconEye,
+  IconEyeOff,
+  IconPlus,
+  IconStar,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -36,14 +44,20 @@ import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
+import { IconSettings } from '@tabler/icons-react';
+import { ModelById } from '~/types/router';
+import { GalleryModerationModal } from './GalleryModerationModal';
+import { useModelGallerySettings } from './gallery.utils';
 
-type ModelVersionsProps = { id: number; name: string };
+type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
+  model: ModelById;
   modelVersions?: ModelVersionsProps[];
   filters: {
     modelId?: number;
     username?: string;
   } & Record<string, unknown>;
+  showModerationOptions?: boolean;
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {
@@ -54,32 +68,36 @@ export const useImagesAsPostsInfiniteContext = () => {
 
 type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
-  modelId: number;
+  model: ModelById;
   username?: string;
   modelVersions?: ModelVersionsProps[];
   generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
+  showModerationOptions?: boolean;
 };
 
 const LIMIT = 50;
 export default function ImagesAsPostsInfinite({
-  modelId,
+  model,
   username,
   modelVersions,
   selectedVersionId,
   generationOptions,
+  showModerationOptions,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isMobile = useContainerSmallerThan('sm');
   // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
+  const [opened, setOpened] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
   const setFilters = useSetFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
     modelVersionId: selectedVersionId,
-    modelId,
+    modelId: model.id,
     username,
     types: undefined, // override global types image filter
   });
@@ -102,22 +120,33 @@ export default function ImagesAsPostsInfinite({
     isLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
 
+  const {
+    hiddenImages: galleryHiddenImages,
+    hiddenTags: galleryHiddenTags,
+    hiddenUsers: galleryHiddenUsers,
+    isLoading: loadingGallerySettings,
+  } = useModelGallerySettings({ modelId: model.id });
+
   const items = useMemo(() => {
     // TODO - fetch user reactions for images separately
-    if (isLoadingHidden) return [];
+    if (isLoadingHidden || loadingGallerySettings) return [];
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
     const filtered = arr
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
-        if (hiddenUsers.get(x.user.id)) return false;
+        if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
+          return false;
         return true;
       })
       .map(({ images, ...x }) => {
         const filteredImages = images?.filter((i) => {
+          // show hidden images only
+          if (showHidden) return galleryHiddenImages.get(i.id);
+
           if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
-          if (hiddenImages.get(i.id)) return false;
+          if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
           for (const tag of i.tagIds ?? []) {
-            if (hiddenTags.get(tag)) return false;
+            if (hiddenTags.get(tag) || galleryHiddenTags.get(tag)) return false;
           }
           return true;
         });
@@ -131,16 +160,36 @@ export default function ImagesAsPostsInfinite({
       })
       .filter(isDefined);
     return filtered;
-  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, isLoadingHidden]);
+  }, [
+    data,
+    currentUser,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    isLoadingHidden,
+    galleryHiddenImages,
+    galleryHiddenTags,
+    galleryHiddenUsers,
+    loadingGallerySettings,
+    showHidden,
+  ]);
+
+  useEffect(() => {
+    if (galleryHiddenImages.size === 0) setShowHidden(false);
+  }, [galleryHiddenImages.size]);
 
   const isMuted = currentUser?.muted ?? false;
-  const addPostLink = `/posts/create?modelId=${modelId}${
+  const addPostLink = `/posts/create?modelId=${model.id}${
     selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
   }&returnUrl=${router.asPath}`;
   const { excludeCrossPosts } = imageFilters;
+  const hasModerationPreferences =
+    galleryHiddenImages.size > 0 || galleryHiddenTags.size > 0 || galleryHiddenUsers.size > 0;
 
   return (
-    <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
+    <ImagesAsPostsInfiniteContext.Provider
+      value={{ filters, modelVersions, showModerationOptions, model }}
+    >
       <MasonryProvider columnWidth={310} maxColumnCount={6} maxSingleColumnWidth={450}>
         <MasonryContainer
           fluid
@@ -152,7 +201,7 @@ export default function ImagesAsPostsInfinite({
           })}
         >
           <Stack spacing="md">
-            <Group spacing="xs" align="flex-end">
+            <Group spacing="xs">
               <Title order={2}>Gallery</Title>
               {!isMuted && (
                 <ResourceAccessWrap
@@ -177,8 +226,27 @@ export default function ImagesAsPostsInfinite({
                   </Group>
                 </ResourceAccessWrap>
               )}
+              {showModerationOptions && (
+                <Group ml="auto" spacing={8}>
+                  {galleryHiddenImages.size > 0 && (
+                    <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
+                      <ActionIcon
+                        variant="outline"
+                        color="red"
+                        onClick={() => setShowHidden((h) => !h)}
+                      >
+                        {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                      </ActionIcon>
+                    </ButtonTooltip>
+                  )}
+                  <ButtonTooltip label="Gallery Moderation Preferences">
+                    <ActionIcon variant="outline" onClick={() => setOpened(true)}>
+                      <IconSettings size={16} />
+                    </ActionIcon>
+                  </ButtonTooltip>
+                </Group>
+              )}
             </Group>
-            {/* IMAGES */}
             <Group position="apart" spacing={0}>
               <SortFilter type="modelImages" />
               <Group spacing={4}>
@@ -195,6 +263,15 @@ export default function ImagesAsPostsInfinite({
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
+            {hasModerationPreferences ? (
+              <Text size="xs" color="dimmed" mt="-md">
+                Some images have been hidden based on moderation preferences set by the creator,{' '}
+                <Link href={`/images?modelVersionId=${selectedVersionId}`} passHref>
+                  <Anchor span>view all images using this resource</Anchor>
+                </Link>
+                .
+              </Text>
+            ) : null}
             {/* <ImageCategories /> */}
             {isLoading ? (
               <Paper style={{ minHeight: 200, position: 'relative' }}>
@@ -285,6 +362,8 @@ export default function ImagesAsPostsInfinite({
           </Stack>
         </Paper>
       )} */}
+
+      <GalleryModerationModal opened={opened} onClose={() => setOpened(false)} />
     </ImagesAsPostsInfiniteContext.Provider>
   );
 }

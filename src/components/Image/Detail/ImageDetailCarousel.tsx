@@ -114,9 +114,10 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     alt={image.name ?? undefined}
                     type={image.type}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
-                    width={image.width ?? 1200}
+                    width="original"
                     anim
                     controls
+                    fadeIn
                   />
                   {showGenerateButton && (
                     <Box

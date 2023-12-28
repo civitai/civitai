@@ -125,7 +125,7 @@ function MyApp(props: CustomAppProps) {
                   <ReferralsProvider>
                     <FiltersProvider value={filters}>
                       <HiddenPreferencesProvider>
-                        <CivitaiLinkProvider> 
+                        <CivitaiLinkProvider>
                           <NotificationsProvider zIndex={9999}>
                             <BrowserRouterProvider>
                               <BaseLayout>
@@ -139,7 +139,7 @@ function MyApp(props: CustomAppProps) {
                                 </CustomModalsProvider>
                               </BaseLayout>
                             </BrowserRouterProvider>
-                          </NotificationsProvider> 
+                          </NotificationsProvider>
                         </CivitaiLinkProvider>
                       </HiddenPreferencesProvider>
                     </FiltersProvider>
@@ -249,6 +249,9 @@ function MyApp(props: CustomAppProps) {
               ],
             },
             black: '#222',
+            other: {
+              fadeIn: `opacity 200ms ease-in`,
+            },
           }}
           withGlobalStyles
           withNormalizeCSS

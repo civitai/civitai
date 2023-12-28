@@ -8,7 +8,6 @@ import {
   SwitchProps,
   Skeleton,
   Chip,
-  Badge,
 } from '@mantine/core';
 import { IconRating18Plus } from '@tabler/icons-react';
 import React from 'react';

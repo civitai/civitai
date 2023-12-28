@@ -4,7 +4,6 @@ import {
   CosmeticSource,
   CosmeticType,
   MetricTimeframe,
-  ModelType,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -135,7 +134,7 @@ export const getArticles = async ({
     const WITH: Prisma.Sql[] = [];
 
     if (query) {
-      AND.push(Prisma.sql`a."title" LIKE '%${query}%'`);
+      AND.push(Prisma.raw(`a."title" ILIKE '%${query}%'`));
     }
     if (!!tags?.length) {
       AND.push(
@@ -158,7 +157,14 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a."nsfw" = false`);
     }
     if (username) {
-      AND.push(Prisma.raw(`u."username" = '${username}'`));
+      const targetUser = await dbRead.user.findUnique({
+        where: { username: username ?? '' },
+        select: { id: true },
+      });
+
+      if (!targetUser) throw new Error('User not found');
+
+      AND.push(Prisma.sql`u.id = ${targetUser.id}`);
     }
 
     if (collectionId) {
@@ -264,6 +270,7 @@ export const getArticles = async ({
     else if (sort === ArticleSort.MostTipped)
       orderBy = `rank."tippedAmountCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
 
+    // eslint-disable-next-line prefer-const
     let [cursorProp, cursorDirection] = orderBy?.split(' ');
 
     if (cursorProp === 'a."publishedAt"') {

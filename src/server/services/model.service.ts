@@ -1,5 +1,4 @@
 import {
-  Availability,
   CommercialUse,
   CosmeticSource,
   CosmeticType,
@@ -29,6 +28,7 @@ import {
   GetAllModelsOutput,
   GetModelsByCategoryInput,
   GetModelVersionsSchema,
+  ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
@@ -207,23 +207,23 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.join(
         [
-          Prisma.raw(`
-          m."name" ILIKE '%${query}%'
-        `),
-          Prisma.raw(`
+          Prisma.sql`
+          m."name" ILIKE ${`%${query}%`}
+        `,
+          Prisma.sql`
           EXISTS (
             SELECT 1 FROM "ModelVersion" mvq
             JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
             JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-            WHERE mvq."modelId" = m."id" AND mfh."hash" = '${query}'
+            WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
           )
-        `),
-          Prisma.raw(`
+        `,
+          Prisma.sql`
           EXISTS (
             SELECT 1 FROM "ModelVersion" mvq
-            WHERE mvq."modelId" = m."id" AND '${lowerQuery}' = ANY(mvq."trainedWords")
+            WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
           )
-        `),
+        `,
         ],
         ' OR '
       )
@@ -257,7 +257,14 @@ export const getModelsRaw = async ({
   }
 
   if (username || user) {
-    AND.push(Prisma.raw(`u."username" = '${username ?? user ?? ''}'`));
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: (username || user) ?? '' },
+      select: { id: true },
+    });
+
+    if (!targetUser) throw new Error('User not found');
+
+    AND.push(Prisma.sql`u.id = ${targetUser.id}`);
   }
 
   if (types?.length) {
@@ -441,6 +448,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
   else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
 
+  // eslint-disable-next-line prefer-const
   let [cursorProp, cursorDirection] = orderBy?.split(' ');
 
   if (cursorProp === 'm."lastVersionAt"') {
@@ -1837,3 +1845,28 @@ export const setAssociatedResources = async (
   ]);
 };
 // #endregion
+
+export const getGalleryHiddenPreferences = async ({
+  settings,
+}: {
+  settings: ModelGallerySettingsSchema;
+}) => {
+  const { tags, users, images } = settings;
+  const hiddenTags =
+    tags && tags.length
+      ? await dbRead.tag.findMany({
+          where: { id: { in: tags } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+  const hiddenUsers =
+    users && users.length
+      ? await dbRead.user.findMany({
+          where: { id: { in: users } },
+          select: { id: true, username: true },
+        })
+      : [];
+
+  return { hiddenTags, hiddenUsers, hiddenImages: images ?? [] };
+};

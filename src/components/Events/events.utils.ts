@@ -7,12 +7,13 @@ export const useQueryEvent = ({ event }: EventInput) => {
   const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery({
     event,
   });
+  const ended = eventData && eventData.endDate < new Date();
+  const window = ended ? 'day' : 'hour';
+  const start =
+    ended && eventData ? eventData.startDate : dayjs().subtract(3, 'days').startOf('hour').toDate();
+
   const { data: teamScoresHistory = [], isLoading: loadingHistory } =
-    trpc.event.getTeamScoreHistory.useQuery({
-      event,
-      window: 'hour',
-      start: dayjs().subtract(3, 'days').startOf('hour').toDate(),
-    });
+    trpc.event.getTeamScoreHistory.useQuery({ event, window, start }, { enabled: !!eventData });
   const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery({
     event,
   });

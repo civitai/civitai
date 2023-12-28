@@ -34,7 +34,7 @@ import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const { ref, inView } = useInView({ rootMargin: '200% 0px' });
   const { classes, cx } = useStyles();
   const { images } = useImagesContext();
   const features = useFeatureFlags();
@@ -77,175 +77,182 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
     <HolidayFrame {...cardDecoration}>
       <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
         <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
-          {inView && (
-            <>
-              {onSite && <OnsiteIndicator />}
-              <ImageGuard
-                images={[image]}
-                render={(image) => (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        <Group
-                          position="apart"
-                          align="start"
-                          spacing={4}
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            width: '100%',
-                            zIndex: 10,
-                            padding: 8,
-                          }}
-                        >
-                          <ImageGuard.ToggleImage position="static" />
-                          <Stack spacing="xs" ml="auto">
-                            {!isBlocked && <ImageGuard.Report context="image" position="static" />}
-                            {features.imageGeneration && image.meta && (
-                              <HoverActionButton
-                                label="Create"
-                                size={30}
-                                color="white"
+          <AspectRatio
+            className={classes.blurHash}
+            ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+          >
+            <MediaHash {...image} />
+          </AspectRatio>
+
+          <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
+            {inView && (
+              <>
+                {onSite && <OnsiteIndicator />}
+                <ImageGuard
+                  images={[image]}
+                  render={(image) => (
+                    <ImageGuard.Content>
+                      {({ safe }) => (
+                        <>
+                          <Group
+                            position="apart"
+                            align="start"
+                            spacing={4}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              zIndex: 10,
+                              padding: 8,
+                            }}
+                          >
+                            <ImageGuard.ToggleImage position="static" />
+                            <Stack spacing="xs" ml="auto">
+                              {!isBlocked && (
+                                <ImageGuard.Report context="image" position="static" />
+                              )}
+                              {features.imageGeneration && image.meta && (
+                                <HoverActionButton
+                                  label="Create"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    generationPanel.open({
+                                      type: 'image',
+                                      id: image.id,
+                                    });
+                                  }}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
+                              {scheduled && (
+                                <Tooltip label="Scheduled">
+                                  <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                                    <IconClock2 size={16} strokeWidth={2.5} />
+                                  </ThemeIcon>
+                                </Tooltip>
+                              )}
+                              {notPublished && (
+                                <Tooltip label="Not published">
+                                  <ThemeIcon size={30} radius="xl" variant="filled" color="yellow">
+                                    <IconAlertTriangle size={16} strokeWidth={2.5} />
+                                  </ThemeIcon>
+                                </Tooltip>
+                              )}
+                            </Stack>
+                          </Group>
+                          {safe && (
+                            <EdgeMedia
+                              src={image.url}
+                              className={cx({ [classes.blocked]: isBlocked })}
+                              name={image.name ?? image.id.toString()}
+                              alt={image.name ?? undefined}
+                              type={image.type}
+                              width={450}
+                              placeholder="empty"
+                              style={{ width: '100%' }}
+                              fadeIn
+                            />
+                          )}
+
+                          <div className="footer-abs">
+                            {showVotes ? (
+                              <div className={classes.footer}>
+                                <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                              </div>
+                            ) : ingestionData.ingestion !== ImageIngestionStatus.Blocked ? (
+                              isLoading ? (
+                                <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
+                                  <Stack spacing={4}>
+                                    <Group spacing={8} noWrap>
+                                      <Loader size={20} />
+                                      <Badge size="xs" color="yellow">
+                                        Analyzing
+                                      </Badge>
+                                    </Group>
+                                    <Text size="sm" inline>
+                                      This image will be available to the community once processing
+                                      is done.
+                                    </Text>
+                                  </Stack>
+                                </Box>
+                              ) : loadingFailed ? (
+                                <Alert className={classes.info} variant="filled" color="yellow">
+                                  There are no tags associated with this image yet. Tags will be
+                                  assigned to this image soon.
+                                </Alert>
+                              ) : (
+                                <Group className={classes.info} spacing={4} position="apart" noWrap>
+                                  <Reactions
+                                    entityId={image.id}
+                                    entityType="image"
+                                    reactions={image.reactions}
+                                    metrics={{
+                                      likeCount: image.stats?.likeCountAllTime,
+                                      dislikeCount: image.stats?.dislikeCountAllTime,
+                                      heartCount: image.stats?.heartCountAllTime,
+                                      laughCount: image.stats?.laughCountAllTime,
+                                      cryCount: image.stats?.cryCountAllTime,
+                                      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                    }}
+                                    targetUserId={image.user.id}
+                                    readonly={!safe}
+                                    className={classes.reactions}
+                                  />
+                                  {!image.hideMeta && image.meta && (
+                                    <ImageMetaPopover
+                                      meta={image.meta}
+                                      generationProcess={image.generationProcess ?? undefined}
+                                      imageId={image.id}
+                                    >
+                                      <ActionIcon variant="transparent" size="lg">
+                                        <IconInfoCircle
+                                          color="white"
+                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                          opacity={0.8}
+                                          strokeWidth={2.5}
+                                          size={26}
+                                        />
+                                      </ActionIcon>
+                                    </ImageMetaPopover>
+                                  )}
+                                </Group>
+                              )
+                            ) : (
+                              <Alert
+                                color="red"
                                 variant="filled"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  generationPanel.open({
-                                    type: 'image',
-                                    id: image.id,
-                                  });
-                                }}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
-                            {scheduled && (
-                              <Tooltip label="Scheduled">
-                                <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
-                                  <IconClock2 size={16} strokeWidth={2.5} />
-                                </ThemeIcon>
-                              </Tooltip>
-                            )}
-                            {notPublished && (
-                              <Tooltip label="Not published">
-                                <ThemeIcon size={30} radius="xl" variant="filled" color="yellow">
-                                  <IconAlertTriangle size={16} strokeWidth={2.5} />
-                                </ThemeIcon>
-                              </Tooltip>
-                            )}
-                          </Stack>
-                        </Group>
-
-                        {!safe ? (
-                          <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        ) : (
-                          <EdgeMedia
-                            src={image.url}
-                            className={cx({ [classes.blocked]: isBlocked })}
-                            name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
-                            type={image.type}
-                            width={450}
-                            placeholder="empty"
-                            style={{ width: '100%' }}
-                          />
-                        )}
-
-                        <div className="footer-abs">
-                          {showVotes ? (
-                            <div className={classes.footer}>
-                              <VotableTags entityType="image" entityId={image.id} tags={tags} />
-                            </div>
-                          ) : ingestionData.ingestion !== ImageIngestionStatus.Blocked ? (
-                            isLoading ? (
-                              <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
-                                <Stack spacing={4}>
-                                  <Group spacing={8} noWrap>
-                                    <Loader size={20} />
-                                    <Badge size="xs" color="yellow">
-                                      Analyzing
-                                    </Badge>
+                                radius={0}
+                                className={classes.info}
+                                title={
+                                  <Group spacing={4}>
+                                    <IconInfoCircle />
+                                    <Text inline>TOS Violation</Text>
                                   </Group>
+                                }
+                              >
+                                <Stack align="flex-end" spacing={0}>
                                   <Text size="sm" inline>
-                                    This image will be available to the community once processing is
-                                    done.
+                                    The image you uploaded was determined to violate our TOS and
+                                    will be completely removed from our service.
                                   </Text>
                                 </Stack>
-                              </Box>
-                            ) : loadingFailed ? (
-                              <Alert className={classes.info} variant="filled" color="yellow">
-                                There are no tags associated with this image yet. Tags will be
-                                assigned to this image soon.
                               </Alert>
-                            ) : (
-                              <Group className={classes.info} spacing={4} position="apart" noWrap>
-                                <Reactions
-                                  entityId={image.id}
-                                  entityType="image"
-                                  reactions={image.reactions}
-                                  metrics={{
-                                    likeCount: image.stats?.likeCountAllTime,
-                                    dislikeCount: image.stats?.dislikeCountAllTime,
-                                    heartCount: image.stats?.heartCountAllTime,
-                                    laughCount: image.stats?.laughCountAllTime,
-                                    cryCount: image.stats?.cryCountAllTime,
-                                    tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                  }}
-                                  targetUserId={image.user.id}
-                                  readonly={!safe}
-                                  className={classes.reactions}
-                                />
-                                {!image.hideMeta && image.meta && (
-                                  <ImageMetaPopover
-                                    meta={image.meta}
-                                    generationProcess={image.generationProcess ?? undefined}
-                                    imageId={image.id}
-                                  >
-                                    <ActionIcon variant="transparent" size="lg">
-                                      <IconInfoCircle
-                                        color="white"
-                                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                        opacity={0.8}
-                                        strokeWidth={2.5}
-                                        size={26}
-                                      />
-                                    </ActionIcon>
-                                  </ImageMetaPopover>
-                                )}
-                              </Group>
-                            )
-                          ) : (
-                            <Alert
-                              color="red"
-                              variant="filled"
-                              radius={0}
-                              className={classes.info}
-                              title={
-                                <Group spacing={4}>
-                                  <IconInfoCircle />
-                                  <Text inline>TOS Violation</Text>
-                                </Group>
-                              }
-                            >
-                              <Stack align="flex-end" spacing={0}>
-                                <Text size="sm" inline>
-                                  The image you uploaded was determined to violate our TOS and will
-                                  be completely removed from our service.
-                                </Text>
-                              </Stack>
-                            </Alert>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </ImageGuard.Content>
-                )}
-              />
-            </>
-          )}
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </ImageGuard.Content>
+                  )}
+                />
+              </>
+            )}
+          </div>
         </MasonryCard>
       </RoutedDialogLink>
     </HolidayFrame>
@@ -279,7 +286,7 @@ const useStyles = createStyles((theme, _, getRef) => {
         to: 'rgba(37,38,43,0)',
         deg: 0,
       }),
-      backdropFilter: 'blur(13px) saturate(160%)',
+      backdropFilter: 'blur(5px) saturate(160%)',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       zIndex: 10,
       gap: 6,
@@ -289,9 +296,9 @@ const useStyles = createStyles((theme, _, getRef) => {
       borderRadius: theme.radius.sm,
       background: theme.fn.rgba(
         theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.8
+        0.6
       ),
-      backdropFilter: 'blur(13px) saturate(160%)',
+      backdropFilter: 'blur(5px) saturate(160%)',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,
     },
@@ -305,6 +312,23 @@ const useStyles = createStyles((theme, _, getRef) => {
       padding: 5,
     },
     blocked: { opacity: 0.3 },
+    blurHash: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      zIndex: 1,
+      opacity: 0.7,
+    },
+    content: {
+      position: 'absolute',
+      zIndex: 2,
+      width: '100%',
+      height: '100%',
+      opacity: 0,
+      transition: theme.other.fadeIn,
+    },
 
     link: {
       [`&:has(~ .frame-decor) .${footerRef}, &:has(~ .frame-decor) .${infoRef}`]: {

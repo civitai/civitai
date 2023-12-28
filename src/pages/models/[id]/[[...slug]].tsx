@@ -8,7 +8,6 @@ import {
   Divider,
   Group,
   Menu,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -17,8 +16,6 @@ import {
   Center,
   Box,
   Loader,
-  List,
-  Anchor,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -49,7 +46,6 @@ import {
   IconInfoCircle,
   IconBolt,
   IconRadar2,
-  IconClubs,
   IconBrush,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -1069,9 +1065,10 @@ export default function ModelDetailsV2({
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
-            modelId={model.id}
+            model={model}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
+            showModerationOptions={isOwner}
             generationOptions={{
               generationModelId: selectedVersion?.meta.picFinderModelId,
               includeEditingActions: isOwner,

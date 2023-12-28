@@ -176,3 +176,8 @@ export enum ClubMembershipSort {
 export enum ClubSort {
   Newest = 'Newest',
 }
+
+export enum BlockedReason {
+  TOS = 'tos',
+  Moderated = 'moderated',
+}

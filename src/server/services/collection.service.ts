@@ -1136,7 +1136,7 @@ export const updateCollectionItemsStatus = async ({
 
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
-      UPDATE "CollectionItem" 
+      UPDATE "CollectionItem"
       SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
       collection.mode === CollectionMode.Contest
         ? ', "randomId" = FLOOR(RANDOM() * 1000000000)'

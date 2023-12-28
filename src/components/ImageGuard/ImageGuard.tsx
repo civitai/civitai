@@ -7,6 +7,9 @@ import {
   HoverCard,
   MantineSize,
   Menu,
+  MenuDividerProps,
+  MenuItemProps,
+  MenuLabelProps,
   Popover,
   Stack,
   Sx,
@@ -302,10 +305,14 @@ ImageGuard.Report = function ReportImage({
   position = 'top-right',
   withinPortal = false,
   context = 'image',
+  additionalMenuItems,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
   context?: 'post' | 'image';
+  additionalMenuItems?:
+    | React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[]
+    | null;
 }) {
   const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();
@@ -464,6 +471,13 @@ ImageGuard.Report = function ReportImage({
       ),
     });
 
+  if (isOwner && features.clubs && image.postId) {
+    defaultMenuItems.push({
+      key: 'add-to-club',
+      component: <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={image.postId} />,
+    });
+  }
+
   if (features.clubs && image.postId) {
     defaultMenuItems.push({
       key: 'create-club-post-from-resource',
@@ -579,7 +593,10 @@ ImageGuard.Report = function ReportImage({
               />
             </ActionIcon>
           </Menu.Target>
-          <Menu.Dropdown>{menuItems}</Menu.Dropdown>
+          <Menu.Dropdown>
+            {menuItems}
+            {additionalMenuItems}
+          </Menu.Dropdown>
         </Menu>
       )}
     </Group>

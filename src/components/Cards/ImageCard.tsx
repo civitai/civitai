@@ -134,7 +134,7 @@ export function UnroutedImageCard({ data }: Props) {
             )}
             <Group spacing={4} position="apart">
               <Reactions
-                className={sharedClasses.infoChip}
+                className={sharedClasses.reactions}
                 entityId={data.id}
                 entityType="image"
                 reactions={data.reactions}

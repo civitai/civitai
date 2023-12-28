@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const getUserNotificationsSchema = getAllQuerySchema.extend({
-  cursor: z.string(),
+  cursor: z.date(),
   unread: z.boolean().default(false),
 });
 export type GetUserNotificationsSchema = z.infer<typeof getUserNotificationsSchema>;
@@ -16,7 +16,6 @@ export const toggleNotificationSettingInput = z.object({
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
 export const markReadNotificationInput = z.object({
-  userId: z.number(),
   id: z.string().optional(),
   all: z.boolean().optional(),
 });

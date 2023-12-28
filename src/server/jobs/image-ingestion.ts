@@ -2,6 +2,7 @@ import { ImageIngestionStatus } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
+import { BlockedReason } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { deleteImageById, ingestImageBulk } from '~/server/services/image.service';
@@ -51,9 +52,15 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
 });
 
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
-  // if (!isProd) return;
+  if (!isProd) return;
   const images = await dbRead.image.findMany({
-    where: { ingestion: ImageIngestionStatus.Blocked },
+    where: {
+      ingestion: ImageIngestionStatus.Blocked,
+      OR: [
+        { createdAt: { lte: decreaseDate(new Date(), 7, 'days') } },
+        { blockedFor: BlockedReason.Moderated },
+      ],
+    },
     select: { id: true },
   });
   if (!images.length) return;
