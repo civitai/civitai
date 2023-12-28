@@ -89,12 +89,16 @@ export const ClubRequirementNotice = ({
         <ThemeIcon radius="xl">
           <IconClubs />
         </ThemeIcon>
-        <Text size="sm">
-          This {getDisplayName(entityType)} requires a club membership to access.
+        <Text size="sm" weight="bold">
+          This {getDisplayName(entityType)} is exclusive to club supporters.
         </Text>
         {clubs.length > 0 && (
           <Stack>
-            <Text size="sm">To get access to this resource, join one of these creator clubs:</Text>
+            <Text size="sm">
+              This {getDisplayName(entityType)} is intended as additional content to reward members
+              of a creator&rsquo;s club. If you&rsquo;d like to access this{' '}
+              {getDisplayName(entityType)} you can sign up for one of the following clubs:
+            </Text>
             <List size="xs" spacing={8}>
               {clubs.map((club) => {
                 const requirement = clubRequirement.clubs.find((c) => c.clubId === club.id);
