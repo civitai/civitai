@@ -72,6 +72,7 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
     edgeCacheTTL: 3 * 60,
     staleWhileRevalidate: 60,
     canCache: true,
+    skip: false,
   },
   res,
 });
