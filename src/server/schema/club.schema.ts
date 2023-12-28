@@ -97,7 +97,7 @@ export type GetInfiniteClubPostsSchema = z.infer<typeof getInfiniteClubPostsSche
 
 export const upsertClubPostInput = z.object({
   id: z.number().optional(),
-  title: z.string().nullish(),
+  title: z.string().max(255).nullish(),
   description: z.string().nullish(),
   coverImage: comfylessImageSchema.nullish(),
   membersOnly: z.boolean().default(false),

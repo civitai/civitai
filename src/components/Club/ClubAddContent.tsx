@@ -7,6 +7,7 @@ import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { ClubAdminPermission } from '@prisma/client';
 import { useClubContributorStatus } from './club.utils';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 const useStyles = createStyles((theme) => ({
   button: {
@@ -20,6 +21,7 @@ const useStyles = createStyles((theme) => ({
 export const ClubAddContent = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
+  const router = useRouter();
   const { classes } = useStyles();
   const { isOwner, isModerator, isClubAdmin, permissions } = useClubContributorStatus({
     clubId,
@@ -57,14 +59,18 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
             </UnstyledButton>
           )}
           {canCreatePosts && (
-            <Link href={`/posts/create?clubId=${clubId}`} onClick={handleClose} passHref>
-              <UnstyledButton className={classes.button}>
-                <Stack align="center">
-                  <IconPictureInPicture />
-                  <Text size="sm">Image Post</Text>
-                </Stack>
-              </UnstyledButton>
-            </Link>
+            <UnstyledButton
+              onClick={() => {
+                router.push(`/posts/create?clubId=${clubId}`);
+                handleClose();
+              }}
+              className={classes.button}
+            >
+              <Stack align="center">
+                <IconPictureInPicture />
+                <Text size="sm">Image Post</Text>
+              </Stack>
+            </UnstyledButton>
           )}
           {canCreateResources && (
             <UnstyledButton

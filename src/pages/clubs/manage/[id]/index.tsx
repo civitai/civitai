@@ -214,7 +214,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
               <Anchor size="sm">
                 <Group spacing={4}>
                   <IconArrowLeft />
-                  <Text inherit>Back to club&rsquo;s feed page</Text>
+                  <Text inherit>Back to clubs feed page</Text>
                 </Group>
               </Anchor>
             </Link>
@@ -257,8 +257,8 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
             <Title order={1}>{club.name}</Title>
             {setupIncomplete && (
               <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconAlertCircle />}>
-                Looks like your club is not complete and will not show up in the club&rsquo;s feed
-                for others to join. In order to complete your setup, you should:
+                Looks like your club is not complete and will not show up in the clubs feed for
+                others to join. In order to complete your setup, you should:
                 <ul>
                   {!club.hasTiers && (
                     <li>

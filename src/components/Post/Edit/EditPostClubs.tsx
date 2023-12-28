@@ -42,14 +42,14 @@ export function EditPostClubs() {
       </Text>
       {!publishedAt && (
         <Text size="xs">
-          This resource will be posted in the club feed once the post is published on the clubs that
-          you have permission to manage club feed posts.
+          A club post will be created once the post is published on the clubs that you have selected
+          and have permission to create club posts.
         </Text>
       )}
 
       <Text size="xs" color="dimmed">
-        By adding this resource available to club members only. People will still see this resource
-        in the public list, but will be required to join the club to use it.
+        Adding this resource to a club will make it so that only club members can see all photos and
+        content in this post. Other users will only see a cover photo.
       </Text>
 
       <ClubResourceManagementInput value={clubs} onChange={setClubs} />

@@ -66,8 +66,9 @@ export function ImageDetailProvider({
   const active = browserRouter.query.active;
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId } = browserRouter.query;
-  const { modelId, modelVersionId, username, reactions } = filters;
+  const { postId: queryPostId } = browserRouter.query;
+  const { modelId, modelVersionId, username, reactions, postId: filterPostId } = filters;
+  const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(

@@ -49,6 +49,7 @@ import { SupportedClubPostEntities } from '~/server/schema/club.schema';
 import { ImageCarousel } from '../../Bounty/ImageCarousel';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
+import { ContentClamp } from '../../ContentClamp/ContentClamp';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -66,6 +67,7 @@ export const useClubFeedStyles = createStyles((theme) => ({
     padding: 0,
   },
   title: {
+    overflowWrap: 'break-word',
     [theme.fn.smallerThan('sm')]: {
       fontSize: '24px',
     },
@@ -112,7 +114,7 @@ export function ClubPostContextMenu({
         <Stack>
           <Text>Are you sure you want to delete this club post?</Text>
           <Text size="sm" color="red">
-            This action not reversible
+            This action is not reversible
           </Text>
         </Stack>
       ),
@@ -227,7 +229,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
             return (
               <ImageGuard.Content>
                 {({ safe }) => (
-                  <>
+                  <div style={{ width: '100%', position: 'relative' }}>
                     {!safe ? (
                       <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                     ) : (
@@ -239,11 +241,9 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
                         aspectRatio={0}
                       />
                     )}
-                    <div style={{ width: '100%', height: '100%' }}>
-                      <ImageGuard.ToggleConnect position="top-left" />
-                      <ImageGuard.Report withinPortal />
-                    </div>
-                  </>
+                    <ImageGuard.ToggleConnect position="top-left" />
+                    <ImageGuard.Report withinPortal />
+                  </div>
                 )}
               </ImageGuard.Content>
             );
@@ -274,7 +274,9 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
         )}
         {description && (
           <>
-            <RenderHtml html={description} />
+            <ContentClamp maxHeight={400}>
+              <RenderHtml html={description} />
+            </ContentClamp>
             <Divider />
           </>
         )}
@@ -332,7 +334,7 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
         onClick={(image) => {
           triggerRoutedDialog({
             name: 'imageDetail',
-            state: { imageId: image.id },
+            state: { imageId: image.id, filters: { postId: resourceData.data.id } },
           });
         }}
       />
