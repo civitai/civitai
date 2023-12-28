@@ -48,6 +48,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { SupportedClubPostEntities } from '~/server/schema/club.schema';
 import { ImageCarousel } from '../../Bounty/ImageCarousel';
 import { useIsMobile } from '../../../hooks/useIsMobile';
+import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -319,6 +320,12 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
         images={resourceData.data.images}
         entityId={resourceData.entityId}
         entityType="post"
+        onClick={(image) => {
+          triggerRoutedDialog({
+            name: 'imageDetail',
+            state: { imageId: image.id },
+          });
+        }}
       />
     );
   }
