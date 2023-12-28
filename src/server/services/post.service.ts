@@ -222,7 +222,7 @@ export const getPostsInfinite = async ({
   }
 
   if (clubId) {
-    cacheTime = CacheTTL.day;
+    cacheTime = 0; //CacheTTL.day;
     cacheTags.push(`posts-club:${clubId}`);
 
     WITH.push(Prisma.sql`
