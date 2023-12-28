@@ -199,7 +199,7 @@ const onFetchItemsToIndex = async ({
         Prisma.sql`i."type" = 'image'`,
         Prisma.sql`i."needsReview" IS NULL`,
         Prisma.sql`p."publishedAt" IS NOT NULL`,
-        Prisma.sql`p."availability" = 'Public'::"Availability"`,
+        Prisma.sql`p."availability" != 'Private'::"Availability"`,
       ];
 
       if (whereOr) {
