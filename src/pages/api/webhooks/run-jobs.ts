@@ -37,6 +37,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -72,6 +73,7 @@ export const jobs: Job[] = [
   ...bountyJobs,
   ...Object.values(eventEngineJobs),
   processClubMembershipRecurringPayments,
+  resourceGenerationAvailability,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -1,12 +1,6 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
-import {
-  BaseModel,
-  Sampler,
-  constants,
-  generation,
-  baseModelSetTypes,
-} from '~/server/common/constants';
+import { BaseModel, constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';

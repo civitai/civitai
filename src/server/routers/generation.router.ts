@@ -16,6 +16,7 @@ import {
   getGenerationRequests,
   getGenerationResources,
   getGenerationStatus,
+  getUnstableResources,
 } from '~/server/services/generation/generation.service';
 import {
   guardedProcedure,
@@ -70,4 +71,7 @@ export const generationRouter = router({
     const { message } = await getGenerationStatus();
     return message;
   }),
+  getUnstableResources: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(() => getUnstableResources()),
 });

@@ -39,6 +39,7 @@ import { formatDateMin } from '~/utils/date-helpers';
 import {
   getBaseModelSetKey,
   useGenerationStatus,
+  useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -61,7 +62,10 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
 export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const { classes } = useStyle();
+
   const generationStatus = useGenerationStatus();
+  const unstableResources = useUnstableResources();
+
   const { copied, copy } = useClipboard();
   const currentUser = useCurrentUser();
 
@@ -124,6 +128,12 @@ export function QueueItem({ request }: Props) {
   const isFullCoverageModel =
     fullCoverageModels?.some((x) => x.id === request.resources[0].id) ?? false;
 
+  const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
+  const overwriteStatusLabel =
+    hasUnstableResources && status === GenerationRequestStatus.Error
+      ? `${status} - Potentially caused by unstable resources`
+      : status;
+
   // const boost = (request: Generation.Request) => {
   //   console.log('boost it', request);
   // };
@@ -140,7 +150,7 @@ export function QueueItem({ request }: Props) {
         <Group position="apart">
           <Group spacing={8}>
             {!!request.images?.length && (
-              <Tooltip label={status} withArrow color="dark">
+              <Tooltip label={overwriteStatusLabel} withArrow color="dark">
                 <ThemeIcon
                   variant={pendingProcessing ? 'filled' : 'light'}
                   w="auto"
@@ -261,22 +271,7 @@ export function QueueItem({ request }: Props) {
             {prompt}
           </Text>
         </ContentClamp>
-        <Collection
-          items={request.resources}
-          limit={3}
-          renderItem={(resource: Generation.Resource) => (
-            <Badge
-              size="sm"
-              sx={{ maxWidth: 200, cursor: 'pointer' }}
-              component={NextLink}
-              href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
-              onClick={() => generationPanel.close()}
-            >
-              {resource.modelName} - {resource.name}
-            </Badge>
-          )}
-          grouped
-        />
+        <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
         {!!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
@@ -349,3 +344,25 @@ const useStyle = createStyles((theme) => ({
     containerType: 'inline-size',
   },
 }));
+
+const ResourceBadge = (props: Generation.Resource) => {
+  const unstableResources = useUnstableResources();
+
+  const { modelId, modelName, id, name } = props;
+  const unstable = unstableResources?.includes(id);
+
+  const badge = (
+    <Badge
+      size="sm"
+      color={unstable ? 'yellow' : undefined}
+      sx={{ maxWidth: 200, cursor: 'pointer' }}
+      component={NextLink}
+      href={`/models/${modelId}?modelVersionId=${id}`}
+      onClick={() => generationPanel.close()}
+    >
+      {modelName} - {name}
+    </Badge>
+  );
+
+  return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
+};

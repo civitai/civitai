@@ -9,7 +9,7 @@ import {
   PrepareModelInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -46,6 +46,7 @@ import { redis } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
+import { fromJson } from '~/utils/json-helpers';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -767,4 +768,13 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
   return response.data;
+}
+
+export async function getUnstableResources() {
+  const cachedData = await redis
+    .hGet('system:features', 'generation:unstable-resources')
+    .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
+    .catch(() => [] as number[]); // fallback to empty array if redis fails
+
+  return cachedData;
 }
