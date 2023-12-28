@@ -772,7 +772,7 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
 
 export async function getUnstableResources() {
   const cachedData = await redis
-    .get('resource-gen-availability')
+    .hGet('system:features', 'generation:unstable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 

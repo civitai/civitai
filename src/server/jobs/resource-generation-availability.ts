@@ -44,7 +44,11 @@ export const resourceGenerationAvailability = createJob(
         .then((data) => data.map(({ modelVersionId }) => modelVersionId));
 
       // Store new data
-      await redis.set('resource-gen-availability', toJson(affectedResources));
+      await redis.hSet(
+        'system:features',
+        'generation:unstable-resources',
+        toJson(affectedResources)
+      );
     } catch (error) {
       throw error;
     }
