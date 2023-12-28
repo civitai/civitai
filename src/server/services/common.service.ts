@@ -243,47 +243,45 @@ export const entityRequiresClub = async ({
 
   const client = tx || dbRead;
 
+  let query = Prisma.sql``;
+  switch (entityType) {
+    case 'ModelVersion':
+      query = Prisma.sql`
+        SELECT
+          mmv.id as "entityId",
+          mv."availability" as "availability"
+        FROM "ModelVersion" mv 
+        JOIN "Model" mmv ON mv."modelId" = mmv.id
+        WHERE mv.id IN (${Prisma.join(entityIds, ', ')})
+        `;
+
+      break;
+    case 'Article':
+      query = Prisma.sql`
+        SELECT
+          a."id" as "entityId",
+          a."availability" as "availability"
+        FROM "Article" a
+        WHERE id IN (${Prisma.join(entityIds, ', ')})
+        `;
+      break;
+    case 'Post':
+      query = Prisma.sql`
+        SELECT
+          p."id" as "entityId",
+          p."availability" as "availability"
+        FROM "Post" p
+        WHERE id IN (${Prisma.join(entityIds, ', ')})
+          `;
+      break;
+    default:
+      query = Prisma.sql``;
+  }
+
   const entitiesAvailability = await client.$queryRaw<
     { availability: Availability; entityId: number }[]
   >`
-    SELECT
-    ${
-      entityType === 'ModelVersion'
-        ? Prisma.raw(`
-      mmv.id as "entityId",
-      mv."availability" as "availability"
-    `)
-        : entityType === 'Article'
-        ? Prisma.raw(`
-      a."id" as "entityId",
-      a."availability" as "availability"
-    `)
-        : entityType === 'Post'
-        ? Prisma.raw(`
-      p."id" as "entityId",
-      p."availability" as "availability"
-    `)
-        : ''
-    }
-    ${
-      entityType === 'ModelVersion'
-        ? Prisma.raw(`
-        FROM "ModelVersion" mv 
-        JOIN "Model" mmv ON mv."modelId" = mmv.id
-        WHERE mv.id IN (${entityIds.join(', ')})
-    `)
-        : entityType === 'Article'
-        ? Prisma.raw(`
-        FROM "Article" a
-        WHERE id IN (${entityIds.join(', ')})
-    `)
-        : entityType === 'Post'
-        ? Prisma.raw(`
-        FROM "Post" p
-        WHERE id IN (${entityIds.join(', ')})
-    `)
-        : ''
-    }
+    ${query}
   `;
 
   const publicEntities = entitiesAvailability.filter(
