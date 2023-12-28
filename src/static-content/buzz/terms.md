@@ -2,8 +2,6 @@
 title: 'Civitai - Buzz Terms and Conditions'
 ---
 
-## Civitai - Buzz Terms and Conditions
-
 Last Updated: 12/27/2023
 
 **PLEASE READ THE FOLLOWING BUZZ TERMS CAREFULLY:**
