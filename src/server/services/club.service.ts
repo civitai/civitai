@@ -26,6 +26,7 @@ import { getPagingData } from '~/server/utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
+import { bustCacheTag } from '../utils/cache-helpers';
 
 export const userContributingClubs = async ({
   userId,
@@ -758,6 +759,10 @@ export const upsertClubResource = async ({
       },
     });
 
+    if (entityType === 'Post') {
+      await Promise.all(clubs.map((c) => bustCacheTag(`posts-club:${c.clubId}`)));
+    }
+
     if (access) {
       // Some access type - i.e, user access, is still there.
       return;
@@ -773,56 +778,59 @@ export const upsertClubResource = async ({
   }
 
   // Now, add and/or remove it from clubs:
-  await dbWrite.$transaction(async (tx) => {
-    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
-    await tx.entityAccess.deleteMany({
-      where: {
-        accessToId: entityId,
-        accessToType: entityType,
+  // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessToId: entityId,
+      accessToType: entityType,
 
-        accessorType: {
-          // Do not delete user access:
-          in: ['Club', 'ClubTier'],
-        },
+      accessorType: {
+        // Do not delete user access:
+        in: ['Club', 'ClubTier'],
       },
-    });
-
-    const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
-    const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
-    const clubAccessIds = generalClubAccess.map((c) => c.clubId);
-    const tierAccessIds = tierClubAccess
-      .map((c) => c.clubTierIds)
-      .filter(isDefined)
-      .flat();
-
-    // Add general club access:
-    await tx.entityAccess.createMany({
-      data: clubAccessIds.map((clubId) => ({
-        accessToId: entityId,
-        accessToType: entityType,
-        accessorId: clubId,
-        accessorType: 'Club',
-        addedById: userId,
-      })),
-    });
-
-    // Add tier club access:
-    await tx.entityAccess.createMany({
-      data: tierAccessIds.map((clubTierId) => ({
-        accessToId: entityId,
-        accessToType: entityType,
-        accessorId: clubTierId,
-        accessorType: 'ClubTier',
-        addedById: userId,
-      })),
-    });
-
-    await entityAvailabilityUpdate({
-      entityType,
-      entityIds: [entityId],
-      availability: Availability.Private,
-    });
+    },
   });
+
+  const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
+  const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
+  const clubAccessIds = generalClubAccess.map((c) => c.clubId);
+  const tierAccessIds = tierClubAccess
+    .map((c) => c.clubTierIds)
+    .filter(isDefined)
+    .flat();
+
+  // Add general club access:
+  await dbWrite.entityAccess.createMany({
+    data: clubAccessIds.map((clubId) => ({
+      accessToId: entityId,
+      accessToType: entityType,
+      accessorId: clubId,
+      accessorType: 'Club',
+      addedById: userId,
+    })),
+  });
+
+  // Add tier club access:
+  await dbWrite.entityAccess.createMany({
+    data: tierAccessIds.map((clubTierId) => ({
+      accessToId: entityId,
+      accessToType: entityType,
+      accessorId: clubTierId,
+      accessorType: 'ClubTier',
+      addedById: userId,
+    })),
+  });
+
+  await entityAvailabilityUpdate({
+    entityType,
+    entityIds: [entityId],
+    availability: Availability.Private,
+  });
+
+  // Bust caches when items are added to clubs:
+  if (entityType === 'Post') {
+    await Promise.all(clubs.map((c) => bustCacheTag(`posts-club:${c.clubId}`)));
+  }
 };
 
 export const getClubDetailsForResource = async ({

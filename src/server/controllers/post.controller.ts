@@ -43,6 +43,7 @@ import {
 } from '../services/club.service';
 import { ClubAdminPermission } from '@prisma/client';
 import { hasEntityAccess } from '../services/common.service';
+import { bustCacheTag } from '../utils/cache-helpers';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -220,7 +221,7 @@ export const updatePostHandler = async ({
               clubId: c.id,
               entityId: updatedPost.id,
               entityType: 'Post',
-              membersOnly: input.unlisted ?? false,
+              membersOnly: updatedPost.unlisted ?? input.unlisted ?? false,
               createdById: updatedPost.userId,
             })),
           });

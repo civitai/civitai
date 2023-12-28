@@ -1,8 +1,9 @@
 import React from 'react';
 import { trpc } from '~/utils/trpc';
-import { Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ClubMembershipStatus, ClubTierItem } from '../ClubTierItem';
+import Link from 'next/link';
 
 type Props = {
   clubId: number;
@@ -61,6 +62,10 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
       ) : (
         <Text color="dimmed">This club does not exist.</Text>
       )}
+
+      <Link href={`/clubs/${clubId}`} passHref>
+        <Button>Check this club&rsquo;s page</Button>
+      </Link>
     </Modal>
   );
 };

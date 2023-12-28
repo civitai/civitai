@@ -57,7 +57,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
             </UnstyledButton>
           )}
           {canCreatePosts && (
-            <Link href={`/posts/create?clubId=${clubId}`} passHref>
+            <Link href={`/posts/create?clubId=${clubId}`} onClick={handleClose} passHref>
               <UnstyledButton className={classes.button}>
                 <Stack align="center">
                   <IconPictureInPicture />

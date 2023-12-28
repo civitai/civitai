@@ -263,7 +263,7 @@ export const getPostsInfinite = async ({
       p."unlisted",
       p."modelVersionId",
       p."collectionId",
-      ${include?.includes('detail') ? Prisma.sql`p."detail",` : ''}
+      ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
       p."availability",
       (
         SELECT jsonb_build_object(

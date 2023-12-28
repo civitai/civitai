@@ -63,6 +63,7 @@ export function ManagePostStatus() {
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
   const isReordering = useEditPostContext((state) => state.reorder);
   const clubs = useEditPostContext((state) => state.clubs);
+  const unlisted = useEditPostContext((state) => state.unlisted);
 
   const { mutate, isLoading } = trpc.post.update.useMutation({
     onError(error) {
@@ -82,7 +83,7 @@ export function ManagePostStatus() {
     if (!currentUser) return;
     const publishedAt = new Date();
     mutate(
-      { id, publishedAt, clubs },
+      { id, publishedAt, clubs, unlisted },
       {
         onSuccess: async () => {
           setPublishedAt(publishedAt);

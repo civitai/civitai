@@ -204,6 +204,15 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
     return clubPost;
   }, [clubPost]);
 
+  if (
+    clubPost &&
+    clubPost.entityId &&
+    clubPost.entityType &&
+    (!('data' in clubPost) || !clubPost.data)
+  ) {
+    return null;
+  }
+
   return (
     <Paper
       className={cx(classes.feedContainer, classes.clubPost, {
