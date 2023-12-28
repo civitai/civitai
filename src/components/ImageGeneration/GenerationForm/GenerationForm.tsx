@@ -58,6 +58,7 @@ import {
   Badge,
   Alert,
   ThemeIcon,
+  List,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -76,7 +77,7 @@ import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 
-const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
+const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
@@ -124,6 +125,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isSDXL,
     isLCM,
     isFullCoverageModel,
+    unstableResources,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -302,6 +304,21 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Accordion.Panel>
               </Accordion.Item>
             </PersistentAccordion>
+            {unstableResources.length > 0 && (
+              <Alert color="yellow" title="Unstable Resources">
+                <Text size="xs">
+                  The following resources are currently unstable and may not be available for
+                  generation
+                </Text>
+                <List size="xs">
+                  {unstableResources.map((resource) => (
+                    <List.Item key={resource.id}>
+                      {resource.modelName} - {resource.name}
+                    </List.Item>
+                  ))}
+                </List>
+              </Alert>
+            )}
             <Card {...sharedCardProps}>
               <Stack>
                 <Stack spacing={0}>
@@ -749,7 +766,7 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
 
   return (
     <IsClient>
-      <GenerationFormInnner {...args} />
+      <GenerationFormInner {...args} />
     </IsClient>
   );
 };
