@@ -47,6 +47,8 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson } from '~/utils/json-helpers';
+import { openai } from '~/server/integrations/openai';
+import { logToAxiom } from '~/server/logging/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -402,6 +404,22 @@ export const createGenerationRequest = async ({
   if (params.aspectRatio.includes('x'))
     throw throwBadRequestError('Invalid size. Please select your size and try again');
   const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  // External prompt moderation
+  let moderationResult = { flagged: false, categories: [] } as AsyncReturnType<
+    typeof openai.moderatePrompt
+  >;
+  try {
+    moderationResult = await openai.moderatePrompt(params.prompt);
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({ name: 'openai-moderation-error', type: 'error', message: error.message });
+  }
+  if (moderationResult.flagged) {
+    throw throwBadRequestError(
+      `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+    );
+  }
 
   // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
 

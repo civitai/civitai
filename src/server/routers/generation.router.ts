@@ -27,6 +27,8 @@ import {
 } from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
+import { TRPCError } from '@trpc/server';
+import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 
 export const generationRouter = router({
   // #region [requests related]
@@ -37,9 +39,25 @@ export const generationRouter = router({
   createRequest: guardedProcedure
     .input(createGenerationRequestSchema)
     .use(isFlagProtected('imageGeneration'))
-    .mutation(({ input, ctx }) =>
-      createGenerationRequest({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await createGenerationRequest({
+          ...input,
+          userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+        });
+      } catch (e) {
+        // Handle prohibited prompt
+        if (
+          e instanceof TRPCError &&
+          e.code === 'BAD_REQUEST' &&
+          e.message.startsWith('Your prompt was flagged')
+        ) {
+          await reportProhibitedRequestHandler({ input: { prompt: input.params.prompt }, ctx });
+        }
+        throw e;
+      }
+    }),
   deleteRequest: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))

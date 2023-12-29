@@ -100,6 +100,8 @@ export const serverSchema = z.object({
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
   IMAGE_QUERY_CACHING: zc.booleanString,
   POST_QUERY_CACHING: zc.booleanString,
+  OPENAI_TOKEN: z.string().optional(),
+  OPENAI_CATEGORIES: commaDelimitedStringArray().optional(),
 });
 
 /**
