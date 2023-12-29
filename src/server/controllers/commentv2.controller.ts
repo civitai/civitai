@@ -108,7 +108,7 @@ export const upsertCommentV2Handler = async ({
       });
 
       if (!access?.hasAccess) {
-        throw throwAuthorizationError('You do not have access to this resource latest version.');
+        throw throwAuthorizationError('You do not have access to this resource.');
       }
     }
 
@@ -133,7 +133,7 @@ export const upsertCommentV2Handler = async ({
         });
 
         if (!club?.admins.length && !club?.memberships.length && club?.userId !== ctx.user.id)
-          throw throwAuthorizationError('You do not have access to this clubPost.');
+          throw throwAuthorizationError('You do not have access to this club post.');
       }
     }
 
