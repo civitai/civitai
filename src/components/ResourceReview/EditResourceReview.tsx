@@ -1,4 +1,4 @@
-import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core';
+import { Card, Group, Rating, Stack, Text, Divider, Button, Alert } from '@mantine/core';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { trpc } from '~/utils/trpc';
 import { useState, useEffect, useRef } from 'react';
@@ -6,7 +6,8 @@ import { IconChevronDown } from '@tabler/icons-react';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
-import { NextLink } from '@mantine/next';
+import { ResourceAccessWrap } from '../Access/ResourceAccessWrap';
+import Link from 'next/link';
 
 type EditResourceReviewProps = {
   id?: number | null;
@@ -86,81 +87,98 @@ export function EditResourceReview({
   }, [details]); // eslint-disable-line
 
   return (
-    <Card p={8} withBorder>
-      <Stack spacing="xs">
-        {modelVersionId ? (
-          <Stack spacing={4}>
-            <Group align="center" position="apart">
-              <NextLink
-                href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
-                target="_blank"
-              >
-                <Stack spacing={0}>
-                  {modelName && <Text lineClamp={1}>{modelName}</Text>}
-                  {modelVersionName && (
-                    <Text lineClamp={1} size="xs" color="dimmed">
-                      {modelVersionName}
-                    </Text>
-                  )}
-                </Stack>
-              </NextLink>
-              <Rating value={rating} onChange={handleRatingChange} />
-            </Group>
-            {createdAt && (
-              <Text size="xs">
-                Reviewed <DaysFromNow date={createdAt} />
-              </Text>
-            )}
-          </Stack>
+    <ResourceAccessWrap
+      entityType="ModelVersion"
+      entityId={modelVersionId}
+      fallback={
+        modelName ? (
+          <Alert>
+            <Text>
+              You cannot review the model{' '}
+              <Text weight="bold" component="span">
+                {modelName} {modelVersionName ? `(${modelVersionName})` : ''}
+              </Text>{' '}
+              as you have no access to it
+            </Text>
+          </Alert>
         ) : (
-          <Text>{name}</Text>
-        )}
-        {id && (
-          <>
-            <Card.Section>
-              <Divider />
-            </Card.Section>
-            <Stack>
-              {!editDetail ? (
-                <Text variant="link" onClick={toggleEditDetail} size="sm">
-                  <Group spacing={4} sx={{ cursor: 'pointer' }}>
-                    <IconChevronDown size={16} />{' '}
-                    <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
-                  </Group>
-                </Text>
-              ) : (
-                <Form form={form} onSubmit={handleSubmit}>
-                  <Stack spacing="xs">
-                    <InputRTE
-                      name="details"
-                      includeControls={['formatting', 'link']}
-                      hideToolbar
-                      editorSize="sm"
-                      innerRef={commentRef}
-                      placeholder={`What did you think of ${modelName}?`}
-                      styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
-                      // withLinkValidation
-                    />
-                    <Group grow spacing="xs">
-                      <Button size="xs" variant="default" onClick={toggleEditDetail}>
-                        Cancel
-                      </Button>
-                      <Button
-                        size="xs"
-                        type="submit"
-                        loading={isLoading}
-                        variant={form.formState.isDirty ? undefined : 'outline'}
-                      >
-                        Save
-                      </Button>
-                    </Group>
+          <Alert>You cannot review a resource you have no access to</Alert>
+        )
+      }
+    >
+      <Card p={8} withBorder>
+        <Stack spacing="xs">
+          {modelVersionId ? (
+            <Stack spacing={4}>
+              <Group align="center" position="apart">
+                <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
+                  <Stack spacing={0}>
+                    {modelName && <Text lineClamp={1}>{modelName}</Text>}
+                    {modelVersionName && (
+                      <Text lineClamp={1} size="xs" color="dimmed">
+                        {modelVersionName}
+                      </Text>
+                    )}
                   </Stack>
-                </Form>
+                </Link>
+                <Rating value={rating} onChange={handleRatingChange} />
+              </Group>
+              {createdAt && (
+                <Text size="xs">
+                  Reviewed <DaysFromNow date={createdAt} />
+                </Text>
               )}
             </Stack>
-          </>
-        )}
-      </Stack>
-    </Card>
+          ) : (
+            <Text>{name}</Text>
+          )}
+          {id && (
+            <>
+              <Card.Section>
+                <Divider />
+              </Card.Section>
+              <Stack>
+                {!editDetail ? (
+                  <Text variant="link" onClick={toggleEditDetail} size="sm">
+                    <Group spacing={4} sx={{ cursor: 'pointer' }}>
+                      <IconChevronDown size={16} />{' '}
+                      <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
+                    </Group>
+                  </Text>
+                ) : (
+                  <Form form={form} onSubmit={handleSubmit}>
+                    <Stack spacing="xs">
+                      <InputRTE
+                        name="details"
+                        includeControls={['formatting', 'link']}
+                        hideToolbar
+                        editorSize="sm"
+                        innerRef={commentRef}
+                        placeholder={`What did you think of ${modelName}?`}
+                        styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                        // withLinkValidation
+                      />
+                      <Group grow spacing="xs">
+                        <Button size="xs" variant="default" onClick={toggleEditDetail}>
+                          Cancel
+                        </Button>
+                        <Button
+                          size="xs"
+                          type="submit"
+                          loading={isLoading}
+                          variant={form.formState.isDirty ? undefined : 'outline'}
+                        >
+                          Save
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Form>
+                )}
+              </Stack>
+            </>
+          )}
+        </Stack>
+      </Card>
+    </ResourceAccessWrap>
   );
 }

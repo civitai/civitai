@@ -26,6 +26,7 @@ import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '../db/client';
 import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
+import { hasEntityAccess } from '../services/common.service';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -78,24 +79,67 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
+    const type =
+      input.entityType === 'image'
+        ? 'Image'
+        : input.entityType === 'post'
+        ? 'Post'
+        : input.entityType === 'article'
+        ? 'Article'
+        : input.entityType === 'comment'
+        ? 'Comment'
+        : input.entityType === 'review'
+        ? 'Review'
+        : input.entityType === 'bounty'
+        ? 'Bounty'
+        : input.entityType === 'bountyEntry'
+        ? 'BountyEntry'
+        : input.entityType === 'clubPost'
+        ? 'ClubPost'
+        : null;
+
+    if (type === 'Post' || type === 'Article') {
+      // Only cgheck access if model has 1 version. Otherwise, we can't be sure that the user has access to the latest version.
+      const [access] = await hasEntityAccess({
+        entityType: type,
+        entityIds: [input.entityId],
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      if (!access?.hasAccess) {
+        throw throwAuthorizationError('You do not have access to this resource.');
+      }
+    }
+
+    if (type === 'ClubPost') {
+      // confirm the user has access to this clubPost:
+      const clubPost = await dbRead.clubPost.findFirst({
+        where: { id: input.entityId },
+        select: { membersOnly: true, clubId: true },
+      });
+
+      if (!clubPost) throw throwNotFoundError(`No clubPost with id ${input.entityId}`);
+
+      if (clubPost.membersOnly) {
+        // confirm the user is a member of this club in any way:
+        const club = await dbRead.club.findFirst({
+          where: { id: clubPost.clubId },
+          select: {
+            memberships: { where: { userId: ctx.user.id } },
+            userId: true,
+            admins: { where: { userId: ctx.user.id } },
+          },
+        });
+
+        if (!club?.admins.length && !club?.memberships.length && club?.userId !== ctx.user.id)
+          throw throwAuthorizationError('You do not have access to this club post.');
+      }
+    }
+
     const result = await upsertComment({ ...input, userId: ctx.user.id });
     if (!input.id) {
-      const type =
-        input.entityType === 'image'
-          ? 'Image'
-          : input.entityType === 'post'
-          ? 'Post'
-          : input.entityType === 'comment'
-          ? 'Comment'
-          : input.entityType === 'review'
-          ? 'Review'
-          : input.entityType === 'bounty'
-          ? 'Bounty'
-          : input.entityType === 'bountyEntry'
-          ? 'BountyEntry'
-          : null;
-
-      if (type) {
+      if (type && type !== 'ClubPost' && type !== 'Article') {
         await ctx.track.comment({
           type,
           nsfw: result.nsfw,

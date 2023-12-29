@@ -44,8 +44,6 @@ export const upsertClubInput = z.object({
   coverImage: comfylessImageSchema.nullish(),
   headerImage: comfylessImageSchema.nullish(),
   avatar: comfylessImageSchema.nullish(),
-  tiers: z.array(upsertClubTierInput).optional(),
-  deleteTierIds: z.array(z.number()).optional(),
 });
 
 export type GetClubTiersInput = z.infer<typeof getClubTiersInput>;

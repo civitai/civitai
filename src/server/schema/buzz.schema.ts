@@ -17,6 +17,7 @@ export enum TransactionType {
   ClubMembership = 13,
   ClubMembershipRefund = 14,
   ClubWithdrawal = 15,
+  ClubDeposit = 16,
 }
 
 const buzzAccountTypes = ['User', 'Club', 'Other'] as const;
@@ -141,9 +142,9 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
-export const withdrawClubFundsSchema = z.object({
+export const clubTransactionSchema = z.object({
   clubId: z.number(),
   amount: z.number(),
 });
 
-export type WithdrawClubFundsSchema = z.infer<typeof withdrawClubFundsSchema>;
+export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;

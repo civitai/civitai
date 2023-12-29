@@ -2,7 +2,7 @@ import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/co
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { useMutateClub, useQueryClub } from './club.utils';
 import { useBuzz } from '../Buzz/useBuzz';
-import { withdrawClubFundsSchema } from '~/server/schema/buzz.schema';
+import { clubTransactionSchema } from '~/server/schema/buzz.schema';
 import { Form, InputNumber, useForm } from '~/libs/form';
 import { showSuccessNotification } from '~/utils/notifications';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
@@ -10,7 +10,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { z } from 'zod';
 import { Currency } from '@prisma/client';
 
-const schema = withdrawClubFundsSchema.omit({ clubId: true });
+const schema = clubTransactionSchema.omit({ clubId: true });
 
 export const ClubWithdrawFunds = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();

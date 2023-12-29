@@ -1,4 +1,4 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { ModelStatus, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
@@ -26,6 +26,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { dbRead } from '../db/client';
+import { hasEntityAccess } from '../services/common.service';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -78,6 +80,42 @@ export const upsertCommentHandler = async ({
 }) => {
   try {
     const { ownerId, locked } = ctx;
+    const { modelId } = input;
+
+    // Get model and at least 2 version to confirm access.
+    // If model has 1 version, check access to that version. Otherwise, ignore.
+    const model = await dbRead.model.findUnique({
+      where: { id: modelId },
+      select: {
+        id: true,
+        modelVersions: {
+          take: 2,
+          select: { id: true },
+          where: { status: ModelStatus.Published },
+          orderBy: { index: 'asc' },
+        },
+      },
+    });
+
+    const [version] = model?.modelVersions ?? [];
+
+    if (!version) {
+      throw throwNotFoundError(`This model has no versions.`);
+    }
+    if (model?.modelVersions.length === 1) {
+      // Only cgheck access if model has 1 version. Otherwise, we can't be sure that the user has access to the latest version.
+      const [access] = await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: [version.id],
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      if (!access?.hasAccess) {
+        throw throwAuthorizationError("You do not have access to this model's latest version.");
+      }
+    }
+
     const comment = await createOrUpdateComment({ ...input, ownerId, locked });
 
     if (!input.commentId) {

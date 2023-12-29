@@ -8,20 +8,20 @@ export const ResourceAccessWrap = ({
   children,
   fallback,
 }: {
-  entityId: number;
+  entityId?: number | null;
   entityType: SupportedClubEntities;
   children: React.ReactElement | JSX.Element;
   fallback?: React.ReactElement | JSX.Element;
 }) => {
   const { entities } = useEntityAccessRequirement({
     entityType,
-    entityIds: [entityId],
+    entityIds: entityId ? [entityId] : undefined,
   });
 
   const [access] = entities;
   const hasAccess = access?.hasAccess;
 
-  if (!hasAccess) {
+  if (!hasAccess && entityId) {
     return fallback ?? null;
   }
 
