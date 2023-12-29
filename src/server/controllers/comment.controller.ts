@@ -88,7 +88,7 @@ export const upsertCommentHandler = async ({
       select: {
         id: true,
         modelVersions: {
-          take: 1,
+          take: 2,
           select: { id: true },
           where: { status: ModelStatus.Published },
           orderBy: { index: 'asc' },
@@ -101,16 +101,18 @@ export const upsertCommentHandler = async ({
     if (!version) {
       throw throwNotFoundError(`This model has no versions.`);
     }
+    if (model?.modelVersions.length === 1) {
+      // Only cgheck access if model has 1 version. Otherwise, we can't be sure that the user has access to the latest version.
+      const [access] = await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: [version.id],
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
 
-    const [access] = await hasEntityAccess({
-      entityType: 'ModelVersion',
-      entityIds: [version.id],
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
-    });
-
-    if (!access?.hasAccess) {
-      throw throwAuthorizationError("You do not have access to this model's latest version.");
+      if (!access?.hasAccess) {
+        throw throwAuthorizationError("You do not have access to this model's latest version.");
+      }
     }
 
     const comment = await createOrUpdateComment({ ...input, ownerId, locked });
