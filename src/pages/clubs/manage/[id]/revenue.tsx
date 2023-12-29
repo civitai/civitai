@@ -14,6 +14,7 @@ import { ClubAdminPermission } from '@prisma/client';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ClubWithdrawFunds } from '~/components/Club/ClubWithdrawFunds';
 import { NextLink } from '@mantine/next';
+import { ClubDepositFunds } from '../../../../components/Club/ClubDepositFunds';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -76,6 +77,7 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
   const hasBalance = (balance ?? 0) > 0;
   const canWithdraw =
     hasBalance && (isOwner || permissions.includes(ClubAdminPermission.WithdrawRevenue));
+  const canDeposit = isOwner;
 
   if (loading) return <PageLoader />;
   if (!club) return <NotFound />;
@@ -84,19 +86,35 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
     <Stack spacing="md">
       <Group position="apart">
         <Title order={2}>Club Revenue</Title>
-        {canWithdraw && (
-          <Button
-            size="sm"
-            onClick={() => {
-              dialogStore.trigger({
-                component: ClubWithdrawFunds,
-                props: { clubId: id },
-              });
-            }}
-          >
-            Withdraw funds
-          </Button>
-        )}
+
+        <Group>
+          {canWithdraw && (
+            <Button
+              size="sm"
+              onClick={() => {
+                dialogStore.trigger({
+                  component: ClubWithdrawFunds,
+                  props: { clubId: id },
+                });
+              }}
+            >
+              Withdraw funds
+            </Button>
+          )}
+          {canDeposit && (
+            <Button
+              size="sm"
+              onClick={() => {
+                dialogStore.trigger({
+                  component: ClubDepositFunds,
+                  props: { clubId: id },
+                });
+              }}
+            >
+              Deposit funds
+            </Button>
+          )}
+        </Group>
       </Group>
       <Anchor size="sm" target="_blank" href="/content/buzz/terms">
         Buzz Agreement
