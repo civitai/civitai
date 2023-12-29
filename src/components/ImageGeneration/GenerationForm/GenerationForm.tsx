@@ -187,7 +187,13 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
         onSuccess?.();
         if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
       } catch (e) {
-        // This is sent as a notification already in the mutation
+        const error = e as Error;
+        if (error.message.startsWith('Your prompt was flagged')) {
+          setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
+          currentUser?.refresh();
+        }
+
+        // All other notifications are already sent in the mutation
       }
     };
 

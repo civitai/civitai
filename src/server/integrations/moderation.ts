@@ -31,7 +31,10 @@ async function moderatePrompt(prompt: string) {
   // If we have categories
   // Only flag if any of them are found in the results
   if (env.EXTERNAL_MODERATION_CATEGORIES) {
-    categories = categories.filter((c) => env.EXTERNAL_MODERATION_CATEGORIES?.includes(c));
+    categories = [];
+    for (const [k, v] of Object.entries(env.EXTERNAL_MODERATION_CATEGORIES)) {
+      if (results[0].categories[k]) categories.push(v ?? k);
+    }
     flagged = categories.length > 0;
   }
 
