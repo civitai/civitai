@@ -28,8 +28,25 @@ export async function updateDocs({
   let retryCount = 0;
   while (true) {
     try {
-      const results = await client.index(indexName).updateDocumentsInBatches(documents, batchSize);
-      return results;
+      const updates = [];
+      for (let i = 0; i < documents.length; i += batchSize) {
+        const batch = documents.slice(i, i + batchSize);
+        try {
+          updates.push(await client.index(indexName).updateDocuments(batch));
+        } catch (e) {
+          console.error(
+            'updateDocs :: Failed on batch',
+            i,
+            'of',
+            documents.length,
+            'for index',
+            indexName
+          );
+
+          throw e;
+        }
+      }
+      return updates;
     } catch (err) {
       retryCount++;
       if (retryCount >= RETRY_LIMIT) throw err;
@@ -37,6 +54,7 @@ export async function updateDocs({
         `updateDocs :: error updating docs for index ${indexName}. Retry ${retryCount}`,
         err
       );
+
       await sleep(5000 * (1 + retryCount));
     }
   }
