@@ -82,7 +82,8 @@ export const upsertCommentHandler = async ({
     const { ownerId, locked } = ctx;
     const { modelId } = input;
 
-    // Get model and 1 version to check if user has access:
+    // Get model and at least 2 version to confirm access.
+    // If model has 1 version, check access to that version. Otherwise, ignore.
     const model = await dbRead.model.findUnique({
       where: { id: modelId },
       select: {

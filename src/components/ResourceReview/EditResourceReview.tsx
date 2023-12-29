@@ -6,8 +6,8 @@ import { IconChevronDown } from '@tabler/icons-react';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
-import { NextLink } from '@mantine/next';
 import { ResourceAccessWrap } from '../Access/ResourceAccessWrap';
+import Link from 'next/link';
 
 type EditResourceReviewProps = {
   id?: number | null;
@@ -102,7 +102,7 @@ export function EditResourceReview({
             </Text>
           </Alert>
         ) : (
-          <Alert>You cannot review the a resource you have no access to</Alert>
+          <Alert>You cannot review a resource you have no access to</Alert>
         )
       }
     >
@@ -111,10 +111,7 @@ export function EditResourceReview({
           {modelVersionId ? (
             <Stack spacing={4}>
               <Group align="center" position="apart">
-                <NextLink
-                  href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
-                  target="_blank"
-                >
+                <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
                   <Stack spacing={0}>
                     {modelName && <Text lineClamp={1}>{modelName}</Text>}
                     {modelVersionName && (
@@ -123,7 +120,7 @@ export function EditResourceReview({
                       </Text>
                     )}
                   </Stack>
-                </NextLink>
+                </Link>
                 <Rating value={rating} onChange={handleRatingChange} />
               </Group>
               {createdAt && (
