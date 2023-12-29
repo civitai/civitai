@@ -66,7 +66,7 @@ export function ClubResourcesPaged({ clubId }: Props) {
         return {
           ...prev,
           items: prev.items.filter(
-            (item) => item.entityId !== resource.entityId && item.entityType !== resource.entityType
+            (item) => item.entityId !== resource.entityId || item.entityType !== resource.entityType
           ),
         };
       }
