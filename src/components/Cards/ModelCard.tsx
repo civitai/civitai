@@ -73,8 +73,12 @@ const querySchema = z.object({
   hidden: z.coerce.boolean().optional(),
 });
 
-export function ModelCard({ data }: Props) {
-  const { ref, inView } = useInView({ rootMargin: '200% 0px' });
+export function ModelCard({ data, forceInView }: Props) {
+  const { ref, inView } = useInView({
+    rootMargin: '200% 0px',
+    skip: forceInView,
+    initialInView: forceInView,
+  });
   const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
@@ -558,4 +562,4 @@ export function ModelCard({ data }: Props) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number] };
+type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };
