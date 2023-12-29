@@ -266,7 +266,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       style={{ width: '100%', position: 'relative', height: '100%' }}
     >
       <Stack spacing={0} h="100%">
-        <ScrollArea scrollRestore={{ key: 'generation-form' }}>
+        <ScrollArea scrollRestore={{ key: 'generation-form' }} py={0}>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
               <DismissibleAlert
