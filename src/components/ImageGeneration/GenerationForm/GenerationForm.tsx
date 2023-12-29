@@ -592,7 +592,17 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Card> */}
           </Stack>
         </ScrollArea>
-        <Stack spacing={4} p="md">
+        <Stack spacing={4} px="md" pt="xs" pb={3}>
+          {promptWarning && (
+            <Group noWrap spacing={5} mb="xs" align="flex-start">
+              <ThemeIcon color="red" size="md">
+                <IconAlertTriangle size={16} />
+              </ThemeIcon>
+              <Text color="red" lh={1.1} size="xs">
+                {promptWarning}
+              </Text>
+            </Group>
+          )}
           {status.available && !reviewed ? (
             <Alert color="yellow" title="Image Generation Terms">
               <Text size="xs">
@@ -691,16 +701,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                     } more jobs`}
               </Text>
-              {promptWarning && (
-                <Group noWrap spacing={5} mb={5} align="flex-start">
-                  <ThemeIcon color="red" size="md">
-                    <IconAlertTriangle size={16} />
-                  </ThemeIcon>
-                  <Text color="red" lh={1.1} size="xs">
-                    {promptWarning}
-                  </Text>
-                </Group>
-              )}
             </>
           ) : null}
           {status.message && (
@@ -714,7 +714,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </AlertWithIcon>
           )}
           {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {status.available && isSDXL && (
+          {/* {status.available && isSDXL && (
             <DismissibleAlert
               id="sdxl-free-preview"
               title="Free SDXL Generations!"
@@ -751,7 +751,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Text>
               }
             />
-          )}
+          )} */}
           {unavailableResources.length > 0 && !isLoadingAccess && (
             <AlertWithIcon
               color="red"
