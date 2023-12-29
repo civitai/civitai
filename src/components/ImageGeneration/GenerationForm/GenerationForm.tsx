@@ -179,13 +179,16 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     });
 
     const performTransaction = async () => {
-      await mutateAsync({
-        resources: _resources.filter((x) => x.covered !== false),
-        params: { ...params, baseModel },
-      }).catch(() => null); // catching here since error is handled at the mutation event level
-      onSuccess?.();
-      // TODO - don't do this if the only view is 'generation'
-      if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
+      try {
+        await mutateAsync({
+          resources: _resources.filter((x) => x.covered !== false),
+          params: { ...params, baseModel },
+        });
+        onSuccess?.();
+        if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
+      } catch (e) {
+        // This is sent as a notification already in the mutation
+      }
     };
 
     setPromptWarning(null);
