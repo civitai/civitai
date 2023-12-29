@@ -143,9 +143,12 @@ export const toggleUserBountyEngagementSchema = getUserBountyEngagementsSchema.e
   bountyId: z.number(),
 });
 
+const prohibitedSources = z.enum(['Regex', 'External']);
+export type ProhibitedSources = z.infer<typeof prohibitedSources>;
 export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
 export const reportProhibitedRequestSchema = z.object({
   prompt: z.string().optional(),
+  source: prohibitedSources.optional(),
 });
 
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });

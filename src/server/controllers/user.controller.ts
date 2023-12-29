@@ -948,7 +948,10 @@ export const reportProhibitedRequestHandler = async ({
   input: ReportProhibitedRequestInput;
   ctx: DeepNonNullable<Context>;
 }) => {
-  await ctx.track.prohibitedRequest({ prompt: input.prompt ?? '{error capturing prompt}' });
+  await ctx.track.prohibitedRequest({
+    prompt: input.prompt ?? '{error capturing prompt}',
+    source: input.source,
+  });
   if (ctx.user.isModerator) return false;
 
   try {
