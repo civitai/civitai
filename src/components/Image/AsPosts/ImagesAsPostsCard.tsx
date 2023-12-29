@@ -180,6 +180,7 @@ export function ImagesAsPostsCard({
                                   width={450}
                                   placeholder="empty"
                                   className={classes.image}
+                                  wrapperProps={{ style: { zIndex: 1 } }}
                                   fadeIn
                                 />
                               )}
@@ -285,6 +286,7 @@ export function ImagesAsPostsCard({
                                         width={450}
                                         placeholder="empty"
                                         className={classes.image}
+                                        wrapperProps={{ style: { zIndex: 1 } }}
                                         fadeIn
                                       />
                                     )}
