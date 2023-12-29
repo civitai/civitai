@@ -34,7 +34,13 @@ export function PostCard({ data }: Props) {
                 if (data.modelVersionId) {
                   return items;
                 }
-                if (currentUser?.id === data.user.id && features.clubs) {
+
+                if (
+                  currentUser?.id === data.user.id &&
+                  features.clubs &&
+                  // Avoids adding it twice.
+                  !menuItems.find((item) => item.key === 'add-to-club')
+                ) {
                   items.push(
                     <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={data.id} />
                   );
