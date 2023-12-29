@@ -871,6 +871,13 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
                 },
               },
             },
+            {
+              admins: {
+                some: {
+                  userId,
+                },
+              },
+            },
           ],
         });
     } else {
