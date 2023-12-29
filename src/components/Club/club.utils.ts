@@ -281,6 +281,8 @@ export const useMutateClub = () => {
   const cancelClubMembershipMutation = trpc.clubMembership.cancelClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {

@@ -130,7 +130,7 @@ export const hasEntityAccess = async ({
             ea."accessorId" IN (
               SELECT cm."clubTierId"
               FROM "ClubMembership" cm 
-              WHERE cm."userId" = ${userId}
+              WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
             )
             -- User is a admin of the club tier
             OR ea."accessorId" IN (
@@ -162,7 +162,7 @@ export const hasEntityAccess = async ({
             OR ea."accessorId" IN (
               SELECT cm."clubId"
               FROM "ClubMembership" cm
-              WHERE cm."userId" = ${userId}
+              WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
             )
             --- User is an admin of this club
             OR ea."accessorId" IN (
@@ -534,7 +534,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
     FROM "EntityAccess" ea
     JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'Club'
-    WHERE cm."userId" = ${userId}
+    WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
 
     UNION 
 
@@ -544,7 +544,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
     FROM "EntityAccess" ea
     JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'ClubTier'
-    WHERE cm."userId" = ${userId}
+    WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
   `;
 
   return entities;
