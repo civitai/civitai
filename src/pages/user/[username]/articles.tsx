@@ -54,12 +54,13 @@ export default function UserArticlesPage() {
   const features = useFeatureFlags();
   const Wrapper = useMemo(
     () =>
-      ({ children }: { children: React.ReactNode }) =>
-        features.profileOverhaul ? (
+      function Wrapper({ children }: { children: React.ReactNode }) {
+        return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
           <Tabs.Panel value="/articles">{children}</Tabs.Panel>
-        ),
+        );
+      },
     [features.profileOverhaul]
   );
 

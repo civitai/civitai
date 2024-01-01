@@ -21,6 +21,8 @@ import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
 import { IconClock } from '@tabler/icons-react';
 import { showErrorNotification } from '~/utils/notifications';
+import { useFeatureFlags } from '../../../providers/FeatureFlagsProvider';
+import { useQueryUserContributingClubs } from '../../Club/club.utils';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -54,12 +56,13 @@ export function ManagePostStatus() {
   const queryUtils = trpc.useContext();
 
   const id = useEditPostContext((state) => state.id);
-  const tags = useEditPostContext((state) => state.tags);
   const title = useEditPostContext((state) => state.title);
   const images = useEditPostContext((state) => state.images);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
   const isReordering = useEditPostContext((state) => state.reorder);
+  const clubs = useEditPostContext((state) => state.clubs);
+  const unlisted = useEditPostContext((state) => state.unlisted);
 
   const { mutate, isLoading } = trpc.post.update.useMutation({
     onError(error) {
@@ -70,20 +73,20 @@ export function ManagePostStatus() {
     },
   });
 
-  const canPublish =
-    tags.filter((x) => !!x.id).length > 0 &&
-    images.filter((x) => x.discriminator === 'image').length > 0 &&
-    !isReordering;
+  const canPublish = images.filter((x) => x.discriminator === 'image').length > 0 && !isReordering;
 
   const handlePublish = () => {
     if (!currentUser) return;
     const publishedAt = new Date();
     mutate(
-      { id, publishedAt },
+      { id, publishedAt, clubs, unlisted },
       {
         onSuccess: async () => {
           setPublishedAt(publishedAt);
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
+          if (clubs?.length) {
+            await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
+          }
 
           if (returnUrl) router.push(returnUrl);
           else router.push(`/user/${currentUser.username}/posts`);
@@ -98,7 +101,7 @@ export function ManagePostStatus() {
         {!publishedAt && (
           <Tooltip
             disabled={canPublish}
-            label="At least one tag is required in order to publish this post to the community"
+            label="At least one image is required in order to publish this post to the community"
             multiline
             width={260}
             withArrow

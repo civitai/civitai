@@ -7,10 +7,10 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ImagesSearchIndexSortBy = [
   IMAGES_SEARCH_INDEX,
-  `${IMAGES_SEARCH_INDEX}:stats.reactionCountAllTime:asc`,
-  `${IMAGES_SEARCH_INDEX}:stats.commentCountAllTime:asc`,
-  `${IMAGES_SEARCH_INDEX}:stats.collectedCountAllTime:asc`,
-  `${IMAGES_SEARCH_INDEX}:stats.tippedAmountCountAllTime:asc`,
+  `${IMAGES_SEARCH_INDEX}:stats.reactionCountAllTime:desc`,
+  `${IMAGES_SEARCH_INDEX}:stats.commentCountAllTime:desc`,
+  `${IMAGES_SEARCH_INDEX}:stats.collectedCountAllTime:desc`,
+  `${IMAGES_SEARCH_INDEX}:stats.tippedAmountCountAllTime:desc`,
   `${IMAGES_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 

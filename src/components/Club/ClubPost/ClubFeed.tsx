@@ -14,7 +14,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ClubPostGetAll, ClubPostResource } from '~/types/router';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
@@ -35,11 +35,7 @@ import {
   IconReceiptRefund,
   IconTrash,
 } from '@tabler/icons-react';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import Link from 'next/link';
-import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { openConfirmModal } from '@mantine/modals';
 import { isDefined } from '~/utils/type-guards';
 import { NextLink } from '@mantine/next';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
@@ -49,8 +45,11 @@ import { trpc } from '~/utils/trpc';
 import { ClubAdminPermission } from '@prisma/client';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { PostCard } from '~/components/Cards/PostCard';
 import { SupportedClubPostEntities } from '~/server/schema/club.schema';
+import { ImageCarousel } from '../../Bounty/ImageCarousel';
+import { useIsMobile } from '../../../hooks/useIsMobile';
+import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
+import { ContentClamp } from '../../ContentClamp/ContentClamp';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -58,7 +57,17 @@ export const useClubFeedStyles = createStyles((theme) => ({
     borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
   },
+  clubPost: {
+    maxWidth: 700,
+    width: '100%',
+  },
+  feedContainerWithCover: {
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    padding: 0,
+  },
   title: {
+    overflowWrap: 'break-word',
     [theme.fn.smallerThan('sm')]: {
       fontSize: '24px',
     },
@@ -105,7 +114,7 @@ export function ClubPostContextMenu({
         <Stack>
           <Text>Are you sure you want to delete this club post?</Text>
           <Text size="sm" color="red">
-            This action not reversible
+            This action is not reversible
           </Text>
         </Stack>
       ),
@@ -125,6 +134,19 @@ export function ClubPostContextMenu({
         component={NextLink}
       >
         Edit
+      </Menu.Item>
+    ) : null,
+    canUpdatePost &&
+    clubPost.entityType === 'Post' &&
+    'data' in clubPost &&
+    (clubPost.data?.user?.id === currentUser?.id || isModerator) ? (
+      <Menu.Item
+        key="edit"
+        icon={<IconPencilMinus size={14} stroke={1.5} />}
+        href={`/posts/${clubPost.entityId}/edit`}
+        component={NextLink}
+      >
+        Edit Image Post
       </Menu.Item>
     ) : null,
     canDeletePost ? (
@@ -163,50 +185,74 @@ export function ClubPostContextMenu({
 }
 
 export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] }) => {
-  const { classes } = useClubFeedStyles();
+  const { classes, cx } = useClubFeedStyles();
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({
     triggerOnce: true,
   });
 
+  const { title, description } = useMemo(() => {
+    if (clubPost.title) {
+      return clubPost;
+    }
+
+    if (clubPost.entityType === 'Post' && 'data' in clubPost) {
+      return {
+        title: clubPost.data?.title ?? '',
+        description: clubPost.data?.detail ?? '',
+      };
+    }
+
+    return clubPost;
+  }, [clubPost]);
+
+  if (
+    clubPost &&
+    clubPost.entityId &&
+    clubPost.entityType &&
+    (!('data' in clubPost) || !clubPost.data)
+  ) {
+    return null;
+  }
+
   return (
-    <Paper className={classes.feedContainer}>
-      <Stack>
-        {clubPost.coverImage && (
-          <ImageCSSAspectRatioWrap aspectRatio={constants.clubs.postCoverImageAspectRatio}>
-            <ImageGuard
-              images={[clubPost.coverImage]}
-              connect={{ entityId: clubPost.coverImage.id, entityType: 'club' }}
-              render={(image) => {
-                return (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        {!safe ? (
-                          <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                        ) : (
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{ width: 450 }}
-                            radius="md"
-                            style={{ width: '100%', height: '100%' }}
-                            aspectRatio={0}
-                          />
-                        )}
-                        <div style={{ width: '100%', height: '100%' }}>
-                          <ImageGuard.ToggleConnect position="top-left" />
-                          <ImageGuard.Report withinPortal />
-                        </div>
-                      </>
+    <Paper
+      className={cx(classes.feedContainer, classes.clubPost, {
+        [classes.feedContainerWithCover]: !!clubPost.coverImage,
+      })}
+    >
+      {clubPost.coverImage && (
+        <ImageGuard
+          images={[clubPost.coverImage]}
+          connect={{ entityId: clubPost.coverImage.id, entityType: 'club' }}
+          render={(image) => {
+            return (
+              <ImageGuard.Content>
+                {({ safe }) => (
+                  <div style={{ width: '100%', position: 'relative' }}>
+                    {!safe ? (
+                      <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 1600 }}
+                        radius="md"
+                        style={{ width: '100%', height: '100%' }}
+                        aspectRatio={0}
+                      />
                     )}
-                  </ImageGuard.Content>
-                );
-              }}
-            />
-          </ImageCSSAspectRatioWrap>
-        )}
+                    <ImageGuard.ToggleConnect position="top-left" />
+                    <ImageGuard.Report withinPortal />
+                  </div>
+                )}
+              </ImageGuard.Content>
+            );
+          }}
+        />
+      )}
+      <Stack p="md">
         <Title order={3} className={classes.title} ref={ref}>
-          {clubPost.title}
+          {title}
         </Title>
         <Group position="apart">
           <UserAvatar
@@ -218,20 +264,22 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
           <ClubPostContextMenu clubPost={clubPost} />
         </Group>
         {!!clubPost.entityType && !!clubPost.entityId && (
-          <Center my="sm">
-            <Box style={{ maxWidth: 250, width: '100%' }}>
-              <ClubPostResourceCard
-                resourceData={{
-                  ...clubPost,
-                  entityId: clubPost.entityId as number,
-                  entityType: clubPost.entityType as SupportedClubPostEntities,
-                }}
-              />
-            </Box>
-          </Center>
+          <ClubPostResourceCard
+            resourceData={{
+              ...clubPost,
+              entityId: clubPost.entityId as number,
+              entityType: clubPost.entityType as SupportedClubPostEntities,
+            }}
+          />
         )}
-        <RenderHtml html={clubPost.description} />
-        <Divider />
+        {description && (
+          <>
+            <ContentClamp maxHeight={400}>
+              <RenderHtml html={description} />
+            </ContentClamp>
+            <Divider />
+          </>
+        )}
         {inView && (
           <ClubPostDiscussion
             clubId={clubPost.clubId}
@@ -245,6 +293,8 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
 };
 
 export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostResource }) => {
+  const isMobile = useIsMobile();
+
   if (!('data' in resourceData)) {
     return null;
   }
@@ -254,18 +304,41 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
     resourceData.data
   ) {
     return (
-      <ModelCard
-        data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
-      />
+      <Center>
+        <Box style={{ maxWidth: 250, width: '100%' }}>
+          <ModelCard
+            data={{ ...resourceData.data, image: resourceData?.data?.images[0] ?? null } as any}
+          />
+        </Box>
+      </Center>
     );
   }
 
   if (resourceData.entityType === 'Article' && resourceData.data) {
-    return <ArticleCard data={resourceData.data} />;
+    return (
+      <Center>
+        <Box style={{ maxWidth: 250, width: '100%' }}>
+          <ArticleCard data={resourceData.data} />
+        </Box>
+      </Center>
+    );
   }
 
   if (resourceData.entityType === 'Post' && resourceData.data) {
-    return <PostCard data={resourceData.data} />;
+    return (
+      <ImageCarousel
+        mobile={isMobile}
+        images={resourceData.data.images}
+        entityId={resourceData.entityId}
+        entityType="post"
+        onClick={(image) => {
+          triggerRoutedDialog({
+            name: 'imageDetail',
+            state: { imageId: image.id, filters: { postId: resourceData.data?.id } },
+          });
+        }}
+      />
+    );
   }
 
   return null;

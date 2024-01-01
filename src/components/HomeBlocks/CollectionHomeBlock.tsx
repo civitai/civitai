@@ -370,6 +370,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                     {item.type === 'model' && (
                       <ModelCard
                         data={{ ...item.data, image: (item.data as any).images[0] } as any}
+                        forceInView
                       />
                     )}
                     {item.type === 'image' && <ImageCard data={item.data as any} />}

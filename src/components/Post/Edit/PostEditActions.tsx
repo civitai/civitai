@@ -1,19 +1,23 @@
-import { Stack, Button } from '@mantine/core';
-import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { Button, Stack } from '@mantine/core';
+import { IconTrash } from '@tabler/icons-react';
 
-import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
-import { IconTrash, IconArrowsSort, IconCheck } from '@tabler/icons-react';
+import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 
 export function PostEditActions() {
   const id = useEditPostContext((state) => state.id);
+  const setDeleting = useEditPostContext((state) => state.setDeleting);
+
   return (
     <Stack spacing="xs">
       <ReorderImagesButton />
       <DeletePostButton postId={id}>
         {({ onClick, isLoading }) => (
           <Button
-            onClick={onClick}
+            onClick={() => {
+              onClick(setDeleting);
+            }}
             color="red"
             loading={isLoading}
             variant="outline"

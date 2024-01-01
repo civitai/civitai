@@ -48,7 +48,7 @@ export default function GenerationTabs({
     queue: {
       Icon: IconListDetails,
       render: () => (
-        <ScrollArea scrollRestore={{ key: 'queue' }}>
+        <ScrollArea scrollRestore={{ key: 'queue' }} py={0}>
           <Queue {...result} />
         </ScrollArea>
       ),
@@ -66,7 +66,7 @@ export default function GenerationTabs({
     feed: {
       Icon: IconSlideshow,
       render: () => (
-        <ScrollArea scrollRestore={{ key: 'feed' }}>
+        <ScrollArea scrollRestore={{ key: 'feed' }} p="md">
           <Feed {...result} />
         </ScrollArea>
       ),

@@ -51,6 +51,8 @@ type EditPostProps = {
   reorder: boolean;
   selectedImageId?: number;
   clubs?: ClubResourceSchema[];
+  unlisted: boolean;
+  deleting: boolean;
 };
 
 interface EditPostState extends EditPostProps {
@@ -64,6 +66,7 @@ interface EditPostState extends EditPostProps {
   setImages: (updateFn: (images: PostEditImage[]) => PostEditImage[]) => void;
   setSelectedImageId: (id?: number) => void;
   setClubs: (clubs?: ClubResourceSchema[]) => void;
+  toggleUnlisted: (value?: boolean) => void;
   upload: (
     { postId, modelVersionId }: { postId: number; modelVersionId?: number },
     files: File[]
@@ -74,6 +77,7 @@ interface EditPostState extends EditPostProps {
   /** used to clean up object urls */
   cleanup: () => void;
   reset: (post?: PostEditDetail) => void;
+  setDeleting: (value: boolean) => void;
 }
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
@@ -92,6 +96,7 @@ const processPost = (post?: PostEditDetail) => {
     images: post?.images ? prepareImages(post.images) : [],
     modelVersionId: post?.modelVersionId ?? undefined,
     clubs: post?.clubs ?? [],
+    unlisted: post?.unlisted ?? false,
   };
 };
 
@@ -114,6 +119,7 @@ const createEditPostStore = ({
         return {
           objectUrls: [],
           reorder: false,
+          deleting: false,
           ...initialData,
           // methods
           setTitle: (title) =>
@@ -163,6 +169,10 @@ const createEditPostStore = ({
           setClubs: (clubs) =>
             set((state) => {
               state.clubs = clubs;
+            }),
+          toggleUnlisted: (value) =>
+            set((state) => {
+              state.unlisted = value ?? !state.unlisted;
             }),
           upload: async ({ postId, modelVersionId }, files) => {
             set((state) => {
@@ -250,6 +260,10 @@ const createEditPostStore = ({
               state.clubs = data.clubs;
             });
           },
+          setDeleting: (value) =>
+            set((state) => {
+              state.deleting = value;
+            }),
         };
       })
     )

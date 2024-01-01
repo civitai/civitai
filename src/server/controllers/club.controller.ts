@@ -165,12 +165,8 @@ export async function upsertClubResourceHandler({
     });
 
     const [details] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityType: input.entityType,
-          entityId: input.entityId,
-        },
-      ],
+      entityType: input.entityType,
+      entityIds: [input.entityId],
     });
 
     return details;
@@ -187,12 +183,8 @@ export async function getClubResourceDetailsHandler({ input }: { input: GetByEnt
     }
 
     const [details] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityType: input.entityType as SupportedClubEntities,
-          entityId: input.entityId,
-        },
-      ],
+      entityType: input.entityType as SupportedClubEntities,
+      entityIds: input.entityId,
     });
 
     return details;
@@ -296,12 +288,8 @@ export async function updateClubResourceHandler({
     });
 
     const [details] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityType: input.entityType,
-          entityId: input.entityId,
-        },
-      ],
+      entityType: input.entityType,
+      entityIds: [input.entityId],
     });
 
     return details;

@@ -36,6 +36,11 @@ export const useDerivedGenerationState = () => {
     calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
   );
 
+  const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
+    return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
+  });
+  const allUnstableResources = useUnstableResources();
+
   const { baseModel, isFullCoverageModel } = useGenerationFormStore(
     useCallback(
       ({ model }) => {
@@ -78,6 +83,10 @@ export const useDerivedGenerationState = () => {
 
     return samplerOffset + cfgOffset;
   });
+  const unstableResources = useMemo(
+    () => selectedResources.filter((x) => allUnstableResources.includes(x.id)),
+    [selectedResources, allUnstableResources]
+  );
 
   return {
     totalCost,
@@ -89,6 +98,7 @@ export const useDerivedGenerationState = () => {
     isSDXL: baseModel === 'SDXL',
     isLCM,
     isFullCoverageModel,
+    unstableResources,
   };
 };
 
@@ -102,6 +112,15 @@ export const useGenerationStatus = () => {
     message: status?.message,
     fullCoverageModels: status?.fullCoverageModels ?? {},
   };
+};
+
+export const useUnstableResources = () => {
+  const { data: unstableResources } = trpc.generation.getUnstableResources.useQuery(undefined, {
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
+
+  return unstableResources ?? [];
 };
 
 export const getFormData = (

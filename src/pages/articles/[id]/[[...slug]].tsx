@@ -53,7 +53,10 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
+import {
+  ClubRequirementIndicator,
+  ClubRequirementNotice,
+} from '~/components/Club/ClubRequirementNotice';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -183,9 +186,12 @@ export default function ArticleDetailsPage({
       <Container size="xl">
         <Stack spacing={0} mb="xl">
           <Group position="apart" noWrap>
-            <Title weight="bold" className={classes.title} order={1}>
-              {article.title}
-            </Title>
+            <Group>
+              <ClubRequirementIndicator entityId={article.id} entityType="Article" />
+              <Title weight="bold" className={classes.title} order={1}>
+                {article.title}
+              </Title>
+            </Group>
             <Group align="center" className={classes.titleWrapper} noWrap>
               {!mobile && actionButtons}
               <ArticleContextMenu article={article} />

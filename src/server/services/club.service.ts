@@ -25,7 +25,9 @@ import {
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { TierCoverImage } from '../../components/Club/ClubTierItem';
+import { userWithCosmeticsSelect } from '../selectors/user.selector';
+import { bustCacheTag } from '../utils/cache-helpers';
+import { isEqual } from 'lodash-es';
 
 export const userContributingClubs = async ({
   userId,
@@ -95,11 +97,26 @@ export const getClub = async ({
       billing: true,
       unlisted: true,
       userId: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+      tiers: {
+        take: 1,
+        where: {
+          unlisted: false,
+          joinable: true,
+        },
+      },
+      posts: {
+        take: 1,
+      },
     },
   });
 
+  const { tiers, posts, ...data } = club;
+
   return {
-    ...club,
+    ...data,
     avatar: club.avatar
       ? {
           ...club.avatar,
@@ -121,6 +138,8 @@ export const getClub = async ({
           metadata: club.headerImage.metadata as MixedObject,
         }
       : club.headerImage,
+    hasTiers: tiers.length > 0,
+    hasPosts: posts.length > 0,
   };
 };
 
@@ -166,44 +185,36 @@ export const updateClub = async ({
   id: number;
   userId: number;
 }) => {
-  const club = await dbWrite.$transaction(
-    async (tx) => {
-      await tx.club.findUniqueOrThrow({ where: { id } });
-      const createdImages = await createEntityImages({
-        tx,
-        images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
-        userId,
-      });
+  await dbWrite.club.findUniqueOrThrow({ where: { id } });
+  const createdImages = await createEntityImages({
+    images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
+    userId,
+  });
 
-      const club = await tx.club.update({
-        where: { id },
-        data: {
-          ...data,
-          avatarId:
-            avatar === null
-              ? null
-              : avatar !== undefined
-              ? avatar?.id ?? createdImages.find((i) => i.url === avatar.url)?.id
-              : undefined,
-          coverImageId:
-            coverImage === null
-              ? null
-              : coverImage !== undefined
-              ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
-              : undefined,
-          headerImageId:
-            headerImage === null
-              ? null
-              : headerImage !== undefined
-              ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
-              : undefined,
-        },
-      });
-
-      return club;
+  const club = await dbWrite.club.update({
+    where: { id },
+    data: {
+      ...data,
+      avatarId:
+        avatar === null
+          ? null
+          : avatar !== undefined
+          ? avatar?.id ?? createdImages.find((i) => i.url === avatar.url)?.id
+          : undefined,
+      coverImageId:
+        coverImage === null
+          ? null
+          : coverImage !== undefined
+          ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
+          : undefined,
+      headerImageId:
+        headerImage === null
+          ? null
+          : headerImage !== undefined
+          ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
+          : undefined,
     },
-    { maxWait: 10000, timeout: 30000 }
-  );
+  });
 
   return club;
 };
@@ -212,50 +223,40 @@ export const createClub = async ({
   coverImage,
   headerImage,
   avatar,
-  tiers = [],
-  deleteTierIds = [],
   userId,
   ...data
 }: Omit<UpsertClubInput, 'id'> & {
   userId: number;
 }) => {
-  const club = await dbWrite.$transaction(
-    async (tx) => {
-      const createdImages = await createEntityImages({
-        tx,
-        images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
-        userId,
-      });
+  const createdImages = await createEntityImages({
+    images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
+    userId,
+  });
 
-      const club = await tx.club.create({
-        data: {
-          ...data,
-          userId,
-          avatarId:
-            avatar === null
-              ? null
-              : avatar !== undefined
-              ? avatar?.id ?? createdImages.find((i) => i.url === avatar.url)?.id
-              : undefined,
-          coverImageId:
-            coverImage === null
-              ? null
-              : coverImage !== undefined
-              ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
-              : undefined,
-          headerImageId:
-            headerImage === null
-              ? null
-              : headerImage !== undefined
-              ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
-              : undefined,
-        },
-      });
-
-      return club;
+  const club = await dbWrite.club.create({
+    data: {
+      ...data,
+      userId,
+      avatarId:
+        avatar === null
+          ? null
+          : avatar !== undefined
+          ? avatar?.id ?? createdImages.find((i) => i.url === avatar.url)?.id
+          : undefined,
+      coverImageId:
+        coverImage === null
+          ? null
+          : coverImage !== undefined
+          ? coverImage?.id ?? createdImages.find((i) => i.url === coverImage.url)?.id
+          : undefined,
+      headerImageId:
+        headerImage === null
+          ? null
+          : headerImage !== undefined
+          ? headerImage?.id ?? createdImages.find((i) => i.url === headerImage.url)?.id
+          : undefined,
     },
-    { maxWait: 10000, timeout: 30000 }
-  );
+  });
 
   return club;
 };
@@ -674,8 +675,18 @@ export const upsertClubResource = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
+  const [clubRequirement] = await entityRequiresClub({
+    entityType,
+    entityIds: [entityId],
+  });
+
+  if (isEqual(clubRequirement?.clubs ?? [], clubs)) {
+    // No change:
+    return;
+  }
+
   // First, check that the person is
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityIds: [entityId], entityType });
 
   if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
@@ -705,12 +716,8 @@ export const upsertClubResource = async ({
   if (clubIds.length === 0) {
     // this resource will be made public:
     const [details] = await getClubDetailsForResource({
-      entities: [
-        {
-          entityId,
-          entityType,
-        },
-      ],
+      entityIds: [entityId],
+      entityType,
     });
 
     await dbWrite.entityAccess.deleteMany({
@@ -745,6 +752,10 @@ export const upsertClubResource = async ({
       },
     });
 
+    if (entityType === 'Post') {
+      await Promise.all(clubs.map((c) => bustCacheTag(`posts-club:${c.clubId}`)));
+    }
+
     if (access) {
       // Some access type - i.e, user access, is still there.
       return;
@@ -760,68 +771,74 @@ export const upsertClubResource = async ({
   }
 
   // Now, add and/or remove it from clubs:
-  await dbWrite.$transaction(async (tx) => {
-    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
-    await tx.entityAccess.deleteMany({
-      where: {
-        accessToId: entityId,
-        accessToType: entityType,
+  // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessToId: entityId,
+      accessToType: entityType,
 
-        accessorType: {
-          // Do not delete user access:
-          in: ['Club', 'ClubTier'],
-        },
+      accessorType: {
+        // Do not delete user access:
+        in: ['Club', 'ClubTier'],
       },
-    });
-
-    const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
-    const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
-    const clubAccessIds = generalClubAccess.map((c) => c.clubId);
-    const tierAccessIds = tierClubAccess
-      .map((c) => c.clubTierIds)
-      .filter(isDefined)
-      .flat();
-
-    // Add general club access:
-    await tx.entityAccess.createMany({
-      data: clubAccessIds.map((clubId) => ({
-        accessToId: entityId,
-        accessToType: entityType,
-        accessorId: clubId,
-        accessorType: 'Club',
-        addedById: userId,
-      })),
-    });
-
-    // Add tier club access:
-    await tx.entityAccess.createMany({
-      data: tierAccessIds.map((clubTierId) => ({
-        accessToId: entityId,
-        accessToType: entityType,
-        accessorId: clubTierId,
-        accessorType: 'ClubTier',
-        addedById: userId,
-      })),
-    });
-
-    await entityAvailabilityUpdate({
-      entityType,
-      entityIds: [entityId],
-      availability: Availability.Private,
-    });
+    },
   });
+
+  const generalClubAccess = clubs.filter((c) => !c.clubTierIds || !c.clubTierIds.length);
+  const tierClubAccess = clubs.filter((c) => c.clubTierIds && c.clubTierIds.length);
+  const clubAccessIds = generalClubAccess.map((c) => c.clubId);
+  const tierAccessIds = tierClubAccess
+    .map((c) => c.clubTierIds)
+    .filter(isDefined)
+    .flat();
+
+  // Add general club access:
+  await dbWrite.entityAccess.createMany({
+    data: clubAccessIds.map((clubId) => ({
+      accessToId: entityId,
+      accessToType: entityType,
+      accessorId: clubId,
+      accessorType: 'Club',
+      addedById: userId,
+    })),
+  });
+
+  // Add tier club access:
+  await dbWrite.entityAccess.createMany({
+    data: tierAccessIds.map((clubTierId) => ({
+      accessToId: entityId,
+      accessToType: entityType,
+      accessorId: clubTierId,
+      accessorType: 'ClubTier',
+      addedById: userId,
+    })),
+  });
+
+  await entityAvailabilityUpdate({
+    entityType,
+    entityIds: [entityId],
+    availability: Availability.Private,
+  });
+
+  // Bust caches when items are added to clubs:
+  if (entityType === 'Post') {
+    await Promise.all(clubs.map((c) => bustCacheTag(`posts-club:${c.clubId}`)));
+  }
 };
 
 export const getClubDetailsForResource = async ({
-  entities,
+  entityIds,
+  entityType,
 }: {
-  entities: {
-    entityType: SupportedClubEntities;
-    entityId: number;
-  }[];
+  entityType: SupportedClubEntities;
+  entityIds: number[];
 }) => {
-  const clubRequirements = await entityRequiresClub({ entities });
-  return clubRequirements;
+  const clubRequirement = await entityRequiresClub({
+    entityType,
+    entityIds,
+  });
+
+  return clubRequirement;
 };
 
 export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
@@ -849,6 +866,13 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
             { userId },
             {
               memberships: {
+                some: {
+                  userId,
+                },
+              },
+            },
+            {
+              admins: {
                 some: {
                   userId,
                 },
@@ -997,7 +1021,7 @@ export const getPaginatedClubResources = async ({
         )
         WHEN ea."accessToType" = 'Post' THEN jsonb_build_object(
           'id', p."id",
-          'title', COALESCE(p."title", 'N/A')
+          'title', COALESCE(p."title", 'Image Post')
         )
         ELSE '{}'::jsonb
       END
@@ -1024,7 +1048,7 @@ export const updateClubResource = async ({
   isModerator?: boolean;
 }) => {
   // First, check that the person is
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityType, entityIds: [entityId] });
 
   if (!isModerator && !ownership.isOwner) {
     throw throwAuthorizationError('You do not have permission to add this resource to a club');
@@ -1046,53 +1070,50 @@ export const updateClubResource = async ({
 
   const allClubTierIds = clubTiers.map((t) => t.id);
 
-  // Now, add and/or remove it from clubs:
-  await dbWrite.$transaction(async (tx) => {
-    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
-    await tx.entityAccess.deleteMany({
-      where: {
-        accessToId: entityId,
-        accessToType: entityType,
-        OR: [
-          {
-            accessorId: clubId,
-            accessorType: 'Club',
-          },
-          {
-            accessorId: {
-              in: allClubTierIds,
-            },
-            accessorType: 'ClubTier',
-          },
-        ],
-      },
-    });
-
-    const isGeneralClubAccess = (clubTierIds ?? []).length === 0;
-    // Add general club access:
-    if (isGeneralClubAccess) {
-      await tx.entityAccess.create({
-        data: {
-          accessToId: entityId,
-          accessToType: entityType,
+  // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessToId: entityId,
+      accessToType: entityType,
+      OR: [
+        {
           accessorId: clubId,
           accessorType: 'Club',
-          addedById: userId,
         },
-      });
-    } else {
-      // Add tier club access:
-      await tx.entityAccess.createMany({
-        data: (clubTierIds ?? []).map((clubTierId) => ({
-          accessToId: entityId,
-          accessToType: entityType,
-          accessorId: clubTierId,
+        {
+          accessorId: {
+            in: allClubTierIds,
+          },
           accessorType: 'ClubTier',
-          addedById: userId,
-        })),
-      });
-    }
+        },
+      ],
+    },
   });
+
+  const isGeneralClubAccess = (clubTierIds ?? []).length === 0;
+  // Add general club access:
+  if (isGeneralClubAccess) {
+    await dbWrite.entityAccess.create({
+      data: {
+        accessToId: entityId,
+        accessToType: entityType,
+        accessorId: clubId,
+        accessorType: 'Club',
+        addedById: userId,
+      },
+    });
+  } else {
+    // Add tier club access:
+    await dbWrite.entityAccess.createMany({
+      data: (clubTierIds ?? []).map((clubTierId) => ({
+        accessToId: entityId,
+        accessToType: entityType,
+        accessorId: clubTierId,
+        accessorType: 'ClubTier',
+        addedById: userId,
+      })),
+    });
+  }
 };
 
 export const removeClubResource = async ({
@@ -1106,7 +1127,7 @@ export const removeClubResource = async ({
   isModerator?: boolean;
 }) => {
   const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
-  const [ownership] = await entityOwnership({ userId, entities: [{ entityType, entityId }] });
+  const [ownership] = await entityOwnership({ userId, entityType, entityIds: [entityId] });
   const canRemoveResource =
     isModerator ||
     ownership.isOwner ||
@@ -1127,47 +1148,44 @@ export const removeClubResource = async ({
 
   const clubTierIds = clubTiers.map((t) => t.id);
 
-  // Now, add and/or remove it from clubs:
-  await dbWrite.$transaction(async (tx) => {
-    // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
-    await tx.entityAccess.deleteMany({
-      where: {
-        accessToId: entityId,
-        accessToType: entityType,
-        OR: [
-          {
-            accessorId: clubId,
-            accessorType: 'Club',
+  // Prisma doesn't do update or create with contraints... Need to delete all records and then add again
+  await dbWrite.entityAccess.deleteMany({
+    where: {
+      accessToId: entityId,
+      accessToType: entityType,
+      OR: [
+        {
+          accessorId: clubId,
+          accessorType: 'Club',
+        },
+        {
+          accessorId: {
+            in: clubTierIds,
           },
-          {
-            accessorId: {
-              in: clubTierIds,
-            },
-            accessorType: 'ClubTier',
-          },
-        ],
-      },
-    });
+          accessorType: 'ClubTier',
+        },
+      ],
+    },
+  });
 
-    // Check if it still requires club access:
-    const access = await tx.entityAccess.findFirst({
-      where: {
-        accessToId: entityId,
-        accessToType: entityType,
-      },
-    });
+  // Check if it still requires club access:
+  const access = await dbWrite.entityAccess.findFirst({
+    where: {
+      accessToId: entityId,
+      accessToType: entityType,
+    },
+  });
 
-    if (access) {
-      // Some access type - i.e, user access, is still there.
-      return;
-    }
+  if (access) {
+    // Some access type - i.e, user access, is still there.
+    return;
+  }
 
-    // Make this resource public:
-    await entityAvailabilityUpdate({
-      entityType,
-      entityIds: [entityId],
-      availability: Availability.Public,
-    });
+  // Make this resource public:
+  await entityAvailabilityUpdate({
+    entityType,
+    entityIds: [entityId],
+    availability: Availability.Public,
   });
 };
 

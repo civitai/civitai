@@ -38,6 +38,8 @@ export default function PostCreate() {
   const modelVersionId = router.query.modelVersionId
     ? Number(router.query.modelVersionId)
     : undefined;
+  const clubId = router.query.clubId ? Number(router.query.clubId) : undefined;
+
   const reviewing = router.query.reviewing ? router.query.reviewing === 'true' : undefined;
   const isMuted = currentUser?.muted ?? false;
   const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
@@ -91,6 +93,7 @@ export default function PostCreate() {
           const queryParams: string[] = [];
           if (returnUrl) queryParams.push(`returnUrl=${returnUrl}`);
           if (reviewing) queryParams.push('reviewing=true');
+          if (clubId) queryParams.push(`clubId=${clubId}`);
           if (queryParams.length > 0) pathname += `?${queryParams.join('&')}`;
 
           await router.push(pathname);
@@ -108,6 +111,7 @@ export default function PostCreate() {
   let backButtonUrl = modelId ? `/models/${modelId}` : '/';
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
   if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
+  if (clubId) backButtonUrl = `/clubs/${clubId}`;
 
   const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
@@ -175,6 +179,7 @@ export default function PostCreate() {
                     resourceReview={currentUserReview}
                     openedCommentBox
                     innerRef={reviewEditRef}
+                    showNoAccessAlert
                   />
                 </Box>
               </Input.Wrapper>

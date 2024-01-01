@@ -13,7 +13,7 @@ export function DeletePostButton({
     onClick,
     isLoading,
   }: {
-    onClick: () => void;
+    onClick: (cb?: (confirm: boolean) => void) => void;
     isLoading: boolean;
   }) => React.ReactElement;
 }) {
@@ -35,7 +35,7 @@ export function DeletePostButton({
     },
   });
 
-  const onClick = () => {
+  const onClick = (cb?: (confirm: boolean) => void) => {
     openConfirmModal({
       centered: true,
       title: 'Delete post',
@@ -47,7 +47,9 @@ export function DeletePostButton({
       ),
       labels: { cancel: `Cancel`, confirm: `Delete Post` },
       confirmProps: { color: 'red' },
+      onCancel: () => cb?.(false),
       onConfirm: () => {
+        cb?.(true);
         mutate({ id: postId });
       },
     });

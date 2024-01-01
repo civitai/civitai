@@ -1,6 +1,7 @@
 import {
   completeStripeBuzzPurchaseHandler,
   createBuzzTipTransactionHandler,
+  depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
   getUserAccountHandler,
@@ -13,7 +14,7 @@ import {
   getBuzzAccountTransactionsSchema,
   getUserBuzzTransactionsSchema,
   userBuzzTransactionInputSchema,
-  withdrawClubFundsSchema,
+  clubTransactionSchema,
 } from '~/server/schema/buzz.schema';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
@@ -41,8 +42,13 @@ export const buzzRouter = router({
     .use(isFlagProtected('buzz'))
     .query(getBuzzAccountTransactionsHandler),
   withdrawClubFunds: protectedProcedure
-    .input(withdrawClubFundsSchema)
+    .input(clubTransactionSchema)
     .use(isFlagProtected('buzz'))
     .use(isFlagProtected('clubs'))
     .mutation(withdrawClubFundsHandler),
+  depositClubFunds: protectedProcedure
+    .input(clubTransactionSchema)
+    .use(isFlagProtected('buzz'))
+    .use(isFlagProtected('clubs'))
+    .mutation(depositClubFundsHandler),
 });

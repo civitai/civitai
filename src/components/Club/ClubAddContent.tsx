@@ -1,11 +1,13 @@
 import { Group, Modal, Stack, UnstyledButton, Text, createStyles } from '@mantine/core';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
-import { IconFile, IconPencilMinus } from '@tabler/icons-react';
+import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
 import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { ClubAdminPermission } from '@prisma/client';
 import { useClubContributorStatus } from './club.utils';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 const useStyles = createStyles((theme) => ({
   button: {
@@ -19,6 +21,7 @@ const useStyles = createStyles((theme) => ({
 export const ClubAddContent = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
+  const router = useRouter();
   const { classes } = useStyles();
   const { isOwner, isModerator, isClubAdmin, permissions } = useClubContributorStatus({
     clubId,
@@ -51,7 +54,21 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
             >
               <Stack align="center">
                 <IconPencilMinus />
-                <Text size="sm">Add Post</Text>
+                <Text size="sm">Text Post</Text>
+              </Stack>
+            </UnstyledButton>
+          )}
+          {canCreatePosts && (
+            <UnstyledButton
+              onClick={() => {
+                router.push(`/posts/create?clubId=${clubId}&returnUrl=${router.asPath}`);
+                handleClose();
+              }}
+              className={classes.button}
+            >
+              <Stack align="center">
+                <IconPictureInPicture />
+                <Text size="sm">Image Post</Text>
               </Stack>
             </UnstyledButton>
           )}
@@ -61,6 +78,9 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
               onClick={() => {
                 dialogStore.trigger({
                   component: AddResourceToClubModal,
+                  props: {
+                    clubId,
+                  },
                 });
 
                 handleClose();

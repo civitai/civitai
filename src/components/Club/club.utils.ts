@@ -32,7 +32,7 @@ import {
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { WithdrawClubFundsSchema } from '~/server/schema/buzz.schema';
+import { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 import {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
@@ -281,6 +281,8 @@ export const useMutateClub = () => {
   const cancelClubMembershipMutation = trpc.clubMembership.cancelClubMembership.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+      await queryUtils.common.getEntityAccess.invalidate();
+      await queryUtils.common.getEntityClubRequirement.invalidate();
     },
     onError(error) {
       try {
@@ -392,6 +394,32 @@ export const useMutateClub = () => {
     },
   });
 
+  const depositClubFundsMutation = trpc.buzz.depositClubFunds.useMutation({
+    async onSuccess(_, { clubId }) {
+      await queryUtils.buzz.getBuzzAccount.invalidate({
+        accountId: clubId,
+        accountType: 'Club',
+      });
+      await queryUtils.buzz.getAccountTransactions.invalidate();
+    },
+    onError(error) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to deposit funds from club',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to deposit funds from club',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
   const togglePauseBillingMutation = trpc.clubMembership.togglePauseBilling.useMutation({
     async onSuccess() {
       await queryUtils.clubMembership.getInfinite.invalidate();
@@ -456,8 +484,11 @@ export const useMutateClub = () => {
   const handleDeleteClubPost = (data: GetByIdInput) => {
     return deleteClubPostMutation.mutateAsync(data);
   };
-  const handleWithdrawClubFunds = (data: WithdrawClubFundsSchema) => {
+  const handleWithdrawClubFunds = (data: ClubTransactionSchema) => {
     return withdrawClubFundsMutation.mutateAsync(data);
+  };
+  const handleDepositClubFunds = (data: ClubTransactionSchema) => {
+    return depositClubFundsMutation.mutateAsync(data);
   };
   const handleTogglePauseBillingMutation = (data: OwnerRemoveClubMembershipInput) => {
     return togglePauseBillingMutation.mutateAsync(data);
@@ -496,44 +527,54 @@ export const useMutateClub = () => {
     withdrawingClubFunds: withdrawClubFundsMutation.isLoading,
     togglePauseBilling: handleTogglePauseBillingMutation,
     togglingPauseBilling: togglePauseBillingMutation.isLoading,
+    depositClubFunds: handleDepositClubFunds,
+    depositingClubFunds: depositClubFundsMutation.isLoading,
   };
 };
 
 export const useEntityAccessRequirement = ({
   entityType,
-  entityId,
+  entityIds,
 }: {
   entityType?: SupportedClubEntities;
-  entityId?: number;
+  entityIds?: number[];
 }) => {
-  const { data: entityAccess, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
+  const { data: entitiesAccess, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
-      entityId: entityId as number,
+      entityId: entityIds as number[],
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityId && !!entityType,
+      enabled: !!entityIds && !!entityType && entityIds?.length > 0,
     }
   );
 
-  const hasAccess = isLoadingAccess ? false : entityAccess?.hasAccess ?? false;
-
-  const { data: clubRequirement } = trpc.common.getEntityClubRequirement.useQuery(
+  const { data: clubRequirements } = trpc.common.getEntityClubRequirement.useQuery(
     {
-      entityId: entityId as number,
+      entityId: entityIds as number[],
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityId && !!entityType && !hasAccess && !isLoadingAccess,
+      enabled: !!entityIds && !!entityType && !isLoadingAccess,
     }
   );
 
-  const requiresClub = clubRequirement?.requiresClub ?? false;
+  const entities = (entityIds ?? []).map((id) => {
+    const entityAccess = entitiesAccess?.find((x) => x.entityId === id);
+    const clubRequirement = clubRequirements?.find((x) => x.entityId === id);
+    const hasAccess = isLoadingAccess ? false : entityAccess?.hasAccess ?? false;
+    const requiresClub = clubRequirement?.requiresClub ?? false;
+    return {
+      entityId: id,
+      entityType: entityType as SupportedClubEntities,
+      hasAccess,
+      requiresClub,
+      clubRequirement,
+    };
+  });
 
   return {
-    clubRequirement,
-    hasAccess,
-    requiresClub,
+    entities,
     isLoadingAccess,
   };
 };

@@ -2484,8 +2484,8 @@ model ClubPost {
   createdBy    User     @relation(fields: [createdById], references: [id])
   createdAt    DateTime @default(now())
   membersOnly  Boolean
-  title        String
-  description  String
+  title        String?
+  description  String?
   coverImageId Int?
   coverImage   Image?   @relation(fields: [coverImageId], references: [id])
   entityId     Int?

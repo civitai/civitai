@@ -58,6 +58,7 @@ import {
   Badge,
   Alert,
   ThemeIcon,
+  List,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -75,8 +76,9 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
 
-const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
+const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
@@ -114,6 +116,16 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line
 
+  const [resources, model] = form.watch(['resources', 'model']);
+  const items = [model, ...(resources ?? [])];
+
+  const { entities, isLoadingAccess } = useEntityAccessRequirement({
+    entityType: 'ModelVersion',
+    entityIds: items?.map((x) => x?.id).filter(isDefined),
+  });
+
+  const unavailableResources = entities.filter((e) => !e.hasAccess);
+
   const {
     totalCost,
     baseModel,
@@ -124,6 +136,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isSDXL,
     isLCM,
     isFullCoverageModel,
+    unstableResources,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -166,13 +179,22 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     });
 
     const performTransaction = async () => {
-      await mutateAsync({
-        resources: _resources.filter((x) => x.covered !== false),
-        params: { ...params, baseModel },
-      }).catch(() => null); // catching here since error is handled at the mutation event level
-      onSuccess?.();
-      // TODO - don't do this if the only view is 'generation'
-      if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
+      try {
+        await mutateAsync({
+          resources: _resources.filter((x) => x.covered !== false),
+          params: { ...params, baseModel },
+        });
+        onSuccess?.();
+        if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
+      } catch (e) {
+        const error = e as Error;
+        if (error.message.startsWith('Your prompt was flagged')) {
+          setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
+          currentUser?.refresh();
+        }
+
+        // All other notifications are already sent in the mutation
+      }
     };
 
     setPromptWarning(null);
@@ -184,7 +206,6 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
     const promptError = (e as any)?.prompt as any;
     if (promptError?.type === 'custom') {
       const status = blockedRequest.status();
-      console.log(status);
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
         const isBlocked = await reportProhibitedRequest({ prompt });
@@ -231,7 +252,8 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit =
     pendingProcessingCount >= constants.imageGeneration.maxConcurrentRequests;
-  const disableGenerateButton = reachedRequestLimit;
+  const disableGenerateButton =
+    reachedRequestLimit || isLoadingAccess || unavailableResources.length > 0;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -244,7 +266,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
       style={{ width: '100%', position: 'relative', height: '100%' }}
     >
       <Stack spacing={0} h="100%">
-        <ScrollArea scrollRestore={{ key: 'generation-form' }}>
+        <ScrollArea scrollRestore={{ key: 'generation-form' }} py={0}>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
               <DismissibleAlert
@@ -302,6 +324,21 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Accordion.Panel>
               </Accordion.Item>
             </PersistentAccordion>
+            {unstableResources.length > 0 && (
+              <Alert color="yellow" title="Unstable Resources">
+                <Text size="xs">
+                  The following resources are currently unstable and may not be available for
+                  generation
+                </Text>
+                <List size="xs">
+                  {unstableResources.map((resource) => (
+                    <List.Item key={resource.id}>
+                      {resource.modelName} - {resource.name}
+                    </List.Item>
+                  ))}
+                </List>
+              </Alert>
+            )}
             <Card {...sharedCardProps}>
               <Stack>
                 <Stack spacing={0}>
@@ -555,7 +592,17 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Card> */}
           </Stack>
         </ScrollArea>
-        <Stack spacing={4} p="md">
+        <Stack spacing={4} px="md" pt="xs" pb={3}>
+          {promptWarning && (
+            <Group noWrap spacing={5} mb="xs" align="flex-start">
+              <ThemeIcon color="red" size="md">
+                <IconAlertTriangle size={16} />
+              </ThemeIcon>
+              <Text color="red" lh={1.1} size="xs">
+                {promptWarning}
+              </Text>
+            </Group>
+          )}
           {status.available && !reviewed ? (
             <Alert color="yellow" title="Image Generation Terms">
               <Text size="xs">
@@ -654,16 +701,6 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                     } more jobs`}
               </Text>
-              {promptWarning && (
-                <Group noWrap spacing={5} mb={5} align="flex-start">
-                  <ThemeIcon color="red" size="md">
-                    <IconAlertTriangle size={16} />
-                  </ThemeIcon>
-                  <Text color="red" lh={1.1} size="xs">
-                    {promptWarning}
-                  </Text>
-                </Group>
-              )}
             </>
           ) : null}
           {status.message && (
@@ -677,7 +714,7 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </AlertWithIcon>
           )}
           {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {status.available && isSDXL && (
+          {/* {status.available && isSDXL && (
             <DismissibleAlert
               id="sdxl-free-preview"
               title="Free SDXL Generations!"
@@ -714,6 +751,31 @@ const GenerationFormInnner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Text>
               }
             />
+          )} */}
+          {unavailableResources.length > 0 && !isLoadingAccess && (
+            <AlertWithIcon
+              color="red"
+              title="You do not have access to some of these resources"
+              icon={<IconAlertTriangle size={20} />}
+              iconColor="red"
+            >
+              <List>
+                {unavailableResources.map((resource) => {
+                  const data = items.find((i) => i.id === resource.entityId);
+                  if (!data) {
+                    return null;
+                  }
+
+                  return (
+                    <List.Item key={data.id}>
+                      <Anchor href={`/models/${data.modelId}?modelVersionId=${data.id}`} size="xs">
+                        {data.modelName} {data.name}
+                      </Anchor>
+                    </List.Item>
+                  );
+                })}
+              </List>
+            </AlertWithIcon>
           )}
           {isLCM && (
             <DismissibleAlert
@@ -749,7 +811,7 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
 
   return (
     <IsClient>
-      <GenerationFormInnner {...args} />
+      <GenerationFormInner {...args} />
     </IsClient>
   );
 };

@@ -9,7 +9,7 @@ import {
   PrepareModelInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -46,6 +46,9 @@ import { redis } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
+import { fromJson } from '~/utils/json-helpers';
+import { extModeration } from '~/server/integrations/moderation';
+import { logToAxiom } from '~/server/logging/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -358,7 +361,8 @@ async function checkResourcesAccess(
   if (hasPrivateResources) {
     // Check for permission:
     const entityAccess = await hasEntityAccess({
-      entities: data.map((d) => ({ entityType: 'ModelVersion', entityId: d.id })),
+      entityIds: data.map((d) => d.id),
+      entityType: 'ModelVersion',
       userId,
     });
 
@@ -400,6 +404,22 @@ export const createGenerationRequest = async ({
   if (params.aspectRatio.includes('x'))
     throw throwBadRequestError('Invalid size. Please select your size and try again');
   const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  // External prompt moderation
+  let moderationResult = { flagged: false, categories: [] } as AsyncReturnType<
+    typeof extModeration.moderatePrompt
+  >;
+  try {
+    moderationResult = await extModeration.moderatePrompt(params.prompt);
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+  }
+  if (moderationResult.flagged) {
+    throw throwBadRequestError(
+      `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+    );
+  }
 
   // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
 
@@ -767,4 +787,13 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
   return response.data;
+}
+
+export async function getUnstableResources() {
+  const cachedData = await redis
+    .hGet('system:features', 'generation:unstable-resources')
+    .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
+    .catch(() => [] as number[]); // fallback to empty array if redis fails
+
+  return cachedData;
 }

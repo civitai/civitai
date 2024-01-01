@@ -91,7 +91,7 @@ export const markNotificationsRead = ({
     return dbWrite.$executeRaw`
       INSERT INTO "NotificationViewed" ("id", "userId")
       VALUES (${id}, ${userId})
-      ON CONFLICT ("id", "userId") DO NOTHING
+      ON CONFLICT ("id") DO NOTHING
     `;
   }
 };

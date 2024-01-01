@@ -6,6 +6,7 @@ import { periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { clubResourceSchema } from './club.schema';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -20,7 +21,7 @@ const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
 export const postsQuerySchema = postsFilterSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(50),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
   excludedTagIds: z.array(z.number()).optional(),
@@ -56,6 +57,8 @@ export const postUpdateSchema = z.object({
   detail: z.string().optional(),
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
+  clubs: z.array(clubResourceSchema).optional(),
+  unlisted: z.boolean().optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;

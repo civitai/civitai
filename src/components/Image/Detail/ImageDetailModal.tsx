@@ -5,6 +5,7 @@ import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
+import { removeEmpty } from '../../../utils/object-helpers';
 
 export default function ImageDetailModal({
   imageId,
@@ -17,7 +18,7 @@ export default function ImageDetailModal({
 } & ImagesContextState) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
-  const queryFilters = imagesQueryParamSchema.parse({ ...filters, ...query });
+  const queryFilters = imagesQueryParamSchema.parse(removeEmpty({ ...query, ...filters }));
 
   if (!query.imageId) return null;
 

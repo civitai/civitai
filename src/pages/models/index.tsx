@@ -1,8 +1,8 @@
-import { ActionIcon, Button, Group, Popover, Stack, Title } from '@mantine/core';
+import { ActionIcon, Button, Group, Popover, Stack, Title, createStyles } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -39,8 +39,19 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const useStyles = createStyles(() => ({
+  filtersWrapper: {
+    [containerQuery.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
+}));
+
 export default function ModelsPage() {
   const features = useFeatureFlags();
+  const { classes, theme } = useStyles();
   const storedView = useFiltersContext((state) => state.models.view);
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
   const { username, favorites, hidden, query, collectionId } = queryFilters;
@@ -69,30 +80,20 @@ export default function ModelsPage() {
           {hidden && <Title>Your Hidden Models</Title>}
           <Stack spacing="xs">
             <Announcements
-              sx={(theme) => ({
+              sx={() => ({
                 marginBottom: -35,
                 [containerQuery.smallerThan('md')]: {
                   marginBottom: -5,
                 },
               })}
             />
-            <Group position="left">
-              {features.alternateHome ? (
-                <FullHomeContentToggle />
-              ) : (
-                <HomeContentToggle sx={showMobile} />
-              )}
-            </Group>
-            <Group position="apart" spacing={0}>
-              <Group>
-                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
-                <SortFilter type="models" />
-              </Group>
-              <Group spacing={4}>
+            <Group position="apart" spacing={8}>
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+              <Group className={classes.filtersWrapper} spacing={4}>
                 {periodMode && (
                   <Popover>
                     <Popover.Target>
-                      <ActionIcon variant="filled" color="blue" radius="xl" size="sm" mr={4}>
+                      <ActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
                         <IconExclamationMark size={20} strokeWidth={3} />
                       </ActionIcon>
                     </Popover.Target>
@@ -104,9 +105,17 @@ export default function ModelsPage() {
                     </Popover.Dropdown>
                   </Popover>
                 )}
-                <PeriodFilter type="models" />
+                <SortFilter type="models" variant="button" />
                 <ModelFiltersDropdown />
-                {canToggleView && <ViewToggle type="models" />}
+                {canToggleView && (
+                  <ViewToggle
+                    type="models"
+                    color="gray"
+                    radius="xl"
+                    size={36}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  />
+                )}
               </Group>
             </Group>
             <IsClient>

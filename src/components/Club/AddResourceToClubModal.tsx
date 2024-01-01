@@ -1,6 +1,17 @@
 import React, { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
-import { Box, Button, Center, Divider, Loader, Modal, Select, Stack } from '@mantine/core';
+import {
+  Box,
+  Button,
+  Center,
+  Checkbox,
+  Divider,
+  Loader,
+  Modal,
+  Select,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { Form, InputClubResourceManagementInput, useForm } from '~/libs/form';
 import { SupportedClubEntities, upsertClubResourceInput } from '~/server/schema/club.schema';
 import { z } from 'zod';
@@ -14,6 +25,8 @@ import { ModelSearchIndexRecord } from '~/server/search-index/models.search-inde
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
+import { dialogStore } from '../Dialog/dialogStore';
 
 const schema = upsertClubResourceInput;
 
@@ -21,32 +34,49 @@ type Props = {
   resource?: ModelSearchIndexRecord | ArticleSearchIndexRecord;
   entityType?: SupportedClubEntities;
   entityId?: number;
+  clubId?: number;
 };
 
-export const AddResourceToClubModal = (props: Props) => {
+export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
   const utils = trpc.useContext();
   const { upsertClubResource, upsertingResource } = useMutateClub();
   const [resource, setResource] = React.useState<
     ModelSearchIndexRecord | ArticleSearchIndexRecord | null
   >(props?.resource ?? null);
   const currentUser = useCurrentUser();
+  const [createClubPost, setCreateClubPost] = React.useState<boolean>(true);
 
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const handleSuccess = () => {
-    utils.club.getPaginatedClubResources.invalidate();
-    showSuccessNotification({
-      title: 'Resource has been updated',
-      message: 'Your resource has been updated correctly.',
-    });
-    handleClose();
-  };
 
   const form = useForm({
     schema: schema,
   });
 
   const [entityId, entityType] = form.watch(['entityId', 'entityType']);
+
+  const handleSuccess = () => {
+    utils.club.getPaginatedClubResources.invalidate();
+    showSuccessNotification({
+      title: 'Resource has been updated',
+      message: 'Your resource has been updated correctly.',
+    });
+
+    handleClose();
+
+    if (createClubPost && clubId) {
+      dialogStore.trigger({
+        component: ClubPostUpsertFormModal,
+        props: {
+          clubId,
+          resource: {
+            entityType,
+            entityId,
+          },
+        },
+      });
+    }
+  };
 
   const { data: resourceDetails, isLoading: isLoadingResourceDetails } =
     trpc.club.resourceDetails.useQuery(
@@ -180,7 +210,19 @@ export const AddResourceToClubModal = (props: Props) => {
           {entityId && entityType && !isLoadingResourceDetails && (
             <InputClubResourceManagementInput name="clubs" />
           )}
-          <Button type="submit" loading={upsertingResource}>
+          {clubId && (
+            <Stack spacing="sm">
+              <Divider mx="-lg" mb="md" />
+              <Checkbox
+                checked={createClubPost}
+                onChange={() => {
+                  setCreateClubPost(!createClubPost);
+                }}
+                label={<Text>Also create Club Feed post</Text>}
+              />
+            </Stack>
+          )}
+          <Button type="submit" loading={upsertingResource} disabled={!resource}>
             Save
           </Button>
         </Stack>

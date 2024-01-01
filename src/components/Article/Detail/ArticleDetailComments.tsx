@@ -3,6 +3,7 @@ import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV
 import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 type ArticleDetailCommentsProps = {
   articleId: number;
@@ -11,6 +12,12 @@ type ArticleDetailCommentsProps = {
 
 export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommentsProps) {
   const [opened, setOpened] = useState(false);
+  const { entities } = useEntityAccessRequirement({
+    entityType: 'Article',
+    entityIds: [articleId],
+  });
+  const [access] = entities;
+  const hasAccess = access?.hasAccess ?? false;
 
   return (
     <>
@@ -19,6 +26,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
         entityId={articleId}
         limit={20}
         badges={[{ userId, label: 'op', color: 'violet' }]}
+        forceLocked={!hasAccess}
       >
         {({ data, created, isLoading, remaining, showMore, hiddenCount, toggleShowMore }) =>
           isLoading ? (

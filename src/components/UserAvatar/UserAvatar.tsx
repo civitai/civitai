@@ -155,7 +155,7 @@ export function UserAvatar({
                             {safe || isSelf ? (
                               <EdgeMedia
                                 src={image.url}
-                                width="original"
+                                width={450}
                                 name={image.name ?? image.id.toString()}
                                 alt={
                                   avatarUser.username && !userDeleted

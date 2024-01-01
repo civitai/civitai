@@ -18,7 +18,6 @@ export function Feed({
     <Stack
       spacing="xs"
       sx={{ position: 'relative', flex: 1, overflow: 'hidden', containerType: 'inline-size' }}
-      p="md"
     >
       <div className={classes.grid}>
         {feed

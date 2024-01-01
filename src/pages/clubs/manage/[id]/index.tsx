@@ -49,6 +49,7 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';
 import { openConfirmModal } from '@mantine/modals';
 import { ClubAdminPermission } from '@prisma/client';
+import { ClubsInfinite } from '../../../../components/Club/Infinite/ClubsInfinite';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -193,16 +194,6 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
   };
   const id = Number(stringId);
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
-  const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
-    {
-      clubId: club?.id as number,
-      listedOnly: true,
-      joinableOnly: true,
-    },
-    {
-      enabled: !!club?.id,
-    }
-  );
 
   if (loading) {
     return <PageLoader />;
@@ -212,7 +203,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
     return <NotFound />;
   }
 
-  const hasJoinableTiers = club && !isLoadingTiers && tiers.length > 0;
+  const setupIncomplete = !club.hasTiers || !club.hasPosts;
 
   return (
     <AppLayout>
@@ -223,7 +214,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
               <Anchor size="sm">
                 <Group spacing={4}>
                   <IconArrowLeft />
-                  <Text inherit>Back to club&rsquo;s feed page</Text>
+                  <Text inherit>Back to clubs feed page</Text>
                 </Group>
               </Anchor>
             </Link>
@@ -264,14 +255,24 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
               </ImageCSSAspectRatioWrap>
             )}
             <Title order={1}>{club.name}</Title>
-            {!hasJoinableTiers && !isLoadingTiers && (
+            {setupIncomplete && (
               <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconAlertCircle />}>
-                It looks like you haven&rsquo;t set up any joinable Club Tiers yet! Navigate to the{' '}
-                <Anchor href={`/clubs/manage/${club.id}/tiers`}>
-                  Club tiers&rsquo; management page
-                </Anchor>{' '}
-                to set those up. Users will not be able to join your club until there is at least
-                one valid, joinable, Tier.
+                Looks like your club is not complete and will not show up in the clubs feed for
+                others to join. In order to complete your setup, you should:
+                <ul>
+                  {!club.hasTiers && (
+                    <li>
+                      <Anchor href={`/clubs/manage/${club.id}/tiers`}>
+                        Setup one joinable tier
+                      </Anchor>
+                    </li>
+                  )}
+                  {!club.hasPosts && (
+                    <li>
+                      <Anchor href={`/clubs/${club.id}`}>Make at least one post </Anchor>
+                    </li>
+                  )}
+                </ul>
               </AlertWithIcon>
             )}
           </Stack>

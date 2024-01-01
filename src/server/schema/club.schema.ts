@@ -44,8 +44,6 @@ export const upsertClubInput = z.object({
   coverImage: comfylessImageSchema.nullish(),
   headerImage: comfylessImageSchema.nullish(),
   avatar: comfylessImageSchema.nullish(),
-  tiers: z.array(upsertClubTierInput).optional(),
-  deleteTierIds: z.array(z.number()).optional(),
 });
 
 export type GetClubTiersInput = z.infer<typeof getClubTiersInput>;
@@ -97,10 +95,8 @@ export type GetInfiniteClubPostsSchema = z.infer<typeof getInfiniteClubPostsSche
 
 export const upsertClubPostInput = z.object({
   id: z.number().optional(),
-  title: z.string().trim().nonempty(),
-  description: getSanitizedStringSchema().refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  title: z.string().max(255).nullish(),
+  description: z.string().nullish(),
   coverImage: comfylessImageSchema.nullish(),
   membersOnly: z.boolean().default(false),
   clubId: z.number(),

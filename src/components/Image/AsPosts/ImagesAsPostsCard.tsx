@@ -180,6 +180,7 @@ export function ImagesAsPostsCard({
                                   width={450}
                                   placeholder="empty"
                                   className={classes.image}
+                                  wrapperProps={{ style: { zIndex: 1 } }}
                                   fadeIn
                                 />
                               )}
@@ -285,6 +286,7 @@ export function ImagesAsPostsCard({
                                         width={450}
                                         placeholder="empty"
                                         className={classes.image}
+                                        wrapperProps={{ style: { zIndex: 1 } }}
                                         fadeIn
                                       />
                                     )}
@@ -376,6 +378,7 @@ const useStyles = createStyles((theme) => ({
     // paddingBottom: 42,
     // background: theme.colors.dark[9],
     flexDirection: 'column',
+    overflow: 'hidden',
   },
   reactions: {
     position: 'absolute',

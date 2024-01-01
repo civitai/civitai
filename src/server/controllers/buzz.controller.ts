@@ -8,7 +8,7 @@ import {
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
-  WithdrawClubFundsSchema,
+  ClubTransactionSchema,
 } from '~/server/schema/buzz.schema';
 import {
   completeStripeBuzzTransaction,
@@ -169,7 +169,7 @@ export async function withdrawClubFundsHandler({
   input,
   ctx,
 }: {
-  input: WithdrawClubFundsSchema;
+  input: ClubTransactionSchema;
   ctx: DeepNonNullable<Context>;
 }) {
   try {
@@ -197,6 +197,42 @@ export async function withdrawClubFundsHandler({
       amount: input.amount,
       type: TransactionType.ClubWithdrawal,
       description: `Club withdrawal from ${club.name}`,
+      details: { clubId: club.id, clubName: club.name, createdAt: new Date(), userId: id },
+    });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function depositClubFundsHandler({
+  input,
+  ctx,
+}: {
+  input: ClubTransactionSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id } = ctx.user;
+
+    const [userClub] = await userContributingClubs({ userId: id, clubIds: [input.clubId] });
+
+    if (!userClub)
+      throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
+
+    if (userClub.userId !== id) {
+      throw throwAuthorizationError('You do not have permission to deposit funds on this club');
+    }
+
+    const club = await dbRead.club.findUniqueOrThrow({ where: { id: input.clubId } });
+
+    return createBuzzTransaction({
+      fromAccountId: id,
+      fromAccountType: 'User',
+      toAccountId: input.clubId,
+      toAccountType: 'Club',
+      amount: input.amount,
+      type: TransactionType.ClubDeposit,
+      description: `Club deposit on ${club.name}`,
       details: { clubId: club.id, clubName: club.name, createdAt: new Date(), userId: id },
     });
   } catch (error) {

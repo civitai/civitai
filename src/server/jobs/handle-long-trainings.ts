@@ -1,13 +1,12 @@
 import { TrainingStatus } from '@prisma/client';
 import { isEmpty } from 'lodash-es';
-import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
-import { withRetries } from '~/server/utils/errorHandling';
-import { createJob, getJobDate } from './job';
-import orchestratorCaller from '../http/orchestrator/orchestrator.caller';
 import { createTrainingRequest } from '~/server/services/training.service';
+import { withRetries } from '~/server/utils/errorHandling';
+import orchestratorCaller from '../http/orchestrator/orchestrator.caller';
+import { createJob, getJobDate } from './job';
 
 const SUBMITTED_CHECK_INTERVAL = 10;
 const PROCESSING_CHECK_INTERVAL = 20;
@@ -23,6 +22,7 @@ type JobStatus =
       date: Date;
     };
 const failedState: JobStatus = { status: 'Failed' };
+
 async function getJobStatus(jobId: string, log: (message: string) => void) {
   function fail(message: string) {
     log(message);
@@ -93,7 +93,12 @@ const handleJob = async (
     if (minsDiff > SUBMITTED_CHECK_INTERVAL) {
       const queueResponse = await orchestratorCaller.getJobById({ id: jobId });
       // If we found it in the queue, we're good
-      if (queueResponse.ok && queueResponse.data?.serviceProviders?.length) return true;
+      if (
+        queueResponse.ok &&
+        queueResponse.data?.serviceProviders &&
+        !isEmpty(queueResponse.data?.serviceProviders)
+      )
+        return true;
 
       // Otherwise, resubmit it
       log(`Could not fetch position in queue.`);
@@ -157,8 +162,7 @@ const handleJob = async (
 
   async function hasEpochs() {
     const [{ epochs }] = await dbWrite.$queryRaw<{ epochs: number | null }[]>`
-      SELECT
-        jsonb_array_length(metadata -> 'trainingResults' -> 'epochs') epochs
+      SELECT jsonb_array_length(metadata -> 'trainingResults' -> 'epochs') epochs
       FROM "ModelFile"
       WHERE id = ${modelFileId};
     `;
@@ -172,6 +176,7 @@ const handleJob = async (
     });
     log(`Updated training status to ${status}`);
   }
+
   //#endregion
 };
 
@@ -187,22 +192,23 @@ type TrainingRunResult = {
 export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * * *`, async () => {
   const [lastRun, setLastRun] = await getJobDate('handle-long-trainings');
   const oldTraining = await dbWrite.$queryRaw<TrainingRunResult[]>`
-      SELECT
-        "ModelFile".id as mf_id,
-        "ModelVersion".id as mv_id,
-        "ModelVersion"."trainingStatus" as status,
-        COALESCE("ModelFile"."metadata" -> 'trainingResults' ->> 'jobId', "ModelFile"."metadata" -> 'trainingResults' -> 'history' -> -1 ->> 'jobId') job_id,
-        "ModelFile"."metadata" -> 'trainingResults' ->> 'transactionId' transaction_id
-      FROM "ModelVersion"
-      JOIN "ModelFile" ON "ModelVersion".id = "ModelFile"."modelVersionId"
-      JOIN "Model" ON "Model".id="ModelVersion"."modelId"
-      WHERE "ModelFile".type = 'Training Data' AND "Model"."uploadType" = 'Trained'
+    SELECT "ModelFile".id                  as                                                   mf_id,
+           "ModelVersion".id               as                                                   mv_id,
+           "ModelVersion"."trainingStatus" as                                                   status,
+           COALESCE("ModelFile"."metadata" -> 'trainingResults' ->> 'jobId',
+                    "ModelFile"."metadata" -> 'trainingResults' -> 'history' -> -1 ->> 'jobId') job_id,
+           "ModelFile"."metadata" -> 'trainingResults' ->> 'transactionId'                      transaction_id
+    FROM "ModelVersion"
+           JOIN "ModelFile" ON "ModelVersion".id = "ModelFile"."modelVersionId"
+           JOIN "Model" ON "Model".id = "ModelVersion"."modelId"
+    WHERE "ModelFile".type = 'Training Data'
+      AND "Model"."uploadType" = 'Trained'
       AND "ModelVersion"."trainingStatus" in ('Processing', 'Submitted')
       -- Hasn't had a recent update
       AND "ModelVersion"."updatedAt" between '10/16/2023' and ${lastRun}
-      --  AND (("ModelFile".metadata -> 'trainingResults' -> 'start_time')::TEXT)::TIMESTAMP < (now() - interval '24 hours')
-      ORDER BY mf_id desc;
-    `;
+    --  AND (("ModelFile".metadata -> 'trainingResults' -> 'start_time')::TEXT)::TIMESTAMP < (now() - interval '24 hours')
+    ORDER BY mf_id desc;
+  `;
 
   if (oldTraining.length === 0) {
     logJob({

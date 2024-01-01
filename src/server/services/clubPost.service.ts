@@ -7,7 +7,7 @@ import {
 } from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, getImagesForPosts } from '~/server/services/image.service';
 import { userContributingClubs } from '~/server/services/club.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -240,7 +240,7 @@ interface ModelVersionClubPostResource {
 
 interface PostClubPostResource {
   entityType: 'Post';
-  data?: PostsInfiniteModel;
+  data?: PostsInfiniteModel & { images: Awaited<ReturnType<typeof getImagesForPosts>> };
 }
 
 interface ArticleClubPostResource {
@@ -321,9 +321,18 @@ export const getClubPostResourceData = async ({
           user,
           browsingMode: BrowsingMode.All,
           ids: postIds,
-          include: ['cosmetics'],
+          include: ['cosmetics', 'detail'],
         })
       : { items: [] };
+
+  const postImages =
+    postIds.length > 0
+      ? await getImagesForPosts({
+          postIds: postIds,
+          userId: user?.id,
+          coverOnly: false,
+        })
+      : [];
 
   const modelVersions =
     modelVersionIds.length > 0
@@ -356,10 +365,13 @@ export const getClubPostResourceData = async ({
           data: models.items.find((x) => x.id === entityId),
         };
       case 'Post':
+        const post = posts.items.find((x) => x.id === entityId);
+        const images = postImages.filter((x) => x.postId === entityId);
+
         return {
           ...base,
           entityType: 'Post',
-          data: posts.items.find((x) => x.id === entityId),
+          data: post && images?.length > 0 ? { ...post, images } : undefined,
         };
       case 'Article':
         return {
