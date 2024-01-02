@@ -174,6 +174,7 @@ model User {
   addedClubPosts          ClubPost[]
   accessGrantedBy         EntityAccess[]
   clubAdmin               ClubAdmin[]
+  clubPostReactions       ClubPostReaction[]
 }
 
 enum OnboardingStep {
@@ -2470,7 +2471,35 @@ model ClubPost {
   entityId     Int?
   entityType   String?
 
-  thread Thread?
+  thread    Thread?
+  reactions ClubPostReaction[]
+  metrics   ClubPostMetric[]
+}
+
+model ClubPostReaction {
+  id         Int             @id @default(autoincrement())
+  clubPostId Int
+  clubPost   ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction   ReviewReactions
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([clubPostId, userId, reaction])
+}
+
+model ClubPostMetric {
+  clubPost     ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  clubPostId   Int
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+
+  @@id([clubPostId, timeframe])
 }
 
 /// @view

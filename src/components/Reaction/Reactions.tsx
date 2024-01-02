@@ -34,6 +34,7 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
 const availableReactions: Partial<Record<ToggleReactionInput['entityType'], ReviewReactions[]>> = {
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
   bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
+  clubPost: ['Like', 'Heart', 'Laugh', 'Cry'],
 };
 
 export function PostReactions({

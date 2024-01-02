@@ -13,6 +13,7 @@ const metricSets = {
     metrics.questionMetrics,
     metrics.tagMetrics,
     metrics.collectionMetrics,
+    metrics.clubPostMetrics,
   ],
 };
 

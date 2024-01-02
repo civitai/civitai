@@ -11,6 +11,7 @@ export const reactableEntities: readonly [string, ...string[]] = [
   'resourceReview',
   'article',
   'bountyEntry',
+  'clubPost',
 ];
 
 export type ReactionEntityType = ToggleReactionInput['entityType'];
