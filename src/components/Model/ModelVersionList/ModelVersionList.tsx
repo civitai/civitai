@@ -16,6 +16,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconClock,
+  IconClubs,
   IconDotsVertical,
   IconEdit,
   IconFileSettings,
@@ -35,6 +36,7 @@ import { ModelById } from '~/types/router';
 import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
 import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
 import { ClubRequirementIndicator } from '../../Club/ClubRequirementNotice';
+import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -118,6 +120,11 @@ export function ModelVersionList({
     largerThanViewport: false,
   });
 
+  const { entities } = useEntityAccessRequirement({
+    entityType: 'ModelVersion',
+    entityIds: versions.map((v) => v.id),
+  });
+
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
 
@@ -169,6 +176,7 @@ export function ModelVersionList({
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
+          const access = (entities ?? []).find((e) => e.entityId === version.id);
 
           const versionButton = (
             <Button
@@ -207,14 +215,16 @@ export function ModelVersionList({
               compact
             >
               <Group spacing={8} noWrap>
-                <ClubRequirementIndicator
-                  entityId={version.id}
-                  entityType="ModelVersion"
-                  size="sm"
-                  variant="light"
-                  title="This version is only available to club members"
-                  radius="xl"
-                />
+                {access?.requiresClub && features.clubs && (
+                  <ThemeIcon
+                    radius="xl"
+                    title="This version is only available to club members"
+                    size="sm"
+                    variant="light"
+                  >
+                    <IconClubs stroke={2.5} size={16} />
+                  </ThemeIcon>
+                )}
                 {features.imageGeneration && version.canGenerate && (
                   <ThemeIcon
                     title="This version is available for image generation"
