@@ -223,8 +223,8 @@ export default function EventPageDetails({
               {formatDate(eventData.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
-          {!equipped && <WelcomeCard event={event} about={aboutText} />}
-          <CharitySection visible={!equipped} partners={partners} />
+          {!equipped && !ended && <WelcomeCard event={event} about={aboutText} />}
+          <CharitySection visible={!equipped && !ended} partners={partners} />
           <Grid gutter={48}>
             {eventCosmetic?.cosmetic && equipped && (
               <>
@@ -487,7 +487,7 @@ export default function EventPageDetails({
             </Grid.Col>
           </Grid>
           <EventContributors event={event} endDate={eventData.endDate} />
-          {equipped && (
+          {(equipped || ended) && (
             <>
               <Divider w="80px" mx="auto" />
               <Stack spacing={20}>
