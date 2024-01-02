@@ -73,7 +73,7 @@ export default function ImagesInfinite({
         <Center p="xl">
           <Loader />
         </Center>
-      ) : !!images.length ? (
+      ) : !!images.length || hasNextPage ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <ImageIngestionProvider
@@ -98,7 +98,8 @@ export default function ImagesInfinite({
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
-              loadCondition={!isRefetching}
+              loadCondition={!isRefetching && hasNextPage}
+              // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
               style={{ gridColumn: '1/-1' }}
             >
               <Center p="xl" sx={{ height: 36 }} mt="md">

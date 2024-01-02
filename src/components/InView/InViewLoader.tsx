@@ -36,7 +36,7 @@ export function InViewLoader({
       setCanLoad(false);
       handleLoad();
     }
-  }, [inView, loadCondition, initialCanLoad]); // eslint-disable-line
+  }, [inView, loadCondition, initialCanLoad, canLoad]); // eslint-disable-line
 
   return (
     <div ref={ref} className={className} style={style}>
