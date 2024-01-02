@@ -10,6 +10,7 @@ import { createJob, getJobDate } from './job';
 
 const SUBMITTED_CHECK_INTERVAL = 10;
 const PROCESSING_CHECK_INTERVAL = 20;
+const REJECTED_CHECK_INTERVAL = 4 * 60;
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'handle-long-trainings', type: 'error', ...data }, 'webhooks').catch();
@@ -81,9 +82,10 @@ const handleJob = async (
   const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
   // Treat rejected as processing
   if (job.status === 'Rejected') {
-    if (minsDiff > PROCESSING_CHECK_INTERVAL) {
+    if (minsDiff > REJECTED_CHECK_INTERVAL) {
       log(`Job stuck in Rejected status - resubmitting`);
-      return await requeueTraining();
+      await updateStatus('Failed');
+      return await refund();
       // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
     }
   }
@@ -102,7 +104,7 @@ const handleJob = async (
 
       // Otherwise, resubmit it
       log(`Could not fetch position in queue.`);
-      return await requeueTraining();
+      await requeueTraining();
       // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
     }
   }
