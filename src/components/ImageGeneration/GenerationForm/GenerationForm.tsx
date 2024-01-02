@@ -187,7 +187,13 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
         onSuccess?.();
         if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
       } catch (e) {
-        // This is sent as a notification already in the mutation
+        const error = e as Error;
+        if (error.message.startsWith('Your prompt was flagged')) {
+          setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
+          currentUser?.refresh();
+        }
+
+        // All other notifications are already sent in the mutation
       }
     };
 
@@ -260,7 +266,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       style={{ width: '100%', position: 'relative', height: '100%' }}
     >
       <Stack spacing={0} h="100%">
-        <ScrollArea scrollRestore={{ key: 'generation-form' }}>
+        <ScrollArea scrollRestore={{ key: 'generation-form' }} py={0}>
           <Stack p="md" pb={0}>
             {/* {type === 'remix' && (
               <DismissibleAlert
@@ -586,7 +592,17 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Card> */}
           </Stack>
         </ScrollArea>
-        <Stack spacing={4} p="md">
+        <Stack spacing={4} px="md" pt="xs" pb={3}>
+          {promptWarning && (
+            <Group noWrap spacing={5} mb="xs" align="flex-start">
+              <ThemeIcon color="red" size="md">
+                <IconAlertTriangle size={16} />
+              </ThemeIcon>
+              <Text color="red" lh={1.1} size="xs">
+                {promptWarning}
+              </Text>
+            </Group>
+          )}
           {status.available && !reviewed ? (
             <Alert color="yellow" title="Image Generation Terms">
               <Text size="xs">
@@ -685,16 +701,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
                     } more jobs`}
               </Text>
-              {promptWarning && (
-                <Group noWrap spacing={5} mb={5} align="flex-start">
-                  <ThemeIcon color="red" size="md">
-                    <IconAlertTriangle size={16} />
-                  </ThemeIcon>
-                  <Text color="red" lh={1.1} size="xs">
-                    {promptWarning}
-                  </Text>
-                </Group>
-              )}
             </>
           ) : null}
           {status.message && (
@@ -708,7 +714,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </AlertWithIcon>
           )}
           {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {status.available && isSDXL && (
+          {/* {status.available && isSDXL && (
             <DismissibleAlert
               id="sdxl-free-preview"
               title="Free SDXL Generations!"
@@ -745,7 +751,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Text>
               }
             />
-          )}
+          )} */}
           {unavailableResources.length > 0 && !isLoadingAccess && (
             <AlertWithIcon
               color="red"

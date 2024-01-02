@@ -11,6 +11,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { env } from '~/env/server.mjs';
 import { cacheDnsEntries } from '~/server/http/dns-cache';
+import { ProhibitedSources } from '~/server/schema/user.schema';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 
 const _installCaching = (() => {
@@ -321,7 +322,7 @@ export class Tracker {
     return this.track('bountyEngagements', values);
   }
 
-  public prohibitedRequest(values: { prompt: string }) {
+  public prohibitedRequest(values: { prompt: string; source?: ProhibitedSources }) {
     return this.track('prohibitedRequests', values);
   }
 

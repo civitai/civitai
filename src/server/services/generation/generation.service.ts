@@ -47,7 +47,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson } from '~/utils/json-helpers';
-import { openai } from '~/server/integrations/openai';
+import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 
 export function parseModelVersionId(assetId: string) {
@@ -407,13 +407,13 @@ export const createGenerationRequest = async ({
 
   // External prompt moderation
   let moderationResult = { flagged: false, categories: [] } as AsyncReturnType<
-    typeof openai.moderatePrompt
+    typeof extModeration.moderatePrompt
   >;
   try {
-    moderationResult = await openai.moderatePrompt(params.prompt);
+    moderationResult = await extModeration.moderatePrompt(params.prompt);
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ name: 'openai-moderation-error', type: 'error', message: error.message });
+    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
   }
   if (moderationResult.flagged) {
     throw throwBadRequestError(

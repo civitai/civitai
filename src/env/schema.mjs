@@ -1,7 +1,7 @@
 // @ts-check
 import { z } from "zod";
 import { zc } from "~/utils/schema-helpers";
-import { commaDelimitedStringArray } from "~/utils/zod-helpers";
+import { commaDelimitedStringObject, commaDelimitedStringArray } from "~/utils/zod-helpers";
 
 /**
  * Specify your server-side environment variables schema here.
@@ -100,8 +100,9 @@ export const serverSchema = z.object({
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
   IMAGE_QUERY_CACHING: zc.booleanString,
   POST_QUERY_CACHING: zc.booleanString,
-  OPENAI_TOKEN: z.string().optional(),
-  OPENAI_CATEGORIES: commaDelimitedStringArray().optional(),
+  EXTERNAL_MODERATION_ENDPOINT: z.string().url().optional(),
+  EXTERNAL_MODERATION_TOKEN: z.string().optional(),
+  EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
 });
 
 /**

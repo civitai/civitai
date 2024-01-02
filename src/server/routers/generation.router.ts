@@ -53,7 +53,10 @@ export const generationRouter = router({
           e.code === 'BAD_REQUEST' &&
           e.message.startsWith('Your prompt was flagged')
         ) {
-          await reportProhibitedRequestHandler({ input: { prompt: input.params.prompt }, ctx });
+          await reportProhibitedRequestHandler({
+            input: { prompt: input.params.prompt, source: 'External' },
+            ctx,
+          });
         }
         throw e;
       }

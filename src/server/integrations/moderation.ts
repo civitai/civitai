@@ -1,19 +1,20 @@
 import { env } from '~/env/server.mjs';
 
 async function moderatePrompt(prompt: string) {
-  if (!env.OPENAI_TOKEN) return { flagged: false, categories: [] };
-  const res = await fetch('https://api.openai.com/v1/moderations', {
+  if (!env.EXTERNAL_MODERATION_TOKEN || !env.EXTERNAL_MODERATION_ENDPOINT)
+    return { flagged: false, categories: [] };
+  const res = await fetch(env.EXTERNAL_MODERATION_ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.OPENAI_TOKEN}`,
+      Authorization: `Bearer ${env.EXTERNAL_MODERATION_TOKEN}`,
     },
     body: JSON.stringify({
       input: prompt,
     }),
   });
   if (!res.ok) {
-    let message = `OpenAI moderation failed: ${res.status} ${res.statusText}`;
+    let message = `External moderation failed: ${res.status} ${res.statusText}`;
     try {
       const body = await res.text();
       message += `\n${body}`;
@@ -29,14 +30,17 @@ async function moderatePrompt(prompt: string) {
 
   // If we have categories
   // Only flag if any of them are found in the results
-  if (env.OPENAI_CATEGORIES) {
-    categories = categories.filter((c) => env.OPENAI_CATEGORIES?.includes(c));
+  if (env.EXTERNAL_MODERATION_CATEGORIES) {
+    categories = [];
+    for (const [k, v] of Object.entries(env.EXTERNAL_MODERATION_CATEGORIES)) {
+      if (results[0].categories[k]) categories.push(v ?? k);
+    }
     flagged = categories.length > 0;
   }
 
   return { flagged, categories };
 }
 
-export const openai = {
+export const extModeration = {
   moderatePrompt,
 };

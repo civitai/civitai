@@ -20,6 +20,21 @@ export function stringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
   );
 }
 
+/** Converts a comma delimited object (ex key:value,key 2:another value) */
+export function commaDelimitedStringObject() {
+  return z.preprocess((value) => {
+    if (typeof value === 'string') {
+      const obj: Record<string, string> = {};
+      value.split(',').forEach((x) => {
+        const [key, val] = x.split(':');
+        obj[key] = val ?? key;
+      });
+      return obj;
+    }
+    return value;
+  }, z.record(z.string()));
+}
+
 /** Converts a comma delimited string to an array of strings */
 export function commaDelimitedStringArray() {
   return z.preprocess((value) => {

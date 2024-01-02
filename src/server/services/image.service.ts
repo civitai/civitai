@@ -2206,11 +2206,9 @@ export const getImageModerationReviewQueue = async ({
   tagIds,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
-  const WITH: Prisma.Sql[] = [];
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
-    AND.push(Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
   }
 
   if (tagReview) {
@@ -2265,28 +2263,8 @@ export const getImageModerationReviewQueue = async ({
     ur.id as "reportUserId",
   `;
 
-  const queryFrom = Prisma.sql`
-    FROM "Image" i
-    JOIN "User" u ON u.id = i."userId"
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
-    ${Prisma.raw(reportReview ? reportsJoin : '')}
-    WHERE ${Prisma.join(AND, ' AND ')}
-  `;
-
-  const queryHeader = Object.entries({
-    cursor,
-    limit,
-  })
-    .filter(([, v]) => v !== undefined)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(', ');
-
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
-    -- ${Prisma.raw(queryHeader)}
-    ${queryWith}
+    -- Image moderation queue
     SELECT
       i.id,
       i.name,
@@ -2318,7 +2296,12 @@ export const getImageModerationReviewQueue = async ({
       ic."entityId",
       ${Prisma.raw(reportReview ? reportsSelect : '')}
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${queryFrom}
+      FROM "Image" i
+      JOIN "User" u ON u.id = i."userId"
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
+      ${Prisma.raw(reportReview ? reportsJoin : '')}
+      WHERE ${Prisma.join(AND, ' AND ')}
       ORDER BY ${Prisma.raw(orderBy)}
       LIMIT ${limit + 1}
   `;
@@ -2360,7 +2343,7 @@ export const getImageModerationReviewQueue = async ({
   }
 
   let namesMap: Map<number, string[]> | undefined;
-  if (needsReview === 'poi') {
+  if (needsReview === 'poi' && imageIds.length > 0) {
     namesMap = new Map();
     const names = await dbRead.$queryRaw<{ imageId: number; name: string }[]>`
       SELECT
