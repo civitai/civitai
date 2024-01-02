@@ -7,12 +7,13 @@ const metricSets = {
   images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
   other: [
-    metrics.answerMetrics,
-    metrics.articleMetrics,
-    metrics.postMetrics,
-    metrics.questionMetrics,
-    metrics.tagMetrics,
-    metrics.collectionMetrics,
+    // metrics.answerMetrics,
+    // metrics.articleMetrics,
+    // metrics.postMetrics,
+    // metrics.questionMetrics,
+    // metrics.tagMetrics,
+    // metrics.collectionMetrics,
+    metrics.clubPostMetrics,
   ],
 };
 

@@ -67,7 +67,7 @@ type Props = {
     entityId: number;
     entityType: SupportedClubPostEntities;
   };
-  clubPost?: ClubPostGetAll[number];
+  clubPost?: Omit<ClubPostGetAll[number], 'metrics' | 'reactions'>;
   clubId: number;
   onSuccess?: () => void;
   onCancel?: () => void;
