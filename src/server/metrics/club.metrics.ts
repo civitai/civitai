@@ -2,7 +2,7 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma } from '@prisma/client';
 
 export const clubMetrics = createMetricProcessor({
-  name: 'ClubPost',
+  name: 'Club',
   async update({ db, lastUpdate }) {
     const recentEngagementSubquery = Prisma.sql`
     -- Get all engagements that have happened since then that affect metrics
@@ -19,7 +19,7 @@ export const clubMetrics = createMetricProcessor({
 
       SELECT
         "clubId" AS id
-      FROM "ClubPost"
+      FROM "Club"
       WHERE ("createdAt" > ${lastUpdate})
 
       UNION
@@ -53,43 +53,15 @@ export const clubMetrics = createMetricProcessor({
           SELECT DISTINCT
               r.id
           FROM recent_engagements r
-          JOIN "ClubPost" b ON b.id = r.id
+          JOIN "Club" c ON c.id = r.id
           WHERE r.id IS NOT NULL
       )
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "ClubPostMetric" ("clubPostId", timeframe, "likeCount", "dislikeCount", "laughCount", "cryCount", "heartCount")
+      INSERT INTO "ClubMetric" ("clubPostId", timeframe, "heartCount")
       SELECT
         m.id,
-        tf.timeframe,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN like_count
-          WHEN tf.timeframe = 'Year' THEN year_like_count
-          WHEN tf.timeframe = 'Month' THEN month_like_count
-          WHEN tf.timeframe = 'Week' THEN week_like_count
-          WHEN tf.timeframe = 'Day' THEN day_like_count
-        END AS like_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN dislike_count
-          WHEN tf.timeframe = 'Year' THEN year_dislike_count
-          WHEN tf.timeframe = 'Month' THEN month_dislike_count
-          WHEN tf.timeframe = 'Week' THEN week_dislike_count
-          WHEN tf.timeframe = 'Day' THEN day_dislike_count
-        END AS dislike_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN laugh_count
-          WHEN tf.timeframe = 'Year' THEN year_laugh_count
-          WHEN tf.timeframe = 'Month' THEN month_laugh_count
-          WHEN tf.timeframe = 'Week' THEN week_laugh_count
-          WHEN tf.timeframe = 'Day' THEN day_laugh_count
-        END AS laugh_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN cry_count
-          WHEN tf.timeframe = 'Year' THEN year_cry_count
-          WHEN tf.timeframe = 'Month' THEN month_cry_count
-          WHEN tf.timeframe = 'Week' THEN week_cry_count
-          WHEN tf.timeframe = 'Day' THEN day_cry_count
-        END AS cry_count, 
+        tf.timeframe, 
         CASE
           WHEN tf.timeframe = 'AllTime' THEN heart_count
           WHEN tf.timeframe = 'Year' THEN year_heart_count
@@ -101,63 +73,41 @@ export const clubMetrics = createMetricProcessor({
       (
         SELECT
           a.id,
-          COALESCE(cpr.heart_count, 0) AS heart_count,
-          COALESCE(cpr.year_heart_count, 0) AS year_heart_count,
-          COALESCE(cpr.month_heart_count, 0) AS month_heart_count,
-          COALESCE(cpr.week_heart_count, 0) AS week_heart_count,
-          COALESCE(cpr.day_heart_count, 0) AS day_heart_count,
-          COALESCE(cpr.laugh_count, 0) AS laugh_count,
-          COALESCE(cpr.year_laugh_count, 0) AS year_laugh_count,
-          COALESCE(cpr.month_laugh_count, 0) AS month_laugh_count,
-          COALESCE(cpr.week_laugh_count, 0) AS week_laugh_count,
-          COALESCE(cpr.day_laugh_count, 0) AS day_laugh_count,
-          COALESCE(cpr.cry_count, 0) AS cry_count,
-          COALESCE(cpr.year_cry_count, 0) AS year_cry_count,
-          COALESCE(cpr.month_cry_count, 0) AS month_cry_count,
-          COALESCE(cpr.week_cry_count, 0) AS week_cry_count,
-          COALESCE(cpr.day_cry_count, 0) AS day_cry_count,
-          COALESCE(cpr.dislike_count, 0) AS dislike_count,
-          COALESCE(cpr.year_dislike_count, 0) AS year_dislike_count,
-          COALESCE(cpr.month_dislike_count, 0) AS month_dislike_count,
-          COALESCE(cpr.week_dislike_count, 0) AS week_dislike_count,
-          COALESCE(cpr.day_dislike_count, 0) AS day_dislike_count,
-          COALESCE(cpr.like_count, 0) AS like_count,
-          COALESCE(cpr.year_like_count, 0) AS year_like_count,
-          COALESCE(cpr.month_like_count, 0) AS month_like_count,
-          COALESCE(cpr.week_like_count, 0) AS week_like_count,
-          COALESCE(cpr.day_like_count, 0) AS day_like_count
+          COALESCE(cm.member_count, 0) AS member_count,
+          COALESCE(cm.year_member_count, 0) AS year_member_count,
+          COALESCE(cm.month_member_count, 0) AS month_member_count,
+          COALESCE(cm.week_member_count, 0) AS week_member_count,
+          COALESCE(cm.day_member_count, 0) AS day_member_count
         FROM affected a
         LEFT JOIN (
           SELECT
-            cpr."clubPostId",
-            SUM(IIF(cpr.reaction = 'Heart', 1, 0)) AS heart_count,
-            SUM(IIF(cpr.reaction = 'Heart' AND cpr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
-            SUM(IIF(cpr.reaction = 'Heart' AND cpr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
-            SUM(IIF(cpr.reaction = 'Heart' AND cpr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
-            SUM(IIF(cpr.reaction = 'Heart' AND cpr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
-            SUM(IIF(cpr.reaction = 'Like', 1, 0)) AS like_count,
-            SUM(IIF(cpr.reaction = 'Like' AND cpr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
-            SUM(IIF(cpr.reaction = 'Like' AND cpr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
-            SUM(IIF(cpr.reaction = 'Like' AND cpr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
-            SUM(IIF(cpr.reaction = 'Like' AND cpr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
-            SUM(IIF(cpr.reaction = 'Dislike', 1, 0)) AS dislike_count,
-            SUM(IIF(cpr.reaction = 'Dislike' AND cpr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
-            SUM(IIF(cpr.reaction = 'Dislike' AND cpr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
-            SUM(IIF(cpr.reaction = 'Dislike' AND cpr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
-            SUM(IIF(cpr.reaction = 'Dislike' AND cpr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
-            SUM(IIF(cpr.reaction = 'Cry', 1, 0)) AS cry_count,
-            SUM(IIF(cpr.reaction = 'Cry' AND cpr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
-            SUM(IIF(cpr.reaction = 'Cry' AND cpr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
-            SUM(IIF(cpr.reaction = 'Cry' AND cpr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
-            SUM(IIF(cpr.reaction = 'Cry' AND cpr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
-            SUM(IIF(cpr.reaction = 'Laugh', 1, 0)) AS laugh_count,
-            SUM(IIF(cpr.reaction = 'Laugh' AND cpr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
-            SUM(IIF(cpr.reaction = 'Laugh' AND cpr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
-            SUM(IIF(cpr.reaction = 'Laugh' AND cpr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
-            SUM(IIF(cpr.reaction = 'Laugh' AND cpr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
-          FROM "ClubPostReaction" cpr
-          GROUP BY cpr."clubPostId"
-        ) cpr ON cpr."clubPostId" = a.id
+            cm."clubId",
+            COUNT(*) AS member_count,
+            SUM(IIF(cm."startedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_member_count,
+            SUM(IIF(cm."startedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_member_count,
+            SUM(IIF(cm."startedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_member_count,
+            SUM(IIF(cm."startedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_member_count, 
+          FROM "ClubMembership" cm
+          WHERE cm."expiresAt" IS NULL OR cm."expiresAt" > NOW()
+          GROUP BY cm."clubId"
+        ) cm ON cm."clubId" = a.id
+        LEFT JOIN (
+          SELECT
+            COALESCE(c.id, ct."clubId") "clubId",
+            COUNT(DISTINCT CONCAT(ea."accessToType", '-', ea."accessToId")) AS resource_count,
+            -- TODO: This sum might be innacurate if an item was added to multiple tiers. We should probably
+            -- figure out a way to dedupe, but since we mostly care for all time right now, might move on.
+            SUM(IIF(ea."addedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_resource_count,
+            SUM(IIF(ea."addedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_resource_count,
+            SUM(IIF(ea."addedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_resource_count,
+            SUM(IIF(ea."addedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_resource_count
+          FROM "EntityAccess" ea
+          LEFT JOIN "Club" c ON ea."accessorId" = c.id AND ea."accessorType" = 'Club'
+          LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."clubId" AND ea."accessorType" = 'ClubTier'
+          WHERE  ea."accessorType" IN ('Club', 'ClubTier')
+            AND COALESCE(c.id, ct."clubId") IS NOT NULL  
+          GROUP BY COALESCE(c.id, ct."clubId")
+        ) ea ON ea."clubId" = a.id
       ) m
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
@@ -168,7 +118,7 @@ export const clubMetrics = createMetricProcessor({
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "ClubPostMetric" SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0  WHERE timeframe = 'Day';
+      UPDATE "ClubMetric" SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0  WHERE timeframe = 'Day';
     `;
   },
 });
