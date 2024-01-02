@@ -28,6 +28,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { bustCacheTag } from '../utils/cache-helpers';
 import { isEqual } from 'lodash-es';
+import { ClubSort } from '../common/enums';
 
 export const userContributingClubs = async ({
   userId,
@@ -914,7 +915,15 @@ export const getAllClubs = <TSelect extends Prisma.ClubSelect>({
   }
 
   const orderBy: Prisma.ClubFindManyArgs['orderBy'] = [];
-  orderBy.push({ id: 'desc' });
+  if (sort === ClubSort.MostMembers) {
+    orderBy.push({ rank: { memberCountAllTimeRank: 'asc' } });
+  } else if (sort === ClubSort.MostPosts) {
+    orderBy.push({ rank: { clubPostCountAllTimeRank: 'asc' } });
+  } else if (sort === ClubSort.MostResources) {
+    orderBy.push({ rank: { resourceCountAllTimeRank: 'asc' } });
+  } else {
+    orderBy.push({ id: 'desc' });
+  }
 
   return dbRead.club.findMany({
     take,

@@ -149,4 +149,9 @@ export const clubMetrics = createMetricProcessor({
       UPDATE "ClubMetric" SET "memberCount" = 0, "resourceCount" = 0, "clubPostCount" = 0  WHERE timeframe = 'Day';
     `;
   },
+  rank: {
+    table: 'ClubRank',
+    primaryKey: 'clubId',
+    refreshInterval: 5 * 60 * 1000,
+  },
 });

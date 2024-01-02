@@ -2365,6 +2365,8 @@ model Club {
   adminInvites ClubAdminInvite[]
   admins       ClubAdmin[]
   metrics      ClubMetric[]
+  rank         ClubRank?
+  stats        ClubStat?
 
   @@index([userId])
 }
@@ -3622,4 +3624,46 @@ model BountyEntryRank {
   tippedAmountCountMonthRank   Int         @default(0)
   tippedAmountCountYearRank    Int         @default(0)
   tippedAmountCountAllTimeRank Int         @default(0)
+}
+
+/// @view
+model ClubStat {
+  clubId               Int  @id
+  Club                 Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  memberCountDay       Int
+  memberCountWeek      Int
+  memberCountMonth     Int
+  memberCountYear      Int
+  memberCountAllTime   Int
+  resourceCountDay     Int
+  resourceCountWeek    Int
+  resourceCountMonth   Int
+  resourceCountYear    Int
+  resourceCountAllTime Int
+  clubPostCountDay     Int
+  clubPostCountWeek    Int
+  clubPostCountMonth   Int
+  clubPostCountYear    Int
+  clubPostCountAllTime Int
+}
+
+/// @view
+model ClubRank {
+  clubId                   Int  @id
+  Club                     Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  memberCountDayRank       Int  @default(0)
+  memberCountWeekRank      Int  @default(0)
+  memberCountMonthRank     Int  @default(0)
+  memberCountYearRank      Int  @default(0)
+  memberCountAllTimeRank   Int  @default(0)
+  resourceCountDayRank     Int  @default(0)
+  resourceCountWeekRank    Int  @default(0)
+  resourceCountMonthRank   Int  @default(0)
+  resourceCountYearRank    Int  @default(0)
+  resourceCountAllTimeRank Int  @default(0)
+  clubPostCountDayRank     Int  @default(0)
+  clubPostCountWeekRank    Int  @default(0)
+  clubPostCountMonthRank   Int  @default(0)
+  clubPostCountYearRank    Int  @default(0)
+  clubPostCountAllTimeRank Int  @default(0)
 }
