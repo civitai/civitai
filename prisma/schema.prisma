@@ -2364,6 +2364,7 @@ model Club {
   posts        ClubPost[]
   adminInvites ClubAdminInvite[]
   admins       ClubAdmin[]
+  metrics      ClubMetric[]
 
   @@index([userId])
 }
@@ -2490,8 +2491,19 @@ model ClubPostReaction {
 }
 
 model ClubPostMetric {
-  clubPost     ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
-  clubPostId   Int
+  clubPost      ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  clubPostId    Int
+  timeframe     MetricTimeframe
+  memberCount   Int             @default(0)
+  clubPostCount Int             @default(0)
+  resourceCount Int             @default(0)
+
+  @@id([clubPostId, timeframe])
+}
+
+model ClubMetric {
+  club         Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  clubId       Int
   timeframe    MetricTimeframe
   likeCount    Int             @default(0)
   dislikeCount Int             @default(0)
@@ -2499,7 +2511,7 @@ model ClubPostMetric {
   cryCount     Int             @default(0)
   heartCount   Int             @default(0)
 
-  @@id([clubPostId, timeframe])
+  @@id([clubId, timeframe])
 }
 
 /// @view
