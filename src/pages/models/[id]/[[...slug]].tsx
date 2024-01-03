@@ -1032,7 +1032,8 @@ export default function ModelDetailsV2({
                       </LoginRedirect>
                     </>
                   ) : (
-                    !isMuted && (
+                    !isMuted &&
+                    onlyEarlyAccess && (
                       <JoinPopover message="You must be a Supporter Tier member to join this discussion">
                         <Button
                           leftIcon={<IconClock size={16} />}

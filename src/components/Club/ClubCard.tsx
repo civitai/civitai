@@ -8,14 +8,16 @@ import { useRouter } from 'next/router';
 import { ClubGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { IconAlertCircle, IconArticle, IconFile, IconFiles, IconUsers } from '@tabler/icons-react';
+import { abbreviateNumber } from '../../utils/number-helpers';
+import { IconBadge } from '../IconBadge/IconBadge';
 
 const IMAGE_CARD_WIDTH = 450;
 
 export function ClubCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const { id, name, coverImage, user } = data;
+  const { id, name, coverImage, user, stats } = data;
 
   return (
     <FeedCard href={`/clubs/${id}`} aspectRatio="square">
@@ -84,10 +86,12 @@ export function ClubCard({ data }: Props) {
           ) : (
             <UserAvatar user={user} />
           )}
+
           <Group position="apart" align="start" spacing={8}>
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
+
             {coverImage && !coverImage?.scannedAt && (
               <HoverCard width={300} position="top-end" withinPortal withArrow>
                 <HoverCard.Target>
@@ -108,6 +112,48 @@ export function ClubCard({ data }: Props) {
                 </HoverCard.Dropdown>
               </HoverCard>
             )}
+          </Group>
+          <Group spacing={8} position="apart">
+            <Badge
+              className={classes.chip}
+              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              radius="xl"
+              px={8}
+              variant="filled"
+            >
+              <Group spacing="xs" noWrap>
+                <IconBadge
+                  icon={<IconUsers size={14} />}
+                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(stats?.memberCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconArticle size={14} />}
+                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(stats?.clubPostCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconFiles size={14} />}
+                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(stats?.resourceCount ?? 0)}</Text>
+                </IconBadge>
+              </Group>
+            </Badge>
           </Group>
         </Stack>
       </div>
