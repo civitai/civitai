@@ -116,7 +116,7 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     if (!!ctx.req.query.batch) {
       const message = `Content not cached: ${path}`;
       if (!isProd) console.log(message);
-      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod');
+      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod').catch();
       return await next();
     }
     if (!isProd) return await next();
