@@ -108,7 +108,10 @@ export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
 };
 
 export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
-  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
+    { id: homeBlockId },
+    { trpc: { context: { skipBatch: true } } }
+  );
   const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
   const { classes, cx } = useStyles({
     columnGap,

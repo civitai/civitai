@@ -164,6 +164,7 @@ export class Tracker {
       });
       this.session.catch(() => {
         // ignore
+        // TODO - logging
       });
     }
   }
@@ -179,7 +180,7 @@ export class Tracker {
     };
 
     // Perform the clickhouse insert in the background
-    await fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
+    fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
       method: 'POST',
       body: JSON.stringify(data),
       headers: {
@@ -187,6 +188,7 @@ export class Tracker {
       },
     }).catch(() => {
       // ignore
+      // TODO - logging
     });
   }
 

@@ -20,7 +20,10 @@ const useStyles = createStyles((theme) => ({
 export const AnnouncementHomeBlock = ({ homeBlockId }: Props) => {
   const { classes } = useStyles();
 
-  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
+    { id: homeBlockId },
+    { trpc: { context: { skipBatch: true } } }
+  );
 
   const announcementIds = useMemo(
     () => (homeBlock?.announcements ? homeBlock.announcements.map((item) => item.id) : []),

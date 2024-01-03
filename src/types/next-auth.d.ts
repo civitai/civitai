@@ -21,8 +21,9 @@ interface ExtendedUser {
   onboardingSteps?: OnboardingStep[];
   permissions?: string[];
   filePreferences?: UserFilePreferences;
-  leaderboardShowcase?: string;
+  leaderboardShowcase?: string; // client only
   referral?: {
+    // client only
     id: number;
   };
 }
