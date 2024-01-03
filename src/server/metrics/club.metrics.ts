@@ -12,7 +12,7 @@ export const clubMetrics = createMetricProcessor({
           COALESCE(c.id, ct."clubId") "id"
       FROM "EntityAccess" ea
       LEFT JOIN "Club" c ON ea."accessorId" = c.id AND ea."accessorType" = 'Club'
-      LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."clubId" AND ea."accessorType" = 'ClubTier'
+      LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."id" AND ea."accessorType" = 'ClubTier'
       WHERE COALESCE(c.id, ct."clubId") IS NOT NULL AND ea."addedAt" > ${lastUpdate}
 
       UNION
@@ -120,7 +120,7 @@ export const clubMetrics = createMetricProcessor({
             SUM(IIF(ea."addedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_resource_count
           FROM "EntityAccess" ea
           LEFT JOIN "Club" c ON ea."accessorId" = c.id AND ea."accessorType" = 'Club'
-          LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."clubId" AND ea."accessorType" = 'ClubTier'
+          LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."id" AND ea."accessorType" = 'ClubTier'
           WHERE  ea."accessorType" IN ('Club', 'ClubTier')
             AND COALESCE(c.id, ct."clubId") IS NOT NULL  
           GROUP BY COALESCE(c.id, ct."clubId")
