@@ -46,6 +46,7 @@ export const trpc = createTRPCNext<AppRouter>({
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
         splitLink({
+          // do not batch post requests
           condition: (op) => (op.type === 'query' ? op.context.skipBatch === true : true),
           // when condition is true, use normal request
           true: httpLink({ url }),
