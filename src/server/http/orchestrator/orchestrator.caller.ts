@@ -9,13 +9,15 @@ class OrchestratorCaller extends HttpCaller {
     super(baseUrl, options);
   }
 
-  static getInstance(): OrchestratorCaller {
-    if (!env.ORCHESTRATOR_ENDPOINT) throw new Error('Missing ORCHESTRATOR_ENDPOINT env');
-    if (!env.ORCHESTRATOR_ACCESS_TOKEN) throw new Error('Missing ORCHESTRATOR_ACCESS_TOKEN env');
+  static getInstance(endpoint?: string, token?: string): OrchestratorCaller {
+    endpoint ??= env.ORCHESTRATOR_ENDPOINT;
+    token ??= env.ORCHESTRATOR_ACCESS_TOKEN;
+    if (!endpoint) throw new Error('Missing ORCHESTRATOR_ENDPOINT env');
+    if (!token) throw new Error('Missing ORCHESTRATOR_ACCESS_TOKEN env');
 
     if (!OrchestratorCaller.instance) {
-      OrchestratorCaller.instance = new OrchestratorCaller(env.ORCHESTRATOR_ENDPOINT, {
-        headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
+      OrchestratorCaller.instance = new OrchestratorCaller(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
       });
     }
 
@@ -93,4 +95,18 @@ class OrchestratorCaller extends HttpCaller {
   }
 }
 
-export default OrchestratorCaller.getInstance();
+const orchestratorCaller = OrchestratorCaller.getInstance();
+export default orchestratorCaller;
+
+export const altOrchestratorCaller =
+  env.ALT_ORCHESTRATION_ENDPOINT && env.ALT_ORCHESTRATION_TOKEN
+    ? OrchestratorCaller.getInstance(env.ALT_ORCHESTRATION_ENDPOINT, env.ALT_ORCHESTRATION_TOKEN)
+    : orchestratorCaller;
+
+export function getOrchestratorCaller(forTime?: Date) {
+  if (forTime && env.ALT_ORCHESTRATION_TIMEFRAME) {
+    const { start, end } = env.ALT_ORCHESTRATION_TIMEFRAME;
+    if ((!start || forTime > start) && (!end || forTime < end)) return altOrchestratorCaller;
+  }
+  return orchestratorCaller;
+}

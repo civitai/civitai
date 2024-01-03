@@ -18,6 +18,6 @@ export const trainingRouter = router({
   moveAsset: protectedProcedure
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
-    .mutation(({ input }) => moveAsset(input)),
+    .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
   getModelBasic: publicProcedure.input(getByIdSchema).query(getModelData),
 });

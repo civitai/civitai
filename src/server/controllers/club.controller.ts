@@ -39,6 +39,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { MetricTimeframe } from '@prisma/client';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {
   try {
@@ -219,6 +220,16 @@ export const getInfiniteClubsHandler = async ({
           select: imageSelect,
         },
         nsfw: true,
+        metrics: {
+          select: {
+            memberCount: true,
+            resourceCount: true,
+            clubPostCount: true,
+          },
+          where: {
+            timeframe: MetricTimeframe.AllTime,
+          },
+        },
         tiers: include?.includes('tiers')
           ? {
               select: {
@@ -239,9 +250,14 @@ export const getInfiniteClubsHandler = async ({
     return {
       nextCursor,
       items: items
-        .map(({ coverImage, ...item }) => {
+        .map(({ metrics, coverImage, ...item }) => {
           return {
             ...item,
+            stats: metrics[0] ?? {
+              memberCount: 0,
+              resourceCount: 0,
+              clubPostCount: 0,
+            },
             coverImage: coverImage
               ? {
                   ...coverImage,
