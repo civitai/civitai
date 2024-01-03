@@ -87,11 +87,6 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getGenerationStatus()),
-  // TODO: Remove temp backwards compatibility
-  getStatusMessage: publicProcedure.use(edgeCacheIt({ ttl: CacheTTL.sm })).query(async () => {
-    const { message } = await getGenerationStatus();
-    return message;
-  }),
   getUnstableResources: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getUnstableResources()),

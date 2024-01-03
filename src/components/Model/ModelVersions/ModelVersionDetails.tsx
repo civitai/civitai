@@ -130,7 +130,7 @@ export function ModelVersionDetails({
 
   const { data: resourceCovered } = trpc.generation.checkResourcesCoverage.useQuery(
     { id: version.id },
-    { enabled: features.imageGeneration && !!version }
+    { enabled: features.imageGeneration && !!version, trpc: { context: { skipBatch: true } } }
   );
   const canGenerate = features.imageGeneration && !!resourceCovered && hasAccess;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();

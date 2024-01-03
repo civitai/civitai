@@ -63,7 +63,9 @@ export function CollectionContextMenu({
 
   // Using this query might be more performant all together as there is a high likelyhood
   // that it's been preloaded by the user.
-  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery(undefined, {
+    trpc: { context: { skipBatch: true } },
+  });
   const collectionHomeBlock = useMemo(() => {
     if (!currentUser) {
       return null;

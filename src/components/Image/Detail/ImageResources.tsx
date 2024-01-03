@@ -46,8 +46,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
   });
 
   const { data, isLoading } = trpc.image.getResources.useQuery(
-    { id: imageId },
-    { trpc: { context: { skipBatch: true } } }
+    { id: imageId }
+    // { trpc: { context: { skipBatch: true } } }
   );
 
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
