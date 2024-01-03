@@ -60,7 +60,9 @@ export function ProfileCard() {
     { enabled: !!currentUser }
   );
   const { data: leaderboards = [], isLoading: loadingLeaderboards } =
-    trpc.leaderboard.getLeaderboards.useQuery();
+    trpc.leaderboard.getLeaderboards.useQuery(undefined, {
+      trpc: { context: { skipBatch: true } },
+    });
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
     async onSuccess(user, { badgeId, nameplateId, profilePicture }) {

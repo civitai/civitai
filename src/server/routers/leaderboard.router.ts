@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import {
   getLeaderboardPositionsSchema,
@@ -20,7 +20,7 @@ export const leaderboardRouter = router({
     .input(getLeaderboardPositionsSchema)
     .use(
       edgeCacheIt({
-        ttl: false,
+        ttl: CacheTTL.day,
         tags: (input) => [
           'leaderboard',
           'leaderboard-positions',
@@ -39,7 +39,7 @@ export const leaderboardRouter = router({
     .input(getLeaderboardSchema)
     .use(
       edgeCacheIt({
-        ttl: false,
+        ttl: CacheTTL.day,
         tags: (input) => ['leaderboard', `leaderboard-${input.id}`],
       })
     )
@@ -50,7 +50,7 @@ export const leaderboardRouter = router({
     .input(getLeaderboardSchema)
     .use(
       edgeCacheIt({
-        ttl: false,
+        ttl: CacheTTL.day,
         tags: (input) => ['leaderboard', `leaderboard-${input.id}`, 'leaderboard-legends'],
       })
     )

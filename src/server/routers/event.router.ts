@@ -50,7 +50,7 @@ export const eventRouter = router({
     .input(eventSchema)
     .use(
       edgeCacheIt({
-        ttl: false,
+        ttl: CacheTTL.day,
         tags: (input) => ['event-contributors', `event-contributors-${input.event}`],
       })
     )

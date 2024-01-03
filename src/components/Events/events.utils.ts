@@ -6,23 +6,32 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export const useQueryEvent = ({ event }: EventInput) => {
   const currentUser = useCurrentUser();
   const { data: eventData, isLoading: loadingData } = trpc.event.getData.useQuery({ event });
-  const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery({
-    event,
-  });
+  const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery(
+    {
+      event,
+    },
+    { trpc: { context: { skipBatch: true } } }
+  );
   const ended = eventData && eventData.endDate < new Date();
   const window = ended ? 'day' : 'hour';
   const start =
     ended && eventData ? eventData.startDate : dayjs().subtract(3, 'days').startOf('hour').toDate();
 
   const { data: teamScoresHistory = [], isLoading: loadingHistory } =
-    trpc.event.getTeamScoreHistory.useQuery({ event, window, start }, { enabled: !!eventData });
+    trpc.event.getTeamScoreHistory.useQuery(
+      { event, window, start },
+      { enabled: !!eventData, trpc: { context: { skipBatch: true } } }
+    );
   const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery(
     { event },
     { enabled: !!currentUser }
   );
-  const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery({
-    event,
-  });
+  const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery(
+    {
+      event,
+    },
+    { trpc: { context: { skipBatch: true } } }
+  );
   const { data: userRank, isLoading: loadingUserRank } = trpc.event.getUserRank.useQuery(
     { event },
     {
@@ -33,9 +42,12 @@ export const useQueryEvent = ({ event }: EventInput) => {
         eventCosmetic?.equipped,
     }
   );
-  const { data: partners, isLoading: loadingPartners } = trpc.event.getPartners.useQuery({
-    event,
-  });
+  const { data: partners, isLoading: loadingPartners } = trpc.event.getPartners.useQuery(
+    {
+      event,
+    },
+    { trpc: { context: { skipBatch: true } } }
+  );
 
   return {
     eventData,
@@ -95,7 +107,10 @@ export const useMutateEvent = () => {
 };
 
 export const useQueryEventContributors = ({ event }: { event: string }) => {
-  const { data: contributors, isLoading } = trpc.event.getContributors.useQuery({ event });
+  const { data: contributors, isLoading } = trpc.event.getContributors.useQuery(
+    { event },
+    { trpc: { context: { skipBatch: true } } }
+  );
 
   return { contributors, loading: isLoading };
 };

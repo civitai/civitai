@@ -105,6 +105,7 @@ export const useDerivedGenerationState = () => {
 export const useGenerationStatus = () => {
   const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
+    trpc: { context: { skipBatch: true } },
   });
 
   return {
@@ -118,6 +119,7 @@ export const useUnstableResources = () => {
   const { data: unstableResources } = trpc.generation.getUnstableResources.useQuery(undefined, {
     cacheTime: Infinity,
     staleTime: Infinity,
+    trpc: { context: { skipBatch: true } },
   });
 
   return unstableResources ?? [];
