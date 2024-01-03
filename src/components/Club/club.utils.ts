@@ -42,7 +42,7 @@ import {
   UpdateClubAdminInput,
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
-import { isDefined } from '../../utils/type-guards';
+import { isDefined, isNumber } from '../../utils/type-guards';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -540,7 +540,7 @@ export const useEntityAccessRequirement = ({
   entityType?: SupportedClubEntities;
   entityIds?: number[];
 }) => {
-  const ids = (entityIds ?? []).filter(isDefined);
+  const ids = (entityIds ?? []).filter((x) => isDefined(x) && isNumber(x));
   const { data: entitiesAccess, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
       entityId: ids,
