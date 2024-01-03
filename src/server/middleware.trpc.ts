@@ -105,17 +105,19 @@ export function cacheIt<TInput extends object>({
   });
 }
 
-type EdgeCacheItProps = {
-  ttl?: number | false;
+export type EdgeCacheItProps = {
+  ttl?: number;
   expireAt?: () => Date;
   tags?: (input: any) => string[];
 };
-export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
-  if (ttl === undefined) ttl = 60 * 3;
-  else if (ttl === false) ttl = 24 * 60 * 60;
-  if (!isProd) return cacheIt({ ttl });
+export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps = {}) {
+  // if (!isProd) return cacheIt({ ttl });
 
-  return middleware(async ({ next, ctx, input }) => {
+  return middleware(async ({ next, ctx, input, path }) => {
+    if (!!ctx.req.query.batch) {
+      console.log('!!! - Content not cached:', path);
+      return await next();
+    }
     let reqTTL = ctx.cache.skip ? 0 : (ttl as number);
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 

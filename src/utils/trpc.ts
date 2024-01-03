@@ -1,6 +1,12 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import { httpBatchLink, httpLink, loggerLink, splitLink, TRPCLink } from '@trpc/client';
+import {
+  httpLink,
+  loggerLink,
+  splitLink,
+  TRPCLink,
+  unstable_httpBatchStreamLink,
+} from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
@@ -44,8 +50,8 @@ export const trpc = createTRPCNext<AppRouter>({
           // when condition is true, use normal request
           true: httpLink({ url }),
           // when condition is false, use batching
-          // false: httpBatchLink({ url, maxURLLength: 2083 }),
-          false: httpLink({ url }), // Let's disable batching for now
+          false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
+          // false: httpLink({ url }), // Let's disable batching for now
         }),
       ],
     };
