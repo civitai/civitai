@@ -32,13 +32,13 @@ export function EventRewards({ event }: { event: string }) {
     return !!cosmetic;
   });
 
-  const shownRewards = ended ? earnedRewards : rewards;
+  const shownRewards = ended && currentUser ? earnedRewards : rewards;
 
   return (
     <SectionCard
       title="Event Rewards"
       subtitle={
-        ended
+        ended && currentUser
           ? 'These are the rewards you earned while the event was ongoing.'
           : 'Earn special badges for completing a variety of challenges during the event.'
       }

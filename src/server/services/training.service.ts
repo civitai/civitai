@@ -19,7 +19,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
-import orchestratorCaller from '../http/orchestrator/orchestrator.caller';
+import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
@@ -39,10 +39,43 @@ type TrainingRequest = {
   fileMetadata: FileMetadata | null;
 };
 
+async function getSubmittedAt(modelVersionId: number, userId: number) {
+  const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
+    SELECT mf.metadata, mv."updatedAt"
+    FROM "ModelVersion" mv
+    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId} AND m."userId" = ${userId}
+  `;
+
+  if (!modelFile) throw throwBadRequestError('Invalid model version');
+  if (modelFile.metadata?.trainingResults?.submittedAt) {
+    return new Date(modelFile.metadata.trainingResults.submittedAt);
+  } else if (modelFile.metadata?.trainingResults?.history) {
+    for (const { status, time } of modelFile.metadata.trainingResults.history) {
+      if (status === TrainingStatus.Submitted) {
+        return new Date(time);
+        break;
+      }
+    }
+  }
+
+  return modelFile.updatedAt;
+}
+
 const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
 
-export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
+type MoveAssetRow = {
+  metadata: FileMetadata | null;
+  updatedAt: Date;
+};
+export const moveAsset = async ({
+  url,
+  modelVersionId,
+  modelId,
+  userId,
+}: MoveAssetInput & { userId: number }) => {
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
@@ -55,7 +88,8 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
     destinationUri,
   };
 
-  const response = await orchestratorCaller.copyAsset({
+  const submittedAt = await getSubmittedAt(modelVersionId, userId);
+  const response = await getOrchestratorCaller(submittedAt).copyAsset({
     payload: reqBody,
     queryParams: { wait: true },
   });
@@ -80,8 +114,8 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
   };
 };
 
-export const deleteAssets = async (jobId: string) => {
-  const response = await orchestratorCaller.clearAssets({
+export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
+  const response = await getOrchestratorCaller(submittedAt).clearAssets({
     payload: { jobId },
     queryParams: { wait: true },
   });
@@ -193,7 +227,9 @@ export const createTrainingRequest = async ({
     },
   };
 
-  const response = await orchestratorCaller.imageResourceTraining({ payload: generationRequest });
+  const response = await getOrchestratorCaller(new Date()).imageResourceTraining({
+    payload: generationRequest,
+  });
   if (!response.ok && transactionId) {
     await withRetries(async () =>
       refundTransaction(
@@ -223,6 +259,7 @@ export const createTrainingRequest = async ({
         ...fileMetadata,
         trainingResults: {
           ...(fileMetadata.trainingResults || {}),
+          submittedAt: new Date().toISOString(),
           jobId: data?.jobs?.[0]?.jobId,
           transactionId,
           history: (fileMetadata.trainingResults?.history || []).concat([

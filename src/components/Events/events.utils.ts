@@ -1,8 +1,10 @@
 import { trpc } from '~/utils/trpc';
 import { EventInput } from '~/server/schema/event.schema';
 import dayjs from 'dayjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useQueryEvent = ({ event }: EventInput) => {
+  const currentUser = useCurrentUser();
   const { data: eventData, isLoading: loadingData } = trpc.event.getData.useQuery({ event });
   const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery(
     {
@@ -20,9 +22,10 @@ export const useQueryEvent = ({ event }: EventInput) => {
       { event, window, start },
       { enabled: !!eventData, trpc: { context: { skipBatch: true } } }
     );
-  const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery({
-    event,
-  });
+  const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery(
+    { event },
+    { enabled: !!currentUser }
+  );
   const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery(
     {
       event,
@@ -31,7 +34,13 @@ export const useQueryEvent = ({ event }: EventInput) => {
   );
   const { data: userRank, isLoading: loadingUserRank } = trpc.event.getUserRank.useQuery(
     { event },
-    { enabled: eventCosmetic?.available && eventCosmetic?.obtained && eventCosmetic?.equipped }
+    {
+      enabled:
+        !!currentUser &&
+        eventCosmetic?.available &&
+        eventCosmetic?.obtained &&
+        eventCosmetic?.equipped,
+    }
   );
   const { data: partners, isLoading: loadingPartners } = trpc.event.getPartners.useQuery(
     {

@@ -910,7 +910,14 @@ export const toggleArticleEngagementHandler = async ({
 }) => {
   try {
     const on = await toggleUserArticleEngagement({ ...input, userId: ctx.user.id });
-    if (on) await ctx.track.articleEngagement(input);
+    // Not awaiting here to avoid slowing down the response
+    ctx.track
+      .articleEngagement({
+        ...input,
+        type: on ? input.type : `Delete${input.type}`,
+      })
+      .catch(handleLogError);
+
     return on;
   } catch (error) {
     throw throwDbError(error);

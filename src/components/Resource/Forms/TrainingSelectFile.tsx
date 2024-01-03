@@ -224,6 +224,7 @@ export default function TrainingSelectFile({
     moveAssetMutation.mutate(
       {
         url: fileUrl,
+        modelVersionId: modelVersion.id,
         modelId: model.id,
       },
       {
