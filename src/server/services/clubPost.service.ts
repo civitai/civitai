@@ -1,7 +1,6 @@
 import { ClubAdminPermission, MetricTimeframe, Prisma } from '@prisma/client';
 import {
   GetInfiniteClubPostsSchema,
-  SupportedClubEntities,
   SupportedClubPostEntities,
   UpsertClubPostInput,
 } from '~/server/schema/club.schema';
@@ -17,7 +16,7 @@ import {
 import { ArticleGetAllRecord, getArticles } from './article.service';
 import { PostsInfiniteModel, getPostsInfinite } from './post.service';
 import { ArticleSort, BrowsingMode, ModelSort, PostSort } from '../common/enums';
-import { number } from 'zod';
+import { clubMetrics } from '../metrics';
 
 export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
@@ -220,6 +219,8 @@ export const deleteClubPost = async ({
   if (!isClubOwner && !isModerator && !canDeletePost) {
     throw throwAuthorizationError('You do not have permission to delete this post.');
   }
+
+  await clubMetrics.queueUpdate(post.clubId);
 
   return dbWrite.clubPost.delete({
     where: {
