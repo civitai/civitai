@@ -42,6 +42,7 @@ import {
   UpdateClubAdminInput,
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
+import { isDefined, isNumber } from '../../utils/type-guards';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -539,27 +540,28 @@ export const useEntityAccessRequirement = ({
   entityType?: SupportedClubEntities;
   entityIds?: number[];
 }) => {
+  const ids = (entityIds ?? []).filter((x) => isDefined(x) && isNumber(x));
   const { data: entitiesAccess, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
-      entityId: entityIds as number[],
+      entityId: ids,
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityIds && !!entityType && entityIds?.length > 0,
+      enabled: ids.length > 0 && !!entityType,
     }
   );
 
   const { data: clubRequirements } = trpc.common.getEntityClubRequirement.useQuery(
     {
-      entityId: entityIds as number[],
+      entityId: ids,
       entityType: entityType as SupportedClubEntities,
     },
     {
-      enabled: !!entityIds && !!entityType && !isLoadingAccess,
+      enabled: ids.length > 0 && !!entityType && !isLoadingAccess,
     }
   );
 
-  const entities = (entityIds ?? []).map((id) => {
+  const entities = ids.map((id) => {
     const entityAccess = entitiesAccess?.find((x) => x.entityId === id);
     const clubRequirement = clubRequirements?.find((x) => x.entityId === id);
     const hasAccess = isLoadingAccess ? false : entityAccess?.hasAccess ?? false;

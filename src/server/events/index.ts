@@ -16,7 +16,7 @@ import { discord } from '~/server/integrations/discord';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 
 // Only include events that aren't completed
-const events = [holiday2023];
+export const events = [holiday2023];
 export const activeEvents = events.filter((x) => x.endDate >= new Date());
 
 export const eventEngine = {

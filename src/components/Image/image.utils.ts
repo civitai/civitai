@@ -87,9 +87,15 @@ export const useQueryImages = (
     isLoading: loadingHidden,
   } = useHiddenPreferencesContext();
 
-  const images = useMemo(() => {
+  const { images, fetchedImages, removedImages } = useMemo(() => {
     // TODO - fetch user reactions for images separately
-    if (loadingHidden) return [];
+    if (loadingHidden)
+      return {
+        images: [],
+        fetchedImages: 0,
+        removedImages: 0,
+      };
+
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
     if (!applyHiddenPreferences) return arr;
     const filtered = arr.filter((x) => {
@@ -100,7 +106,12 @@ export const useQueryImages = (
       for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
       return true;
     });
-    return filtered;
+
+    return {
+      images: filtered,
+      fetchedImages: arr.length,
+      removedImages: arr.length - filtered.length,
+    };
   }, [
     data,
     currentUser,
@@ -112,7 +123,7 @@ export const useQueryImages = (
     applyHiddenPreferences,
   ]);
 
-  return { data, images, ...rest };
+  return { data, images, removedImages, fetchedImages, ...rest };
 };
 
 export const useQueryImageCategories = (

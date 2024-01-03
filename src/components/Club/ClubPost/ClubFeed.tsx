@@ -50,6 +50,7 @@ import { ImageCarousel } from '../../Bounty/ImageCarousel';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
 import { ContentClamp } from '../../ContentClamp/ContentClamp';
+import { Reactions } from '../../Reaction/Reactions';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -190,6 +191,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
   const { ref, inView } = useInView({
     triggerOnce: true,
   });
+  const { metrics, reactions } = clubPost;
 
   const { title, description } = useMemo(() => {
     if (clubPost.title) {
@@ -280,6 +282,18 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
             <Divider />
           </>
         )}
+        <Reactions
+          entityId={clubPost.id}
+          entityType="clubPost"
+          reactions={reactions}
+          metrics={{
+            likeCount: metrics?.likeCount,
+            heartCount: metrics?.heartCount,
+            laughCount: metrics?.laughCount,
+            cryCount: metrics?.cryCount,
+          }}
+          targetUserId={currentUser?.id}
+        />
         {inView && (
           <ClubPostDiscussion
             clubId={clubPost.clubId}

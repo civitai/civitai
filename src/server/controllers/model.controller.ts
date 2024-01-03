@@ -1053,71 +1053,82 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ? { id: toModelId, resourceType: 'model' as const }
         : { id: toArticleId, resourceType: 'article' as const }
     );
+
     if (!resourcesIds.length) return [];
+
+    const modelResources = resourcesIds
+      .filter(({ resourceType }) => resourceType === 'model')
+      .map(({ id }) => id);
+    const articleResources = resourcesIds
+      .filter(({ resourceType }) => resourceType === 'article')
+      .map(({ id }) => id);
 
     const period = MetricTimeframe.AllTime;
     const modelInput = getAllModelsSchema.parse({
       ...userPreferences,
-      ids: resourcesIds.filter(({ resourceType }) => resourceType === 'model').map(({ id }) => id),
+      ids: modelResources,
       period,
     });
     const articleInput = getInfiniteArticlesSchema.parse({
       ...userPreferences,
-      ids: resourcesIds
-        .filter(({ resourceType }) => resourceType === 'article')
-        .map(({ id }) => id),
+      ids: articleResources,
       period,
     });
 
     const [{ items: models }, { items: articles }] = await Promise.all([
-      getModels({
-        user,
-        input: modelInput,
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          nsfw: true,
-          status: true,
-          createdAt: true,
-          lastVersionAt: true,
-          publishedAt: true,
-          locked: true,
-          earlyAccessDeadline: true,
-          mode: true,
-          rank: {
-            select: {
-              [`downloadCount${period}`]: true,
-              [`favoriteCount${period}`]: true,
-              [`commentCount${period}`]: true,
-              [`ratingCount${period}`]: true,
-              [`rating${period}`]: true,
-            },
-          },
-          modelVersions: {
-            orderBy: { index: 'asc' },
-            take: 1,
-            where: { status: ModelStatus.Published },
+      modelResources?.length > 0
+        ? getModels({
+            user,
+            input: modelInput,
             select: {
               id: true,
-              earlyAccessTimeFrame: true,
+              name: true,
+              type: true,
+              nsfw: true,
+              status: true,
               createdAt: true,
-              baseModel: true,
-              baseModelType: true,
-              generationCoverage: { select: { covered: true } },
+              lastVersionAt: true,
+              publishedAt: true,
+              locked: true,
+              earlyAccessDeadline: true,
+              mode: true,
+              rank: {
+                select: {
+                  [`downloadCount${period}`]: true,
+                  [`favoriteCount${period}`]: true,
+                  [`commentCount${period}`]: true,
+                  [`ratingCount${period}`]: true,
+                  [`rating${period}`]: true,
+                },
+              },
+              modelVersions: {
+                orderBy: { index: 'asc' },
+                take: 1,
+                where: { status: ModelStatus.Published },
+                select: {
+                  id: true,
+                  earlyAccessTimeFrame: true,
+                  createdAt: true,
+                  baseModel: true,
+                  baseModelType: true,
+                  generationCoverage: { select: { covered: true } },
+                },
+              },
+              user: { select: simpleUserSelect },
+              hashes: {
+                select: modelHashSelect,
+                where: {
+                  hashType: ModelHashType.SHA256,
+                  fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+                },
+              },
             },
-          },
-          user: { select: simpleUserSelect },
-          hashes: {
-            select: modelHashSelect,
-            where: {
-              hashType: ModelHashType.SHA256,
-              fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-            },
-          },
-        },
-      }),
-      getArticles({ ...articleInput, sessionUser: user }),
+          })
+        : { items: [] },
+      articleResources?.length > 0
+        ? getArticles({ ...articleInput, sessionUser: user })
+        : { items: [] },
+      ,
     ]);
 
     if (!models.length) {

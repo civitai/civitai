@@ -4,6 +4,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { purgeCache } from '~/server/cloudflare/client';
 import { BrowsingMode } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getHiddenTagsForUser, userCache } from '~/server/services/user-cache.service';
@@ -105,17 +106,20 @@ export function cacheIt<TInput extends object>({
   });
 }
 
-type EdgeCacheItProps = {
-  ttl?: number | false;
+export type EdgeCacheItProps = {
+  ttl?: number;
   expireAt?: () => Date;
   tags?: (input: any) => string[];
 };
-export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
-  if (ttl === undefined) ttl = 60 * 3;
-  else if (ttl === false) ttl = 24 * 60 * 60;
-  if (!isProd) return cacheIt({ ttl });
-
-  return middleware(async ({ next, ctx, input }) => {
+export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps = {}) {
+  return middleware(async ({ next, ctx, input, path }) => {
+    if (!!ctx.req.query.batch) {
+      const message = `Content not cached: ${path}`;
+      if (!isProd) console.log(message);
+      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod').catch();
+      return await next();
+    }
+    if (!isProd) return await next();
     let reqTTL = ctx.cache.skip ? 0 : (ttl as number);
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 

@@ -47,7 +47,7 @@ export const getServerSideProps = createServerSideProps({
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
-    trpc.tag.getHomeExcluded.useQuery();
+    trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();

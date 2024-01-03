@@ -180,6 +180,7 @@ model User {
   addedClubPosts          ClubPost[]
   accessGrantedBy         EntityAccess[]
   clubAdmin               ClubAdmin[]
+  clubPostReactions       ClubPostReaction[]
 }
 
 enum OnboardingStep {
@@ -2427,6 +2428,9 @@ model Club {
   posts        ClubPost[]
   adminInvites ClubAdminInvite[]
   admins       ClubAdmin[]
+  metrics      ClubMetric[]
+  rank         ClubRank?
+  stats        ClubStat?
 
   @@index([userId])
 }
@@ -2534,7 +2538,46 @@ model ClubPost {
   entityId     Int?
   entityType   String?
 
-  thread Thread?
+  thread    Thread?
+  reactions ClubPostReaction[]
+  metrics   ClubPostMetric[]
+}
+
+model ClubPostReaction {
+  id         Int             @id @default(autoincrement())
+  clubPostId Int
+  clubPost   ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction   ReviewReactions
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([clubPostId, userId, reaction])
+}
+
+model ClubPostMetric {
+  clubPost     ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  clubPostId   Int
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+
+  @@id([clubPostId, timeframe])
+}
+
+model ClubMetric {
+  club          Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  clubId        Int
+  timeframe     MetricTimeframe
+  memberCount   Int             @default(0)
+  clubPostCount Int             @default(0)
+  resourceCount Int             @default(0)
+
+  @@id([clubId, timeframe])
 }
 
 /// @view
@@ -3645,4 +3688,46 @@ model BountyEntryRank {
   tippedAmountCountMonthRank   Int         @default(0)
   tippedAmountCountYearRank    Int         @default(0)
   tippedAmountCountAllTimeRank Int         @default(0)
+}
+
+/// @view
+model ClubStat {
+  clubId               Int  @id
+  Club                 Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  memberCountDay       Int
+  memberCountWeek      Int
+  memberCountMonth     Int
+  memberCountYear      Int
+  memberCountAllTime   Int
+  resourceCountDay     Int
+  resourceCountWeek    Int
+  resourceCountMonth   Int
+  resourceCountYear    Int
+  resourceCountAllTime Int
+  clubPostCountDay     Int
+  clubPostCountWeek    Int
+  clubPostCountMonth   Int
+  clubPostCountYear    Int
+  clubPostCountAllTime Int
+}
+
+/// @view
+model ClubRank {
+  clubId                   Int  @id
+  Club                     Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  memberCountDayRank       Int  @default(0)
+  memberCountWeekRank      Int  @default(0)
+  memberCountMonthRank     Int  @default(0)
+  memberCountYearRank      Int  @default(0)
+  memberCountAllTimeRank   Int  @default(0)
+  resourceCountDayRank     Int  @default(0)
+  resourceCountWeekRank    Int  @default(0)
+  resourceCountMonthRank   Int  @default(0)
+  resourceCountYearRank    Int  @default(0)
+  resourceCountAllTimeRank Int  @default(0)
+  clubPostCountDayRank     Int  @default(0)
+  clubPostCountWeekRank    Int  @default(0)
+  clubPostCountMonthRank   Int  @default(0)
+  clubPostCountYearRank    Int  @default(0)
+  clubPostCountAllTimeRank Int  @default(0)
 }

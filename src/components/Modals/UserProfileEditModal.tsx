@@ -75,7 +75,9 @@ const { openModal, Modal } = createContextModal({
     const previousData = useRef<FormDataSchema>();
 
     const { data: leaderboards = [], isLoading: loadingLeaderboards } =
-      trpc.leaderboard.getLeaderboards.useQuery();
+      trpc.leaderboard.getLeaderboards.useQuery(undefined, {
+        trpc: { context: { skipBatch: true } },
+      });
 
     const { mutate, isLoading: isUpdating } = trpc.userProfile.update.useMutation({
       onSuccess: (data) => {

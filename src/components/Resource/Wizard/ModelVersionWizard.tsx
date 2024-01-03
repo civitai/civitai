@@ -1,4 +1,15 @@
-import { Anchor, Button, Container, Group, Stack, Stepper, Text, Title } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  Container,
+  Group,
+  Stack,
+  Stepper,
+  Text,
+  Title,
+  Center,
+  Loader,
+} from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -27,11 +38,10 @@ export function ModelVersionWizard({ data }: Props) {
     { id: Number(versionId), withFiles: true },
     {
       enabled: !!versionId,
-      placeholderData: {
-        model: { ...data },
-      },
     }
   );
+
+  const modelData = modelVersion?.model ?? data;
 
   const { getStatus: getUploadStatus } = useS3UploadStore();
   const { uploading, error, aborted } = getUploadStatus(
@@ -88,14 +98,14 @@ export function ModelVersionWizard({ data }: Props) {
   const postId = modelVersion?.posts?.[0]?.id;
 
   return (
-    <FilesProvider model={modelVersion?.model} version={modelVersion}>
+    <FilesProvider model={modelData} version={modelVersion}>
       <Container size="sm">
         <Stack spacing="xl" py="xl">
-          <Link href={`/models/${modelVersion?.model.id}`} passHref>
+          <Link href={`/models/${modelData?.id}`} passHref>
             <Anchor size="xs">
               <Group spacing={4} noWrap>
                 <IconArrowLeft size={12} />
-                <Text inherit>Back to {modelVersion?.model.name} page</Text>
+                <Text inherit>Back to {modelData?.name} page</Text>
               </Group>
             </Anchor>
           </Link>
@@ -103,9 +113,7 @@ export function ModelVersionWizard({ data }: Props) {
             active={activeStep - 1}
             onStepClick={(step) =>
               router.replace(
-                `/models/${modelVersion?.model.id}/model-versions/${versionId}/wizard?step=${
-                  step + 1
-                }`
+                `/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${step + 1}`
               )
             }
             allowNextStepsSelect={false}
@@ -114,24 +122,26 @@ export function ModelVersionWizard({ data }: Props) {
             <Stepper.Step label={editing ? 'Edit version' : 'Add version'}>
               <Stack>
                 <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
-                <ModelVersionUpsertForm
-                  model={modelVersion?.model}
-                  version={modelVersion}
-                  onSubmit={(result) => {
-                    if (editing) return goNext();
-                    router.replace(
-                      `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`
-                    );
-                  }}
-                >
-                  {({ loading }) => (
-                    <Group mt="xl" position="right">
-                      <Button type="submit" loading={loading}>
-                        Next
-                      </Button>
-                    </Group>
-                  )}
-                </ModelVersionUpsertForm>
+                {modelVersion && (
+                  <ModelVersionUpsertForm
+                    model={modelData}
+                    version={modelVersion}
+                    onSubmit={(result) => {
+                      if (editing) return goNext();
+                      router.replace(
+                        `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`
+                      );
+                    }}
+                  >
+                    {({ loading }) => (
+                      <Group mt="xl" position="right">
+                        <Button type="submit" loading={loading}>
+                          Next
+                        </Button>
+                      </Group>
+                    )}
+                  </ModelVersionUpsertForm>
+                )}
               </Stack>
             </Stepper.Step>
             <Stepper.Step
@@ -148,12 +158,9 @@ export function ModelVersionWizard({ data }: Props) {
             <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
               <Stack spacing="xl">
                 <Title order={3}>{postId ? 'Edit post' : 'Create your post'}</Title>
-                {modelVersion && (
+                {modelVersion && modelData && (
                   <PostEditWrapper postId={postId}>
-                    <PostUpsertForm
-                      modelVersionId={modelVersion.id}
-                      modelId={modelVersion.model.id}
-                    />
+                    <PostUpsertForm modelVersionId={modelVersion.id} modelId={modelData?.id} />
                   </PostEditWrapper>
                 )}
               </Stack>

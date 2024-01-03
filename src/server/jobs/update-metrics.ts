@@ -6,6 +6,7 @@ const metricSets = {
   users: [metrics.userMetrics],
   images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
+  clubs: [metrics.clubPostMetrics, metrics.clubMetrics],
   other: [
     metrics.answerMetrics,
     metrics.articleMetrics,

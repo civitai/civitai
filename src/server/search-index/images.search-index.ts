@@ -254,7 +254,8 @@ const onFetchItemsToIndex = async ({
           'tippedAmountCountAllTime', SUM("tippedAmountCount")
         ) stats
       FROM "ImageMetric" im
-      WHERE im."imageId" IN (SELECT id FROM target)
+      WHERE im."imageId" IN (SELECT id FROM target)          
+        AND im."timeframe" = 'AllTime'::"MetricTimeframe"
       GROUP BY im."imageId"
   ), users AS MATERIALIZED (
     SELECT

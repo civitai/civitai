@@ -64,6 +64,7 @@ export default function Leaderboard() {
   const [drawerOpen, { close, toggle }] = useDisclosure();
 
   const { data: leaderboards = [] } = trpc.leaderboard.getLeaderboards.useQuery(undefined, {
+    trpc: { context: { skipBatch: true } },
     onSuccess: (data) => {
       if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
     },
@@ -73,6 +74,7 @@ export default function Leaderboard() {
       { id, date },
       {
         enabled: board === 'season',
+        trpc: { context: { skipBatch: true } },
       }
     );
   const { data: leaderboardLegend = [], isLoading: loadingLeaderboardLegend } =
@@ -80,6 +82,7 @@ export default function Leaderboard() {
       { id, date },
       {
         enabled: board === 'legend',
+        trpc: { context: { skipBatch: true } },
       }
     );
   const { data: leaderboardPositionsRaw = [], isLoading: loadingLeaderboardPositions } =
@@ -87,6 +90,7 @@ export default function Leaderboard() {
       { date, userId: currentUser?.id, top: 1000 },
       {
         enabled: !!currentUser,
+        trpc: { context: { skipBatch: true } },
       }
     );
   const leaderboardPositions = useMemo(() => {

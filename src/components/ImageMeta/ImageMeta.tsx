@@ -83,13 +83,13 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img', onCrea
   // TODO.optimize - can we get this data higher up?
   const { data = [] } = trpc.image.getResources.useQuery(
     { id: imageId as number },
-    { enabled: flags.imageGeneration && !!imageId }
+    { enabled: flags.imageGeneration && !!imageId, trpc: { context: { skipBatch: true } } }
   );
   const resourceId = data.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
 
   const { data: resourceCoverage } = trpc.generation.checkResourcesCoverage.useQuery(
     { id: resourceId as number },
-    { enabled: flags.imageGeneration && !!resourceId }
+    { enabled: flags.imageGeneration && !!resourceId, trpc: { context: { skipBatch: true } } }
   );
 
   const canCreate = flags.imageGeneration && !!resourceCoverage;

@@ -97,7 +97,9 @@ export type ReactionType =
   | 'Answer_Create'
   | 'Answer_Delete'
   | 'BountyEntry_Create'
-  | 'BountyEntry_Delete';
+  | 'BountyEntry_Delete'
+  | 'Article_Create'
+  | 'Article_Delete';
 export type ReportType = 'Create' | 'StatusChange';
 export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
 export type TagEngagementType = 'Hide' | 'Allow';
@@ -162,6 +164,7 @@ export class Tracker {
       });
       this.session.catch(() => {
         // ignore
+        // TODO - logging
       });
     }
   }
@@ -177,7 +180,7 @@ export class Tracker {
     };
 
     // Perform the clickhouse insert in the background
-    await fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
+    fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
       method: 'POST',
       body: JSON.stringify(data),
       headers: {
@@ -185,6 +188,7 @@ export class Tracker {
       },
     }).catch(() => {
       // ignore
+      // TODO - logging
     });
   }
 
@@ -303,7 +307,10 @@ export class Tracker {
     return this.track('modelEngagements', values);
   }
 
-  public articleEngagement(values: { type: ArticleEngagementType; articleId: number }) {
+  public articleEngagement(values: {
+    type: ArticleEngagementType | `Delete${ArticleEngagementType}`;
+    articleId: number;
+  }) {
     return this.track('articleEngagements', values);
   }
 

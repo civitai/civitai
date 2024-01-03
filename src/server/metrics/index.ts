@@ -9,3 +9,5 @@ export { userMetrics } from '~/server/metrics/user.metrics';
 export { collectionMetrics } from '~/server/metrics/collection.metrics';
 export { bountyMetrics } from '~/server/metrics/bounty.metrics';
 export { bountyEntryMetrics } from '~/server/metrics/bountyEntry.metrics';
+export { clubPostMetrics } from '~/server/metrics/clubPost.metrics';
+export { clubMetrics } from '~/server/metrics/club.metrics';

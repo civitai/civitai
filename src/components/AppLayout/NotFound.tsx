@@ -10,6 +10,7 @@ export function NotFound() {
   const isClient = useIsClient();
   const { data: images } = trpc.image.getNotFoundImages.useQuery(undefined, {
     enabled: isClient,
+    trpc: { context: { skipBatch: true } },
   });
 
   const image = useMemo(() => {

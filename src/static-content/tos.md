@@ -74,7 +74,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 **The following User Content is expressly prohibited and may be flagged by or for our moderators:**
 
-- (a) Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please review our guidelines on depicting the likeness of real people and depicting minors;
+- (a) Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safetyhttps://);
 - (b) Content depicting or intended to depict photorealistic minors, regardless of context;
 - (c) Content promoting illegal or violent activities, including, but not limited to: - child abuse and exploitation - rape and domestic abuse - illegal substances or product sales requiring permits/licenses (e.g., pharmaceuticals, narcotics, firearms) - fraud, deception, or false impersonation - brutal fights, graphic injuries, or human death - graphic violence or bestiality
 

@@ -175,6 +175,9 @@ export enum ClubMembershipSort {
 
 export enum ClubSort {
   Newest = 'Newest',
+  MostResources = 'Most Resources',
+  MostPosts = 'Most Club Posts',
+  MostMembers = 'Most Members',
 }
 
 export enum BlockedReason {

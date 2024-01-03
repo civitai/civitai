@@ -123,7 +123,10 @@ export const CollectionHomeBlock = ({ ...props }: Props) => {
 
 const ITEMS_PER_ROW = 7;
 const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
-  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
+    { id: homeBlockId },
+    { trpc: { context: { skipBatch: true } } }
+  );
   const rows = metadata.collection?.rows ?? 2;
   const { classes, cx } = useStyles({
     count: homeBlock?.collection?.items.length ?? 0,

@@ -17,11 +17,12 @@ interface ExtendedUser {
   tier?: string;
   muted?: boolean;
   bannedAt?: Date;
-  autoplayGifs?: boolean;
-  onboardingSteps?: OnboardingStep[];
+  autoplayGifs?: boolean; // client only
+  onboardingSteps?: OnboardingStep[]; // client only
   permissions?: string[];
   filePreferences?: UserFilePreferences;
-  leaderboardShowcase?: string;
+  leaderboardShowcase?: string; // client only
+  // client only
   referral?: {
     id: number;
   };

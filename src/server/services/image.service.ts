@@ -479,7 +479,7 @@ export const getAllImages = async ({
   userId?: number;
   isModerator?: boolean;
   nsfw?: NsfwLevel;
-  headers?: Record<string, string>;
+  headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];

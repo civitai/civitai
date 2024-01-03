@@ -17,22 +17,22 @@ export function CreatorCard({
   tipBuzzEntityId,
   withActions = true,
 }: Props) {
-  const { data: creator } = trpc.user.getCreator.useQuery(
-    { id: user.id },
-    {
-      placeholderData: {
-        ...user,
-        rank: null,
-        stats: {
-          downloadCountAllTime: 0,
-          favoriteCountAllTime: 0,
-          followerCountAllTime: 0,
-          ratingAllTime: 0,
-          ratingCountAllTime: 0,
-        },
-      },
-    }
-  );
+  const { data } = trpc.user.getCreator.useQuery({ id: user.id });
+
+  const creator = data || {
+    ...user,
+    createdAt: null,
+    _count: { models: 0 },
+    rank: null,
+    links: [],
+    stats: {
+      downloadCountAllTime: 0,
+      favoriteCountAllTime: 0,
+      followerCountAllTime: 0,
+      ratingAllTime: 0,
+      ratingCountAllTime: 0,
+    },
+  };
 
   const { models: uploads } = creator?._count ?? { models: 0 };
   const stats = creator?.stats;
@@ -48,7 +48,7 @@ export function CreatorCard({
               size="sm"
               avatarProps={{ size: 32 }}
               user={creator}
-              subText={`Joined ${formatDate(creator.createdAt)}`}
+              subText={creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined}
               withUsername
               linkToProfile
             />

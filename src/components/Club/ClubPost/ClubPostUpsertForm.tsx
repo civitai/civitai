@@ -67,7 +67,7 @@ type Props = {
     entityId: number;
     entityType: SupportedClubPostEntities;
   };
-  clubPost?: ClubPostGetAll[number];
+  clubPost?: Omit<ClubPostGetAll[number], 'metrics' | 'reactions'>;
   clubId: number;
   onSuccess?: () => void;
   onCancel?: () => void;
@@ -152,9 +152,9 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
             label={
               resource
                 ? 'This resource will be linked to the club post'
-                : 'Link a resources to this post'
+                : 'Link a resource to this post'
             }
-            description="By linking a resource to the club post, the resource card will be displayed in your club feed and post. This will not affect the resource permisisons or access. If someone with no access to this resource happens unpon your club post, they will not be able to see it."
+            description="By linking a resource to the club post, the resource card will be displayed in your club feed and post. This will not affect the resource permissions or access. If someone with no access to this resource happens upon your club post, they will not be able to see it."
           >
             <Divider mt="md" size={0} />
             <Stack>

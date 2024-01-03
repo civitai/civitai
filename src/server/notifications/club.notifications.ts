@@ -61,7 +61,7 @@ export const clubNotifications = createNotificationProcessor({
           COALESCE(c.name, cct.name) "name"
         FROM "EntityAccess" ea
         LEFT JOIN "Club" c ON ea."accessorId" = c.id AND ea."accessorType" = 'Club'
-        LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."clubId" AND ea."accessorType" = 'ClubTier'
+        LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."id" AND ea."accessorType" = 'ClubTier'
         LEFT JOIN "Club" cct ON ct."clubId" = cct.id
         WHERE COALESCE(c.id, ct."clubId") IS NOT NULL AND ea."addedAt" > '${lastSent}'
       ), data AS (

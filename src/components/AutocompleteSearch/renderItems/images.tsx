@@ -23,13 +23,10 @@ export const ImagesSearchItem = forwardRef<
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, tags, stats } = hit;
-  const { commentCountAllTime, ...reactionStats } = stats || {
+  const { commentCountAllTime, reactionCountAllTime } = stats || {
     commentCountAllTime: 0,
-    viewCountAllTime: 0,
-    favoriteCountAllTime: 0,
-    likeCountAllTime: 0,
+    reactionCountAllTime: 0,
   };
-  const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
   const tagsMax = tags?.slice(0, 3);
   const remainingTagsCount = tags?.slice(3).length;
 
@@ -93,7 +90,7 @@ export const ImagesSearchItem = forwardRef<
         {stats && (
           <Group spacing={4}>
             <ActionIconBadge icon={<IconMoodSmile size={12} stroke={2.5} />}>
-              {abbreviateNumber(reactionCount)}
+              {abbreviateNumber(reactionCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
               {abbreviateNumber(commentCountAllTime)}

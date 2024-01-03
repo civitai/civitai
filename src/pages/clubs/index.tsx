@@ -98,6 +98,9 @@ export default function ClubsPage() {
             />
             <Group position="apart" spacing={8}>
               {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+                <SortFilter type="clubs" variant="button" />
+              </Group>
             </Group>
             {query.engagement && (
               <Stack spacing="xl" align="flex-start">
