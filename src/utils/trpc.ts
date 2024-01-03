@@ -46,12 +46,12 @@ export const trpc = createTRPCNext<AppRouter>({
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
         splitLink({
-          condition: (op) => op.context.skipBatch === true,
+          condition: (op) => op.context.skipBatch === true && op.type === 'query',
           // when condition is true, use normal request
           true: httpLink({ url }),
           // when condition is false, use batching
-          false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
-          // false: httpLink({ url }), // Let's disable batching for now
+          // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
+          false: httpLink({ url }), // Let's disable batching for now
         }),
       ],
     };
