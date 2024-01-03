@@ -819,49 +819,6 @@ model Report {
   bountyEntry    BountyEntryReport?
 }
 
-enum ReportEntity {
-  Model
-  Comment
-  CommentV2
-  Image
-  ResourceReview
-  Article
-  Post
-  User
-  Collection
-  Bounty
-  BountyEntry
-}
-
-model Report2 {
-  id            Int          @id @default(autoincrement())
-  createdAt     DateTime     @default(now())
-  entityId      Int
-  entityType    ReportEntity
-  // status        ReportStatus
-  // statusSetAt   DateTime?
-  // statusSetById Int?
-  internalNotes String?
-
-  items ReportItem[]
-
-  @@unique([entityId, entityType])
-}
-
-model ReportItem {
-  reportId      Int
-  report        Report2?     @relation(fields: [reportId], references: [id])
-  reportedById  Int
-  createdAt     DateTime     @default(now())
-  reason        ReportReason
-  details       Json?
-  status        ReportStatus
-  statusSetAt   DateTime?
-  statusSetById Int?
-
-  @@id([reportId, reportedById])
-}
-
 model ResourceReviewReport {
   resourceReviewId Int
   resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id], onDelete: Cascade)

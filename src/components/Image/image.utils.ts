@@ -97,15 +97,16 @@ export const useQueryImages = (
       };
 
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
-    if (!applyHiddenPreferences) return arr;
-    const filtered = arr.filter((x) => {
-      if (x.user.id === currentUser?.id) return true;
-      if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
-      if (hiddenImages.get(x.id) && !filters?.hidden) return false;
-      if (hiddenUsers.get(x.user.id)) return false;
-      for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-      return true;
-    });
+    const filtered = applyHiddenPreferences
+      ? arr.filter((x) => {
+          if (x.user.id === currentUser?.id) return true;
+          if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
+          if (hiddenImages.get(x.id) && !filters?.hidden) return false;
+          if (hiddenUsers.get(x.user.id)) return false;
+          for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+          return true;
+        })
+      : arr;
 
     return {
       images: filtered,
