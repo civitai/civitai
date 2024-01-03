@@ -260,47 +260,49 @@ export const bulkUpdateReports = ({
   return dbWrite.report.updateMany({ where: { id: { in: ids } }, data });
 };
 
-export const getReportCounts = ({ type }: GetReportCountInput) => {
-  return dbRead.report.count({
-    where: { [type]: { isNot: null }, status: ReportStatus.Pending },
-  });
-};
+// #region [Unused]
+// export const getReportCounts = ({ type }: GetReportCountInput) => {
+//   return dbRead.report.count({
+//     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
+//   });
+// };
 
-export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
-  commentId,
-  select,
-}: {
-  commentId: number;
-  select: TSelect;
-}) => {
-  return dbRead.commentReport.findMany({
-    select,
-    where: { commentId },
-  });
-};
+// export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
+//   commentId,
+//   select,
+// }: {
+//   commentId: number;
+//   select: TSelect;
+// }) => {
+//   return dbRead.commentReport.findMany({
+//     select,
+//     where: { commentId },
+//   });
+// };
 
-export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
-  imageId,
-  select,
-}: {
-  imageId: number;
-  select: TSelect;
-}) => {
-  return dbRead.imageReport.findMany({
-    select,
-    where: { imageId },
-  });
-};
+// export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
+//   imageId,
+//   select,
+// }: {
+//   imageId: number;
+//   select: TSelect;
+// }) => {
+//   return dbRead.imageReport.findMany({
+//     select,
+//     where: { imageId },
+//   });
+// };
 
-export const getResourceReviewReports = <TSelect extends Prisma.ResourceReviewReportSelect>({
-  resourceReviewId,
-  select,
-}: {
-  resourceReviewId: number;
-  select: TSelect;
-}) => {
-  return dbRead.resourceReviewReport.findMany({
-    select,
-    where: { resourceReviewId },
-  });
-};
+// export const getResourceReviewReports = <TSelect extends Prisma.ResourceReviewReportSelect>({
+//   resourceReviewId,
+//   select,
+// }: {
+//   resourceReviewId: number;
+//   select: TSelect;
+// }) => {
+//   return dbRead.resourceReviewReport.findMany({
+//     select,
+//     where: { resourceReviewId },
+//   });
+// };
+// #endregion
