@@ -21,6 +21,7 @@ import {
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { userContributingClubs } from '~/server/services/club.service';
 import { createNotification } from './notification.service';
+import { clubMetrics } from '../metrics';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { cursor, limit: take, clubId, clubTierId, userId, sort },
@@ -437,6 +438,8 @@ export const clubOwnerRemoveMember = async ({
       'Club does not have enough funds to refund this user as such, they cannot be removed'
     );
   }
+
+  await clubMetrics.queueUpdate(membership.clubId);
 
   return dbWrite.$transaction(async (tx) => {
     // Remove the user:

@@ -6,6 +6,7 @@ export function useIsLive() {
     refetchInterval: REFETCH_INTERVAL,
     refetchOnWindowFocus: true,
     staleTime: REFETCH_INTERVAL,
+    trpc: { context: { skipBatch: true } },
   });
 
   return !isLoading && isLive;

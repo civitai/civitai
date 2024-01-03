@@ -56,6 +56,7 @@ export default withAxiom(
             path,
             user: ctx?.user?.id,
             browser: req.headers['user-agent'],
+            input: req.method === 'GET' ? input : undefined,
           },
           'civitai-prod'
         ).then();

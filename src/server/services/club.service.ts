@@ -29,6 +29,7 @@ import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { bustCacheTag } from '../utils/cache-helpers';
 import { isEqual } from 'lodash-es';
 import { ClubSort } from '../common/enums';
+import { clubMetrics } from '../metrics';
 
 export const userContributingClubs = async ({
   userId,
@@ -696,6 +697,8 @@ export const upsertClubResource = async ({
   const clubIds = clubs.map((c) => c.clubId);
   const contributingClubs = await userContributingClubs({ userId, clubIds });
 
+  await clubMetrics.queueUpdate(clubIds);
+
   if (!isModerator && clubIds.some((c) => !contributingClubs.find((cc) => cc.id === c))) {
     throw throwAuthorizationError(
       'You do not have permission to add this resource to one of the provided clubs'
@@ -1176,6 +1179,8 @@ export const removeClubResource = async ({
       ],
     },
   });
+
+  await clubMetrics.queueUpdate(clubId);
 
   // Check if it still requires club access:
   const access = await dbWrite.entityAccess.findFirst({

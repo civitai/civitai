@@ -21,7 +21,9 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CivitaiNewsroom() {
   const { classes } = useStyles();
-  const { data } = trpc.article.getCivitaiNews.useQuery();
+  const { data } = trpc.article.getCivitaiNews.useQuery(undefined, {
+    trpc: { context: { skipBatch: true } },
+  });
   const news = data?.news ?? [];
   const updates = data?.updates ?? [];
   const pressMentions = data?.pressMentions ?? [];

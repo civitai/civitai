@@ -58,6 +58,7 @@ export const createContext = async ({
     ip,
     cache,
     res,
+    req,
   };
 };
 
@@ -75,6 +76,7 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
     skip: false,
   },
   res,
+  req,
 });
 
 export type Context = AsyncReturnType<typeof createContext>;

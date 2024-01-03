@@ -23,6 +23,7 @@ export const getServerProxySSGHelpers = async (
       ip: null as any,
       res: null as any,
       cache: null as any,
+      req: null as any,
     },
     transformer: superjson,
   });
