@@ -216,7 +216,7 @@ export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * 
       -- Hasn't had a recent update
       AND mv."updatedAt" between '10/16/2023' and ${lastRun}
     --  AND ((mf.metadata -> 'trainingResults' -> 'start_time')::TEXT)::TIMESTAMP < (now() - interval '24 hours')
-    ORDER BY mf_id desc;
+    ORDER BY 1 desc;
   `;
 
   if (oldTraining.length === 0) {
