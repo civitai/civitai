@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 export type TrainingResults = z.infer<typeof trainingResultsSchema>;
 export const trainingResultsSchema = z.object({
   start_time: z.string().nullish(),
+  submittedAt: z.string().nullish(),
   end_time: z.string().nullish(),
   attempts: z.number().nullish(),
   jobId: z.string().nullish(),

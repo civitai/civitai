@@ -103,6 +103,17 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_ENDPOINT: z.string().url().optional(),
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
+  ALT_ORCHESTRATION_ENDPOINT: z.string().url().optional(),
+  ALT_ORCHESTRATION_TOKEN: z.string().optional(),
+  ALT_ORCHESTRATION_TIMEFRAME: z.preprocess((value) => {
+    if (typeof value !== 'string') return null;
+
+    const [start, end] = value.split(',').map((x) => new Date(x))
+    return { start, end };
+  }, z.object({
+    start: z.date().optional(),
+    end: z.date().optional()
+  })).optional(),
 });
 
 /**
