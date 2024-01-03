@@ -186,12 +186,9 @@ export default function ArticleDetailsPage({
       <Container size="xl">
         <Stack spacing={0} mb="xl">
           <Group position="apart" noWrap>
-            <Group>
-              <ClubRequirementIndicator entityId={article.id} entityType="Article" />
-              <Title weight="bold" className={classes.title} order={1}>
-                {article.title}
-              </Title>
-            </Group>
+            <Title weight="bold" className={classes.title} order={1}>
+              {article.title}
+            </Title>
             <Group align="center" className={classes.titleWrapper} noWrap>
               {!mobile && actionButtons}
               <ArticleContextMenu article={article} />
@@ -240,6 +237,7 @@ export default function ArticleDetailsPage({
                 />
               </>
             )}
+            <ClubRequirementIndicator entityId={article.id} entityType="Article" size="sm" />
           </Group>
         </Stack>
         <Grid>
