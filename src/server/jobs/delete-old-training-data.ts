@@ -12,22 +12,27 @@ const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks').catch();
 };
 
+type OldTrainingRow = {
+  mf_id: number;
+  history: NonNullable<FileMetadata['trainingResults']>['history'];
+  job_id: NonNullable<FileMetadata['trainingResults']>['jobId'];
+  submitted_at: Date;
+  visibility: ModelFileVisibility;
+  url: string;
+};
+
 export const deleteOldTrainingData = createJob(
   'delete-old-training-data',
   '5 13 * * *',
   async () => {
-    const oldTraining = await dbWrite.$queryRaw<
-      {
-        mf_id: number;
-        history: NonNullable<FileMetadata['trainingResults']>['history'];
-        job_id: NonNullable<FileMetadata['trainingResults']>['jobId'];
-        visibility: ModelFileVisibility;
-        url: string;
-      }[]
-    >`
+    const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                         as mf_id,
              mf.metadata -> 'trainingResults' -> 'history' as history,
              mf.metadata -> 'trainingResults' -> 'jobId'   as job_id,
+             COALESCE(COALESCE(mf.metadata -> 'trainingResults' ->> 'submittedAt',
+		                mf.metadata -> 'trainingResults' -> 'history' -> 0 ->> 'time')::timestamp,
+                mv."updatedAt"
+              ) as submitted_at
              mf.visibility,
              mf.url
       FROM "ModelVersion" mv
@@ -56,12 +61,12 @@ export const deleteOldTrainingData = createJob(
 
     let goodJobs = 0;
     let errorJobs = 0;
-    for (const { mf_id, history, job_id, visibility, url } of oldTraining) {
+    for (const { mf_id, history, job_id, submitted_at, visibility, url } of oldTraining) {
       let hasError = false;
 
       if (!!job_id) {
         try {
-          const result = await deleteAssets(job_id);
+          const result = await deleteAssets(job_id, submitted_at);
           if (!result || !result.total) {
             hasError = true;
             logJob({
@@ -93,7 +98,7 @@ export const deleteOldTrainingData = createJob(
             if (!histJobId) continue;
             if (!seenJobs.includes(histJobId)) {
               try {
-                const result = await deleteAssets(histJobId);
+                const result = await deleteAssets(histJobId, submitted_at);
                 if (!result || !result.total) {
                   hasError = true;
                   logJob({
