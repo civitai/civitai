@@ -48,8 +48,6 @@ const Feed = () => {
   const { data: userClubs = [], isLoading: isLoadingUserClubs } =
     trpc.club.userContributingClubs.useQuery();
 
-  console.log(clubPosts, clubPosts.length);
-
   return (
     <>
       {isLoading || isLoadingClub ? (

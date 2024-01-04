@@ -192,7 +192,6 @@ export function DumbModelFiltersDropdown({
       <Stack spacing={0}>
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         {!localMode ? (
-          // TODO: This looks backwards?
           <PeriodFilter
             type="models"
             variant="chips"
@@ -200,7 +199,12 @@ export function DumbModelFiltersDropdown({
             onChange={(period) => setQueryFilters({ period })}
           />
         ) : (
-          <PeriodFilter type="models" variant="chips" />
+          <PeriodFilter
+            type="models"
+            variant="chips"
+            value={period}
+            onChange={(period) => setFilters({ period })}
+          />
         )}
       </Stack>
       <Stack spacing={0}>
