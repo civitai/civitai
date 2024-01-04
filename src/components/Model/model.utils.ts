@@ -39,6 +39,7 @@ const modelQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.enum(constants.baseModels))
     ),
+    clubId: z.number().optional(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;

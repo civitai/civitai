@@ -11,6 +11,7 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
 import { MetricTimeframe } from '@prisma/client';
+import { ModelFilterSchema } from '../../../providers/FiltersProvider';
 
 const ClubModels = () => {
   const router = useRouter();
@@ -18,11 +19,12 @@ const ClubModels = () => {
     id: string;
   };
   const id = Number(stringId);
-  const [filters, setFilters] = useState<Partial<ModelQueryParams> & { clubId: number }>({
+  const [filters, setFilters] = useState<Partial<ModelFilterSchema> & { clubId: number }>({
     sort: ModelSort.Newest,
     period: MetricTimeframe.AllTime,
     clubId: id,
   });
+
   return (
     <>
       <Stack mb="sm">
@@ -33,11 +35,6 @@ const ClubModels = () => {
             onChange={(x) => setFilters((f) => ({ ...f, sort: x as ModelSort }))}
           />
           <Group spacing="xs">
-            <PeriodFilter
-              type="models"
-              value={filters.period as MetricTimeframe}
-              onChange={(x) => setFilters((f) => ({ ...f, period: x }))}
-            />
             <DumbModelFiltersDropdown
               filters={filters}
               setFilters={(updated) => setFilters((f) => ({ ...f, ...updated }))}
@@ -48,6 +45,7 @@ const ClubModels = () => {
       <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
         <MasonryContainer fluid mt="md" p={0}>
           <ModelsInfinite
+            useStoreFilters={false}
             filters={{
               ...filters,
             }}

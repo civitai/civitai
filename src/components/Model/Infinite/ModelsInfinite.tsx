@@ -19,17 +19,21 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
+  useStoreFilters?: boolean;
   showEof?: boolean;
 };
 
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
+  useStoreFilters = true,
 }: InfiniteModelsProps) {
   const features = useFeatureFlags();
   const modelFilters = useModelFilters();
 
-  const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
+  const filters = removeEmpty(
+    useStoreFilters ? { ...modelFilters, ...filterOverrides } : filterOverrides
+  );
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryModels(
@@ -45,7 +49,7 @@ export function ModelsInfinite({
 
   return (
     <ModelCardContextProvider
-      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || filters?.clubId}
+      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || !!filters?.clubId}
     >
       {isLoading ? (
         <Center p="xl">

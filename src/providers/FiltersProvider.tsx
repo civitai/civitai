@@ -147,7 +147,6 @@ const videoFilterSchema = imageFilterSchema.omit({
   excludeCrossPosts: true,
 });
 
-  
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
