@@ -282,7 +282,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                 <Stack spacing="lg">
                   <Title order={1}>{club.name}</Title>
                   {club.description && (
-                    <ContentClamp maxHeight={145}>
+                    <ContentClamp maxHeight={500}>
                       <RenderHtml html={club.description} />
                     </ContentClamp>
                   )}
