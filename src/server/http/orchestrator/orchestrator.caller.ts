@@ -111,9 +111,7 @@ export function getOrchestratorCaller(forTime?: Date) {
       logToAxiom({
         name: 'orchestrator',
         type: 'info',
-        message: 'Using alt orchestrator caller',
-        endpoint: env.ALT_ORCHESTRATION_ENDPOINT,
-        token: env.ALT_ORCHESTRATION_TOKEN,
+        message: `Using alt orchestrator caller: ${env.ALT_ORCHESTRATION_ENDPOINT} - ${env.ALT_ORCHESTRATION_TOKEN}`,
       });
       return altOrchestratorCaller;
     }
