@@ -17,6 +17,7 @@ import { ArticleGetAllRecord, getArticles } from './article.service';
 import { PostsInfiniteModel, getPostsInfinite } from './post.service';
 import { ArticleSort, BrowsingMode, ModelSort, PostSort } from '../common/enums';
 import { clubMetrics } from '../metrics';
+import { isDefined } from '../../utils/type-guards';
 
 export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
@@ -108,7 +109,7 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
   const includeMembersOnlyContent =
     isModerator ||
     (clubWithMembership &&
-      (userId === clubWithMembership.userId || clubWithMembership.memberships.length > 0))
+      (userId === clubWithMembership?.userId || clubWithMembership?.memberships.length > 0))
       ? undefined
       : false;
 
@@ -136,11 +137,9 @@ export const upsertClubPost = async ({
   const dbClient = dbWrite;
 
   const [userClub] = await userContributingClubs({ userId, clubIds: [input.clubId as number] });
-  const isOwner = userClub.userId === userId;
 
-  if (!userClub && !isModerator) {
-    throw throwAuthorizationError('You do not have permission to create posts on this club.');
-  }
+  const isOwner = userClub?.userId === userId;
+  const canManagePosts = userClub?.admin?.permissions.includes(ClubAdminPermission.ManagePosts);
 
   if (input.id) {
     const post = await dbClient.clubPost.findUniqueOrThrow({
@@ -153,11 +152,13 @@ export const upsertClubPost = async ({
       },
     });
 
-    const canUpdatePost = userClub.admin?.permissions.includes(ClubAdminPermission.ManagePosts);
-
-    if (post.createdById !== userId && !isModerator && !isOwner && !canUpdatePost) {
+    if (post.createdById !== userId && !isModerator && !isOwner && !canManagePosts) {
       throw throwAuthorizationError('You do not have permission to edit this post.');
     }
+  }
+
+  if (!isOwner && !isModerator && !canManagePosts && !input.id) {
+    throw throwAuthorizationError('You do not have permission to create posts on this club.');
   }
 
   const [createdCoverImage] =

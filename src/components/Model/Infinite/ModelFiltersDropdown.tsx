@@ -192,6 +192,7 @@ export function DumbModelFiltersDropdown({
       <Stack spacing={0}>
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         {!localMode ? (
+          // TODO: This looks backwards?
           <PeriodFilter
             type="models"
             variant="chips"

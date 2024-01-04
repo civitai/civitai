@@ -24,6 +24,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { MetricTimeframe } from '@prisma/client';
 import { dbRead } from '../db/client';
 import { getReactionsSelectV2 } from '../selectors/reaction.selector';
+import { isDefined } from '../../utils/type-guards';
 
 export const getInfiniteClubPostsHandler = async ({
   input,
@@ -93,33 +94,35 @@ export const getInfiniteClubPostsHandler = async ({
 
     return {
       nextCursor,
-      items: items.map(({ metrics, coverImage, ...x }) => {
-        const resource =
-          x.entityType && x.entityId
-            ? entityData.find((d) => d.entityId === x.entityId && d.entityType === x.entityType)
-            : undefined;
+      items: items
+        .map(({ metrics, coverImage, ...x }) => {
+          const resource =
+            x.entityType && x.entityId
+              ? entityData.find((d) => d.entityId === x.entityId && d.entityType === x.entityType)
+              : undefined;
 
-        return {
-          ...x,
-          metrics: metrics[0] ?? {
-            likeCount: 0,
-            dislikeCount: 0,
-            laughCount: 0,
-            cryCount: 0,
-            heartCount: 0,
-          },
-          entityType: x.entityType as SupportedClubPostEntities | null,
-          ...resource,
-          coverImage: coverImage
-            ? {
-                ...coverImage,
-                metadata: coverImage.metadata as MixedObject,
-                meta: coverImage.meta as ImageMetaProps,
-                tags: coverImage.tags.map((t) => t.tag),
-              }
-            : null,
-        };
-      }),
+          return {
+            ...x,
+            metrics: metrics[0] ?? {
+              likeCount: 0,
+              dislikeCount: 0,
+              laughCount: 0,
+              cryCount: 0,
+              heartCount: 0,
+            },
+            entityType: x.entityType as SupportedClubPostEntities | null,
+            ...resource,
+            coverImage: coverImage
+              ? {
+                  ...coverImage,
+                  metadata: coverImage.metadata as MixedObject,
+                  meta: coverImage.meta as ImageMetaProps,
+                  tags: coverImage.tags.map((t) => t.tag),
+                }
+              : null,
+          };
+        })
+        .filter((x) => (x.entityType && x.entityId ? 'data' in x && isDefined(x.data) : true)),
     };
   } catch (error) {
     throw throwDbError(error);

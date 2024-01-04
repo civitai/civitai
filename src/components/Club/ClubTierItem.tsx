@@ -183,9 +183,10 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             {clubTier.unitAmount > 0 ? (
               <>
                 <Text align="center">
-                  You will be charged the membership fee immediately and get access to this
-                  tier&rsquo;s benefits. Memberships are billed monthly and can be canceled at any
-                  time.
+                  You will be charged the membership fee of{' '}
+                  <CurrencyBadge unitAmount={clubTier.unitAmount} currency={Currency.BUZZ} />{' '}
+                  immediately and get access to this tier&rsquo;s benefits. Memberships are billed
+                  monthly and can be canceled at any time.
                 </Text>
 
                 <Text color="dimmed" size="sm" align="center">
@@ -243,7 +244,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                         currency={Currency.USD}
                       />{' '}
                       will be charged to your card only in the case that you do not have enough buzz
-                      to
+                      to cover the membership fee.
                     </Text>
                     <Text>
                       You can always add a payment method later in your{' '}
