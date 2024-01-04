@@ -4,25 +4,15 @@ import { HttpCaller } from '../httpCaller';
 import { Orchestrator } from './orchestrator.types';
 
 class OrchestratorCaller extends HttpCaller {
-  private static instance: OrchestratorCaller;
-
-  protected constructor(baseUrl: string, options?: { headers?: MixedObject }) {
-    super(baseUrl, options);
-  }
-
-  static getInstance(endpoint?: string, token?: string): OrchestratorCaller {
+  constructor(endpoint?: string, token?: string) {
     endpoint ??= env.ORCHESTRATOR_ENDPOINT;
     token ??= env.ORCHESTRATOR_ACCESS_TOKEN;
     if (!endpoint) throw new Error('Missing ORCHESTRATOR_ENDPOINT env');
     if (!token) throw new Error('Missing ORCHESTRATOR_ACCESS_TOKEN env');
 
-    if (!OrchestratorCaller.instance) {
-      OrchestratorCaller.instance = new OrchestratorCaller(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    }
-
-    return OrchestratorCaller.instance;
+    super(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
   }
 
   public textToImage({ payload }: { payload: Orchestrator.Generation.TextToImageJobPayload }) {
@@ -96,12 +86,12 @@ class OrchestratorCaller extends HttpCaller {
   }
 }
 
-const orchestratorCaller = OrchestratorCaller.getInstance();
+const orchestratorCaller = new OrchestratorCaller();
 export default orchestratorCaller;
 
 export const altOrchestratorCaller =
   env.ALT_ORCHESTRATION_ENDPOINT && env.ALT_ORCHESTRATION_TOKEN
-    ? OrchestratorCaller.getInstance(env.ALT_ORCHESTRATION_ENDPOINT, env.ALT_ORCHESTRATION_TOKEN)
+    ? new OrchestratorCaller(env.ALT_ORCHESTRATION_ENDPOINT, env.ALT_ORCHESTRATION_TOKEN)
     : orchestratorCaller;
 
 export function getOrchestratorCaller(forTime?: Date) {
