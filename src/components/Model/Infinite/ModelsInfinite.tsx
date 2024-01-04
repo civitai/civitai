@@ -19,20 +19,20 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
-  useStoreFilters?: boolean;
+  disableStoreFilters?: boolean;
   showEof?: boolean;
 };
 
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
-  useStoreFilters = true,
+  disableStoreFilters = false,
 }: InfiniteModelsProps) {
   const features = useFeatureFlags();
   const modelFilters = useModelFilters();
 
   const filters = removeEmpty(
-    useStoreFilters ? { ...modelFilters, ...filterOverrides } : filterOverrides
+    disableStoreFilters ? filterOverrides : { ...modelFilters, ...filterOverrides }
   );
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
