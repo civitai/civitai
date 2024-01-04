@@ -122,26 +122,24 @@ export function ModelVersionWizard({ data }: Props) {
             <Stepper.Step label={editing ? 'Edit version' : 'Add version'}>
               <Stack>
                 <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
-                {modelVersion && (
-                  <ModelVersionUpsertForm
-                    model={modelData}
-                    version={modelVersion}
-                    onSubmit={(result) => {
-                      if (editing) return goNext();
-                      router.replace(
-                        `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`
-                      );
-                    }}
-                  >
-                    {({ loading }) => (
-                      <Group mt="xl" position="right">
-                        <Button type="submit" loading={loading}>
-                          Next
-                        </Button>
-                      </Group>
-                    )}
-                  </ModelVersionUpsertForm>
-                )}
+                <ModelVersionUpsertForm
+                  model={modelData}
+                  version={modelVersion}
+                  onSubmit={(result) => {
+                    if (editing) return goNext();
+                    router.replace(
+                      `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`
+                    );
+                  }}
+                >
+                  {({ loading }) => (
+                    <Group mt="xl" position="right">
+                      <Button type="submit" loading={loading}>
+                        Next
+                      </Button>
+                    </Group>
+                  )}
+                </ModelVersionUpsertForm>
               </Stack>
             </Stepper.Step>
             <Stepper.Step
