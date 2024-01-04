@@ -52,12 +52,13 @@ export default function UserPostsPage() {
 
   const Wrapper = useMemo(
     () =>
-      ({ children }: { children: React.ReactNode }) =>
-        features.profileOverhaul ? (
+      function Wrapper({ children }: { children: React.ReactNode }) {
+        return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
           <Tabs.Panel value="/posts">{children}</Tabs.Panel>
-        ),
+        );
+      },
     [features.profileOverhaul]
   );
 
@@ -91,7 +92,7 @@ export default function UserPostsPage() {
                   onChange={(x) => replace({ sort: x as PostSort })}
                 />
                 <PostFiltersDropdown
-                  query={{ ...query, followed }}
+                  query={{ ...query, period, followed }}
                   onChange={(filters) => replace(filters)}
                 />
               </Group>
