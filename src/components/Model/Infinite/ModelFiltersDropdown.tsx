@@ -202,7 +202,7 @@ export function DumbModelFiltersDropdown({
           <PeriodFilter
             type="models"
             variant="chips"
-            value={period}
+            value={filters.period ?? MetricTimeframe.AllTime}
             onChange={(period) => setFilters({ period })}
           />
         )}
