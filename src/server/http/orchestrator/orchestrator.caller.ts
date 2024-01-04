@@ -1,4 +1,5 @@
 import { env } from '~/env/server.mjs';
+import { logToAxiom } from '~/server/logging/client';
 import { HttpCaller } from '../httpCaller';
 import { Orchestrator } from './orchestrator.types';
 
@@ -106,7 +107,10 @@ export const altOrchestratorCaller =
 export function getOrchestratorCaller(forTime?: Date) {
   if (forTime && env.ALT_ORCHESTRATION_TIMEFRAME) {
     const { start, end } = env.ALT_ORCHESTRATION_TIMEFRAME;
-    if ((!start || forTime > start) && (!end || forTime < end)) return altOrchestratorCaller;
+    if ((!start || forTime > start) && (!end || forTime < end)) {
+      logToAxiom({ name: 'orchestrator', type: 'info', message: 'Using alt orchestrator caller' });
+      return altOrchestratorCaller;
+    }
   }
   return orchestratorCaller;
 }
