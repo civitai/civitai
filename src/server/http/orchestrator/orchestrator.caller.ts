@@ -108,7 +108,13 @@ export function getOrchestratorCaller(forTime?: Date) {
   if (forTime && env.ALT_ORCHESTRATION_TIMEFRAME) {
     const { start, end } = env.ALT_ORCHESTRATION_TIMEFRAME;
     if ((!start || forTime > start) && (!end || forTime < end)) {
-      logToAxiom({ name: 'orchestrator', type: 'info', message: 'Using alt orchestrator caller' });
+      logToAxiom({
+        name: 'orchestrator',
+        type: 'info',
+        message: 'Using alt orchestrator caller',
+        endpoint: env.ALT_ORCHESTRATION_ENDPOINT,
+        token: env.ALT_ORCHESTRATION_TOKEN,
+      });
       return altOrchestratorCaller;
     }
   }
