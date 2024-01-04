@@ -105,7 +105,7 @@ export default function ClubsPage() {
             {query.engagement && (
               <Stack spacing="xl" align="flex-start">
                 <Title>My Clubs</Title>
-                <SegmentedControl
+                {/* <SegmentedControl
                   classNames={classes}
                   transitionDuration={0}
                   radius="xl"
@@ -113,7 +113,7 @@ export default function ClubsPage() {
                   data={[...constants.clubs.engagementTypes]}
                   value={query.engagement as string}
                   onChange={handleEngagementChange}
-                />
+                /> */}
               </Stack>
             )}
             <ClubsInfinite filters={{ engagement }} showEof={!engagement} />
