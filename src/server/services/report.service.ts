@@ -276,8 +276,8 @@ export async function bulkSetReportStatus({
 }) {
   const statusSetAt = new Date();
 
-  const reports = await getReportByIds({
-    ids,
+  const reports = await dbRead.report.findMany({
+    where: { id: { in: ids }, status: { not: status } },
     select: { id: true, userId: true, alsoReportedBy: true },
   });
 

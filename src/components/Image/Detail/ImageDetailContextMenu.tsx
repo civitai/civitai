@@ -23,6 +23,7 @@ import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { ReportReason } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useReportCsam } from '~/components/Report/report.utils';
+import { useReportCsamImages } from '~/components/Image/image.utils';
 
 /*
 TODO.gallery
@@ -238,7 +239,7 @@ function ReportCsamButton({ children, onSuccess }: ButtonCallbackProps) {
 
   const { csamReports } = useFeatureFlags();
 
-  const { mutate, isLoading } = useReportCsam({
+  const { mutate, isLoading } = useReportCsamImages({
     async onSuccess() {
       onSuccess?.();
     },
@@ -247,7 +248,7 @@ function ReportCsamButton({ children, onSuccess }: ButtonCallbackProps) {
   const onClick = () => {
     if (!image) return;
     if (csamReports) router.push(`/moderator/csam/${image.user.id}?imageId=${image.id}`);
-    else mutate([{ type: ReportEntity.Image, id: image.id, reason: ReportReason.CSAM }]);
+    else mutate([image.id]);
   };
 
   return children({ onClick, isLoading });

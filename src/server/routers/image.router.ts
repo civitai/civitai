@@ -124,7 +124,7 @@ export const imageRouter = router({
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(z.number().array())
-    .query(({ input: imageIds, ctx }) =>
+    .mutation(({ input: imageIds, ctx }) =>
       reportCsamImages({ imageIds, user: ctx.user, ip: ctx.ip })
     ),
 });

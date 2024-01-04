@@ -52,9 +52,10 @@ import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { Collection } from '~/components/Collection/Collection';
-import { useCreateReport, useReportCsam } from '~/components/Report/report.utils';
+import { useCreateReport } from '~/components/Report/report.utils';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useReportCsamImages } from '~/components/Image/image.utils';
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
 //   resolver: async ({ session }) => {
@@ -294,9 +295,10 @@ function ModerationControls({
     },
   });
 
-  const createCsamReport = useReportCsam({
+  const createCsamReport = useReportCsamImages({
     async onSuccess() {
       await queryUtils.image.getModeratorReviewQueue.invalidate();
+      deselectAll();
     },
   });
 
@@ -339,10 +341,7 @@ function ModerationControls({
   };
 
   const handleReportCsam = () => {
-    deselectAll();
-    createCsamReport.mutate(
-      selected.map((id) => ({ type: ReportEntity.Image, id, reason: 'CSAM' }))
-    );
+    createCsamReport.mutate(selected);
   };
 
   const handleDeleteSelected = () => {
@@ -460,6 +459,7 @@ function ModerationControls({
           </ActionIcon>
         </ButtonTooltip>
       </PopConfirm>
+
       <ButtonTooltip {...tooltipProps} label="Report CSAM">
         <ActionIcon
           variant="outline"

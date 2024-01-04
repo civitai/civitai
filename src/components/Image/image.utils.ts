@@ -13,6 +13,9 @@ import { booleanString, numericString, numericStringArray } from '~/utils/zod-he
 import { isEqual } from 'lodash-es';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showNotification, hideNotification } from '@mantine/notifications';
+import { closeModal, openConfirmModal } from '@mantine/modals';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -148,3 +151,58 @@ export const useQueryImageCategories = (
 
   return { data, categories, ...rest };
 };
+
+const CSAM_NOTIFICATION_ID = 'sending-report';
+export function useReportCsamImages(
+  options?: Parameters<typeof trpc.image.reportCsamImages.useMutation>[0]
+) {
+  const { onMutate, onSuccess, onError, onSettled, ...rest } = options ?? {};
+  const { mutateAsync, ...reportCsamImage } = trpc.image.reportCsamImages.useMutation({
+    async onMutate(...args) {
+      showNotification({
+        id: CSAM_NOTIFICATION_ID,
+        loading: true,
+        disallowClose: true,
+        autoClose: false,
+        message: 'Sending report...',
+      });
+      await onMutate?.(...args);
+    },
+    async onSuccess(...args) {
+      showSuccessNotification({
+        title: 'Image reported',
+        message: 'Your request has been received',
+      });
+      closeModal('confirm-csam');
+      await onSuccess?.(...args);
+    },
+    async onError(error, ...args) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Unable to send report',
+        reason: error.message ?? 'An unexpected error occurred, please try again',
+      });
+      await onError?.(error, ...args);
+    },
+    async onSettled(...args) {
+      hideNotification(CSAM_NOTIFICATION_ID);
+      await onSettled?.(...args);
+    },
+    ...rest,
+  });
+
+  const mutate = (args: Parameters<typeof reportCsamImage.mutate>[0]) => {
+    openConfirmModal({
+      modalId: 'confirm-csam',
+      title: 'Report CSAM',
+      children: `Are you sure you want to report this as CSAM?`,
+      centered: true,
+      labels: { confirm: 'Yes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: reportCsamImage.isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => reportCsamImage.mutate(args),
+    });
+  };
+
+  return { ...reportCsamImage, mutate };
+}
