@@ -479,7 +479,9 @@ export const getModelsRaw = async ({
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
-        SELECT DISTINCT ON (mv."modelId") "modelId"
+        SELECT  
+          mv."modelId" "modelId",
+          MAX(mv."id") "modelVersionId"
         FROM "EntityAccess" ea
         JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
         LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
@@ -492,6 +494,7 @@ export const getModelsRaw = async ({
             )
           )
           AND ea."accessToType" = 'ModelVersion'
+        GROUP BY mv."modelId"
       )
     `);
   }
@@ -521,6 +524,10 @@ export const getModelsRaw = async ({
 
   if (hidePrivateModels) {
     modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
+  }
+
+  if (clubId) {
+    modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
