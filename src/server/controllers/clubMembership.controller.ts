@@ -28,6 +28,8 @@ import { userContributingClubs } from '~/server/services/club.service';
 import { ClubAdminPermission } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '../schema/image.schema';
+import { clubMembershipDetailSelect } from '../selectors/club.selector';
+import { dbWrite } from '../db/client';
 
 export const getInfiniteClubMembershipsHandler = async ({
   input,
@@ -57,48 +59,7 @@ export const getInfiniteClubMembershipsHandler = async ({
   try {
     const items = await getClubMemberships({
       input: { ...input, limit },
-      select: {
-        id: true,
-        startedAt: true,
-        nextBillingAt: true,
-        unitAmount: true,
-        currency: true,
-        expiresAt: true,
-        cancelledAt: true,
-        downgradeClubTierId: true,
-        billingPausedAt: true,
-        user: {
-          select: userWithCosmeticsSelect,
-        },
-        club: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        clubTier: {
-          select: {
-            id: true,
-            name: true,
-            unitAmount: true,
-            currency: true,
-            coverImage: {
-              select: imageSelect,
-            },
-          },
-        },
-        downgradeClubTier: {
-          select: {
-            id: true,
-            name: true,
-            unitAmount: true,
-            currency: true,
-            coverImage: {
-              select: imageSelect,
-            },
-          },
-        },
-      },
+      select: clubMembershipDetailSelect,
     });
 
     let nextCursor: number | undefined;
@@ -135,45 +96,7 @@ export const getClubMembershipOnClubHandler = async ({
         clubId,
         userId: user.id,
       },
-      select: {
-        id: true,
-        startedAt: true,
-        nextBillingAt: true,
-        unitAmount: true,
-        expiresAt: true,
-        cancelledAt: true,
-        billingPausedAt: true,
-        downgradeClubTierId: true,
-        club: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        clubTier: {
-          select: {
-            id: true,
-            name: true,
-            unitAmount: true,
-            currency: true,
-            clubId: true,
-            coverImage: {
-              select: imageSelect,
-            },
-          },
-        },
-        downgradeClubTier: {
-          select: {
-            id: true,
-            name: true,
-            unitAmount: true,
-            currency: true,
-            coverImage: {
-              select: imageSelect,
-            },
-          },
-        },
-      },
+      select: clubMembershipDetailSelect,
     });
 
     return membership
@@ -204,10 +127,35 @@ export async function createClubMembershipHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    return createClubMembership({
+    const created = await createClubMembership({
       ...input,
       userId: ctx.user.isModerator ? input.userId ?? ctx.user.id : ctx.user.id,
     });
+
+    const membership = await clubMembershipOnClub({
+      input: {
+        clubId: created.clubId,
+        userId: ctx.user.id,
+      },
+      select: clubMembershipDetailSelect,
+      dbClient: dbWrite,
+    });
+
+    return membership
+      ? {
+          ...membership,
+          clubTier: {
+            ...membership.clubTier,
+            coverImage: membership?.clubTier.coverImage
+              ? {
+                  ...membership?.clubTier.coverImage,
+                  meta: membership?.clubTier.coverImage.meta as ImageMetaProps,
+                  metadata: membership?.clubTier.coverImage.metadata as MixedObject,
+                }
+              : null,
+          },
+        }
+      : null;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
@@ -222,10 +170,35 @@ export async function updateClubMembershipHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    return updateClubMembership({
+    const updated = await updateClubMembership({
       ...input,
       userId: ctx.user.id,
     });
+
+    const membership = await clubMembershipOnClub({
+      input: {
+        clubId: updated.clubId,
+        userId: ctx.user.id,
+      },
+      select: clubMembershipDetailSelect,
+      dbClient: dbWrite,
+    });
+
+    return membership
+      ? {
+          ...membership,
+          clubTier: {
+            ...membership.clubTier,
+            coverImage: membership?.clubTier.coverImage
+              ? {
+                  ...membership?.clubTier.coverImage,
+                  meta: membership?.clubTier.coverImage.meta as ImageMetaProps,
+                  metadata: membership?.clubTier.coverImage.metadata as MixedObject,
+                }
+              : null,
+          },
+        }
+      : null;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);

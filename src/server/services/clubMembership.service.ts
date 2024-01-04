@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { ClubAdminPermission, Prisma } from '@prisma/client';
+import { ClubAdminPermission, Prisma, PrismaClient } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ToggleClubMembershipStatusInput,
@@ -51,11 +51,13 @@ export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSe
 export const clubMembershipOnClub = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { clubId, userId, expired },
   select,
+  dbClient = dbRead,
 }: {
   input: ClubMembershipOnClubInput & { userId: number; expired?: boolean };
   select: TSelect;
+  dbClient?: PrismaClient;
 }) => {
-  return dbRead.clubMembership.findUnique({
+  return dbClient.clubMembership.findUnique({
     select,
     where: {
       userId_clubId: {
