@@ -36,6 +36,7 @@ import { ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { isDefined } from '../../utils/type-guards';
+import { SessionUser } from 'next-auth';
 
 type SortableImage = {
   nsfw: NsfwLevel;

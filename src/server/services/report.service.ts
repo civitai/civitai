@@ -1,6 +1,8 @@
 import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
+import { SessionUser } from 'next-auth';
 
 import { dbWrite, dbRead } from '~/server/db/client';
+import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateReportInput,
@@ -8,6 +10,7 @@ import {
   GetReportsInput,
   ReportEntity,
 } from '~/server/schema/report.schema';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { addTagVotes } from '~/server/services/tag.service';
 import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -260,49 +263,69 @@ export const bulkUpdateReports = ({
   return dbWrite.report.updateMany({ where: { id: { in: ids } }, data });
 };
 
-// #region [Unused]
-// export const getReportCounts = ({ type }: GetReportCountInput) => {
-//   return dbRead.report.count({
-//     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
-//   });
-// };
+export async function bulkSetReportStatus({
+  ids,
+  status,
+  user,
+  ip,
+}: {
+  ids: number[];
+  status: ReportStatus;
+  user: SessionUser;
+  ip?: string;
+}) {
+  const statusSetAt = new Date();
 
-// export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
-//   commentId,
-//   select,
-// }: {
-//   commentId: number;
-//   select: TSelect;
-// }) => {
-//   return dbRead.commentReport.findMany({
-//     select,
-//     where: { commentId },
-//   });
-// };
+  const reports = await getReportByIds({
+    ids,
+    select: { id: true, userId: true, alsoReportedBy: true },
+  });
 
-// export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
-//   imageId,
-//   select,
-// }: {
-//   imageId: number;
-//   select: TSelect;
-// }) => {
-//   return dbRead.imageReport.findMany({
-//     select,
-//     where: { imageId },
-//   });
-// };
+  await dbWrite.$transaction(
+    reports.map((report) =>
+      dbWrite.report.update({
+        where: { id: report.id },
+        data: {
+          status,
+          statusSetAt,
+          statusSetBy: user.id,
+          previouslyReviewedCount:
+            status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
+        },
+      })
+    )
+  );
 
-// export const getResourceReviewReports = <TSelect extends Prisma.ResourceReviewReportSelect>({
-//   resourceReviewId,
-//   select,
-// }: {
-//   resourceReviewId: number;
-//   select: TSelect;
-// }) => {
-//   return dbRead.resourceReviewReport.findMany({
-//     select,
-//     where: { resourceReviewId },
-//   });
-// };
+  // Track mod activity in the background
+  trackModReports({ ids, userId: user.id });
+
+  // If we're actioning reports, we need to reward the users who reported them
+  if (status === ReportStatus.Actioned) {
+    const prepReports = reports.map((report) => ({
+      id: report.id,
+      userIds: [report.userId, ...report.alsoReportedBy],
+    }));
+
+    for (const report of prepReports) {
+      await Promise.all(
+        report.userIds.map((userId) =>
+          reportAcceptedReward.apply({ userId, reportId: report.id }, ip)
+        )
+      );
+    }
+  }
+}
+
+// #region [helpers]
+function trackModReports({ ids, userId }: { ids: number[]; userId: number }) {
+  Promise.all(
+    ids.map((id) =>
+      trackModActivity(userId, {
+        entityType: 'report',
+        entityId: id,
+        activity: 'review',
+      })
+    )
+  );
+}
 // #endregion
