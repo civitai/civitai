@@ -44,7 +44,9 @@ export function ModelsInfinite({
   //#endregion
 
   return (
-    <ModelCardContextProvider useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}>
+    <ModelCardContextProvider
+      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || filters?.clubId}
+    >
       {isLoading ? (
         <Center p="xl">
           <Loader size="xl" />
