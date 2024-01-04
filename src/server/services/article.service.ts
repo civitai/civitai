@@ -130,6 +130,11 @@ export const getArticles = async ({
       !!username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
 
+    // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
+    // At that point, we should be relying more on unlisted status which is set by the owner.
+    const hidePrivateArticles =
+      !clubId && !username && !collectionId && !followed && !hidden && !favorites && !userIds;
+
     const AND: Prisma.Sql[] = [];
     const WITH: Prisma.Sql[] = [];
 
@@ -411,6 +416,9 @@ export const getArticles = async ({
 
     const items = articles
       .filter((a) => {
+        // This take prio over mod status just so mods can see the same as users.
+        if (hidePrivateArticles && a.availability === Availability.Private) return false;
+
         if (sessionUser?.isModerator || a.userId === sessionUser?.id) return true;
 
         // Hide posts where the user does not have permission.
