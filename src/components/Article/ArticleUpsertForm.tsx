@@ -93,7 +93,6 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
     cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
     clubs: article?.clubs ?? [],
-    unlisted: article?.unlisted ?? false,
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
   const clearStorage = useFormStorage({
@@ -101,18 +100,16 @@ export function ArticleUpsertForm({ article }: Props) {
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, cover, categoryId, nsfw, tags, title, unlisted }) => ({
+    watch: ({ content, cover, categoryId, nsfw, tags, title }) => ({
       content,
       cover,
       categoryId,
       nsfw,
       tags,
       title,
-      unlisted,
     }),
   });
 
-  const [unlisted] = form.watch(['unlisted']);
   const [publishing, setPublishing] = useState(false);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -227,26 +224,6 @@ export function ArticleUpsertForm({ article }: Props) {
                 </Group>
               }
             />
-            {features.clubs && hasClubs && (
-              <>
-                <Checkbox
-                  checked={!unlisted}
-                  onChange={() => {
-                    form.setValue('unlisted', !unlisted);
-                  }}
-                  label={
-                    <Stack>
-                      <Text>Visible to everyone</Text>
-                    </Stack>
-                  }
-                />
-                <Text size="xs">
-                  By marking this visible to everyone, a preview of this article will be displayed
-                  in the article feed for other users. If you want this article to only be visible
-                  to club members, uncheck this.
-                </Text>
-              </>
-            )}
             <InputSimpleImageUpload name="cover" label="Cover Image" withAsterisk />
             <InputSelect
               name="categoryId"
