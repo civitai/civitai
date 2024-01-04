@@ -112,6 +112,13 @@ export const getClub = async ({
       posts: {
         take: 1,
       },
+      stats: {
+        select: {
+          clubPostCountAllTime: true,
+          memberCountAllTime: true,
+          resourceCountAllTime: true,
+        },
+      },
     },
   });
 

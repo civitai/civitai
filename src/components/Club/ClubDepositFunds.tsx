@@ -43,7 +43,7 @@ export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
           </Center>
         ) : (
           <Stack>
-            <Text>You are about to withdraw funds from {club.name}</Text>
+            <Text>You are about to deposit funds from {club.name}</Text>
             <Text size="sm">Your current balance:</Text>
             <CurrencyBadge size="lg" unitAmount={userBalance ?? 0} currency={Currency.BUZZ} />
             <Text size="sm">Current Club balance:</Text>
