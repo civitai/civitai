@@ -166,8 +166,15 @@ export const useMutateClub = () => {
   });
 
   const createClubMembershipMutation = trpc.clubMembership.createClubMembership.useMutation({
-    async onSuccess() {
-      await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+    async onSuccess(created) {
+      if (created) {
+        queryUtils.clubMembership.getClubMembershipOnClub.setData(
+          {
+            clubId: created.club.id,
+          },
+          created
+        );
+      }
       await queryUtils.common.getEntityAccess.invalidate();
       await queryUtils.common.getEntityClubRequirement.invalidate();
     },
@@ -190,8 +197,18 @@ export const useMutateClub = () => {
   });
 
   const updateClubMembershipMutation = trpc.clubMembership.updateClubMembership.useMutation({
-    async onSuccess() {
-      await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+    async onSuccess(updated) {
+      if (updated) {
+        queryUtils.clubMembership.getClubMembershipOnClub.setData(
+          {
+            clubId: updated.club.id,
+          },
+          (prev) => ({
+            ...prev,
+            ...updated,
+          })
+        );
+      }
       await queryUtils.common.getEntityAccess.invalidate();
       await queryUtils.common.getEntityClubRequirement.invalidate();
     },
@@ -280,8 +297,21 @@ export const useMutateClub = () => {
   });
 
   const cancelClubMembershipMutation = trpc.clubMembership.cancelClubMembership.useMutation({
-    async onSuccess() {
-      await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+    async onSuccess(updated) {
+      if (updated) {
+        queryUtils.clubMembership.getClubMembershipOnClub.setData(
+          {
+            clubId: updated.clubId,
+          },
+          (prev) =>
+            prev
+              ? {
+                  ...prev,
+                  ...updated,
+                }
+              : null
+        );
+      }
       await queryUtils.common.getEntityAccess.invalidate();
       await queryUtils.common.getEntityClubRequirement.invalidate();
     },
@@ -304,8 +334,21 @@ export const useMutateClub = () => {
   });
 
   const restoreClubMembershipMutation = trpc.clubMembership.restoreClubMembership.useMutation({
-    async onSuccess() {
-      await queryUtils.clubMembership.getClubMembershipOnClub.invalidate();
+    async onSuccess(updated) {
+      if (updated) {
+        queryUtils.clubMembership.getClubMembershipOnClub.setData(
+          {
+            clubId: updated.clubId,
+          },
+          (prev) =>
+            prev
+              ? {
+                  ...prev,
+                  ...updated,
+                }
+              : null
+        );
+      }
     },
     onError(error) {
       try {
