@@ -38,6 +38,7 @@ import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { csamJobs } from '~/server/jobs/process-csam';
+import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -74,6 +75,7 @@ export const jobs: Job[] = [
   ...Object.values(eventEngineJobs),
   processClubMembershipRecurringPayments,
   // ...csamJobs,
+  resourceGenerationAvailability,
 ];
 
 const log = createLogger('jobs', 'green');
