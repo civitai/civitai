@@ -110,7 +110,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                             <ImageGuard.ToggleImage position="static" />
                             <Stack spacing="xs" ml="auto">
                               {!isBlocked && (
-                                <ImageGuard.Report context="image" position="static" />
+                                <ImageGuard.Report context="image" position="static" withinPortal />
                               )}
                               {features.imageGeneration && image.meta && (
                                 <HoverActionButton
