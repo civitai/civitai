@@ -133,7 +133,14 @@ export const getArticles = async ({
     // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
     // At that point, we should be relying more on unlisted status which is set by the owner.
     const hidePrivateArticles =
-      !clubId && !username && !collectionId && !followed && !hidden && !favorites && !userIds;
+      !ids &&
+      !clubId &&
+      !username &&
+      !collectionId &&
+      !followed &&
+      !hidden &&
+      !favorites &&
+      !userIds;
 
     const AND: Prisma.Sql[] = [];
     const WITH: Prisma.Sql[] = [];

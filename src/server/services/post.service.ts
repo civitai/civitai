@@ -125,7 +125,7 @@ export const getPostsInfinite = async ({
   // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
   // At that point, we should be relying more on unlisted status which is set by the owner.
   const hidePrivatePosts =
-    !clubId && !isOwnerRequest && !(!!user && followed) && !(collectionId && !!user?.id);
+    !ids && !clubId && !isOwnerRequest && !(!!user && followed) && !(collectionId && !!user?.id);
 
   // Filter only followed users
   if (!!user && followed) {
