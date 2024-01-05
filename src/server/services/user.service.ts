@@ -13,6 +13,7 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
+  NsfwLevel,
   OnboardingStep,
   Prisma,
   SearchIndexUpdateQueueAction,
@@ -127,18 +128,46 @@ export const getUserCreator = async ({
   });
 };
 
-export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
-  return dbRead.$queryRaw<{ id: number; username: string }[]>`
-    SELECT id, username
-    FROM "User"
+type GetUsersRow = {
+  id: number;
+  username: string;
+  status: 'active' | 'banned' | 'muted' | 'deleted' | undefined;
+  avatarUrl: string | undefined;
+  avatarNsfw: NsfwLevel | undefined;
+};
+
+// Caution! this query is exposed to the public API, only non-sensitive data should be returned
+export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput) => {
+  const select = ['u.id', 'u.username'];
+  if (include?.includes('status'))
+    select.push(`
+      CASE
+        WHEN u."deletedAt" IS NOT NULL THEN 'deleted'
+        WHEN u."bannedAt" IS NOT NULL THEN 'banned'
+        WHEN u.muted IS TRUE THEN 'muted'
+        ELSE 'active'
+      END AS status`);
+  if (include?.includes('avatar'))
+    select.push(
+      'COALESCE(i.url, u.image) AS "avatarUrl"',
+      `COALESCE(i.nsfw, 'None') AS "avatarNsfw"`
+    );
+
+  return dbRead.$queryRaw<GetUsersRow[]>`
+    SELECT
+      ${Prisma.raw(select.join(','))}
+    FROM "User" u
+    ${Prisma.raw(
+      include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
+    )}
     WHERE
-      ${ids && ids.length > 0 ? Prisma.sql`id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
-      AND ${query ? Prisma.sql`username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
-      AND ${email ? Prisma.sql`email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
-      AND "deletedAt" IS NULL
-      AND "id" != -1
-    ORDER BY LENGTH(username) ASC
-    LIMIT ${limit}
+      ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
+      AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
+      AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
+      AND u."deletedAt" IS NULL
+      AND u."id" != -1
+    ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
+    ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 };
 

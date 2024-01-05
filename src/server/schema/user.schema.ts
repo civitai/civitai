@@ -13,7 +13,11 @@ import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { numericString } from '~/utils/zod-helpers';
+import {
+  commaDelimitedEnumArray,
+  commaDelimitedNumberArray,
+  numericString,
+} from '~/utils/zod-helpers';
 
 export const userPageQuerySchema = z
   .object({
@@ -43,7 +47,11 @@ export const getUserByUsernameSchema = z.object({
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;
 
 export const getAllUsersInput = getAllQuerySchema
-  .extend({ email: z.string(), ids: z.array(z.number()) })
+  .extend({
+    email: z.string(),
+    ids: commaDelimitedNumberArray(),
+    include: commaDelimitedEnumArray(z.enum(['status', 'avatar'])).default([]),
+  })
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
