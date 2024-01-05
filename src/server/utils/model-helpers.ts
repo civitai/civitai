@@ -54,7 +54,7 @@ export function getPrimaryFile<T extends FileFormatType>(
       file,
       score: getScore(file),
     }))
-    .sort((a, b) => b.score - a.score)[0].file;
+    .sort((a, b) => b.score - a.score)[0]?.file;
 }
 
 export const getFileDisplayName = ({
