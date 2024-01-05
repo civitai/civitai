@@ -779,7 +779,7 @@ export function AppHeader({
               <Divider orientation="vertical" />
             )}
             <Menu
-              width={260}
+              width={268}
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
@@ -799,42 +799,48 @@ export function AppHeader({
                   </Group>
                 </UnstyledButton>
               </Menu.Target>
-              <Menu.Dropdown>
-                <BuzzMenuItem withAbbreviation={false} />
-                {userMenuItems}
-                <Divider my={4} />
-                <Menu.Item
-                  closeMenuOnClick={false}
-                  icon={<IconPalette stroke={1.5} />}
-                  onClick={() => toggleColorScheme()}
+              <Menu.Dropdown p={0}>
+                <ScrollArea.Autosize
+                  maxHeight={576}
+                  styles={{ viewport: { paddingBottom: 0 } }}
+                  offsetScrollbars
                 >
-                  <Group align="center" position="apart">
-                    Dark mode
-                    <Switch
-                      checked={colorScheme === 'dark'}
-                      sx={{ display: 'flex', alignItems: 'center' }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Group>
-                </Menu.Item>
+                  <BuzzMenuItem withAbbreviation={false} />
+                  {userMenuItems}
+                  <Divider my={4} />
+                  <Menu.Item
+                    closeMenuOnClick={false}
+                    icon={<IconPalette stroke={1.5} />}
+                    onClick={() => toggleColorScheme()}
+                  >
+                    <Group align="center" position="apart">
+                      Dark mode
+                      <Switch
+                        checked={colorScheme === 'dark'}
+                        sx={{ display: 'flex', alignItems: 'center' }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Group>
+                  </Menu.Item>
 
-                {currentUser ? (
-                  <>
-                    <Menu.Item
-                      icon={<IconSettings stroke={1.5} />}
-                      component={NextLink}
-                      href="/user/account"
-                    >
-                      Account settings
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                      onClick={handleSignOut}
-                    >
-                      Logout
-                    </Menu.Item>
-                  </>
-                ) : null}
+                  {currentUser ? (
+                    <>
+                      <Menu.Item
+                        icon={<IconSettings stroke={1.5} />}
+                        component={NextLink}
+                        href="/user/account"
+                      >
+                        Account settings
+                      </Menu.Item>
+                      <Menu.Item
+                        icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
+                        onClick={handleSignOut}
+                      >
+                        Logout
+                      </Menu.Item>
+                    </>
+                  ) : null}
+                </ScrollArea.Autosize>
               </Menu.Dropdown>
             </Menu>
           </Group>
