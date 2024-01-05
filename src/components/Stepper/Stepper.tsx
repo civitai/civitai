@@ -9,20 +9,12 @@ export const useStepperContext = () => {
   return context;
 };
 
-export function Stepper({
-  stepper,
-  ...useStepperProps
-}: {
-  stepper?: UseStepperReturn;
-} & UseStepperProps) {
-  const _stepper = useStepper(useStepperProps);
-  const stepperState = stepper ?? _stepper;
-
-  const Component = stepperState.component;
+export function Stepper({ stepper }: { stepper: UseStepperReturn }) {
+  const Component = stepper.component;
 
   return (
-    <StepperContext.Provider value={stepperState}>
-      <Component {...stepperState.props} />
+    <StepperContext.Provider value={stepper}>
+      <Component {...stepper.props} />
     </StepperContext.Provider>
   );
 }

@@ -1,10 +1,21 @@
-import { Center, Loader, Checkbox, Card, Group, Button } from '@mantine/core';
+import {
+  Center,
+  Loader,
+  Checkbox,
+  Card,
+  Group,
+  Button,
+  Text,
+  useMantineTheme,
+  Badge,
+  Title,
+} from '@mantine/core';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { trpc } from '~/utils/trpc';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
-import { useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -17,30 +28,20 @@ import { Stepper } from '~/components/Stepper/Stepper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { ImageSort } from '~/server/common/enums';
 
-export function CsamImageSelection({ imageId }: { imageId?: number }) {
-  const { userId, isInternal } = useCsamContext();
-  const { data: user } = trpc.user.getById.useQuery({ id: userId }, { enabled: !isInternal });
+export function CsamImageSelection() {
+  const { userId, user } = useCsamContext();
+
+  // TODO - get all images for user, don't use this util unless we provide a way to get all images regardless of ingestion status
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    { username: user?.username ?? undefined },
-    { applyHiddenPreferences: false, enabled: !!user, keepPreviousData: true }
+    { username: user?.username ?? undefined, sort: ImageSort.Newest },
+    { applyHiddenPreferences: false, enabled: !!user }
   );
 
-  const [hasSelected, setHasSelected] = useState(!!imageId);
-
-  useEffect(() => {
-    if (userId)
-      useCsamImageSelectStore.subscribe(({ selected }) => {
-        const count = Object.keys(selected[userId] ?? {}).length;
-        setHasSelected(!!count);
-      });
-  }, [userId]);
-
-  // get initial image in select store
-  useEffect(() => {
-    if (imageId !== undefined)
-      useCsamImageSelectStore.getState().toggle(userId ?? -1, imageId, true);
-  }, [imageId, userId]);
+  const hasSelected = useCsamImageSelectStore(
+    useCallback(({ selected }) => !!Object.keys(selected[userId] ?? {}).length, [userId])
+  );
 
   if (isLoading)
     return (
@@ -53,6 +54,9 @@ export function CsamImageSelection({ imageId }: { imageId?: number }) {
   return (
     <MasonryProvider columnWidth={300} maxColumnCount={7} maxSingleColumnWidth={450}>
       <ScrollArea>
+        <Title align="center" mb="md">
+          CSAM Image Selection
+        </Title>
         <IsClient>
           <MasonryContainer size="xl" w="100%">
             <ImagesProvider images={images}>
@@ -86,6 +90,9 @@ export function CsamImageSelection({ imageId }: { imageId?: number }) {
         <MasonryContainer size="xl">
           <Group position="right">
             {/* <Button variant="default">Cancel</Button> */}
+            <Badge>
+              Selected: <SelectedCount />
+            </Badge>
             <Stepper.NextButton disabled={!hasSelected}>Next</Stepper.NextButton>
           </Group>
         </MasonryContainer>
@@ -94,8 +101,17 @@ export function CsamImageSelection({ imageId }: { imageId?: number }) {
   );
 }
 
+function SelectedCount() {
+  const { userId } = useCsamContext();
+  const count = useCsamImageSelectStore(
+    useCallback(({ selected }) => Object.keys(selected[userId] ?? {}).length, [userId])
+  );
+  return <>{count.toString()}</>;
+}
+
 function CsamImageCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
+  const theme = useMantineTheme();
   const userId = image.user.id;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
@@ -108,6 +124,11 @@ function CsamImageCard({ data: image, height }: { data: ImagesInfiniteModel; hei
       height={height}
       ref={ref}
       sx={{ position: 'relative' }}
+      style={{
+        outline: checked
+          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          : undefined,
+      }}
     >
       {inView && (
         <>

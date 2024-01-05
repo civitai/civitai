@@ -62,7 +62,7 @@ export async function setReportStatusHandler({
 }) {
   try {
     const { id, status } = input;
-    await bulkSetReportStatus({ ids: [id], status, user: ctx.user, ip: ctx.ip });
+    await bulkSetReportStatus({ ids: [id], status, userId: ctx.user.id, ip: ctx.ip });
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);
@@ -78,7 +78,7 @@ export async function bulkUpdateReportStatusHandler({
 }) {
   try {
     const { ids, status } = input;
-    await bulkSetReportStatus({ ids, status, user: ctx.user });
+    await bulkSetReportStatus({ ids, status, userId: ctx.user.id });
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);

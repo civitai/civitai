@@ -6,6 +6,7 @@ export type StepProps<T = any> = {
   disableNext?: boolean;
   disabled?: boolean;
   hidden?: boolean;
+  label?: React.ReactNode;
 };
 
 export type UseStepperProps = {
@@ -49,6 +50,8 @@ export const useStepper = ({
     setActive(step);
   };
 
+  const reset = () => goToStep(0);
+
   const lastActive = active === stepCount - 1;
   const firstActive = active === 0;
 
@@ -57,6 +60,7 @@ export const useStepper = ({
     next: lastActive ? onComplete : next,
     previous,
     goToStep,
+    reset,
     lastActive,
     firstActive,
     stepCount,

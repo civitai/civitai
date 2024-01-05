@@ -22,7 +22,6 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { ReportReason } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useReportCsam } from '~/components/Report/report.utils';
 import { useReportCsamImages } from '~/components/Image/image.utils';
 
 /*

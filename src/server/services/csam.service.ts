@@ -1,5 +1,5 @@
 import { ReportType } from './../clickhouse/client';
-import { CsamReport, Prisma } from '@prisma/client';
+import { CsamReport, Prisma, ReportStatus } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CsamFileOutput,
@@ -29,6 +29,8 @@ import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { PaginationInput } from '~/server/schema/base.schema';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
+import { bulkSetReportStatus } from '~/server/services/report.service';
+import { softDeleteUser } from '~/server/services/user.service';
 
 const baseDir = env.DIRNAME ?? process.cwd();
 
@@ -85,24 +87,14 @@ export async function createCsamReport({
   }
 
   // Resolve reports concerning csam images
-  await dbWrite.report.updateMany({
-    where: { image: { imageId: { in: images.map((x) => x.id) } } },
-    data: { status: 'Actioned' },
+  await bulkSetReportStatus({
+    ids: images.map((x) => x.id),
+    status: ReportStatus.Actioned,
+    userId: reportedById,
   });
 
   if (!isInternalReport) {
-    // hide user content
-    await dbWrite.model.updateMany({
-      where: { userId },
-      data: { status: 'UnpublishedViolation' },
-    });
-    await dbWrite.image.updateMany({
-      where: { userId },
-      data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
-    });
-    await cancelSubscription({ userId });
-    await dbWrite.user.update({ where: { id: userId }, data: { bannedAt: date } });
-    await invalidateSession(userId);
+    await softDeleteUser({ id: userId });
   }
 }
 

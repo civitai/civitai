@@ -202,16 +202,15 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
     const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [{ modelId, modelVersionId }];
     if (username) AND.push({ user: { username } });
 
-    const [count, items] = await dbRead.$transaction([
-      dbRead.resourceReview.count({ where: { AND } }),
-      dbRead.resourceReview.findMany({
-        skip,
-        take,
-        where: { AND },
-        orderBy: { createdAt: 'desc' },
-        select: resourceReviewSelect,
-      }),
-    ]);
+    const count = await dbRead.resourceReview.count({ where: { AND } });
+    const items = dbRead.resourceReview.findMany({
+      skip,
+      take,
+      where: { AND },
+      orderBy: { createdAt: 'desc' },
+      select: resourceReviewSelect,
+    });
+
     return { items, count };
   });
 };

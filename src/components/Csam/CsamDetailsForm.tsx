@@ -12,7 +12,9 @@ import {
   Badge,
   Button,
   Container,
+  Title,
 } from '@mantine/core';
+import { closeModal, openConfirmModal } from '@mantine/modals';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 
@@ -23,7 +25,6 @@ import {
   useCsamImageSelectStore,
   useCsamModelVersionSelectStore,
 } from '~/components/Csam/useCsamImageSelect.store';
-import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Stepper, useStepperContext } from '~/components/Stepper/Stepper';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
@@ -44,24 +45,41 @@ export function CsamDetailsForm() {
     shouldUnregister: false,
   });
 
-  const { mutate: createReport, isLoading } = trpc.csam.createReport.useMutation();
+  const { mutate: createReport, isLoading } = trpc.csam.createReport.useMutation({
+    onSuccess: () => {
+      closeModal('csam-confirm');
+      next();
+    },
+  });
 
   const handleSubmit = (data: z.infer<typeof csamReportFormSchema>) => {
-    createReport({
-      ...data,
-      userId,
-      modelVersionIds: useCsamModelVersionSelectStore.getState().getSelected(userId),
-      images: useCsamImageSelectStore
-        .getState()
-        .getSelected(userId)
-        .map((id) => ({ id })),
+    openConfirmModal({
+      modalId: 'csam-confirm',
+      centered: true,
+      title: 'Confirm CSAM report',
+      children: 'Are you sure you want to report this content as CSAM?',
+      labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+      confirmProps: { loading: isLoading },
+      onConfirm: () => {
+        createReport({
+          ...data,
+          userId,
+          modelVersionIds: useCsamModelVersionSelectStore.getState().getSelected(userId),
+          images: useCsamImageSelectStore
+            .getState()
+            .getSelected(userId)
+            .map((id) => ({ id })),
+        });
+      },
     });
-    next();
   };
 
   return (
     <ScrollArea>
       <Container>
+        <Title align="center" mb="md">
+          CSAM Details Form
+        </Title>
         <Card>
           <Form id="csamForm" form={form} onSubmit={handleSubmit}>
             <Stack spacing="xl">
@@ -98,7 +116,7 @@ export function CsamDetailsForm() {
               </Input.Wrapper>
               <Group position="right">
                 <Stepper.PreviousButton>Previous</Stepper.PreviousButton>
-                <Button type="submit" onClick={() => confirm('Are you sure')} loading={isLoading}>
+                <Button type="submit" loading={isLoading}>
                   Submit
                 </Button>
               </Group>

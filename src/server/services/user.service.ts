@@ -422,6 +422,21 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   return result;
 };
 
+/** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
+export async function softDeleteUser({ id }: { id: number }) {
+  await dbWrite.model.updateMany({
+    where: { userId: id },
+    data: { status: 'UnpublishedViolation' },
+  });
+  await dbWrite.image.updateMany({
+    where: { userId: id },
+    data: { ingestion: 'Blocked', blockedFor: 'CSAM', needsReview: null },
+  });
+  await cancelSubscription({ userId: id });
+  await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
+  await invalidateSession(id);
+}
+
 export const toggleBlockedTag = async ({
   tagId,
   userId,

@@ -2564,5 +2564,5 @@ export async function reportCsamImages({
     select: { reports: { select: { reportId: true } } },
   });
   const reportIds = images.flatMap((x) => x.reports.map((x) => x.reportId));
-  await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, user, ip });
+  await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
 }

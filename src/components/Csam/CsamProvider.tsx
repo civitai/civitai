@@ -1,8 +1,10 @@
 import { createContext, useContext } from 'react';
+import { SimpleUser } from '~/server/selectors/user.selector';
 
 type CsamState = {
   isInternal: boolean;
   userId: number;
+  user?: SimpleUser;
 };
 const CsamContext = createContext<CsamState | null>(null);
 export const useCsamContext = () => {
@@ -11,8 +13,12 @@ export const useCsamContext = () => {
   return context;
 };
 
-export function CsamProvider({ children, userId }: { children: React.ReactNode; userId: number }) {
-  const isInternal = userId === -1;
+export function CsamProvider({ children, user }: { children: React.ReactNode; user: SimpleUser }) {
+  const isInternal = user.id === -1;
 
-  return <CsamContext.Provider value={{ userId, isInternal }}>{children}</CsamContext.Provider>;
+  return (
+    <CsamContext.Provider value={{ userId: user.id, isInternal, user }}>
+      {children}
+    </CsamContext.Provider>
+  );
 }

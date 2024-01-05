@@ -266,12 +266,12 @@ export const bulkUpdateReports = ({
 export async function bulkSetReportStatus({
   ids,
   status,
-  user,
+  userId,
   ip,
 }: {
   ids: number[];
   status: ReportStatus;
-  user: SessionUser;
+  userId: number;
   ip?: string;
 }) {
   const statusSetAt = new Date();
@@ -281,6 +281,8 @@ export async function bulkSetReportStatus({
     select: { id: true, userId: true, alsoReportedBy: true },
   });
 
+  if (!reports) return;
+
   await dbWrite.$transaction(
     reports.map((report) =>
       dbWrite.report.update({
@@ -288,7 +290,7 @@ export async function bulkSetReportStatus({
         data: {
           status,
           statusSetAt,
-          statusSetBy: user.id,
+          statusSetBy: userId,
           previouslyReviewedCount:
             status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
         },
@@ -297,7 +299,7 @@ export async function bulkSetReportStatus({
   );
 
   // Track mod activity in the background
-  trackModReports({ ids, userId: user.id });
+  trackModReports({ ids, userId: userId });
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
