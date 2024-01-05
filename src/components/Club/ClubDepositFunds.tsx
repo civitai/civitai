@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { Currency } from '@prisma/client';
 import { NumberInputWrapper } from '../../libs/form/components/NumberInputWrapper';
 import { BuzzTransactionButton } from '../Buzz/BuzzTransactionButton';
+import { isDefined } from '../../utils/type-guards';
 
 const schema = clubTransactionSchema.omit({ clubId: true });
 
@@ -37,7 +38,7 @@ export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
     <Modal {...dialog} title="Deposit your funds into your club" size="sm" withCloseButton>
       <Stack>
         <Divider mx="-lg" mb="md" />
-        {isLoading || !club || !balance || !userBalance ? (
+        {isLoading || !club || !isDefined(balance) || !isDefined(userBalance) ? (
           <Center>
             <Loader />
           </Center>

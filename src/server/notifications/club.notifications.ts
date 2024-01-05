@@ -6,10 +6,49 @@ export const clubNotifications = createNotificationProcessor({
     displayName: 'New Member Joined your club!',
     prepareMessage: ({ details }) => {
       return {
-        message: `A new user has joined your club!`,
-        url: `/clubs/${details.clubId}`,
+        message: `A new user has joined the club ${details.clubName} as a member of the tier ${details.tierName}!`,
+        url: `/clubs/manage/${details.clubId}/members`,
       };
     },
+    prepareQuery: async ({ lastSent }) => `
+       WITH data AS (
+        SELECT
+          c.id "clubId",
+          c.name "clubName",
+          ct.name "tierName",
+          c."userId"
+        FROM "ClubMembership" cm
+        JOIN "Club" c ON cm."clubId" = c.id
+        JOIN "ClubTier" ct ON cm."clubTierId" = ct.id
+        WHERE cm."startedAt" > '${lastSent}'
+
+        UNION
+
+        SELECT
+          c.id "clubId",
+          c.name "clubName",
+          ct.name "tierName",
+          ca."userId"
+        FROM "ClubMembership" cm
+        JOIN "Club" c ON cm."clubId" = c.id
+        JOIN "ClubTier" ct ON cm."clubTierId" = ct.id
+        JOIN "ClubAdmin" ca ON ca."clubId" = c.id
+        WHERE cm."startedAt" > '${lastSent}'
+          AND 'ManageMemberships'=ANY(ca.permissions)
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+        SELECT
+          REPLACE(gen_random_uuid()::text, '-', ''),
+          "userId",
+          'club-new-member-joined' "type",
+          jsonb_build_object(
+            'clubId', "clubId",
+            'clubName', "clubName",
+            'tierName', "tierName"
+          )
+        FROM data
+      ON CONFLICT("id") DO NOTHING;
+    `,
   },
   'club-new-post-created': {
     displayName: 'A new club post has been created!',

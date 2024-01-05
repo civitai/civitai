@@ -184,15 +184,6 @@ export const createClubMembership = async ({
         },
       });
     }
-    // Attempt to pay the membership fee
-    await createNotification({
-      type: 'club-new-member-joined',
-      userId: clubTier.club.userId,
-      details: {
-        username: '',
-        clubId: clubTier.clubId,
-      },
-    });
 
     return membership;
   });
