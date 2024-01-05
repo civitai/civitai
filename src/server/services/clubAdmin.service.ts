@@ -111,9 +111,9 @@ export const acceptClubAdminInvite = async ({
     throw throwBadRequestError('You are already a club admin or owner for this club');
   }
 
-  await dbWrite.$transaction(async (tx) => {
+  return dbWrite.$transaction(async (tx) => {
     // Accept invite
-    await tx.clubAdmin.create({
+    const clubAdmin = await tx.clubAdmin.create({
       data: {
         clubId: clubAdminInvite.clubId,
         userId,
@@ -123,10 +123,8 @@ export const acceptClubAdminInvite = async ({
 
     // Delete invite
     await tx.clubAdminInvite.delete({ where: { id } });
-  });
 
-  return dbWrite.clubAdmin.findUnique({
-    where: { clubId_userId: { clubId: clubAdminInvite.clubId, userId } },
+    return clubAdmin;
   });
 };
 

@@ -33,16 +33,16 @@ export const processClubMembershipRecurringPayments = createJob(
         },
         cancelledAt: null,
         expiresAt: null,
-        billingPausedAt: null,
         unitAmount: {
           gt: 0,
         },
-        club: {
-          billing: true,
+        clubTier: {
+          oneTimeFee: false,
         },
       },
       include: {
         downgradeClubTier: true,
+        club: true,
       },
     });
 
@@ -51,100 +51,113 @@ export const processClubMembershipRecurringPayments = createJob(
     // For each membership, create a payment intent.
     await Promise.all(
       clubMemberships.map(async (clubMembership) => {
-        const user = await dbRead.user.findUnique({
-          where: { id: clubMembership.userId },
-          select: {
-            customerId: true,
-            email: true,
-          },
-        });
-
-        if (!user) {
-          logger({
-            data: {
-              message: 'User not found',
-              ...clubMembership,
+        try {
+          const user = await dbRead.user.findUnique({
+            where: { id: clubMembership.userId },
+            select: {
+              customerId: true,
+              email: true,
             },
           });
 
-          return;
-        }
-
-        // Check if the user has buzz and can pay with buzz.
-        const account = await getUserBuzzAccount({ accountId: clubMembership.userId });
-
-        if (!account) {
-          // TODO: Send email to user that they need to add a payment method.
-          logger({
-            data: {
-              message: "Unable to get user's buzz account",
-              ...clubMembership,
-            },
-          });
-
-          return;
-        }
-
-        const chargedAmount =
-          clubMembership.downgradeClubTier?.unitAmount ?? clubMembership.unitAmount;
-        const downgradeClubTierId = clubMembership.downgradeClubTier?.id ?? undefined;
-
-        if (chargedAmount > 0) {
-          if ((account?.balance ?? 0) >= chargedAmount) {
-            // Pay with buzz.
-            await dbWrite.$transaction(async (tx) => {
-              try {
-                await tx.clubMembership.update({
-                  where: { id: clubMembership.id },
-                  data: {
-                    nextBillingAt: dayjs(clubMembership.nextBillingAt).add(1, 'month').toDate(),
-                    clubTierId: downgradeClubTierId, // Won't do anything if the user doesn't have it.
-                    downgradeClubTierId: null,
-                  },
-                });
-
-                await createBuzzTransaction({
-                  fromAccountId: clubMembership.userId,
-                  toAccountId: clubMembership.clubId,
-                  toAccountType: 'Club',
-                  amount: chargedAmount,
-                  type: TransactionType.ClubMembership,
-                  details: {
-                    clubMembershipId: clubMembership.id,
-                  },
-                });
-              } catch (e) {
-                logger({
-                  data: {
-                    message: 'Error paying with buzz',
-                    ...clubMembership,
-                  },
-                });
-
-                await tx.clubMembership.update({
-                  where: { id: clubMembership.id },
-                  data: {
-                    // Expire that membership so the user loses access.
-                    // Might need to also send an email.
-                    expiresAt: now.toDate(),
-                  },
-                });
-              }
-            });
-
-            return; // Nothing else to do. We paid with buzz.
-          }
-
-          if (!user?.customerId) {
+          if (!user) {
             logger({
               data: {
-                message: 'User is not a stripe customer',
+                message: 'User not found',
                 ...clubMembership,
               },
             });
 
-            await dbWrite.$transaction(async (tx) => {
-              await tx.clubMembership.update({
+            return;
+          }
+
+          if (!clubMembership.club.billing || clubMembership.billingPausedAt) {
+            await dbWrite.clubMembership.update({
+              where: { id: clubMembership.id },
+              data: {
+                // Expire that membership so the user loses access.
+                // Might need to also send an email.
+                nextBillingAt: now.add(1, 'month').toDate(),
+              },
+            });
+
+            return;
+          }
+
+          // Check if the user has buzz and can pay with buzz.
+          const account = await getUserBuzzAccount({ accountId: clubMembership.userId });
+
+          if (!account) {
+            // TODO: Send email to user that they need to add a payment method.
+            logger({
+              data: {
+                message: "Unable to get user's buzz account",
+                ...clubMembership,
+              },
+            });
+
+            return;
+          }
+
+          const chargedAmount =
+            clubMembership.downgradeClubTier?.unitAmount ?? clubMembership.unitAmount;
+          const downgradeClubTierId = clubMembership.downgradeClubTier?.id ?? undefined;
+
+          if (chargedAmount > 0) {
+            if ((account?.balance ?? 0) >= chargedAmount) {
+              // Pay with buzz.
+              await dbWrite.$transaction(async (tx) => {
+                try {
+                  await tx.clubMembership.update({
+                    where: { id: clubMembership.id },
+                    data: {
+                      nextBillingAt: dayjs(clubMembership.nextBillingAt).add(1, 'month').toDate(),
+                      clubTierId: downgradeClubTierId, // Won't do anything if the user doesn't have it.
+                      downgradeClubTierId: null,
+                    },
+                  });
+
+                  await createBuzzTransaction({
+                    fromAccountId: clubMembership.userId,
+                    toAccountId: clubMembership.clubId,
+                    toAccountType: 'Club',
+                    amount: chargedAmount,
+                    type: TransactionType.ClubMembership,
+                    details: {
+                      clubMembershipId: clubMembership.id,
+                    },
+                  });
+                } catch (e) {
+                  logger({
+                    data: {
+                      message: 'Error paying with buzz',
+                      ...clubMembership,
+                    },
+                  });
+
+                  await tx.clubMembership.update({
+                    where: { id: clubMembership.id },
+                    data: {
+                      // Expire that membership so the user loses access.
+                      // Might need to also send an email.
+                      expiresAt: now.toDate(),
+                    },
+                  });
+                }
+              });
+
+              return; // Nothing else to do. We paid with buzz.
+            }
+
+            if (!user?.customerId) {
+              logger({
+                data: {
+                  message: 'User is not a stripe customer',
+                  ...clubMembership,
+                },
+              });
+
+              await dbWrite.clubMembership.update({
                 where: { id: clubMembership.id },
                 data: {
                   // Expire that membership so the user loses access.
@@ -152,10 +165,10 @@ export const processClubMembershipRecurringPayments = createJob(
                   expiresAt: now.toDate(),
                 },
               });
-            });
-          }
 
-          await dbWrite.$transaction(async (tx) => {
+              return;
+            }
+
             const paymentMethods = await stripe.paymentMethods.list({
               customer: user.customerId as string,
               // type: 'card',
@@ -166,10 +179,21 @@ export const processClubMembershipRecurringPayments = createJob(
             if (!defaultCard || !defaultCard?.id) {
               logger({
                 data: {
-                  message: 'User does not have a default payment method',
+                  message: 'User does not have a default payment method. cancelling membership.',
                   ...clubMembership,
                 },
               });
+
+              await dbWrite.clubMembership.update({
+                where: { id: clubMembership.id },
+                data: {
+                  // Expire that membership so the user loses access.
+                  // Might need to also send an email.
+                  expiresAt: now.toDate(),
+                },
+              });
+
+              return;
             }
 
             const purchasedUnitAmount = Math.max(
@@ -193,7 +217,7 @@ export const processClubMembershipRecurringPayments = createJob(
               },
             });
 
-            await tx.clubMembershipCharge.create({
+            await dbWrite.clubMembershipCharge.create({
               data: {
                 userId: clubMembership.userId,
                 clubId: clubMembership.clubId,
@@ -204,6 +228,13 @@ export const processClubMembershipRecurringPayments = createJob(
                 chargedAt: dayjs().toDate(),
               },
             });
+          }
+        } catch (e) {
+          logger({
+            data: {
+              message: 'Error processing membership payment',
+              error: e,
+            },
           });
         }
       })

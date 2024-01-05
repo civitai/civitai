@@ -1,9 +1,11 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { getDisplayName } from '../../utils/string-helpers';
+import { formatDate } from '../../utils/date-helpers';
 
 export const clubNotifications = createNotificationProcessor({
   'club-new-member-joined': {
     displayName: 'New Member Joined your club!',
+    toggleable: false,
     prepareMessage: ({ details }) => {
       return {
         message: `A new user has joined the club ${details.clubName} as a member of the tier ${details.tierName}!`,
@@ -50,9 +52,23 @@ export const clubNotifications = createNotificationProcessor({
       ON CONFLICT("id") DO NOTHING;
     `,
   },
+  'club-billing-toggled': {
+    displayName: 'Monthly billing for a club you are a member of has been toggled',
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      return {
+        message: `Monthly billing for the club ${details.clubName} has been ${
+          details.billing
+            ? `enabled. Your next billing will be on ${formatDate(details.nextBillingAt)}.`
+            : 'disabled. You will not be charged for this club on a monthly basis anymore.'
+        }`,
+        url: `/clubs/${details.clubId}`,
+      };
+    },
+  },
   'club-new-post-created': {
     displayName: 'A new club post has been created!',
-    toggleable: false,
+    toggleable: true,
     prepareMessage: ({ details }) => ({
       message: `New club post has been added to ${details.name} club.`,
       url: `/clubs/${details.clubId}`,
@@ -84,7 +100,7 @@ export const clubNotifications = createNotificationProcessor({
   },
   'club-new-resource-added': {
     displayName: 'A new club resouce has been created!',
-    toggleable: false,
+    toggleable: true,
     prepareMessage: ({ details }) => ({
       message: `New ${
         details.resourceType === 'Post' ? 'Image Post' : getDisplayName(details.resourceType)

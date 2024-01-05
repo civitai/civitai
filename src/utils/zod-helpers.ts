@@ -38,7 +38,7 @@ export function commaDelimitedStringObject() {
 function stringToArray(value: unknown) {
   if (!Array.isArray(value) && typeof value === 'string')
     return value.split(',').map((x) => x.trim());
-  return (value as unknown[]).map(String);
+  return ((value ?? []) as unknown[]).map(String);
 }
 
 /** Converts a comma delimited string to an array of strings */

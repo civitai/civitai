@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Center,
+  CheckIcon,
   Divider,
   Group,
   Loader,
@@ -24,7 +25,13 @@ import { GetInfiniteClubMembershipsSchema } from '~/server/schema/clubMembership
 import { ClubMembershipSort } from '~/server/common/enums';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
-import { IconClock, IconPlayerPause, IconPlayerPlay, IconTrash } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconClock,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconTrash,
+} from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ClubAdminPermission, Currency } from '@prisma/client';
@@ -149,11 +156,14 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                     <CurrencyBadge
                       unitAmount={membership.unitAmount}
                       currency={membership.currency ?? Currency.BUZZ}
+                      size="sm"
                     />
                   </td>
                   <td>{formatDate(membership.startedAt)}</td>
                   <td>
-                    {membership.cancelledAt || membership.unitAmount === 0
+                    {membership.clubTier.oneTimeFee
+                      ? 'Single Payment - Not Applicable'
+                      : membership.cancelledAt || membership.unitAmount === 0
                       ? '-'
                       : formatDate(membership.nextBillingAt)}
                   </td>
@@ -168,7 +178,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                   </td>
                   <td>
                     {canManageMemberships ? (
-                      <Group>
+                      <Group noWrap>
                         {membership.unitAmount > 0 && (
                           <Tooltip
                             label={`${

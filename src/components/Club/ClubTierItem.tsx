@@ -39,7 +39,27 @@ export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
 
   return (
     <>
-      {membership?.cancelledAt ? (
+      {membership?.clubTier?.oneTimeFee ? (
+        <Alert color="yellow">
+          <Stack>
+            <Text size="sm">You are a member of this club.</Text>
+            <Text size="sm">
+              You have a one time payment membership on the club tier &rsquo;
+              {membership.clubTier.name}&rsquo;.
+            </Text>
+
+            <Button
+              size="xs"
+              onClick={toggleCancelStatus}
+              loading={isToggling}
+              variant="subtle"
+              color="yellow"
+            >
+              Exit club
+            </Button>
+          </Stack>
+        </Alert>
+      ) : membership?.cancelledAt ? (
         <Alert color="yellow">
           <Stack>
             <Text size="sm">
@@ -185,13 +205,23 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 <Text align="center">
                   You will be charged the membership fee of{' '}
                   <CurrencyBadge unitAmount={clubTier.unitAmount} currency={Currency.BUZZ} />{' '}
-                  immediately and get access to this tier&rsquo;s benefits. Memberships are billed
-                  monthly and can be canceled at any time.
+                  immediately and get access to this tier&rsquo;s benefits.
                 </Text>
-
-                <Text color="dimmed" size="sm" align="center">
-                  Your next billing date will be on {formatDate(dayjs().add(1, 'month').toDate())}
-                </Text>
+                {clubTier.oneTimeFee ? (
+                  <Text align="center">
+                    This is a one time payment and you will not be charged again.
+                  </Text>
+                ) : (
+                  <>
+                    <Text align="center">
+                      Memberships are billed monthly and can be canceled at any time.
+                    </Text>
+                    <Text color="dimmed" size="sm" align="center">
+                      Your next billing date will be on{' '}
+                      {formatDate(dayjs().add(1, 'month').toDate())}
+                    </Text>
+                  </>
+                )}
               </>
             ) : (
               <Text>
@@ -216,7 +246,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             message: 'You are now a member of this club! Enjoy your stay.',
           });
 
-          if (userPaymentMethods.length === 0 && clubTier.unitAmount > 0) {
+          if (userPaymentMethods.length === 0 && clubTier.unitAmount > 0 && !clubTier.oneTimeFee) {
             dialogStore.trigger({
               component: StripePaymentMethodSetupModal,
               props: {
@@ -307,19 +337,28 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 and get access to this tier&rsquo;s benefits.
               </Text>
 
-              <Stack mt="md">
-                <Text align="center" weight="bold">
-                  Your next billing date will be on {formatDate(nextBillingDate)}.
-                </Text>
-                <Text color="dimmed" align="center" size="sm">
-                  An additional{' '}
-                  <Text component="span" weight="bold">
-                    {addedDaysFromCurrentTier} days
-                  </Text>{' '}
-                  will be added to your new membership period to account for the remaining days in
-                  your current membership.
-                </Text>
-              </Stack>
+              {clubTier.oneTimeFee ? (
+                <Stack mt="md">
+                  <Text align="center" weight="bold">
+                    This is a one time payment and you will not be charged again unless leave the
+                    club.
+                  </Text>
+                </Stack>
+              ) : (
+                <Stack mt="md">
+                  <Text align="center" weight="bold">
+                    Your next billing date will be on {formatDate(nextBillingDate)}.
+                  </Text>
+                  <Text color="dimmed" align="center" size="sm">
+                    An additional{' '}
+                    <Text component="span" weight="bold">
+                      {addedDaysFromCurrentTier} days
+                    </Text>{' '}
+                    will be added to your new membership period to account for the remaining days in
+                    your current membership.
+                  </Text>
+                </Stack>
+              )}
             </Stack>
           </Center>
         ),
@@ -370,6 +409,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
         <ContentClamp maxHeight={200}>
           <RenderHtml html={clubTier.description} />
         </ContentClamp>
+
         {!isOwner && (
           <LoginPopover>
             {isNextDowngradeTier ? (
@@ -407,7 +447,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 color="yellow.7"
                 variant="light"
                 onClick={handleMembershipUpdate}
-                disabled={remainingSpots === 0}
+                disabled={remainingSpots === 0 || membership?.clubTier.oneTimeFee}
               >
                 Downgrade
               </Button>
@@ -418,7 +458,9 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 buzzAmount={clubTier.unitAmount}
                 radius="md"
                 onPerformTransaction={isUpgrade ? handleMembershipUpdate : handleMembershipJoin}
-                label={isUpgrade ? 'Upgrade' : 'Become a member'}
+                label={
+                  isUpgrade ? 'Upgrade' : clubTier.oneTimeFee ? 'Get Access ' : 'Become a member'
+                }
                 color="yellow.7"
               />
             )}
@@ -496,7 +538,7 @@ export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number
             <Text align="center" weight={800}>
               {clubTier.name}
             </Text>
-            {clubTier.unitAmount > 0 ? (
+            {clubTier.unitAmount > 0 && !clubTier.oneTimeFee ? (
               <Text align="center">
                 Your membership will be canceled at the end of your current billing period on{' '}
                 {formatDate(membership?.nextBillingAt)} and no more charges to your account will be

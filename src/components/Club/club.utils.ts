@@ -297,14 +297,16 @@ export const useMutateClub = () => {
   });
 
   const cancelClubMembershipMutation = trpc.clubMembership.cancelClubMembership.useMutation({
-    async onSuccess(updated) {
-      if (updated) {
+    async onSuccess(updated, payload) {
+      if (updated?.clubId || payload?.clubId) {
         queryUtils.clubMembership.getClubMembershipOnClub.setData(
           {
-            clubId: updated.clubId,
+            clubId: updated?.clubId || payload?.clubId,
           },
           (prev) =>
-            prev
+            !updated
+              ? null
+              : prev
               ? {
                   ...prev,
                   ...updated,
