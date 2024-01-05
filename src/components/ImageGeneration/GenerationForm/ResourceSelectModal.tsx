@@ -67,6 +67,8 @@ import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ModelType } from '@prisma/client';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { truncate } from 'lodash-es';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -507,7 +509,13 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
                         <EdgeMedia
                           src={image.url}
                           name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
+                          alt={
+                            image.meta
+                              ? truncate((image.meta as ImageMetaProps).prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : image.name ?? undefined
+                          }
                           type={image.type}
                           width={
                             originalAspectRatio > 1

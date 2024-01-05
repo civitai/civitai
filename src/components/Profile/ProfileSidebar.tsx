@@ -272,11 +272,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                   <Popover.Target>
                     {data.animated ? (
                       <Box style={{ cursor: 'pointer', width: sizeOpts.badges }}>
-                        <EdgeMedia src={url} width="original" />
+                        <EdgeMedia src={url} alt={award.name} width="original" />
                       </Box>
                     ) : (
                       <Box style={{ cursor: 'pointer' }}>
-                        <EdgeMedia src={url} width={sizeOpts.badges} />
+                        <EdgeMedia src={url} alt={award.name} width={sizeOpts.badges} />
                       </Box>
                     )}
                   </Popover.Target>

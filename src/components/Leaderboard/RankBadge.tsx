@@ -35,7 +35,11 @@ export const RankBadge = ({
       <Group spacing={0} noWrap sx={{ position: 'relative' }}>
         {rank.leaderboardCosmetic ? (
           <Box pos="relative" sx={{ zIndex: 2 }}>
-            <EdgeMedia src={rank.leaderboardCosmetic} width={32} />
+            <EdgeMedia
+              src={rank.leaderboardCosmetic}
+              alt={`${rank.leaderboardTitle} position #${rank.leaderboardRank}`}
+              width={32}
+            />
           </Box>
         ) : null}
         <IconBadge

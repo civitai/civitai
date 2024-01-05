@@ -249,6 +249,7 @@ export const constants = {
     coverImageHeight: 400,
     coverImageWidth: 1600,
   },
+  altTruncateLength: 125,
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers'];

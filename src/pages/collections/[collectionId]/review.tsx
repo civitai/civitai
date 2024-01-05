@@ -43,7 +43,7 @@ import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -54,6 +54,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { truncate } from 'lodash-es';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -280,7 +281,13 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         <EdgeMedia
                           src={image.url ?? ''}
                           name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
+                          alt={
+                            image.meta
+                              ? truncate((image.meta as ImageMetaProps).prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : image.name ?? undefined
+                          }
                           type={image.type}
                           width={
                             originalAspectRatio > 1

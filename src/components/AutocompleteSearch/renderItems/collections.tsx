@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Badge, BadgeProps, Center, Group, Stack, Text } from '@mantine/core';
+import { AutocompleteItem, Center, Group, Stack, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
@@ -13,17 +13,23 @@ import {
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { constants } from '~/server/common/constants';
 
 export const CollectionsSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: Hit<CollectionSearchIndexRecord> }
 >(({ value, hit, ...props }, ref) => {
-  const { theme, classes } = useSearchItemStyles();
+  const { classes } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, images, metrics } = hit;
   const [image] = images;
+  const alt = truncate((image.meta as ImageMetaProps)?.prompt, {
+    length: constants.altTruncateLength,
+  });
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -43,6 +49,7 @@ export const CollectionsSearchItem = forwardRef<
             src={image.url}
             name={image.name ?? image.id.toString()}
             type={image.type}
+            alt={alt}
             anim={false}
             width={450}
             style={{

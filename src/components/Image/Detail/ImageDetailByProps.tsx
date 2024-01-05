@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Card,
@@ -18,7 +17,6 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import {
-  IconDotsVertical,
   IconAlertTriangle,
   IconEye,
   IconPlaylistAdd,
@@ -26,12 +24,9 @@ import {
   IconChevronRight,
   IconTrash,
 } from '@tabler/icons-react';
-import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
@@ -58,6 +53,8 @@ import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import React, { useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 export function ImageDetailByProps({
   imageId,
@@ -513,7 +510,11 @@ export function ImageDetailCarousel({
                       <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={
+                          image.meta
+                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                            : image.name ?? undefined
+                        }
                         type={image.type}
                         style={{ maxHeight: '100%', maxWidth: '100%' }}
                         width={image.width ?? 1200}

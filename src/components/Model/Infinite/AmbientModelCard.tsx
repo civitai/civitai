@@ -64,6 +64,8 @@ import {
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const mantineColors: DefaultMantineColor[] = [
   'blue',
@@ -477,7 +479,13 @@ export function AmbientModelCard({ data, height }: Props) {
                           <EdgeMedia
                             src={image.url}
                             name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
+                            alt={
+                              image.meta
+                                ? truncate((image.meta as ImageMetaProps).prompt, {
+                                    length: constants.altTruncateLength,
+                                  })
+                                : image.name ?? undefined
+                            }
                             type={image.type}
                             width={450}
                             placeholder="empty"

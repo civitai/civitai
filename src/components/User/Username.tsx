@@ -48,11 +48,11 @@ export function Username({
         <Tooltip color="dark" label={badge.name} withArrow withinPortal>
           {badge.data.animated ? (
             <div style={{ display: 'flex', width: badgeSize }}>
-              <EdgeMedia src={badge.data.url} width="original" />
+              <EdgeMedia src={badge.data.url} alt={badge.name} width="original" />
             </div>
           ) : (
             <div style={{ display: 'flex' }}>
-              <EdgeMedia src={badge.data.url} width={badgeSize} />
+              <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
             </div>
           )}
         </Tooltip>

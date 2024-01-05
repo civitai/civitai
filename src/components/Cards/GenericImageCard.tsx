@@ -3,9 +3,10 @@ import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { IconCategory, IconPhoto } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 
 export function GenericImageCard({
   image: coverImage,
@@ -18,7 +19,7 @@ export function GenericImageCard({
   entityId?: number;
   disabled?: boolean;
 }) {
-  const { classes: sharedClasses, cx } = useCardStyles({
+  const { classes: sharedClasses } = useCardStyles({
     aspectRatio: coverImage.width && coverImage.height ? coverImage.width / coverImage.height : 1,
   });
 
@@ -87,7 +88,11 @@ export function GenericImageCard({
                       <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={
+                          image.meta
+                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                            : image.name ?? undefined
+                        }
                         type={image.type}
                         width={
                           originalAspectRatio > 1

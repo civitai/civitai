@@ -2,6 +2,7 @@ import { createStyles, UnstyledButton, Center, Button, Group, Box } from '@manti
 import { useHotkeys } from '@mantine/hooks';
 import { IconBrush } from '@tabler/icons-react';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
@@ -9,6 +10,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
 
 type GalleryCarouselProps = {
@@ -111,7 +113,11 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   <EdgeMedia
                     src={image.url}
                     name={image.name ?? image.id.toString()}
-                    alt={image.name ?? undefined}
+                    alt={
+                      image.meta
+                        ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                        : image.name ?? undefined
+                    }
                     type={image.type}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width="original"

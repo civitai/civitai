@@ -8,7 +8,6 @@ import {
   Indicator,
   LoadingOverlay,
   Menu,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -23,7 +22,6 @@ import {
   IconFlag,
   IconHeart,
   IconMessageCircle2,
-  IconStar,
   IconTagOff,
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
@@ -55,17 +53,12 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function ModelCategoryCard({
-  data,
-  height,
-}: {
-  data: ModelGetByCategoryModel;
-  height: number;
-}) {
+export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; height: number }) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
@@ -310,7 +303,13 @@ export function ModelCategoryCard({
                           className={classes.image}
                           src={image.url}
                           name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
+                          alt={
+                            image.meta
+                              ? truncate((image.meta as ImageMetaProps).prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : image.name ?? undefined
+                          }
                           type={image.type}
                           width={450}
                           placeholder="empty"

@@ -1,12 +1,4 @@
-import {
-  ActionIcon,
-  createStyles,
-  Group,
-  keyframes,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { createStyles, Group, keyframes, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -20,9 +12,12 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { IconAward, IconFiles } from '@tabler/icons-react';
+import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { constants } from '~/server/common/constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -149,8 +144,12 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
                         type={image.type}
+                        alt={
+                          image.meta
+                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                            : image.name ?? undefined
+                        }
                         width={IMAGE_CARD_WIDTH}
                         className={classes.image}
                         wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}

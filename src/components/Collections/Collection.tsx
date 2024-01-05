@@ -65,6 +65,7 @@ import { isCollectionSubsmissionPeriod } from '~/components/Collections/collecti
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { truncate } from 'lodash-es';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -470,7 +471,13 @@ export function Collection({
                         src={collection.image.url}
                         type={collection.image.type}
                         name={collection.image.name ?? collection.image.url}
-                        alt={collection.image.name ?? undefined}
+                        alt={
+                          collection.image.meta
+                            ? truncate(collection.image.meta.prompt, {
+                                length: constants.altTruncateLength,
+                              })
+                            : collection.image.name ?? undefined
+                        }
                         width={collection.image.width ?? 1200}
                         loading="lazy"
                       />
@@ -483,7 +490,7 @@ export function Collection({
                       <Title
                         order={1}
                         lineClamp={1}
-                        sx={(theme) => ({
+                        sx={() => ({
                           [containerQuery.smallerThan('sm')]: {
                             fontSize: '28px',
                           },

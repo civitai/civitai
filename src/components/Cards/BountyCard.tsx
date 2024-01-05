@@ -8,18 +8,7 @@ import {
   ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
-import React from 'react';
-import { FeedCard } from '~/components/Cards/FeedCard';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useRouter } from 'next/router';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
-import { BountyGetAll } from '~/types/router';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { Currency } from '@prisma/client';
 import {
   IconAlertCircle,
   IconClockHour4,
@@ -28,11 +17,25 @@ import {
   IconSwords,
   IconViewfinder,
 } from '@tabler/icons-react';
-import { BountyContextMenu } from '../Bounty/BountyContextMenu';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
+import { truncate } from 'lodash-es';
+import { useRouter } from 'next/router';
+import React from 'react';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { FeedCard } from '~/components/Cards/FeedCard';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { BountyGetAll } from '~/types/router';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { DaysFromNow } from '../Dates/DaysFromNow';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { constants } from '~/server/common/constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -137,7 +140,13 @@ export function BountyCard({ data }: Props) {
                       <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={
+                          image.meta
+                            ? truncate((image.meta as ImageMetaProps).prompt, {
+                                length: constants.altTruncateLength,
+                              })
+                            : undefined
+                        }
                         type={image.type}
                         width={IMAGE_CARD_WIDTH}
                         className={classes.image}

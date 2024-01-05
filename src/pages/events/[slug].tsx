@@ -621,7 +621,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
               rel="noreferrer"
             >
               <div className={classes.partnerLogo}>
-                <EdgeMedia src={partner.image} width={120} />
+                <EdgeMedia src={partner.image} alt={`${partner.title} logo`} width={120} />
               </div>
               <Stack spacing={0} align="center">
                 <Text size={20} weight={600}>

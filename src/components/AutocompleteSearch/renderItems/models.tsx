@@ -1,15 +1,6 @@
 import React, { forwardRef } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  AutocompleteItem,
-  Badge,
-  Center,
-  Group,
-  Rating,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import { AutocompleteItem, Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import {
@@ -30,6 +21,9 @@ import {
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { StarRating } from '~/components/StartRating/StarRating';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { constants } from '~/server/common/constants';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
@@ -41,6 +35,9 @@ export const ModelSearchItem = forwardRef<
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { image: coverImage, user, nsfw, type, category, metrics, version } = hit;
+  const alt = truncate((coverImage.meta as ImageMetaProps)?.prompt, {
+    length: constants.altTruncateLength,
+  });
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -61,6 +58,7 @@ export const ModelSearchItem = forwardRef<
               src={coverImage.url}
               name={coverImage.name ?? coverImage.id.toString()}
               type={coverImage.type}
+              alt={alt}
               anim={false}
               width={450}
               style={{

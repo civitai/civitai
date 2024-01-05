@@ -18,6 +18,8 @@ import { useState } from 'react';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -80,7 +82,11 @@ export function PostImages({
                       <EdgeMedia
                         src={image.url}
                         name={image.name}
-                        alt={image.name ?? undefined}
+                        alt={
+                          image.meta
+                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                            : image.name ?? undefined
+                        }
                         type={image.type}
                         width={width < maxWidth ? width : maxWidth}
                         className={cx({ [classes.blur]: !safe })}
