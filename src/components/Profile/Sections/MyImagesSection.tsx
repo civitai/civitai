@@ -41,6 +41,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
       username: user.username,
       withMeta: false,
       types: undefined,
+      include: ['profilePictures'],
     },
     { keepPreviousData: true, enabled: inView }
   );
