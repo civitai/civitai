@@ -8,9 +8,11 @@ import { useRouter } from 'next/router';
 import { ClubGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { IconAlertCircle, IconArticle, IconFile, IconFiles, IconUsers } from '@tabler/icons-react';
+import { IconAlertCircle, IconArticle, IconFiles, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '../../utils/number-helpers';
 import { IconBadge } from '../IconBadge/IconBadge';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -49,7 +51,11 @@ export function ClubCard({ data }: Props) {
                       <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={
+                          image.meta
+                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                            : image.name ?? undefined
+                        }
                         type={image.type}
                         width={IMAGE_CARD_WIDTH}
                         className={classes.image}

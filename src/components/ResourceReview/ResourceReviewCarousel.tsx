@@ -23,6 +23,8 @@ import { MetricTimeframe } from '@prisma/client';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 export function ResourceReviewCarousel({
   username,
@@ -96,7 +98,13 @@ export function ResourceReviewCarousel({
                               <EdgeMedia
                                 src={image.url}
                                 name={image.name ?? image.id.toString()}
-                                alt={image.name ?? undefined}
+                                alt={
+                                  image.meta
+                                    ? truncate(image.meta.prompt, {
+                                        length: constants.altTruncateLength,
+                                      })
+                                    : image.name ?? undefined
+                                }
                                 type={image.type}
                                 width={450}
                                 placeholder="empty"

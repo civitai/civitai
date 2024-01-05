@@ -13,6 +13,8 @@ import { IconClubs } from '@tabler/icons-react';
 import { useCurrentUser } from '../../../hooks/useCurrentUser';
 import { useFeatureFlags } from '../../../providers/FeatureFlagsProvider';
 import { AddToClubMenuItem } from '../../Club/AddToClubMenuItem';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 export function PostsCard({
   data: { image, id, stats, imageCount, clubRequirement, user, modelVersionId },
@@ -97,7 +99,13 @@ export function PostsCard({
                           <EdgeMedia
                             src={image.url}
                             name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
+                            alt={
+                              image.meta
+                                ? truncate(image.meta.prompt, {
+                                    length: constants.altTruncateLength,
+                                  })
+                                : image.name ?? undefined
+                            }
                             type={image.type}
                             width={450}
                             placeholder="empty"

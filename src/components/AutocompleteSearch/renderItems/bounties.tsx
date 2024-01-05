@@ -1,32 +1,37 @@
-import React, { forwardRef } from 'react';
 import { AutocompleteItem, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Currency } from '@prisma/client';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
-import { Highlight } from 'react-instantsearch';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { Hit } from 'instantsearch.js';
+import { truncate } from 'lodash-es';
+import React, { forwardRef } from 'react';
+import { Highlight } from 'react-instantsearch';
 import {
   ActionIconBadge,
-  useSearchItemStyles,
   ViewMoreItem,
+  useSearchItemStyles,
 } from '~/components/AutocompleteSearch/renderItems/common';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { constants } from '~/server/common/constants';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export const BountiesSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: Hit<BountySearchIndexRecord> }
 >(({ value, hit, ...props }, ref) => {
-  const { theme, classes } = useSearchItemStyles();
+  const { classes } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, images, stats } = hit;
   const [image] = images;
+  const alt = truncate((image.meta as ImageMetaProps)?.prompt, {
+    length: constants.altTruncateLength,
+  });
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -48,6 +53,7 @@ export const BountiesSearchItem = forwardRef<
                 src={image.url}
                 name={image.name ?? image.id.toString()}
                 type={image.type}
+                alt={alt}
                 anim={false}
                 width={450}
                 style={{

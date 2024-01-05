@@ -2,7 +2,6 @@ import React, { forwardRef } from 'react';
 import { AutocompleteItem, Badge, BadgeProps, Center, Group, Stack, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
-import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { Hit } from 'instantsearch.js';
@@ -13,6 +12,9 @@ import {
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { constants } from '~/server/common/constants';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
@@ -23,6 +25,9 @@ export const ImagesSearchItem = forwardRef<
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, tags, stats } = hit;
+  const alt = truncate((hit.meta as ImageMetaProps)?.prompt, {
+    length: constants.altTruncateLength,
+  });
   const { commentCountAllTime, reactionCountAllTime } = stats || {
     commentCountAllTime: 0,
     reactionCountAllTime: 0,
@@ -55,6 +60,7 @@ export const ImagesSearchItem = forwardRef<
             src={hit.url}
             name={hit.name ?? hit.id.toString()}
             type={hit.type}
+            alt={alt}
             anim={false}
             width={450}
             style={{

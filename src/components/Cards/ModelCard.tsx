@@ -24,14 +24,12 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { useEffect } from 'react';
 import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -51,7 +49,6 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
-import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
 import {
@@ -64,7 +61,8 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { ClubPostFromResourceMenuItem } from '../Club/ClubPostFromResourceMenuItem';
-import { AddToClubMenuItem } from '../Club/AddToClubMenuItem';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -369,7 +367,13 @@ export function ModelCard({ data, forceInView }: Props) {
                                     <EdgeMedia
                                       src={image.url}
                                       name={image.name ?? image.id.toString()}
-                                      alt={image.name ?? undefined}
+                                      alt={
+                                        image.meta
+                                          ? truncate((image.meta as ImageMetaProps).prompt, {
+                                              length: 125,
+                                            })
+                                          : undefined
+                                      }
                                       type={image.type}
                                       width={
                                         originalAspectRatio > 1

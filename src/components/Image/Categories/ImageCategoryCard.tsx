@@ -1,11 +1,14 @@
 import { ActionIcon, AspectRatio, Box, createStyles } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { constants } from '~/server/common/constants';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageGetByCategoryImageModel } from '~/types/router';
 
 export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel }) {
@@ -40,7 +43,13 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
                     <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={
+                        image.meta
+                          ? truncate((image.meta as ImageMetaProps).prompt, {
+                              length: constants.altTruncateLength,
+                            })
+                          : image.name ?? undefined
+                      }
                       type={image.type}
                       width={450}
                       placeholder="empty"
@@ -66,7 +75,7 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
               />
               {!image.hideMeta && image.meta && (
                 <ImageMetaPopover
-                  meta={image.meta as any}
+                  meta={image.meta as ImageMetaProps}
                   generationProcess={image.generationProcess ?? undefined}
                   imageId={image.id}
                 >

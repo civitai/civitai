@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
-import { chunk } from 'lodash-es';
+import { chunk, truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
@@ -55,13 +55,13 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
-import { ImageResourceHelperModel, profileImageSelect } from '~/server/selectors/image.selector';
+import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
@@ -2427,10 +2427,13 @@ export const getImageModerationReviewQueue = async ({
 };
 
 export async function get404Images() {
-  const imagesRaw = await dbRead.$queryRaw<{ url: string; username: string }[]>`
+  const imagesRaw = await dbRead.$queryRaw<
+    { url: string; username: string; meta: ImageMetaProps | null }[]
+  >`
     SELECT
       u.username,
-      i.url
+      i.url,
+      i.meta
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
@@ -2443,7 +2446,11 @@ export async function get404Images() {
       AND ci.status = 'ACCEPTED';
   `;
 
-  const images = Object.values(imagesRaw).map((x) => [x.username, x.url] as [string, string]);
+  const images = Object.values(imagesRaw).map(({ meta, username, url }) => {
+    const alt = truncate(meta?.prompt, { length: constants.altTruncateLength });
+    return [username, url, alt];
+  });
+
   return images;
 }
 

@@ -1,7 +1,7 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
 import { Center, Modal } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { ContextModalProps } from '@mantine/modals';
+import { truncate } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
@@ -9,6 +9,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
+import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 
 const TRANSITION_DURATION = 200;
@@ -63,7 +64,11 @@ export function GeneratedImageLightbox({
               }}
             >
               <Center h={height} w={width}>
-                <EdgeMedia src={item.url} width={request.params.width} />
+                <EdgeMedia
+                  src={item.url}
+                  alt={truncate(request.params.prompt, { length: constants.altTruncateLength })}
+                  width={request.params.width}
+                />
               </Center>
             </Carousel.Slide>
           ))}

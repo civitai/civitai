@@ -42,6 +42,7 @@ import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { truncate } from 'lodash-es';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
@@ -310,7 +311,11 @@ function SelectableImageCard({ data }: { data: ImageGetInfinite[number] }) {
                     <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={
+                        image.meta
+                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                          : image.name ?? undefined
+                      }
                       type={image.type}
                       width={450}
                       placeholder="empty"

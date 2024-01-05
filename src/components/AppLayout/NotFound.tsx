@@ -16,8 +16,8 @@ export function NotFound() {
   const image = useMemo(() => {
     if (!images) return;
 
-    const [username, url] = images[Math.floor(Math.random() * images.length)];
-    return { username, url };
+    const [username, url, alt] = images[Math.floor(Math.random() * images.length)];
+    return { username, url, alt };
   }, [images]);
 
   return (
@@ -46,7 +46,7 @@ export function NotFound() {
               })}
             >
               {image ? (
-                <EdgeMedia src={image.url} width={700} />
+                <EdgeMedia src={image.url} width={700} alt={image.alt} />
               ) : (
                 <Skeleton height={400} width={400}></Skeleton>
               )}

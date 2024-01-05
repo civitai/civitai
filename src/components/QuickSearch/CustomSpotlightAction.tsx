@@ -9,7 +9,6 @@ import {
   Text,
   ThemeIcon,
   createStyles,
-  useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { SpotlightActionProps, useSpotlight } from '@mantine/spotlight';
@@ -30,16 +29,17 @@ import {
   IconUser,
   IconUsers,
 } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { applyQueryMatchers } from '~/components/QuickSearch/util';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const actions = {
@@ -165,7 +165,11 @@ function ModelSpotlightAction({
           ) : (
             <EdgeMedia
               src={image.url}
-              name={image.name ?? image.id.toString()}
+              alt={
+                image.meta
+                  ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                  : image.name ?? undefined
+              }
               type={image.type}
               anim={false}
               width={450}
@@ -369,6 +373,11 @@ function ArticleSpotlightAction({
       >
         <EdgeMedia
           src={image}
+          alt={
+            image.meta
+              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+              : image.name ?? undefined
+          }
           width={450}
           style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
         />

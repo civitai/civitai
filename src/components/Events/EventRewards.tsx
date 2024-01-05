@@ -63,7 +63,11 @@ export function EventRewards({ event }: { event: string }) {
           {shownRewards.map((reward) => (
             <div key={reward.id}>
               <div className={classes.badge}>
-                <EdgeMedia src={(reward.data as { url: string })?.url} width="original" />
+                <EdgeMedia
+                  src={(reward.data as { url: string })?.url}
+                  alt={`Event reward: ${reward.name}`}
+                  width="original"
+                />
               </div>
               <Text align="center" size="lg" weight={590} w="100%" tt="capitalize">
                 {reward.name}
