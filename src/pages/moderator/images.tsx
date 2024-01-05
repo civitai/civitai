@@ -150,11 +150,7 @@ export default function Images() {
     .filter((x) => (!csamReports ? x.value !== 'csam' : true));
 
   return (
-    <MasonryProvider
-      columnWidth={constants.cardSizes.image}
-      maxColumnCount={7}
-      maxSingleColumnWidth={450}
-    >
+    <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
       <MasonryContainer py="xl" size="xl">
         <Stack>
           <Paper

@@ -1,4 +1,3 @@
-import { ReportType } from './../clickhouse/client';
 import { CsamReport, Prisma, ReportStatus } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -21,8 +20,6 @@ import fs from 'fs';
 import archiver from 'archiver';
 import stream from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
-import { invalidateSession } from '~/server/utils/session-helpers';
-import { cancelSubscription } from '~/server/services/stripe.service';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { z } from 'zod';
 import plimit from 'p-limit';
@@ -321,16 +318,18 @@ export async function processCsamReport(report: CsamReportProps) {
           email: 'report@civitai.com',
         },
       },
-      personOrUserReported: {
-        espIdentifier: report.userId,
-        screenName: reportedUser?.username,
-        // personOrUserReportedPerson: {
-        //   firstName: reportedUser?.name,
-        //   email: reportedUser?.email,
-        //   displayName: reportedUser?.username,
-        // },
-        ipCaptureEvent: ipAddresses?.map((ipAddress) => ({ ipAddress })),
-      },
+      personOrUserReported: report.userId
+        ? {
+            espIdentifier: report.userId,
+            screenName: reportedUser?.username,
+            // personOrUserReportedPerson: {
+            //   firstName: reportedUser?.name,
+            //   email: reportedUser?.email,
+            //   displayName: reportedUser?.username,
+            // },
+            ipCaptureEvent: ipAddresses?.map((ipAddress) => ({ ipAddress })),
+          }
+        : undefined,
       additionalInfo: `<![CDATA[${additionalInfo}]]>`,
     },
   };
