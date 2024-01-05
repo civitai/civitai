@@ -37,7 +37,7 @@ export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
     <Modal {...dialog} title="Deposit your funds into your club" size="sm" withCloseButton>
       <Stack>
         <Divider mx="-lg" mb="md" />
-        {isLoading || !club || !balance || !userBalance ? (
+        {isLoading || !club || balance === undefined || userBalance === undefined ? (
           <Center>
             <Loader />
           </Center>
