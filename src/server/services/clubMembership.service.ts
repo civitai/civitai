@@ -243,6 +243,7 @@ export const updateClubMembership = async ({
           name: true,
           unitAmount: true,
           currency: true,
+          oneTimeFee: true,
         },
       },
     },
@@ -260,6 +261,12 @@ export const updateClubMembership = async ({
   const isSameTier = clubTier.id === clubMembership.clubTier.id;
   const isUpgrade = !isSameTier && clubTier.unitAmount > clubMembership.clubTier.unitAmount;
   const isDowngrade = !isSameTier && clubTier.unitAmount < clubMembership.clubTier.unitAmount;
+
+  if (isDowngrade && clubMembership.clubTier.oneTimeFee) {
+    throw throwBadRequestError(
+      'Cannot downgrade from a one time payment tier. Please leave the tier first'
+    );
+  }
 
   const membership = await dbWrite.$transaction(async (tx) => {
     const { nextBillingDate } = calculateClubTierNextBillingDate({
@@ -523,11 +530,12 @@ export const clubOwnerTogglePauseBilling = async ({
 export const cancelClubMembership = async ({ userId, clubId }: ToggleClubMembershipStatusInput) => {
   const membership = await dbRead.clubMembership.findFirst({
     where: { clubId, userId },
+    include: { clubTier: true },
   });
 
   if (!membership) throw throwBadRequestError('Club membership not found');
 
-  if (membership.unitAmount === 0) {
+  if (membership.unitAmount === 0 || membership.clubTier.oneTimeFee) {
     await dbWrite.clubMembership.delete({
       where: { id: membership.id },
     });

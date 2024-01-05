@@ -29,6 +29,7 @@ export const clubMembershipDetailSelect = Prisma.validator<Prisma.ClubMembership
       unitAmount: true,
       currency: true,
       clubId: true,
+      oneTimeFee: true,
       coverImage: {
         select: imageSelect,
       },

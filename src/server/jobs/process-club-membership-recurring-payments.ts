@@ -33,16 +33,16 @@ export const processClubMembershipRecurringPayments = createJob(
         },
         cancelledAt: null,
         expiresAt: null,
-        billingPausedAt: null,
         unitAmount: {
           gt: 0,
         },
-        club: {
-          billing: true,
+        clubTier: {
+          oneTimeFee: false,
         },
       },
       include: {
         downgradeClubTier: true,
+        club: true,
       },
     });
 
@@ -65,6 +65,19 @@ export const processClubMembershipRecurringPayments = createJob(
               data: {
                 message: 'User not found',
                 ...clubMembership,
+              },
+            });
+
+            return;
+          }
+
+          if (!clubMembership.club.billing || clubMembership.billingPausedAt) {
+            await dbWrite.clubMembership.update({
+              where: { id: clubMembership.id },
+              data: {
+                // Expire that membership so the user loses access.
+                // Might need to also send an email.
+                nextBillingAt: now.add(1, 'month').toDate(),
               },
             });
 

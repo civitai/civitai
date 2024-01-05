@@ -270,111 +270,6 @@ export const createClub = async ({
   return club;
 };
 
-export const upsertClubTiers = async ({
-  clubId,
-  tiers,
-  deleteTierIds,
-  tx,
-  userId,
-  isModerator,
-}: {
-  userId: number;
-  isModerator?: boolean;
-  clubId: number;
-  tiers?: UpsertClubTierInput[];
-  deleteTierIds?: number[];
-  tx?: Prisma.TransactionClient;
-}) => {
-  const dbClient = tx ?? dbWrite;
-
-  const [userClub] = await userContributingClubs({ userId, clubIds: [clubId], tx: dbClient });
-
-  if (
-    userId !== userClub?.userId &&
-    !isModerator &&
-    !userClub?.admin?.permissions?.includes(ClubAdminPermission.ManageTiers)
-  ) {
-    throw throwBadRequestError('Only club owners can edit club tiers');
-  }
-
-  if ((deleteTierIds?.length ?? 0) > 0) {
-    const deletingTierWithMembers = await dbClient.clubTier.findFirst({
-      where: {
-        id: {
-          in: deleteTierIds,
-        },
-        memberships: {
-          some: {},
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-
-    if (deletingTierWithMembers) {
-      throw throwBadRequestError(
-        'Cannot delete tier with members. Please move the members out of this tier before deleting it.'
-      );
-    }
-
-    await dbClient.clubTier.deleteMany({
-      where: {
-        id: {
-          in: deleteTierIds,
-        },
-      },
-    });
-  }
-
-  if (tiers && tiers.length > 0) {
-    const createdImages = await createEntityImages({
-      userId,
-      images: tiers
-        .filter((tier) => tier.coverImage?.id === undefined)
-        .map((tier) => tier.coverImage)
-        .filter(isDefined),
-      tx: dbClient,
-    });
-
-    const toCreate = tiers.filter((tier) => !tier.id);
-    if (toCreate.length > 0) {
-      await dbClient.clubTier.createMany({
-        data: toCreate.map(({ coverImage, ...tier }) => ({
-          ...tier,
-          clubId,
-          coverImageId: coverImage?.id ?? createdImages.find((i) => i.url === coverImage?.url)?.id,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    const toUpdate = tiers.filter((tier) => tier.id !== undefined);
-    if (toUpdate.length > 0) {
-      await Promise.all(
-        toUpdate.map((tier) => {
-          const { id, coverImage, clubId, ...data } = tier;
-          return dbClient.clubTier.update({
-            where: {
-              id: id as number,
-            },
-            data: {
-              ...data,
-              coverImageId:
-                coverImage === null
-                  ? null
-                  : coverImage === undefined
-                  ? undefined
-                  : coverImage?.id ?? createdImages.find((i) => i.url === coverImage?.url)?.id,
-            },
-          });
-        })
-      );
-    }
-  }
-};
-
 export const upsertClubTier = async ({
   clubId,
   tier,
@@ -389,7 +284,6 @@ export const upsertClubTier = async ({
   const [userClub] = await userContributingClubs({ userId, clubIds: [clubId] });
 
   // Check that the user can actually add tiers to this club
-
   if (
     userId !== userClub?.userId &&
     !isModerator &&
@@ -420,23 +314,28 @@ export const upsertClubTier = async ({
       throw throwBadRequestError('Club tier not found');
     }
 
-    if (existingClubTier.unitAmount > data.unitAmount) {
-      // Check that there are no members in this tier:
-      const hasMembers = await dbRead.clubTier.findFirst({
-        where: {
-          id: data.id,
-          memberships: {
-            some: {},
-          },
+    const hasMembers = await dbRead.clubTier.findFirst({
+      where: {
+        id: data.id,
+        memberships: {
+          some: {},
         },
-      });
+      },
+    });
 
-      if (hasMembers) {
-        throw throwBadRequestError(
-          'Cannot downgrade tier with members. Please move the members out of this tier before downgrading it.'
-        );
-      }
+    if (existingClubTier.unitAmount > data.unitAmount && hasMembers) {
+      throw throwBadRequestError(
+        'Cannot downgrade tier with members. Please move the members out of this tier before downgrading it.'
+      );
     }
+
+    if (existingClubTier.oneTimeFee !== data.oneTimeFee && hasMembers) {
+      throw throwBadRequestError(
+        'Cannot change one time payment status of a tier with members. Please move the members out of this tier before changing its one time payment status.'
+      );
+    }
+
+    console.log(data);
 
     return await dbWrite.clubTier.update({
       where: {
@@ -651,6 +550,7 @@ export const getClubTiers = async ({
       joinable: true,
       unlisted: true,
       memberLimit: true,
+      oneTimeFee: true,
       _count: {
         select: {
           memberships: true,

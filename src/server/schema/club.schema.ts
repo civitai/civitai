@@ -26,6 +26,7 @@ export const upsertClubTierInput = z
     joinable: z.boolean().default(true),
     clubId: z.number().optional(),
     memberLimit: z.number().max(constants.clubs.tierMaxMemberLimit).nullish(),
+    oneTimeFee: z.boolean().default(false),
   })
   .refine((data) => !!data.clubId || !!data.id, {
     message: 'When creating a new tier, clubId must be provided',
