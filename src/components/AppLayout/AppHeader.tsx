@@ -91,7 +91,6 @@ import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { constants } from '~/server/common/constants';
 import { EventButton } from '~/components/EventButton/EventButton';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { ContainerGridProvider } from '~/components/ContainerGrid/ContainerGrid.context';
 
 const HEADER_HEIGHT = 70;
 
@@ -779,7 +778,7 @@ export function AppHeader({
               <Divider orientation="vertical" />
             )}
             <Menu
-              width={268}
+              width={260}
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
