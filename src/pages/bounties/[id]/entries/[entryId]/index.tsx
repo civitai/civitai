@@ -834,6 +834,7 @@ export function BountyEntryCarousel({
 
             const deleteImage = (
               <DeleteImage
+                key="delete-image"
                 imageId={image.id}
                 onSuccess={handleDeleteSuccess}
                 onDelete={() => setDeletingImage(true)}
