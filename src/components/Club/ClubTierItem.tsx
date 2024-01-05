@@ -409,6 +409,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
         <ContentClamp maxHeight={200}>
           <RenderHtml html={clubTier.description} />
         </ContentClamp>
+
         {!isOwner && (
           <LoginPopover>
             {isNextDowngradeTier ? (
@@ -457,7 +458,9 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 buzzAmount={clubTier.unitAmount}
                 radius="md"
                 onPerformTransaction={isUpgrade ? handleMembershipUpdate : handleMembershipJoin}
-                label={isUpgrade ? 'Upgrade' : 'Become a member'}
+                label={
+                  isUpgrade ? 'Upgrade' : clubTier.oneTimeFee ? 'Get Access ' : 'Become a member'
+                }
                 color="yellow.7"
               />
             )}
