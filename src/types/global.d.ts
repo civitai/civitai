@@ -65,7 +65,7 @@ declare global {
     id?: number;
   };
 
-  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Diffusers' | 'Core ML' | 'Other';
+  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Diffusers' | 'Core ML' | 'ONNX' | 'Other';
   type ModelFileSize = 'full' | 'pruned';
   type ModelFileFp = 'fp32' | 'fp16' | 'bf16';
   type ImageFormat = 'optimized' | 'metadata';
