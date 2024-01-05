@@ -1,8 +1,7 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
 import { Center, Modal } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { ContextModalProps } from '@mantine/modals';
-import { truncate } from 'lodash';
+import { truncate } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 

@@ -13,7 +13,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
-import { truncate } from 'lodash';
+import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
 type ImageProps = {
