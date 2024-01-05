@@ -194,7 +194,7 @@ export const updateClub = async ({
   id: number;
   userId: number;
 }) => {
-  await dbWrite.club.findUniqueOrThrow({ where: { id } });
+  const existingClub = await dbWrite.club.findUniqueOrThrow({ where: { id } });
   const createdImages = await createEntityImages({
     images: [coverImage, headerImage, avatar].filter((i) => !i?.id).filter(isDefined),
     userId,
@@ -224,6 +224,39 @@ export const updateClub = async ({
           : undefined,
     },
   });
+
+  if (data.billing !== undefined && existingClub.billing !== data.billing) {
+    // Notify users...
+    const notificationQuery = Prisma.sql`
+    WITH data AS (
+        SELECT
+          c.id "clubId",
+          c.name "clubName",
+          c.billing,
+          cm."userId",
+          cm."nextBillingAt"
+        FROM "ClubMembership" cm
+        JOIN "Club" c ON cm."clubId" = c.id
+        JOIN "ClubTier" ct ON cm."clubTierId" = ct.id
+        WHERE ct."oneTimeFee" = false AND cm."expiresAt" IS NULL AND cm."cancelledAt" IS NULL AND cm."nextBillingAt" IS NOT NULL
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+        SELECT
+          REPLACE(gen_random_uuid()::text, '-', ''),
+          "userId",
+          'club-billing-toggled' "type",
+          jsonb_build_object(
+            'clubId', "clubId",
+            'clubName', "clubName",
+            'billing', "billing",
+            'nextBillingAt', "nextBillingAt"
+          )
+        FROM data
+      ON CONFLICT("id") DO NOTHING;
+      `;
+
+    await dbWrite.$executeRaw(notificationQuery);
+  }
 
   return club;
 };
