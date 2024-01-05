@@ -335,8 +335,6 @@ export const upsertClubTier = async ({
       );
     }
 
-    console.log(data);
-
     return await dbWrite.clubTier.update({
       where: {
         id: data.id,
