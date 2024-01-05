@@ -32,24 +32,24 @@ const missingEnvs = (): string[] => {
   return keys;
 };
 
-export async function setCors(s3: S3Client | null = null) {
-  if (!s3) s3 = await getS3Client();
-  await s3.send(
-    new PutBucketCorsCommand({
-      Bucket: env.S3_UPLOAD_BUCKET,
-      CORSConfiguration: {
-        CORSRules: [
-          {
-            AllowedHeaders: ['content-type'],
-            ExposeHeaders: ['ETag'],
-            AllowedMethods: ['PUT', 'GET'],
-            AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS : ['*'],
-          },
-        ],
-      },
-    })
-  );
-}
+// export async function setCors(s3: S3Client | null = null) {
+//   if (!s3) s3 = await getS3Client();
+//   await s3.send(
+//     new PutBucketCorsCommand({
+//       Bucket: env.S3_UPLOAD_BUCKET,
+//       CORSConfiguration: {
+//         CORSRules: [
+//           {
+//             AllowedHeaders: ['content-type'],
+//             ExposeHeaders: ['ETag'],
+//             AllowedMethods: ['PUT', 'GET'],
+//             AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS : ['*'],
+//           },
+//         ],
+//       },
+//     })
+//   );
+// }
 
 export function getS3Client() {
   const missing = missingEnvs();
