@@ -798,10 +798,10 @@ export function AppHeader({
                   </Group>
                 </UnstyledButton>
               </Menu.Target>
-              <Menu.Dropdown p={0}>
+              <Menu.Dropdown>
                 <ScrollArea.Autosize
-                  maxHeight={576}
-                  styles={{ viewport: { paddingBottom: 0 } }}
+                  maxHeight="calc(90vh - var(--mantine-header-height))"
+                  styles={{ root: { margin: -4 }, viewport: { padding: 4 } }}
                   offsetScrollbars
                 >
                   <BuzzMenuItem withAbbreviation={false} />
