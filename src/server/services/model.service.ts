@@ -201,7 +201,7 @@ export const getModelsRaw = async ({
 
   // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
   // At that point, we should be relying more on unlisted status which is set by the owner.
-  const hidePrivateModels = !clubId && !username && !user && !followed && !collectionId;
+  const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
 
   if (query) {
     const lowerQuery = query?.toLowerCase();
