@@ -5,7 +5,7 @@ description: The Terms of Service for the model sharing platform Civitai
 
 Last Updated: 12/26/23
 
-Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
+Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
 PLEASE READ THE FOLLOWING TERMS CAREFULLY:
 BY CLICKING “I ACCEPT,” OR BY DOWNLOADING, INSTALLING, OR OTHERWISE ACCESSING OR USING THE SERVICE, YOU AGREE THAT YOU HAVE READ AND UNDERSTOOD, AND, AS A CONDITION TO YOUR USE OF THE SERVICE, YOU AGREE TO BE BOUND BY, THE FOLLOWING TERMS AND CONDITIONS, INCLUDING CIVITAI’S PRIVACY POLICY (TOGETHER, THESE “TERMS”). IF YOU ARE NOT ELIGIBLE, OR DO NOT AGREE TO THE TERMS, THEN YOU DO NOT HAVE OUR PERMISSION TO USE THE SERVICE. YOUR USE OF THE SERVICE, AND CIVITAI’S PROVISION OF THE SERVICE TO YOU, CONSTITUTES AN AGREEMENT BY CIVITAI AND BY YOU TO BE BOUND BY THESE TERMS.
@@ -16,7 +16,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 2. **Eligibility.** You must be at least 18 years old to use the Service. By agreeing to these Terms, you represent and warrant to us that: (a) you are at least 18 years old; (b) you have not previously been suspended or removed from the Service; and (c) your registration and your use of the Service is in compliance with any and all applicable laws and regulations. If you are an entity, organization, or company, the individual accepting these Terms on your behalf represents and warrants that they have authority to bind you to these Terms and you agree to be bound by these Terms.
 
-3. **Accounts and Registration.** To access most features of the Service, you must register for an account, whether directly or through a third party integration (“Account”). When you register for an Account, you may be required to provide us with some information about yourself, such as your name, username, email address, or other contact information. You agree that the information you provide to us is accurate, complete, and not misleading, and that you will keep it accurate and up to date at all times. When you register, you will be asked to create a password. You are solely responsible for maintaining the confidentiality of your Account and password, and you accept responsibility for all activities that occur under your Account. If you believe that your Account is no longer secure, then you should immediately notify us at [support@civitai.com](support@civitai.com).
+3. **Accounts and Registration.** To access most features of the Service, you must register for an account, whether directly or through a third party integration (“Account”). When you register for an Account, you may be required to provide us with some information about yourself, such as your name, username, email address, or other contact information. You agree that the information you provide to us is accurate, complete, and not misleading, and that you will keep it accurate and up to date at all times. When you register, you will be asked to create a password. You are solely responsible for maintaining the confidentiality of your Account and password, and you accept responsibility for all activities that occur under your Account. If you believe that your Account is no longer secure, then you should immediately notify us at [support@civitai.com](mailto:support@civitai.com).
 
 4. **Buzz.** Citivai may offer and accept on-platform points (“Buzz”). In addition to these Terms, your use of Buzz is subject to the [Buzz Terms and Conditions](https://civitai.com/content/buzz/terms), which are incorporated into these Terms by this reference.
 
@@ -40,11 +40,11 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 6. **Licenses**
 
-- **6.1 Limited License.** Subject to your complete and ongoing compliance with these Terms, Civitai grants you, solely for your personal, non-commercial use, a limited, non-exclusive, non-transferable, non-sublicensable, revocable license to: (a) install and use one object code copy of any mobile or other downloadable application associated with the Service (whether installed by you or pre-installed on your mobile device by the device manufacturer or a wireless telephone provider) on a mobile device that you own or control; and (b) access and use the Service.
+- 6.1 **Limited License.** Subject to your complete and ongoing compliance with these Terms, Civitai grants you, solely for your personal, non-commercial use, a limited, non-exclusive, non-transferable, non-sublicensable, revocable license to: (a) install and use one object code copy of any mobile or other downloadable application associated with the Service (whether installed by you or pre-installed on your mobile device by the device manufacturer or a wireless telephone provider) on a mobile device that you own or control; and (b) access and use the Service.
 
-- **6.2 License Restrictions.** Except and solely to the extent such a restriction is impermissible under applicable law, you may not: (a) reproduce, distribute, publicly display, publicly perform, or create derivative works of the Service; (b) make modifications to the Service; or (c) interfere with or circumvent any feature of the Service, including any security or access control mechanism. If you are prohibited under applicable law from using the Service, then you may not use it.
+- 6.2 **License Restrictions.** Except and solely to the extent such a restriction is impermissible under applicable law, you may not: (a) reproduce, distribute, publicly display, publicly perform, or create derivative works of the Service; (b) make modifications to the Service; or (c) interfere with or circumvent any feature of the Service, including any security or access control mechanism. If you are prohibited under applicable law from using the Service, then you may not use it.
 
-- **6.3 Feedback.** We respect and appreciate the thoughts and comments from our Users If you choose to provide input and suggestions regarding existing functionalities, problems with or proposed modifications or improvements to the Service (“Feedback”), then you hereby grant Civitai an unrestricted, perpetual, irrevocable, non-exclusive, fully-paid, royalty-free right and license to exploit the Feedback in any manner and for any purpose, including to improve the Service and create other products and services. We will have no obligation to provide you with attribution for any Feedback you provide to us.
+- 6.3 **Feedback.** We respect and appreciate the thoughts and comments from our Users If you choose to provide input and suggestions regarding existing functionalities, problems with or proposed modifications or improvements to the Service (“Feedback”), then you hereby grant Civitai an unrestricted, perpetual, irrevocable, non-exclusive, fully-paid, royalty-free right and license to exploit the Feedback in any manner and for any purpose, including to improve the Service and create other products and services. We will have no obligation to provide you with attribution for any Feedback you provide to us.
 
 7. **Ownership; Proprietary Rights.** The Service is owned and operated by Civitai. The visual interfaces, graphics, design, compilation, information, data, computer code (including source code or object code), products, software, services, and all other elements of the Service provided by Civitai (“Materials”) are protected by intellectual property and other laws. “Materials” does not include any User Content Posted by you or other Users. All Materials included in the Service are the property of Civitai or its third-party licensors. Except as expressly authorized by Civitai, you may not make use of the Materials. There are no implied licenses in these Terms and Civitai reserves all rights to the Materials not granted expressly in these Terms.
 
@@ -63,7 +63,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - 9.3 **You Must Have Rights to the Content You Post; User Content Representations and Warranties.** You must not Post User Content if you are not the owner of or are not fully authorized to grant rights in all of the elements of that User Content as set forth in these Terms. Civitai disclaims any and all liability in connection with User Content. You are solely responsible for (i) your User Content and the consequences of providing User Content via the Service, and (ii) all license terms related to User Content. By providing User Content via the Service, you affirm, represent, and warrant to us that:
   - (a) you are the creator and owner of the User Content, or have the necessary licenses, rights, consents, and permissions to authorize Civitai and Users in the manner contemplated by Civitai, the Service, and these Terms;
   - (b) your User Content, and the Posting or other use of your User Content as contemplated by these Terms, does not and will not: (i) infringe, violate, misappropriate, or otherwise breach any third-party right, including any copyright, trademark, patent, trade secret, moral right, privacy right, right of publicity, or any other intellectual property, contract, or proprietary right; (ii) slander, defame, libel, or invade the right of privacy, publicity or other property rights of any other person; or (iii) cause Civitai to violate any law or regulation or require us to obtain any further licenses from or pay any royalties, fees, compensation or other amounts or provide any attribution to any third parties; and
-  - (c) your User Content could not be deemed by a reasonable person to be objectionable, profane, indecent, pornographic, harassing, threatening, embarrassing, hateful, or otherwise inappropriate.
+  - (c) your User Content could not be deemed by a reasonable person to be objectionable, profane, indecent, harassing, threatening, embarrassing, hateful, or otherwise inappropriate.
 - 9.4 **Bespoke License for Models.** You may choose to make your Models available for download or use by other Users. In such circumstances, you may license your Models under bespoke license terms (“Bespoke License”) generated via the Service. If you download or use Models Posted by other Users, you agree that your access to and use of such Models will be subject to the terms of the applicable Bespoke License associated with the Models. We reserve the right to suspend or terminate your Account and your access to the Service upon becoming aware of your actual or potential violation of the applicable Bespoke License associated with a Model, with or without notice to you.
 
 - 9.5 **User Content Disclaimer.** We are under no obligation to edit or control User Content that you or other Users Post and will not be in any way responsible or liable for User Content. Civitai may, however, at any time and without prior notice, screen, remove, edit, or block any User Content that in our sole judgment violates these Terms, is alleged to violate the rights of third parties, or is otherwise objectionable. You understand that, when using the Service, you will be exposed to User Content from a variety of sources and acknowledge that User Content may be inaccurate, offensive, indecent, or objectionable. You agree to waive, and do waive, any legal or equitable right or remedy you have or may have against Civitai with respect to User Content.
@@ -72,24 +72,23 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   Moderators may flag content or Users at their reasonable discretion. If any User Content is flagged, our moderators will consider context and intent while enforcing these Terms and our policies. If notified by a User or content owner that User Content allegedly does not conform to these Terms, we may investigate the allegation and determine in our sole discretion whether to remove the User Content, which we reserve the right to do at any time and without notice. For clarity, Civitai does not permit infringing activities on the Service. Civitai may block, filter, mute, remove or disable access to any User Content uploaded to or transmitted through the Service without any liability to the User who Posted such User Content to the Service or to any other Users.
 
-**The following User Content is expressly prohibited and may be flagged by or for our moderators:**
+  **The following User Content is expressly prohibited and may be flagged by or for our moderators:**
 
-- (a) Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safetyhttps://);
+- (a) Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety);
 - (b) Content depicting or intended to depict photorealistic minors, regardless of context;
 - (c) Content promoting illegal or violent activities, including, but not limited to: - child abuse and exploitation - rape and domestic abuse - illegal substances or product sales requiring permits/licenses (e.g., pharmaceuticals, narcotics, firearms) - fraud, deception, or false impersonation - brutal fights, graphic injuries, or human death - graphic violence or bestiality
-
-  - (d) "Loli", "lolicon", "shota", "shotacon" content;
-  - (e) Content depicting the excrement of "scat" or fecal matter;
-  - (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
-    For additional information about how content is moderated, please review our Content Moderation Policy.
+- (d) "Loli", "lolicon", "shota", "shotacon" content;
+- (e) Content depicting the excrement of "scat" or fecal matter;
+- (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
+  For additional information about how content is moderated, please review our Content Moderation Policy.
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
-10. **Communications**
+10.  **Communications**
 
 - 10.1 **Push Notifications.** When you install our app on your mobile device, you agree to receive push notifications, which are messages an app sends you on your mobile device when you are not in the app. You can turn off notifications by visiting your mobile device’s “settings” page.
 
-- 13.2 **Email.** We may send you emails concerning our products and services, as well as those of third parties. You may opt out of promotional emails by following the unsubscribe instructions in the promotional email itself.
+- 10.2 **Email.** We may send you emails concerning our products and services, as well as those of third parties. You may opt out of promotional emails by following the unsubscribe instructions in the promotional email itself.
 
 11. **Prohibited Conduct. BY USING THE SERVICE, YOU AGREE NOT TO:**
 
@@ -107,7 +106,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 11.7 perform any fraudulent activity including impersonating any person or entity, claiming a false affiliation or identity, accessing any other Service account without permission;
 
-- 14.8 sell or otherwise transfer the access granted under these Terms or any Materials (as defined in Section 7 (Ownership; Proprietary Rights)) or any right or ability to view, access, or use any Materials; or
+- 11.8 sell or otherwise transfer the access granted under these Terms or any Materials (as defined in Section 7 (Ownership; Proprietary Rights)) or any right or ability to view, access, or use any Materials; or
 
 - 11.9 attempt to do any of the acts described in this Section 11 (Prohibited Conduct) or assist or permit any person in engaging in any of the acts described in this Section 11 (Prohibited Conduct).
 
@@ -117,12 +116,14 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 12.2 **DMCA Notification.** We comply with the provisions of the Digital Millennium Copyright Act applicable to Internet service providers (17 U.S.C. § 512, as amended). If you have an intellectual property rights-related complaint about any material on the Service, you may complete our [DMCA Report Form](https://forms.clickup.com/8459928/f/825mr-5904/HX69YZMDH2N3JJA1R4) or contact our Designated Agent at the following address:
 
-Civit AI, Inc.
-Attn: Legal Department (IP Notification)
-447 Sutter St
-Ste 405 PMB1283
-San Francisco, CA 94108
-Email: dmca@civitai.com
+  ```
+  Civit AI, Inc.
+  Attn: Legal Department (IP Notification)
+  447 Sutter St
+  Ste 405 PMB1283
+  San Francisco, CA 94108
+  Email: dmca@civitai.com
+  ```
 
 - 12.3 **Procedure for Reporting Claimed Infringement.** If you believe that any content made available on or through the Service has been used or exploited in a manner that infringes an intellectual property right you own or control, then please promptly send a written “Notification of Claimed Infringement” to the Designated Agent identified above containing the following information:
 
@@ -133,7 +134,7 @@ Email: dmca@civitai.com
   - (e) a statement by you that you have a good faith belief that the use of the materials on the Service of which you are complaining is not authorized by the copyright or other intellectual property right owner, its agent, or the law; and
   - (f) a statement by you that the above information in your notice is accurate and that, under penalty of perjury, you are the copyright or other intellectual property right owner or authorized to act on the copyright or intellectual property owner’s behalf.
 
-Your Notification of Claimed Infringement may be shared by Civitai with the User alleged to have infringed a right you own or control as well as with the operators of publicly available databases that track notifications of claimed infringement, and you consent to Civitai making such disclosures. You should consult with your own lawyer or see 17 U.S.C. § 512 to confirm your obligations to provide a valid notice of claimed infringement.
+  Your Notification of Claimed Infringement may be shared by Civitai with the User alleged to have infringed a right you own or control as well as with the operators of publicly available databases that track notifications of claimed infringement, and you consent to Civitai making such disclosures. You should consult with your own lawyer or see 17 U.S.C. § 512 to confirm your obligations to provide a valid notice of claimed infringement.
 
 - 12.4 **Repeat Infringers.** Civitai’s policy is to: (a) remove or disable access to material that Civitai believes in good faith, upon notice from an intellectual property rights owner or authorized agent, is infringing the intellectual property rights of a third party by being made available through the Service; and (b) in appropriate circumstances, to terminate the accounts of and block access to the Service by any User who repeatedly or egregiously infringes other people’s copyright or other intellectual property rights. Civitai will terminate the accounts of Users that are determined by Civitai to be repeat infringers. Civitai reserves the right, however, to suspend or terminate accounts of Users in our sole discretion.
 
@@ -144,15 +145,15 @@ Your Notification of Claimed Infringement may be shared by Civitai with the User
   - (c) a statement under penalty of perjury that you have a good faith belief that the material was removed or disabled as a result of mistake or misidentification of the material to be removed or disabled; and
   - (d) your name, address, and telephone number, and a statement that you consent to the jurisdiction of Federal District Court for the judicial district in which the address is located, or if you are residing outside of the United States, then for any judicial district in which Civitai may be found, and that you will accept service of process from the person who provided notification under Section 12.2 (DMCA Notification) above or an agent of that person.
 
-A party submitting a Counter Notification should consult a lawyer or see 17 U.S.C. § 512 to confirm the party’s obligations to provide a valid counter notification under the Copyright Act.
+  A party submitting a Counter Notification should consult a lawyer or see 17 U.S.C. § 512 to confirm the party’s obligations to provide a valid counter notification under the Copyright Act.
 
 - 12.6 **Reposting of Content Subject to a Counter Notification.** If you submit a Counter Notification to Civitai in response to a Notification of Claimed Infringement, then Civitai will promptly provide the person who provided the Notification of Claimed Infringement with a copy of your Counter Notification and inform that person that Civitai will replace the removed User Content or cease disabling access to it in 10 business days, and Civitai will replace the removed User Content and cease disabling access to it not less than 10, nor more than 14, business days following receipt of the Counter Notification, unless Civitai’s Designated Agent receives notice from the party that submitted the Notification of Claimed Infringement that such person has filed an action seeking a court order to restrain the User from engaging in infringing activity relating to the material on Civitai’s system or network.
 
 - 12.7 **False Notifications of Claimed Infringement or Counter Notifications.** The Copyright Act provides at 17 U.S.C. § 512(f) that: “[a]ny person who knowingly materially misrepresents under [Section 512 of the Copyright Act (17 U.S.C. § 512)] (1) that material or activity is infringing, or (2) that material or activity was removed or disabled by mistake or misidentification, will be liable for any damages, including costs and attorneys’ fees, incurred by the alleged infringer, by any copyright owner or copyright owner’s authorized licensee, or by a service provider, who is injured by such misrepresentation, as the result of [Civitai] relying upon such misrepresentation in removing or disabling access to the material or activity claimed to be infringing, or in replacing the removed material or ceasing to disable access to it.” Civitai reserves the right to seek damages from any party that submits a Notification of Claimed Infringement or Counter Notification in violation of the law.
 
-13. **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
+1.  **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
 
-14. **Term, Termination, and Modification of the Service**
+2.  **Term, Termination, and Modification of the Service**
 
 - 14.1 **Term.** These Terms are effective beginning when you accept the Terms or first download, install, access, or use the Service, and ending when terminated as described in Section 14.2 (Termination).
 
@@ -215,7 +216,7 @@ A party submitting a Counter Notification should consult a lawyer or see 17 U.S.
 
 - 19.5 **Consent to Electronic Communications.** By using the Service, you consent to receiving certain electronic communications from us as further described in our Privacy Policy. Please read our Privacy Policy to learn more about our electronic communications practices. You agree that any notices, agreements, disclosures, or other communications that we send to you electronically will satisfy any legal communication requirements, including that those communications be in writing.
 
-- 19.6 **Contact Information.** The Service is offered by Civit AI, Inc., located at 447 Sutter St, Ste 405 PMB1283, San Francisco, CA 94108 . You may contact us by sending correspondence to that address or by emailing us at support@civitai.com.
+- 19.6 **Contact Information.** The Service is offered by Civit AI, Inc., located at 447 Sutter St, Ste 405 PMB1283, San Francisco, CA 94108. You may contact us by sending correspondence to that address or by emailing us at support@civitai.com.
 
 - 19.7 **Notice to California Residents.** If you are a California resident, then under California Civil Code Section 1789.3, you may contact the Complaint Assistance Unit of the Division of Consumer Services of the California Department of Consumer Affairs in writing at 1625 N. Market Blvd., Suite N 112, Sacramento, California 95834, or by telephone at +1-800-952-5210 in order to resolve a complaint regarding the Service or to receive further information regarding use of the Service.
 

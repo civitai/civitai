@@ -9,7 +9,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ImageGetInfinite } from '~/types/router';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import HoverActionButton from './components/HoverActionButton';
@@ -20,6 +20,7 @@ import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { CosmeticType } from '@prisma/client';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
+import { truncate } from 'lodash-es';
 
 export function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -84,7 +85,11 @@ export function UnroutedImageCard({ data }: Props) {
                         <EdgeMedia
                           src={image.url}
                           name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                              : image.name ?? undefined
+                          }
                           type={image.type}
                           width={
                             originalAspectRatio > 1

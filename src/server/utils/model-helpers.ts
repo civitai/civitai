@@ -4,7 +4,8 @@ import { ModelFileType } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type FileFormatType = {
-  type: string | ModelFileType;
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  type: ModelFileType | (string & {});
   metadata: FileMetadata;
 };
 
@@ -48,6 +49,7 @@ export function getPrimaryFile<T extends FileFormatType>(
   };
 
   return files
+    .filter((file) => file.type !== 'Training Data')
     .map((file) => ({
       file,
       score: getScore(file),

@@ -32,6 +32,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -110,7 +112,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                             <ImageGuard.ToggleImage position="static" />
                             <Stack spacing="xs" ml="auto">
                               {!isBlocked && (
-                                <ImageGuard.Report context="image" position="static" />
+                                <ImageGuard.Report context="image" position="static" withinPortal />
                               )}
                               {features.imageGeneration && image.meta && (
                                 <HoverActionButton
@@ -151,7 +153,13 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               src={image.url}
                               className={cx({ [classes.blocked]: isBlocked })}
                               name={image.name ?? image.id.toString()}
-                              alt={image.name ?? undefined}
+                              alt={
+                                image.meta
+                                  ? truncate(image.meta.prompt, {
+                                      length: constants.altTruncateLength,
+                                    })
+                                  : image.name ?? undefined
+                              }
                               type={image.type}
                               width={450}
                               placeholder="empty"

@@ -85,7 +85,7 @@ export const constants = {
   ],
   trainingModelTypes: ['Character', 'Style', 'Concept'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
-  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Core ML', 'Other'],
+  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],
@@ -249,9 +249,10 @@ export const constants = {
     coverImageHeight: 400,
     coverImageWidth: 1600,
   },
+  altTruncateLength: 125,
 } as const;
 
-export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers'];
+export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;

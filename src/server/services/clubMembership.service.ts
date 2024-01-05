@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { ClubAdminPermission, Prisma } from '@prisma/client';
+import { ClubAdminPermission, Prisma, PrismaClient } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ToggleClubMembershipStatusInput,
@@ -51,11 +51,13 @@ export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSe
 export const clubMembershipOnClub = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { clubId, userId, expired },
   select,
+  dbClient = dbRead,
 }: {
   input: ClubMembershipOnClubInput & { userId: number; expired?: boolean };
   select: TSelect;
+  dbClient?: PrismaClient;
 }) => {
-  return dbRead.clubMembership.findUnique({
+  return dbClient.clubMembership.findUnique({
     select,
     where: {
       userId_clubId: {
@@ -182,15 +184,6 @@ export const createClubMembership = async ({
         },
       });
     }
-    // Attempt to pay the membership fee
-    await createNotification({
-      type: 'club-new-member-joined',
-      userId: clubTier.club.userId,
-      details: {
-        username: '',
-        clubId: clubTier.clubId,
-      },
-    });
 
     return membership;
   });
@@ -250,6 +243,7 @@ export const updateClubMembership = async ({
           name: true,
           unitAmount: true,
           currency: true,
+          oneTimeFee: true,
         },
       },
     },
@@ -267,6 +261,12 @@ export const updateClubMembership = async ({
   const isSameTier = clubTier.id === clubMembership.clubTier.id;
   const isUpgrade = !isSameTier && clubTier.unitAmount > clubMembership.clubTier.unitAmount;
   const isDowngrade = !isSameTier && clubTier.unitAmount < clubMembership.clubTier.unitAmount;
+
+  if (isDowngrade && clubMembership.clubTier.oneTimeFee) {
+    throw throwBadRequestError(
+      'Cannot downgrade from a one time payment tier. Please leave the tier first'
+    );
+  }
 
   const membership = await dbWrite.$transaction(async (tx) => {
     const { nextBillingDate } = calculateClubTierNextBillingDate({
@@ -530,11 +530,12 @@ export const clubOwnerTogglePauseBilling = async ({
 export const cancelClubMembership = async ({ userId, clubId }: ToggleClubMembershipStatusInput) => {
   const membership = await dbRead.clubMembership.findFirst({
     where: { clubId, userId },
+    include: { clubTier: true },
   });
 
   if (!membership) throw throwBadRequestError('Club membership not found');
 
-  if (membership.unitAmount === 0) {
+  if (membership.unitAmount === 0 || membership.clubTier.oneTimeFee) {
     await dbWrite.clubMembership.delete({
       where: { id: membership.id },
     });

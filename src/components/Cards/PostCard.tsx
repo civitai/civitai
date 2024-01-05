@@ -14,6 +14,8 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { AddToClubMenuItem } from '../Club/AddToClubMenuItem';
 import { useFeatureFlags } from '../../providers/FeatureFlagsProvider';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -85,7 +87,11 @@ export function PostCard({ data }: Props) {
                         <EdgeMedia
                           src={image.url}
                           name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                              : image.name ?? undefined
+                          }
                           type={image.type}
                           width={IMAGE_CARD_WIDTH}
                           placeholder="empty"

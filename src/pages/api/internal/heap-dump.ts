@@ -4,8 +4,9 @@ import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 import { createReadStream } from 'node:fs';
 
 export default JobEndpoint(async function getHeapDump(req: NextApiRequest, res: NextApiResponse) {
-  const path = writeHeapSnapshot();
+  const localPath = `/tmp/heapdump-${Date.now()}.heapsnapshot`;
+  writeHeapSnapshot(localPath);
 
-  const readStream = createReadStream(path);
+  const readStream = createReadStream(localPath);
   res.send(readStream);
 });

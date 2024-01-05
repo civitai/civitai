@@ -100,7 +100,6 @@ export const getPostsInfinite = async ({
   browsingMode,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: { id: number; isModerator?: boolean; username?: string };
-  ignoreListedStatus?: boolean;
   include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
@@ -122,6 +121,11 @@ export const getPostsInfinite = async ({
       cacheTags.push(`posts-user:${targetUser}`);
     }
   }
+
+  // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
+  // At that point, we should be relying more on unlisted status which is set by the owner.
+  const hidePrivatePosts =
+    !ids && !clubId && !isOwnerRequest && !(!!user && followed) && !(collectionId && !!user?.id);
 
   // Filter only followed users
   if (!!user && followed) {
@@ -366,6 +370,11 @@ export const getPostsInfinite = async ({
     items: postsRaw
       // remove unlisted resources the user has no access to:
       .filter((p) => {
+        // Hide private posts from the main feed.
+        if (hidePrivatePosts && p.availability === Availability.Private) {
+          return false;
+        }
+
         // Allow mods and owners to view all.
         if (user?.isModerator || p.userId === user?.id) return true;
 

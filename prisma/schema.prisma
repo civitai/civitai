@@ -2412,6 +2412,7 @@ model ClubTier {
   createdAt            DateTime         @default(now())
   updatedAt            DateTime?        @updatedAt
   memberLimit          Int?
+  oneTimeFee           Boolean          @default(false)
 }
 
 enum ClubAdminPermission {

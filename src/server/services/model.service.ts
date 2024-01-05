@@ -153,7 +153,6 @@ export const getModelsRaw = async ({
   input,
   user: sessionUser,
   count,
-  ignoreListedStatus,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -162,7 +161,6 @@ export const getModelsRaw = async ({
   // TODO: Likely we wanna remove session user all in all.
   user?: { id: number; isModerator?: boolean; username?: string };
   count?: boolean;
-  ignoreListedStatus?: boolean;
 }) => {
   const {
     user,
@@ -200,6 +198,10 @@ export const getModelsRaw = async ({
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
   const WITH: Prisma.Sql[] = [];
+
+  // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
+  // At that point, we should be relying more on unlisted status which is set by the owner.
+  const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
 
   if (query) {
     const lowerQuery = query?.toLowerCase();
@@ -474,21 +476,12 @@ export const getModelsRaw = async ({
     )`);
   }
 
-  if (!ignoreListedStatus) {
-    AND.push(
-      Prisma.sql`
-      (
-          m."unlisted" = false
-          ${Prisma.raw(sessionUser?.id ? `OR m."userId" = ${sessionUser?.id}` : '')}
-      )
-      `
-    );
-  }
-
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
-        SELECT DISTINCT ON (mv."modelId") "modelId"
+        SELECT  
+          mv."modelId" "modelId",
+          MAX(mv."id") "modelVersionId"
         FROM "EntityAccess" ea
         JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
         LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
@@ -501,6 +494,7 @@ export const getModelsRaw = async ({
             )
           )
           AND ea."accessToType" = 'ModelVersion'
+        GROUP BY mv."modelId"
       )
     `);
   }
@@ -514,18 +508,26 @@ export const getModelsRaw = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  let modelVersionWhere: Prisma.Sql | undefined;
+  const modelVersionWhere: Prisma.Sql[] = [];
 
   if (!sessionUser?.isModerator || !status?.length) {
-    modelVersionWhere = Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`;
+    modelVersionWhere.push(Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`);
   }
 
   if (baseModels) {
-    modelVersionWhere = Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`;
+    modelVersionWhere.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
   }
 
   if (!!modelVersionIds?.length) {
-    modelVersionWhere = Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`;
+    modelVersionWhere.push(Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`);
+  }
+
+  if (hidePrivateModels) {
+    modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
+  }
+
+  if (clubId) {
+    modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
@@ -582,7 +584,11 @@ export const getModelsRaw = async ({
        FROM "ModelVersion" mv
 	     LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
 	     WHERE mv."modelId" = m."id"
-         ${modelVersionWhere ? Prisma.sql`AND ${modelVersionWhere}` : Prisma.sql``}
+         ${
+           modelVersionWhere.length > 0
+             ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
+             : Prisma.sql``
+         }
 		   ORDER BY mv."index" ASC LIMIT 1
       ) as "modelVersion",
 	    jsonb_build_object(
@@ -660,7 +666,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   select,
   user: sessionUser,
   count = false,
-  ignoreListedStatus,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -669,7 +674,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   select: TSelect;
   user?: SessionUser;
   count?: boolean;
-  ignoreListedStatus?: boolean;
 }) => {
   const {
     take,
@@ -865,22 +869,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
           },
         },
       },
-    });
-  }
-
-  if (!ignoreListedStatus) {
-    // TODO: This might be more conditional than anything really.
-    AND.push({
-      OR: [
-        {
-          unlisted: false,
-        },
-        sessionUser
-          ? {
-              userId: sessionUser.id,
-            }
-          : undefined,
-      ].filter(isDefined),
     });
   }
 

@@ -1,6 +1,7 @@
 import { Carousel, Embla } from '@mantine/carousel';
 import { ActionIcon, Center, Group, Menu, Paper, Text, Tooltip, createStyles } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -19,6 +20,7 @@ import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
+import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 
 export function ImagesAsPostsCard({
@@ -175,7 +177,13 @@ export function ImagesAsPostsCard({
                                 <EdgeMedia
                                   src={image.url}
                                   name={image.name ?? image.id.toString()}
-                                  alt={image.name ?? undefined}
+                                  alt={
+                                    image.meta
+                                      ? truncate(image.meta.prompt, {
+                                          length: constants.altTruncateLength,
+                                        })
+                                      : image.name ?? undefined
+                                  }
                                   type={image.type}
                                   width={450}
                                   placeholder="empty"
@@ -281,7 +289,13 @@ export function ImagesAsPostsCard({
                                       <EdgeMedia
                                         src={image.url}
                                         name={image.name ?? image.id.toString()}
-                                        alt={image.name ?? undefined}
+                                        alt={
+                                          image.meta
+                                            ? truncate(image.meta.prompt, {
+                                                length: constants.altTruncateLength,
+                                              })
+                                            : image.name ?? undefined
+                                        }
                                         type={image.type}
                                         width={450}
                                         placeholder="empty"

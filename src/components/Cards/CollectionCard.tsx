@@ -7,14 +7,14 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { isDefined } from '~/utils/type-guards';
 import { MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
-import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import { truncate } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 type ImageProps = {
   id: number;
@@ -29,6 +29,7 @@ type ImageProps = {
   url: string;
   type: MediaType;
   name?: string | null;
+  meta?: ImageMetaProps | null;
 };
 
 export function CollectionCard({ data, sx }: Props) {
@@ -172,7 +173,11 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
                 type={image.type}
                 className={classes.image}
                 name={image.name ?? image.id.toString()}
-                alt={image.name ?? undefined}
+                alt={
+                  image.meta
+                    ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                    : image.name ?? undefined
+                }
                 placeholder="empty"
                 loading="lazy"
                 width={DEFAULT_EDGE_IMAGE_WIDTH}

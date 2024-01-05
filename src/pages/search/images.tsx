@@ -68,7 +68,12 @@ function RenderFilters() {
         operator="and"
         searchable={true}
       />
-      <ChipRefinementList title="Filter by Base Model" sortBy={['name']} attribute="baseModel" />
+      <ChipRefinementList
+        title="Filter by Base Model"
+        sortBy={['name']}
+        attribute="baseModel"
+        limit={20}
+      />
     </>
   );
 }

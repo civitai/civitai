@@ -96,7 +96,7 @@ export default function UserArticlesPage() {
                     onChange={(x) => replace({ sort: x as ArticleSort })}
                   />
                   <ArticleFiltersDropdown
-                    query={{ ...query, followed }}
+                    query={{ ...query, period, followed }}
                     onChange={(filters) => replace(filters)}
                   />
                 </Group>

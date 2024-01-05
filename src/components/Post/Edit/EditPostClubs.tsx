@@ -36,7 +36,7 @@ export function EditPostClubs() {
 
   return (
     <Stack mt="lg">
-      <ManagePostUnlistedStatus />
+      {/* <ManagePostUnlistedStatus /> */}
       <Text size="sm" tt="uppercase" weight="bold">
         Make this resource part of a club
       </Text>

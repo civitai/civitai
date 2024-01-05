@@ -79,7 +79,7 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
   },
   csamReports: ['granted'],
-  clubs: ['mod', 'granted'],
+  clubs: ['public'],
   createClubs: ['mod', 'granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);

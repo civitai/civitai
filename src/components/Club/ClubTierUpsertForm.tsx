@@ -47,6 +47,7 @@ export function ClubTierUpsertForm({
     defaultValues: {
       unlisted: false,
       joinable: true,
+      oneTimeFee: false,
       ...clubTier,
       clubId,
     },
@@ -170,6 +171,20 @@ export function ClubTierUpsertForm({
                         link or not. This is useful to create tiers that are only available to users
                         you want to invite and to start working on a tier before other users get
                         access to it.
+                      </Text>
+                    </Stack>
+                  }
+                />
+                <InputSwitch
+                  name="oneTimeFee"
+                  label={
+                    <Stack spacing={4}>
+                      <Group spacing={4}>
+                        <Text inline>One time payment</Text>
+                      </Group>
+                      <Text size="xs" color="dimmed">
+                        This tier will not be charged on a monthly basis and its users will only pay
+                        the joining fee.
                       </Text>
                     </Stack>
                   }

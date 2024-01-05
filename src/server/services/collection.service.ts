@@ -807,7 +807,7 @@ export const getCollectionItemsByCollectionId = async ({
   const images =
     imageIds.length > 0
       ? await getAllImages({
-          include: ['cosmetics', 'tagIds'],
+          include: ['cosmetics', 'tagIds', 'profilePictures'],
           limit: imageIds.length,
           period: MetricTimeframe.AllTime,
           periodMode: 'stats',

@@ -244,7 +244,7 @@ export function ClubUpsertForm({
                   label={
                     <Stack spacing={4}>
                       <Group spacing={4}>
-                        <Text inline>Billing</Text>
+                        <Text inline>Renew Memberships Monthly</Text>
                         <Tooltip
                           label="By disabling billing, people will keep their memberships but won't be charged monthly. This is useful if you're not planning to add content for a while."
                           {...tooltipProps}

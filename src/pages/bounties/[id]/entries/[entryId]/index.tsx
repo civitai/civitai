@@ -47,7 +47,6 @@ import {
   IconLock,
   IconLockOpen,
   IconPencilMinus,
-  IconPhoto,
   IconShare3,
   IconStar,
   IconTrash,
@@ -58,14 +57,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BountyEntryGetById } from '~/types/router';
 import { BountyEntryDiscussion } from '~/components/Bounty/BountyEntryDiscussion';
 import { formatKBytes } from '~/utils/number-helpers';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useRouter } from 'next/router';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { openConfirmModal } from '@mantine/modals';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -81,6 +78,8 @@ import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { truncate } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -834,6 +833,7 @@ export function BountyEntryCarousel({
 
             const deleteImage = (
               <DeleteImage
+                key="delete-image"
                 imageId={image.id}
                 onSuccess={handleDeleteSuccess}
                 onDelete={() => setDeletingImage(true)}
@@ -895,7 +895,11 @@ export function BountyEntryCarousel({
                     <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={
+                        image.meta
+                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                          : image.name ?? undefined
+                      }
                       type={image.type}
                       style={{ maxHeight: '100%', maxWidth: '100%' }}
                       width={image.width ?? 1200}

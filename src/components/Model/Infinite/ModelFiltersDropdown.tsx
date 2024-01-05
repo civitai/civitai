@@ -10,6 +10,7 @@ import {
   Stack,
   Drawer,
   PopoverProps,
+  ScrollArea,
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
@@ -198,7 +199,12 @@ export function DumbModelFiltersDropdown({
             onChange={(period) => setQueryFilters({ period })}
           />
         ) : (
-          <PeriodFilter type="models" variant="chips" />
+          <PeriodFilter
+            type="models"
+            variant="chips"
+            value={filters.period ?? MetricTimeframe.AllTime}
+            onChange={(period) => setFilters({ period })}
+          />
         )}
       </Stack>
       <Stack spacing={0}>
@@ -370,7 +376,7 @@ export function DumbModelFiltersDropdown({
       >
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} w="100%">
-          {dropdown}
+          <ScrollArea.Autosize maxHeight={450}>{dropdown}</ScrollArea.Autosize>
         </Popover.Dropdown>
       </Popover>
     </IsClient>

@@ -505,7 +505,7 @@ function FileEditForm({
           {versionFile.name.endsWith('.zip') && (
             <Select
               label="Format"
-              placeholder="Diffusers, Core ML"
+              placeholder="Diffusers, Core ML, ONNX"
               data={zipModelFileTypes.map((x) => ({ label: x, value: x }))}
               error={error?.format?._errors[0]}
               value={versionFile.format ?? null}

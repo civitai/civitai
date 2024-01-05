@@ -594,14 +594,33 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
         </ScrollArea>
         <Stack spacing={4} px="md" pt="xs" pb={3}>
           {promptWarning && (
-            <Group noWrap spacing={5} mb="xs" align="flex-start">
-              <ThemeIcon color="red" size="md">
-                <IconAlertTriangle size={16} />
-              </ThemeIcon>
-              <Text color="red" lh={1.1} size="xs">
-                {promptWarning}
+            <div>
+              <Alert color="red" title="Prohibited Prompt">
+                <Text>{promptWarning}</Text>
+                <Button
+                  color="red"
+                  variant="light"
+                  onClick={() => setPromptWarning(null)}
+                  style={{ marginTop: 10 }}
+                  leftIcon={<IconCheck />}
+                  fullWidth
+                >
+                  I Understand, Continue Generating
+                </Button>
+              </Alert>
+              <Text size="xs" color="dimmed" mt={4}>
+                Is this a mistake?{' '}
+                <Text
+                  component="a"
+                  td="underline"
+                  href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser?.username}`}
+                  target="_blank"
+                >
+                  Submit your prompt for review
+                </Text>{' '}
+                so we can refine our system.
               </Text>
-            </Group>
+            </div>
           )}
           {status.available && !reviewed ? (
             <Alert color="yellow" title="Image Generation Terms">
@@ -627,7 +646,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 I Confirm, Start Generating
               </Button>
             </Alert>
-          ) : status.available ? (
+          ) : status.available && !promptWarning ? (
             <>
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
                 <Card withBorder className={classes.generateButtonQuantity} p={0}>
@@ -703,7 +722,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               </Text>
             </>
           ) : null}
-          {status.message && (
+          {status.message && !promptWarning && (
             <AlertWithIcon
               color="yellow"
               title="Image Generation Status Alert"
