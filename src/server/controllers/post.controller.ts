@@ -287,8 +287,7 @@ export const addPostImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const result = await addPostImage({ ...input, userId: ctx.user.id });
-    return result;
+    return await addPostImage({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

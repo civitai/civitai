@@ -459,7 +459,7 @@ export async function softDeleteUser({ id }: { id: number }) {
   });
   await dbWrite.image.updateMany({
     where: { userId: id },
-    data: { ingestion: 'Blocked', blockedFor: 'CSAM', needsReview: null },
+    data: { ingestion: 'Blocked', blockedFor: 'CSAM', needsReview: 'blocked' },
   });
   await cancelSubscription({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
