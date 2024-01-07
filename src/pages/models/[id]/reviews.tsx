@@ -117,7 +117,7 @@ export default function ModelReviews() {
     router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
   };
 
-  if (!model || model?.status !== 'Published') return <NotFound />;
+  if (!loadingModel && (!model || model?.status !== 'Published')) return <NotFound />;
 
   const Model = loadingModel ? (
     <Skeleton height={44} />
