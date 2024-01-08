@@ -9,7 +9,15 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 
-import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
+import {
+  createContext,
+  Dispatch,
+  SetStateAction,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
@@ -20,6 +28,9 @@ import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearc
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useRouter } from 'next/router';
+import { useTrackEvent } from '../TrackView/track.utils';
+import { z } from 'zod';
 
 const SIDEBAR_SIZE = 377;
 
@@ -109,6 +120,13 @@ function renderSearchComponent(props: RenderSearchComponentProps) {
   return <CustomSearchBox {...props} />;
 }
 
+const searchQuerySchema = z
+  .object({
+    query: z.string().trim().optional(),
+    sortBy: z.string().optional(),
+  })
+  .passthrough();
+
 export function SearchLayout({
   children,
   indexName,
@@ -118,6 +136,17 @@ export function SearchLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
+
+  const router = useRouter();
+  const { trackSearch } = useTrackEvent();
+
+  useEffect(() => {
+    const result = searchQuerySchema.safeParse(router.query);
+    if (!result.success) return;
+
+    const { query, sortBy: index, ...filters } = result.data;
+    if (query && index) trackSearch({ query, index, filters });
+  }, [router.query]);
 
   return (
     <SearchLayoutCtx.Provider value={ctx}>

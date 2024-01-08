@@ -2,7 +2,6 @@ import {
   ActionIcon,
   AutocompleteItem,
   AutocompleteProps,
-  CloseButton,
   Code,
   Group,
   HoverCard,
@@ -67,7 +66,7 @@ const meilisearch = instantMeiliSearch(
   { primaryKey: 'id' }
 );
 
-type Props = Omit<AutocompleteProps, 'data'> & {
+type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   onClear?: VoidFunction;
   onSubmit?: VoidFunction;
   searchBoxProps?: SearchBoxProps;
@@ -353,15 +352,13 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   }));
 
   const handleSubmit = () => {
-    if (query) {
+    if (search) {
       router.push(
-        `/search/${indexName}?query=${encodeURIComponent(query)}&${
+        `/search/${indexName}?query=${encodeURIComponent(search)}&${
           searchPageQuery.length ? `${searchPageQuery}` : ''
         }`,
         undefined,
-        {
-          shallow: false,
-        }
+        { shallow: false }
       );
 
       blurInput();
@@ -394,7 +391,6 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
     setQuery(cleanedSearch);
     setFilters(filters);
     setSearchPageQuery(searchPageQuery);
-
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, query]);
 

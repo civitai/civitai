@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { ActionType } from '../clickhouse/client';
-import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
+import { trackedReasons } from '~/utils/login-helpers';
 
 export const addViewSchema = z.object({
   type: z.enum([
@@ -33,6 +32,13 @@ export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
   platform: z.enum(['reddit', 'twitter', 'clipboard']),
   url: z.string().url().trim().nonempty(),
+});
+
+export type TrackSearchInput = z.infer<typeof trackSearchSchema>;
+export const trackSearchSchema = z.object({
+  query: z.string().trim(),
+  index: z.string(),
+  filters: z.object({}).passthrough().optional(),
 });
 
 // action tracking schemas
