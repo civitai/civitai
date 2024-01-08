@@ -77,8 +77,8 @@ export const reviewNotifications = createNotificationProcessor({
         JOIN "ModelVersion" mv ON mv.id = ua."modelVersionId" AND mv.status = 'Published'
         JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
         WHERE ua."userId" IS NOT NULL
-          AND ua."downloadAt" >= CURRENT_DATE-INTERVAL '72 hour'
-          AND ua."downloadAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
+          AND ua."downloadAt" >= ${lastSent} - INTERVAL '72 hour'
+          AND ua."downloadAt" <= NOW() - INTERVAL '72 hour'
           AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
