@@ -1,4 +1,12 @@
-import { Group, SegmentedControl, Stack, Title, createStyles } from '@mantine/core';
+import {
+  Group,
+  SegmentedControl,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  createStyles,
+} from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
@@ -14,6 +22,8 @@ import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
+import { FeatureIntroduction } from '../../components/FeatureIntroduction/FeatureIntroduction';
+import { IconInfoCircle } from '@tabler/icons-react';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -99,6 +109,17 @@ export default function ClubsPage() {
             <Group position="apart" spacing={8}>
               {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
+                {!query.engagement && (
+                  <FeatureIntroduction
+                    feature="clubs"
+                    contentSlug={['feature-introduction', 'clubs']}
+                    actionButton={
+                      <ThemeIcon variant="light" radius="xl" size="lg">
+                        <IconInfoCircle />
+                      </ThemeIcon>
+                    }
+                  />
+                )}
                 <SortFilter type="clubs" variant="button" />
               </Group>
             </Group>
