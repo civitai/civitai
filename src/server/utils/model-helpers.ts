@@ -49,7 +49,6 @@ export function getPrimaryFile<T extends FileFormatType>(
   };
 
   return files
-    .filter((file) => file.type !== 'Training Data')
     .map((file) => ({
       file,
       score: getScore(file),
