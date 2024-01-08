@@ -203,7 +203,7 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
     if (username) AND.push({ user: { username } });
 
     const count = await dbRead.resourceReview.count({ where: { AND } });
-    const items = dbRead.resourceReview.findMany({
+    const items = await dbRead.resourceReview.findMany({
       skip,
       take,
       where: { AND },
