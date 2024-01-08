@@ -39,3 +39,15 @@ const modelVersionApi = Prisma.validator<Prisma.ModelVersionArgs>()({
   select: getModelVersionApiSelect,
 });
 export type ModelVersionApiReturn = Prisma.ModelVersionGetPayload<typeof modelVersionApi>;
+
+export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersionSelect>()({
+  id: true,
+  name: true,
+  earlyAccessTimeFrame: true,
+  createdAt: true,
+  generationCoverage: { select: { covered: true } },
+  trainedWords: true,
+  baseModel: true,
+  baseModelType: true,
+  files: { select: { metadata: true }, where: { type: 'Model' } },
+});
