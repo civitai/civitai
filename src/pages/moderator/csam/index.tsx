@@ -50,12 +50,12 @@ export default function CsamReports() {
       {
         id: 'userId',
         header: 'User Id',
-        accessorFn: (x) => (x.userId ? String(x.userId) : undefined),
+        accessorFn: (x) => (x.user ? x.user.username : undefined),
       },
       {
         id: 'reportedById',
         header: 'Reported By',
-        accessorFn: (x) => (x.reportedById ? String(x.reportedById) : undefined),
+        accessorFn: (x) => (x.reportedBy ? x.reportedBy.username : undefined),
       },
 
       {

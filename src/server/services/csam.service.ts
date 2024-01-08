@@ -1,4 +1,4 @@
-import { CsamReport, Prisma, ReportStatus } from '@prisma/client';
+import { CsamReport, Image, Prisma, ReportStatus } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CsamFileOutput,
@@ -28,8 +28,9 @@ import { PaginationInput } from '~/server/schema/base.schema';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
+import { isProd } from '~/env/other';
 
-const baseDir = env.DIRNAME ?? process.cwd();
+const baseDir = `${isProd ? env.DIRNAME : process.cwd()}/csam`;
 
 export async function getImageResources({ ids }: GetImageResourcesOutput) {
   return await dbRead.imageResourceHelper.findMany({
@@ -104,7 +105,19 @@ type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
 export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
   const { take, skip } = getPagination(limit, page);
 
-  const items = await dbRead.csamReport.findMany({ take, skip });
+  const reports = await dbRead.csamReport.findMany({ take, skip });
+  const usersIds = [
+    ...new Set(reports.flatMap((x) => [x.reportedById, x.userId]).filter(isDefined)),
+  ];
+  const users = await dbRead.user.findMany({
+    where: { id: { in: usersIds } },
+    select: { id: true, username: true },
+  });
+  const items = reports.map((report) => ({
+    ...report,
+    user: users.find((x) => x.id === report.userId),
+    reportedBy: users.find((x) => x.id === report.reportedById),
+  }));
   const count = await dbRead.csamReport.count();
   return getPagingData({ items, count }, take, page);
 }
@@ -233,6 +246,11 @@ export async function processCsamReport(report: CsamReportProps) {
     imageIds,
     modelVersionIds: report.details.modelVersionIds,
   });
+
+  if (!images.length) {
+    await dbWrite.csamReport.delete({ where: { id: report.id } });
+    return;
+  }
 
   const getModelsText = () => {
     if (!models.length) return '';
@@ -411,11 +429,13 @@ export async function processCsamReport(report: CsamReportProps) {
       where: { id: report.id },
       data: {
         images: fileUploadResults,
+        reportId,
         reportSentAt: new Date(),
       },
     });
 
     await ncmecCaller.finishReport(reportId);
+    console.log('finished report:', reportId);
   } catch (e) {
     console.log('ERROR');
     console.log(e);
@@ -500,128 +520,93 @@ function uploadStream({
   });
 }
 
-async function zipAndUploadCsamImages({
-  userId,
-  imageIds,
-}: {
-  userId: number;
-  imageIds?: number[];
-}) {
-  const isInternal = userId === -1;
-  const imagesDir = `${baseDir}/csam-images`;
-  const zipDir = `${baseDir}/csam-zip`;
-  const images = await dbRead.image.findMany({
-    where: {
-      userId: !isInternal ? userId : undefined,
-      id: imageIds ? { in: imageIds } : undefined,
-    },
-  });
-
-  for (const dir of [imagesDir, zipDir]) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-  }
-
+async function writeReportedImagesToDisk({ dir, images }: { dir: string; images: Image[] }) {
   // concurrency limiter
   const limit = plimit(10);
 
+  await Promise.all(
+    images.map((image) => {
+      return limit(async () => {
+        const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
+        const arrayBuffer = await blob.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const imageName = image.name
+          ? image.name.substring(0, image.name.lastIndexOf('.'))
+          : image.url;
+        const name = imageName.length ? imageName : image.url;
+        const filename = `${name}.${blob.type.split('/').pop()}`;
+        const path = `${dir}/${filename}`;
+
+        await fsAsync.writeFile(path, buffer);
+      });
+    })
+  );
+}
+
+export async function archiveCsamDataForReport(report: CsamReportProps) {
+  const { userId, reportId } = report;
+  if (!reportId || !userId) return;
+
+  const isInternal = userId === -1;
+  const reportDir = `${baseDir}/${reportId}`;
+  const imagesDir = `${baseDir}/${reportId}/images`;
+
+  for (const dir of [reportDir, imagesDir]) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
+
+  const images = await dbRead.image.findMany({
+    where: {
+      userId,
+    },
+  });
+
   try {
-    // write image files to disk
-    await Promise.all(
-      images.map((image) => {
-        return limit(async () => {
-          const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
-          const arrayBuffer = await blob.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-
-          const imageName = image.name
-            ? image.name.substring(0, image.name.lastIndexOf('.'))
-            : image.url;
-          const name = imageName.length ? imageName : image.url;
-          const filename = `${name}.${blob.type.split('/').pop()}`;
-          const path = `${imagesDir}/${filename}`;
-
-          if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
-          await fsAsync.writeFile(path, buffer);
-        });
-      })
-    );
+    await writeReportedImagesToDisk({ dir: imagesDir, images });
 
     // create zip file and zip images directory
-    const outPath = `${zipDir}/${userId}_csam.zip`;
+    const outPath = `${reportDir}/${userId}_csam.zip`;
     await zipDirectory(imagesDir, outPath);
 
     // upload zip file to s3 bucket
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
     // remove zip and images directory/files
-    for (const dir of [imagesDir, zipDir]) fs.rmSync(dir, { recursive: true });
+
+    if (!isInternal) {
+      const user = await getReportedUser(userId);
+      const ipAddresses = await getUserIpInfo({ userId });
+      const models = await dbRead.model.findMany({ where: { userId } });
+      const modelVersions = await dbRead.modelVersion.findMany({
+        where: { modelId: { in: models.map((x) => x.id) } },
+      });
+
+      await fsAsync.writeFile(
+        outPath,
+        JSON.stringify({
+          user: { userId, ...user },
+          reportId,
+          ipAddresses,
+          models,
+          modelVersions,
+          images,
+        })
+      );
+
+      const readableStream = fs.createReadStream(outPath);
+      await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
+    }
+    for (const dir of [imagesDir, reportDir]) fs.rmSync(dir, { recursive: true });
+
+    await dbWrite.csamReport.update({
+      where: { id: report.id },
+      data: {
+        archivedAt: new Date(),
+      },
+    });
   } catch (e) {
-    for (const dir of [imagesDir, zipDir]) fs.rmSync(dir, { recursive: true });
+    for (const dir of [imagesDir, reportDir]) fs.rmSync(dir, { recursive: true });
     throw e;
   }
-
-  return images;
-}
-
-async function zipAndUploadCsamUserData(
-  userId: number,
-  reportId: number | null = null,
-  imagesArr?: unknown[]
-) {
-  const isInternal = userId === -1;
-  if (isInternal) return;
-
-  const jsonDir = `${baseDir}/csam-json`;
-  const outPath = `${jsonDir}/user_${userId}.json`;
-
-  const images = imagesArr ?? (await dbRead.image.findMany({ where: { userId } }));
-  const user = await getReportedUser(userId);
-  const ipAddresses = await getUserIpInfo({ userId });
-  const models = await dbRead.model.findMany({ where: { userId } });
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { modelId: { in: models.map((x) => x.id) } },
-  });
-
-  try {
-    await fsAsync.writeFile(
-      outPath,
-      JSON.stringify({
-        user: { userId, ...user },
-        reportId,
-        ipAddresses,
-        models,
-        modelVersions,
-        images,
-      })
-    );
-
-    const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
-    fs.rmSync(jsonDir, { recursive: true });
-  } catch (e) {
-    fs.rmSync(jsonDir, { recursive: true });
-    throw e;
-  }
-}
-
-export async function archiveCsamDataForReport(report: CsamReportProps) {
-  const { userId, images, reportId } = report;
-
-  // handle user reports
-  if (userId) {
-    const images = await zipAndUploadCsamImages({ userId });
-    await zipAndUploadCsamUserData(userId, reportId, images);
-  }
-  // handle internal reports
-  // if the report is internal, only zip the images that were reported
-  else {
-    await zipAndUploadCsamImages({ userId: -1, imageIds: images.map((x) => x.id) });
-  }
-
-  await dbWrite.csamReport.update({
-    where: { id: report.id },
-    data: {
-      archivedAt: new Date(),
-    },
-  });
 }
