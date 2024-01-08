@@ -3,7 +3,6 @@ import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import ProfileLayout from '~/components/Profile/ProfileLayout';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -18,7 +17,6 @@ import {
   Center,
   Container,
   createStyles,
-  Divider,
   Group,
   Loader,
   Menu,
@@ -71,7 +69,10 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
-  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
+    { username },
+    { enabled: username !== 'civitai' }
+  );
   const isMod = currentUser && currentUser.isModerator;
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
@@ -279,7 +280,10 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
   const { classes } = useStyles();
   const features = useFeatureFlags();
 
-  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
+    { username },
+    { enabled: username !== 'civitai' }
+  );
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;

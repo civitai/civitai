@@ -114,6 +114,7 @@ export const getUserCreatorHandler = async ({
   input: GetUserByUsernameSchema;
 }) => {
   if (!username && !id) throw throwBadRequestError('Must provide username or id');
+  if (id === -1 || username === 'civitai') return null;
 
   try {
     const user = await getUserCreator({ username, id, leaderboardId });

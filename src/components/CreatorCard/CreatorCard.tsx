@@ -17,7 +17,7 @@ export function CreatorCard({
   tipBuzzEntityId,
   withActions = true,
 }: Props) {
-  const { data } = trpc.user.getCreator.useQuery({ id: user.id });
+  const { data } = trpc.user.getCreator.useQuery({ id: user.id }, { enabled: user.id !== -1 });
 
   const creator = data || {
     ...user,
