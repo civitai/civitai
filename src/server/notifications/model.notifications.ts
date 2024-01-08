@@ -238,7 +238,7 @@ export const modelNotifications = createNotificationProcessor({
       FROM early_access_complete;
     `,
   },
-  'model-old-draft': {
+  'old-draft': {
     displayName: 'Old Model Draft Deletion Reminder',
     toggleable: false,
     prepareMessage: ({ details }) => ({
