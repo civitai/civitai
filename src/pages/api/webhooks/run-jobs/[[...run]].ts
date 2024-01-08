@@ -74,7 +74,7 @@ export const jobs: Job[] = [
   ...bountyJobs,
   ...Object.values(eventEngineJobs),
   processClubMembershipRecurringPayments,
-  // ...csamJobs,
+  ...csamJobs,
   resourceGenerationAvailability,
 ];
 
