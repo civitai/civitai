@@ -198,6 +198,7 @@ export async function createBuzzTransaction({
     }
   }
 
+  // TODO.transaction - move this outside of transaction
   if (payload.type === TransactionType.Tip && toAccountId !== 0) {
     const fromUser = await dbRead.user.findUnique({
       where: { id: payload.fromAccountId },

@@ -1,4 +1,4 @@
-import { applyBrowsingMode, cacheIt, edgeCacheIt } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
   getImageDetailHandler,
@@ -40,8 +40,10 @@ import {
   removeImageResource,
   getModeratorPOITags,
   get404Images,
+  reportCsamImages,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
+import { z } from 'zod';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -82,13 +84,13 @@ export const imageRouter = router({
   getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
   getInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
-    .use(applyUserPreferences())
-    .use(applyBrowsingMode())
+    // .use(applyUserPreferences())
+    // .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
   getImagesAsPostsInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
-    .use(applyUserPreferences())
-    .use(applyBrowsingMode())
+    // .use(applyUserPreferences())
+    // .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getImageSchema).query(getImageHandler),
   getResources: publicProcedure
@@ -120,4 +122,9 @@ export const imageRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.month }))
     .use(cacheIt({ ttl: CacheTTL.week }))
     .query(() => get404Images()),
+  reportCsamImages: moderatorProcedure
+    .input(z.number().array())
+    .mutation(({ input: imageIds, ctx }) =>
+      reportCsamImages({ imageIds, user: ctx.user, ip: ctx.ip })
+    ),
 });

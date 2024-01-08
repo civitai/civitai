@@ -13,8 +13,9 @@ import { booleanString, numericString, numericStringArray } from '~/utils/zod-he
 import { isEqual } from 'lodash-es';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesImages } from '../Search/search.utils';
-import { ImageGetInfinite } from '~/types/router';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showNotification, hideNotification } from '@mantine/notifications';
+import { closeModal, openConfirmModal } from '@mantine/modals';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -35,10 +36,10 @@ export const imagesQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.nativeEnum(ReviewReactions))
     ),
-    types: z.preprocess(
-      (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.nativeEnum(MediaType))
-    ),
+    types: z
+      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
+      .transform((val) => (Array.isArray(val) ? val : [val]))
+      .optional(),
     withMeta: booleanString(),
     section: z.enum(['images', 'reactions']),
     hidden: z.coerce.boolean(),
@@ -67,8 +68,9 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
 
 export const useQueryImages = (
   filters?: Partial<GetInfiniteImagesInput>,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
+  options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
+  const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   // const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
@@ -76,7 +78,7 @@ export const useQueryImages = (
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...queryOptions,
     }
   );
 
@@ -98,21 +100,32 @@ export const useQueryImages = (
       };
 
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
-    const filtered = arr.filter((x) => {
-      if (x.user.id === currentUser?.id) return true;
-      if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
-      if (hiddenImages.get(x.id) && !filters?.hidden) return false;
-      if (hiddenUsers.get(x.user.id)) return false;
-      for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-      return true;
-    });
+    const filtered = applyHiddenPreferences
+      ? arr.filter((x) => {
+          if (x.user.id === currentUser?.id) return true;
+          if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
+          if (hiddenImages.get(x.id) && !filters?.hidden) return false;
+          if (hiddenUsers.get(x.user.id)) return false;
+          for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+          return true;
+        })
+      : arr;
 
     return {
       images: filtered,
       fetchedImages: arr.length,
       removedImages: arr.length - filtered.length,
     };
-  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, loadingHidden]);
+  }, [
+    data,
+    currentUser,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    loadingHidden,
+    filters?.hidden,
+    applyHiddenPreferences,
+  ]);
 
   return { data, images, removedImages, fetchedImages, ...rest };
 };
@@ -138,3 +151,58 @@ export const useQueryImageCategories = (
 
   return { data, categories, ...rest };
 };
+
+const CSAM_NOTIFICATION_ID = 'sending-report';
+export function useReportCsamImages(
+  options?: Parameters<typeof trpc.image.reportCsamImages.useMutation>[0]
+) {
+  const { onMutate, onSuccess, onError, onSettled, ...rest } = options ?? {};
+  const { mutateAsync, ...reportCsamImage } = trpc.image.reportCsamImages.useMutation({
+    async onMutate(...args) {
+      showNotification({
+        id: CSAM_NOTIFICATION_ID,
+        loading: true,
+        disallowClose: true,
+        autoClose: false,
+        message: 'Sending report...',
+      });
+      await onMutate?.(...args);
+    },
+    async onSuccess(...args) {
+      showSuccessNotification({
+        title: 'Image reported',
+        message: 'Your request has been received',
+      });
+      closeModal('confirm-csam');
+      await onSuccess?.(...args);
+    },
+    async onError(error, ...args) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Unable to send report',
+        reason: error.message ?? 'An unexpected error occurred, please try again',
+      });
+      await onError?.(error, ...args);
+    },
+    async onSettled(...args) {
+      hideNotification(CSAM_NOTIFICATION_ID);
+      await onSettled?.(...args);
+    },
+    ...rest,
+  });
+
+  const mutate = (args: Parameters<typeof reportCsamImage.mutate>[0]) => {
+    openConfirmModal({
+      modalId: 'confirm-csam',
+      title: 'Report CSAM',
+      children: `Are you sure you want to report this as CSAM?`,
+      centered: true,
+      labels: { confirm: 'Yes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: reportCsamImage.isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => reportCsamImage.mutate(args),
+    });
+  };
+
+  return { ...reportCsamImage, mutate };
+}

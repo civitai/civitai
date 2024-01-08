@@ -46,6 +46,7 @@ import { commonRouter } from '~/server/routers/common.router';
 import { clubPostRouter } from '~/server/routers/clubPost.router';
 import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
 import { eventRouter } from '~/server/routers/event.router';
+import { csamRouter } from '~/server/routers/csam.router';
 import { clubAdminRouter } from './clubAdmin.router';
 
 export const appRouter = router({
@@ -96,6 +97,7 @@ export const appRouter = router({
   userProfile: userProfileRouter,
   cosmetic: cosmeticRouter,
   event: eventRouter,
+  csam: csamRouter,
 });
 
 // export type definition of API

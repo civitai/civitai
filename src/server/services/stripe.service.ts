@@ -460,7 +460,7 @@ export const cancelSubscription = async ({
     subscriptionId = subscription.id;
   }
 
-  if (!subscriptionId) throw new Error('No subscription found');
+  if (!subscriptionId) return;
   const stripe = await getServerStripe();
   await stripe.subscriptions.del(subscriptionId);
 };

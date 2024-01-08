@@ -2,7 +2,7 @@ import { Box, BoxProps, ThemeIcon, createStyles, useMantineTheme } from '@mantin
 import { useMergedRef } from '@mantine/hooks';
 import { IconRefresh } from '@tabler/icons-react';
 
-import { RefObject, createContext, forwardRef, useContext, useEffect, useRef } from 'react';
+import React, { RefObject, createContext, forwardRef, useContext, useEffect, useRef } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
 
@@ -27,19 +27,6 @@ export const useScrollAreaRef = (args?: { onScroll?: () => void }) => {
 
   return ref;
 };
-
-// export function ScrollArea({ children, className, scrollRestore, ...props }: ScrollAreaProps) {
-//   const { classes, cx } = useStyles();
-//   const ref = useScrollRestore<HTMLDivElement>(scrollRestore);
-
-//   return (
-//     <ScrollAreaContext.Provider value={{ ref }}>
-//       <Box ref={ref} className={cx(classes.root, className)} py="md" {...props}>
-//         {children}
-//       </Box>
-//     </ScrollAreaContext.Provider>
-//   );
-// }
 
 export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
   ({ children, className, scrollRestore, ...props }, ref) => {
@@ -178,19 +165,5 @@ const useStyles = createStyles(() => ({
     willChange: 'transform',
     position: 'relative',
     scrollbarWidth: 'thin',
-    overscrollBehavior: '',
-    // '&::-webkit-scrollbar': {
-    //   width: '10px',
-    //   height: '100%',
-    // },
-    // '&::-webkit-scrollbar-track': {
-    //   background: '#f1f1f1',
-    // },
-    // '&::-webkit-scrollbar-thumb': {
-    //   background: '#888',
-    // },
-    // '&::-webkit-scrollbar-thumb:hover': {
-    //   background: '#555',
-    // },
   },
 }));

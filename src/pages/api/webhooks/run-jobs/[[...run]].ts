@@ -37,6 +37,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { csamJobs } from '~/server/jobs/process-csam';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 
 export const jobs: Job[] = [
@@ -73,6 +74,7 @@ export const jobs: Job[] = [
   ...bountyJobs,
   ...Object.values(eventEngineJobs),
   processClubMembershipRecurringPayments,
+  // ...csamJobs,
   resourceGenerationAvailability,
 ];
 
@@ -110,7 +112,10 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 const querySchema = z.object({
-  run: z.string().optional(),
+  run: z
+    .union([z.string(), z.string().array()])
+    .transform((x) => (Array.isArray(x) ? x[0] : x))
+    .optional(),
 });
 
 async function isLocked(name: string) {

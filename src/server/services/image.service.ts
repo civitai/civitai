@@ -63,6 +63,7 @@ import { getCursor } from '~/server/utils/pagination-helpers';
 import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
+import { bulkSetReportStatus } from '~/server/services/report.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2549,4 +2550,26 @@ async function removeNameReference(images: number[]) {
   });
 
   await limitConcurrency(tasks, 3);
+}
+
+export async function reportCsamImages({
+  imageIds,
+  user,
+  ip,
+}: {
+  imageIds: number[];
+  user: SessionUser;
+  ip?: string;
+}) {
+  if (!user.isModerator) throw throwAuthorizationError();
+  await dbWrite.image.updateMany({
+    where: { id: { in: imageIds } },
+    data: { needsReview: 'csam' },
+  });
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { reports: { select: { reportId: true } } },
+  });
+  const reportIds = images.flatMap((x) => x.reports.map((x) => x.reportId));
+  await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
 }

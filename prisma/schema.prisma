@@ -1,6 +1,12 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
+// Migration steps
+// 1. Add the darkpit env var
+// 2. `npm run db:migrate -- --name dont-drift-me-bro --no-check`
+// 3. review and revise your migration then manually apply it to the DB.
+// 4. `npm run db:applied` to mark the last migration as applied.
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["metrics"]
@@ -776,6 +782,7 @@ enum ReportReason {
   Ownership
   AdminAttention
   Claim
+  CSAM
 }
 
 enum ReportStatus {
@@ -2316,6 +2323,20 @@ model BountyEntryMetric {
   tippedAmountCount Int             @default(0)
 
   @@id([bountyEntryId, timeframe])
+}
+
+model CsamReport {
+  id               Int       @id @default(autoincrement())
+  userId           Int?
+  createdAt        DateTime  @default(now())
+  reportedById     Int
+  reportSentAt     DateTime?
+  archivedAt       DateTime?
+  contentRemovedAt DateTime?
+  reportId         Int?
+  details          Json      @default("{}")
+  images           Json      @default("[]")
+  // modelVersionIds  Int[]     @default([])
 }
 
 model Link {

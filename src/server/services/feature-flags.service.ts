@@ -78,6 +78,7 @@ const featureFlags = createFeatureFlags({
     description: `An improved user profile experience to boast around.`,
     availability: ['public'],
   },
+  csamReports: ['granted'],
   clubs: ['public'],
   createClubs: ['mod', 'granted'],
 });

@@ -18,6 +18,7 @@ import {
   getReports,
   updateReportById,
   getReportByIds,
+  bulkSetReportStatus,
 } from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -61,48 +62,7 @@ export async function setReportStatusHandler({
 }) {
   try {
     const { id, status } = input;
-    const report = await getReportById({
-      id,
-      select: { alsoReportedBy: true, previouslyReviewedCount: true, reason: true },
-    });
-    if (!report) throw throwNotFoundError(`No report with id ${id}`);
-
-    const updatedReport = await updateReportById({
-      id,
-      data: {
-        status,
-        statusSetAt: new Date(),
-        statusSetBy: ctx.user.id,
-        previouslyReviewedCount:
-          status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
-      },
-    });
-
-    await trackModActivity(ctx.user.id, {
-      entityType: 'report',
-      entityId: id,
-      activity: 'review',
-    });
-
-    // If we're actioning a report, we need to reward all users who reported it
-    if (input.status === ReportStatus.Actioned) {
-      const userIds = [updatedReport.userId, ...updatedReport.alsoReportedBy];
-      await Promise.all(
-        userIds.map((userId) =>
-          reportAcceptedReward.apply({ userId, reportId: updatedReport.id }, ctx.ip)
-        )
-      );
-    }
-
-    // await ctx.track.report({
-    //   type: 'StatusChange',
-    //   entityId: input.id,
-    //   entityType: report.type,
-    //   reason: report.reason,
-    //   status,
-    // });
-
-    return updatedReport;
+    await bulkSetReportStatus({ ids: [id], status, userId: ctx.user.id, ip: ctx.ip });
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);
@@ -118,48 +78,7 @@ export async function bulkUpdateReportStatusHandler({
 }) {
   try {
     const { ids, status } = input;
-    const { count } = await bulkUpdateReports({
-      ids,
-      data: {
-        status,
-        statusSetAt: new Date(),
-        statusSetBy: ctx.user.id,
-        previouslyReviewedCount: status === ReportStatus.Actioned ? { increment: 1 } : undefined,
-      },
-    });
-
-    // Track mod activity in the background
-    Promise.all(
-      ids.map((id) =>
-        trackModActivity(ctx.user.id, {
-          entityType: 'report',
-          entityId: id,
-          activity: 'review',
-        })
-      )
-    );
-
-    // If we're actioning reports, we need to reward the users who reported them
-    if (status === ReportStatus.Actioned) {
-      const actionedReports = await getReportByIds({
-        ids,
-        select: { id: true, userId: true, alsoReportedBy: true },
-      });
-      const prepReports = actionedReports.map((report) => ({
-        id: report.id,
-        userIds: [report.userId, ...report.alsoReportedBy],
-      }));
-
-      for (const report of prepReports) {
-        await Promise.all(
-          report.userIds.map((userId) =>
-            reportAcceptedReward.apply({ userId, reportId: report.id }, ctx.ip)
-          )
-        );
-      }
-    }
-
-    return count;
+    await bulkSetReportStatus({ ids, status, userId: ctx.user.id });
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);

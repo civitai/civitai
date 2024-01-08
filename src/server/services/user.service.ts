@@ -451,6 +451,21 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   return result;
 };
 
+/** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
+export async function softDeleteUser({ id }: { id: number }) {
+  await dbWrite.model.updateMany({
+    where: { userId: id },
+    data: { status: 'UnpublishedViolation' },
+  });
+  await dbWrite.image.updateMany({
+    where: { userId: id },
+    data: { ingestion: 'Blocked', blockedFor: 'CSAM', needsReview: 'blocked' },
+  });
+  await cancelSubscription({ userId: id });
+  await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
+  await invalidateSession(id);
+}
+
 export const toggleBlockedTag = async ({
   tagId,
   userId,
@@ -563,28 +578,31 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     select: { id: true },
   });
 
-  const res = await dbWrite.$transaction([
-    dbWrite.model.deleteMany({ where: { userId: id } }),
-    dbWrite.comment.deleteMany({ where: { userId: id } }),
-    dbWrite.commentV2.deleteMany({ where: { userId: id } }),
-    dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
-    dbWrite.post.deleteMany({ where: { userId: id } }),
-    dbWrite.image.deleteMany({ where: { userId: id } }),
-    dbWrite.article.deleteMany({ where: { userId: id } }),
-    dbWrite.userProfile.deleteMany({ where: { userId: id } }),
-    dbWrite.userLink.deleteMany({ where: { userId: id } }),
-    dbWrite.question.deleteMany({ where: { userId: id } }),
-    dbWrite.answer.deleteMany({ where: { userId: id } }),
-    dbWrite.collection.deleteMany({ where: { userId: id } }),
-    dbWrite.bounty.deleteMany({ where: { userId: id } }),
-    dbWrite.bountyEntry.deleteMany({
-      where: { userId: id, benefactors: { none: {} } },
-    }),
-    dbWrite.imageReaction.deleteMany({ where: { userId: id } }),
-    dbWrite.articleReaction.deleteMany({ where: { userId: id } }),
-    dbWrite.commentReaction.deleteMany({ where: { userId: id } }),
-    dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } }),
-  ]);
+  // sort deletes by least impactful to most impactful
+  await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
+  await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
+  await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
+  await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
+  await dbWrite.bountyEntry.deleteMany({
+    where: { userId: id, benefactors: { none: {} } },
+  });
+  await dbWrite.bounty.deleteMany({ where: { userId: id } });
+  await dbWrite.answer.deleteMany({ where: { userId: id } });
+  await dbWrite.question.deleteMany({ where: { userId: id } });
+  await dbWrite.userLink.deleteMany({ where: { userId: id } });
+  await dbWrite.userProfile.deleteMany({ where: { userId: id } });
+  await dbWrite.resourceReview.deleteMany({ where: { userId: id } });
+  await dbWrite.commentV2.deleteMany({ where: { userId: id } });
+  await dbWrite.comment.deleteMany({ where: { userId: id } });
+  await dbWrite.collection.deleteMany({ where: { userId: id } });
+  await dbWrite.article.deleteMany({ where: { userId: id } });
+  await dbWrite.post.deleteMany({ where: { userId: id } });
+  await dbWrite.model.deleteMany({ where: { userId: id } });
+
+  // TODO - an implementation similar to the following
+  // loop through image
+  // imageService.deleteImageById
+  await dbWrite.image.deleteMany({ where: { userId: id } });
 
   await modelsSearchIndex.queueUpdate(
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
@@ -606,8 +624,6 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await userMetrics.queueUpdate(id);
   await imageMetrics.queueUpdate(images.map((i) => i.id));
   await articleMetrics.queueUpdate(articles.map((a) => a.id));
-
-  return res;
 };
 
 export const getUserCosmetics = ({

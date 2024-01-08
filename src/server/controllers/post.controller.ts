@@ -44,6 +44,7 @@ import {
 import { ClubAdminPermission } from '@prisma/client';
 import { hasEntityAccess } from '../services/common.service';
 import { bustCacheTag } from '../utils/cache-helpers';
+import { NsfwLevel } from '@prisma/client';
 
 export const getPostsInfiniteHandler = async ({
   input,

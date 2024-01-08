@@ -78,9 +78,8 @@ export function VotableTag({
 }: VotableTagProps) {
   const clickedRef = useRef(false);
   const key = getKey({ entityType, entityId, name });
-  const vote = useVotableTagStore(useCallback((state) => state.votes[key], [key])) ?? initialVote;
+  const vote = useVotableTagStore(useCallback((state) => state.votes[key] ?? initialVote, [key])); //eslint-disable-line
   const upvoteDate = useVotableTagStore(useCallback((state) => state.upvoteDates[key], [key]));
-  const setVote = useVotableTagStore((state) => state.setVote);
 
   const theme = useMantineTheme();
   const isModeration = type === 'Moderation';
@@ -124,7 +123,6 @@ export function VotableTag({
 
     runDebouncer(() => {
       const value = vote !== 1 ? 1 : 0;
-      setVote({ entityId, entityType, name, vote: value });
       onChange({ name, vote: value });
     });
   };
@@ -135,7 +133,6 @@ export function VotableTag({
 
     runDebouncer(() => {
       const value = vote !== -1 ? -1 : 0;
-      setVote({ entityId, entityType, name, vote: value });
       onChange({ name, vote: value });
     });
   };
@@ -145,7 +142,6 @@ export function VotableTag({
     e.nativeEvent.stopImmediatePropagation();
 
     runDebouncer(() => {
-      setVote({ entityId, entityType, name, vote: 0 });
       onChange({ name, vote: 0 });
     });
   };

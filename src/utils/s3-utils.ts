@@ -3,6 +3,7 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   GetObjectCommandInput,
   HeadObjectCommand,
@@ -31,24 +32,24 @@ const missingEnvs = (): string[] => {
   return keys;
 };
 
-export async function setCors(s3: S3Client | null = null) {
-  if (!s3) s3 = await getS3Client();
-  await s3.send(
-    new PutBucketCorsCommand({
-      Bucket: env.S3_UPLOAD_BUCKET,
-      CORSConfiguration: {
-        CORSRules: [
-          {
-            AllowedHeaders: ['content-type'],
-            ExposeHeaders: ['ETag'],
-            AllowedMethods: ['PUT', 'GET'],
-            AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS : ['*'],
-          },
-        ],
-      },
-    })
-  );
-}
+// export async function setCors(s3: S3Client | null = null) {
+//   if (!s3) s3 = await getS3Client();
+//   await s3.send(
+//     new PutBucketCorsCommand({
+//       Bucket: env.S3_UPLOAD_BUCKET,
+//       CORSConfiguration: {
+//         CORSRules: [
+//           {
+//             AllowedHeaders: ['content-type'],
+//             ExposeHeaders: ['ETag'],
+//             AllowedMethods: ['PUT', 'GET'],
+//             AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS : ['*'],
+//           },
+//         ],
+//       },
+//     })
+//   );
+// }
 
 export function getS3Client() {
   const missing = missingEnvs();
@@ -91,13 +92,31 @@ export function deleteObject(bucket: string, key: string, s3: S3Client | null = 
   );
 }
 
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/example_s3_DeleteObjects_section.html
+export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client | null = null) {
+  if (!s3) s3 = getS3Client();
+  return s3.send(
+    new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: {
+        Objects: keys.map((key) => ({ Key: key })),
+      },
+    })
+  );
+}
+
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
-export async function getMultipartPutUrl(key: string, size: number, s3: S3Client | null = null) {
+export async function getMultipartPutUrl(
+  key: string,
+  size: number,
+  s3: S3Client | null = null,
+  bucket: string | null = null
+) {
   if (!s3) s3 = getS3Client();
 
-  const bucket = await getBucket();
+  if (!bucket) bucket = await getBucket();
   const { UploadId } = await s3.send(
     new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })
   );

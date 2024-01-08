@@ -27,7 +27,7 @@ const logFor = (target: 'write' | 'read') =>
     }
 
     if (!isProd) console.log(query);
-    else await logToAxiom({ query, duration: e.duration, pod: env.PODNAME, target }, 'db-logs');
+    else logToAxiom({ query, duration: e.duration, pod: env.PODNAME, target }, 'db-logs');
   };
 
 const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
