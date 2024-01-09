@@ -21,6 +21,7 @@ import {
 import { getCategoryTags } from '~/server/services/system-cache';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { withRetries } from '~/server/utils/errorHandling';
+import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -29,6 +30,7 @@ const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
+
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -174,17 +176,7 @@ const onFetchItemsToIndex = async ({
           },
           modelVersions: {
             orderBy: { index: 'asc' },
-            select: {
-              id: true,
-              name: true,
-              earlyAccessTimeFrame: true,
-              createdAt: true,
-              generationCoverage: { select: { covered: true } },
-              trainedWords: true,
-              baseModel: true,
-              baseModelType: true,
-              files: { select: { metadata: true }, where: { type: 'Model' } },
-            },
+            select: getModelVersionsForSearchIndex,
             where: {
               status: ModelStatus.Published,
             },

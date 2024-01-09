@@ -83,7 +83,8 @@ export const createPostHandler = async ({
       }
     }
     const post = await createPost({ userId: ctx.user.id, ...input });
-    const isScheduled = dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
+    const isPublished = !!post.publishedAt;
+    const isScheduled = isPublished && dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
     const tags = post.tags.map((x) => x.name);
     if (isScheduled) tags.push('scheduled');
 
@@ -94,7 +95,7 @@ export const createPostHandler = async ({
       tags,
     });
 
-    if (!isScheduled) {
+    if (isPublished && !isScheduled) {
       await firstDailyPostReward.apply(
         {
           postId: post.id,

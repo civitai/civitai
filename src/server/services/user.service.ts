@@ -56,6 +56,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { ProfileImage } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
+import { constants } from '~/server/common/constants';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -70,7 +71,10 @@ export const getUserCreator = async ({
     where: {
       ...where,
       deletedAt: null,
-      AND: [{ id: { not: -1 } }, { username: { not: 'civitai' } }],
+      AND: [
+        { id: { not: constants.system.user.id } },
+        { username: { not: constants.system.user.username } },
+      ],
     },
     select: {
       id: true,

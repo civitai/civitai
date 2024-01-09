@@ -448,14 +448,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   autosize
                 />
                 <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-                <Text size="xs" color="dimmed" mt={-16}>
-                  {nsfw &&
-                    isFullCoverageModel &&
-                    'You are using a model with Full Coverage, your generation times may be longer than average.'}
-                  {nsfw && !isFullCoverageModel && 'Your generation may be censored by Provider.'}
-                  {!nsfw &&
-                    'Your generation may still be blocked by Provider due to flaws in their filter.'}
-                </Text>
               </Stack>
             </Card>
             <Card {...sharedCardProps} style={{ overflow: 'visible' }}>

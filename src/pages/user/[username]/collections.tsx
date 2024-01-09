@@ -38,16 +38,20 @@ export default function UserCollectionsPage() {
   const features = useFeatureFlags();
 
   const username = (router.query.username as string) ?? '';
-  const { data: creator, isLoading } = trpc.user.getCreator.useQuery({ username });
+  const { data: creator, isLoading } = trpc.user.getCreator.useQuery(
+    { username },
+    { enabled: username !== constants.system.user.username }
+  );
 
   const Wrapper = useMemo(
     () =>
-      ({ children }: { children: React.ReactNode }) =>
-        features.profileOverhaul ? (
+      function Wrapper({ children }: { children: React.ReactNode }) {
+        return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
           <Tabs.Panel value="/collections">{children}</Tabs.Panel>
-        ),
+        );
+      },
     [features.profileOverhaul]
   );
 
