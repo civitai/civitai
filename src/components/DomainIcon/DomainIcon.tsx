@@ -1,4 +1,5 @@
 import {
+  IconBrandBilibili,
   IconBrandDeviantart,
   IconBrandDiscord,
   IconBrandFacebook,
@@ -7,8 +8,10 @@ import {
   IconBrandLinktree,
   IconBrandPatreon,
   IconBrandReddit,
+  IconBrandTelegram,
   IconBrandTumblr,
   IconBrandTwitch,
+  IconBrandVk,
   IconBrandX,
   IconBrandYoutube,
   IconCup,
@@ -18,8 +21,9 @@ import {
   Icon as TablerIcon,
   TablerIconsProps,
 } from '@tabler/icons-react';
+import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { IconBrandHuggingFace } from '~/components/SVG/IconHuggingFace';
-import { getDomainLinkType, DomainLink } from '~/utils/domain-link';
+import { DomainLink, getDomainLinkType } from '~/utils/domain-link';
 
 export function DomainIcon({
   url,
@@ -49,4 +53,8 @@ const tablerIconMap: { [key in DomainLink]: TablerIcon } = {
   linktree: IconBrandLinktree,
   deviantArt: IconBrandDeviantart,
   tumblr: IconBrandTumblr,
+  telegram: IconBrandTelegram,
+  vk: IconBrandVk,
+  bilibili: IconBrandBilibili,
+  civitai: IconCivitai,
 };

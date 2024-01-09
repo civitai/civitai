@@ -17,6 +17,10 @@ export const domainLinks = {
   linktree: ['linktr.ee'],
   deviantArt: ['deviantart.com'],
   tumblr: ['tumblr.com'],
+  telegram: ['t.me'],
+  vk: ['vk.com'],
+  bilibili: ['bilibili.com'],
+  civitai: ['civitai.com'],
 };
 
 const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(undefined);
