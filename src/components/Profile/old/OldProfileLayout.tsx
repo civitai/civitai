@@ -65,13 +65,14 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { constants } from '~/server/common/constants';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
     { username },
-    { enabled: username !== 'civitai' }
+    { enabled: username !== constants.system.user.username }
   );
   const isMod = currentUser && currentUser.isModerator;
   const isSameUser =
@@ -282,7 +283,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
     { username },
-    { enabled: username !== 'civitai' }
+    { enabled: username !== constants.system.user.username }
   );
 
   const { models: uploads } = user?._count ?? { models: 0 };

@@ -250,6 +250,9 @@ export const constants = {
     coverImageWidth: 1600,
   },
   altTruncateLength: 125,
+  system: {
+    user: { id: -1, username: 'civitai' },
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

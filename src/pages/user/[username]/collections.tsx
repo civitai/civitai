@@ -40,7 +40,7 @@ export default function UserCollectionsPage() {
   const username = (router.query.username as string) ?? '';
   const { data: creator, isLoading } = trpc.user.getCreator.useQuery(
     { username },
-    { enabled: username !== 'civitai' }
+    { enabled: username !== constants.system.user.username }
   );
 
   const Wrapper = useMemo(

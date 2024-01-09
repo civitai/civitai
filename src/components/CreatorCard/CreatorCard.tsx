@@ -10,6 +10,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
+import { constants } from '~/server/common/constants';
 
 export function CreatorCard({
   user,
@@ -17,7 +18,10 @@ export function CreatorCard({
   tipBuzzEntityId,
   withActions = true,
 }: Props) {
-  const { data } = trpc.user.getCreator.useQuery({ id: user.id }, { enabled: user.id !== -1 });
+  const { data } = trpc.user.getCreator.useQuery(
+    { id: user.id },
+    { enabled: user.id !== constants.system.user.id }
+  );
 
   const creator = data || {
     ...user,
