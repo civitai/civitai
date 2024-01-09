@@ -11,7 +11,7 @@ export function SocialLink({
   link: GetUserLinksResult[0];
   setSelected: (data: GetUserLinksResult[0]) => void;
 }) {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const { mutate, isLoading } = trpc.userLink.delete.useMutation({
     onSuccess: () => {
