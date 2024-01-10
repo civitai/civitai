@@ -72,7 +72,6 @@ import {
   getUnavailableResources,
   prepareModelInOrchestrator,
 } from '~/server/services/generation/generation.service';
-import { entityRequiresClub } from '~/server/services/common.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -1021,8 +1020,6 @@ export const getModelsWithImagesAndModelVersions = async ({
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
-        const requiresClub =
-          clubRequirement.find((r) => r.entityId === version.id)?.requiresClub ?? false;
 
         return {
           ...model,
