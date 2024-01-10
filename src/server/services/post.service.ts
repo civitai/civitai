@@ -568,7 +568,7 @@ export const getPostTags = async ({
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
     ORDER BY ${Prisma.raw(
-      showTrending ? `r."postCountDayRank" DESC` : `LENGTH(t.name), r."postCountAllTimeRank" DESC`
+      showTrending ? `r."postCountDayRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}
     LIMIT ${limit}
   `;
