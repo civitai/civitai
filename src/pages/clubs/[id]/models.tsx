@@ -12,6 +12,20 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
 import { MetricTimeframe } from '@prisma/client';
 import { ModelFilterSchema } from '../../../providers/FiltersProvider';
+import { createServerSideProps } from '../../../server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.clubs) return { notFound: true };
+
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: false,
+      },
+    };
+  },
+});
 
 const ClubModels = () => {
   const router = useRouter();

@@ -35,6 +35,20 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ClubAddContent } from '~/components/Club/ClubAddContent';
 import { Meta } from '../../../components/Meta/Meta';
+import { createServerSideProps } from '../../../server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.clubs) return { notFound: true };
+
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: false,
+      },
+    };
+  },
+});
 
 const Feed = () => {
   const router = useRouter();

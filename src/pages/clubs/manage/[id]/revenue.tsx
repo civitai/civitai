@@ -64,6 +64,13 @@ export const getServerSideProps = createServerSideProps({
       await ssg.club.getById.prefetch({ id });
     }
 
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: true,
+      },
+    };
+
     return { props: { id } };
   },
 });

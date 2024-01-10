@@ -199,11 +199,6 @@ export default defineNextConfig(withAxiom({
         source: '/education',
         destination: 'https://education.civitai.com',
         permanent: true,
-      },
-      {
-        source: '/clubs/:path*',
-        destination: '/content/clubs',
-        permanent: true,
       }
     ];
   },
