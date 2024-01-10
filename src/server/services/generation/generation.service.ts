@@ -1,4 +1,4 @@
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetByIdInput, PaginationInput } from '~/server/schema/base.schema';
 import {
   BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
@@ -49,6 +49,7 @@ import { cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
+import { getPagedData, getPagination } from '~/server/utils/pagination-helpers';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -104,96 +105,123 @@ function mapGenerationResource(
 }
 
 const baseModelSetsArray = Object.values(baseModelSets);
-export const getGenerationResources = async ({
-  take,
-  query,
-  types,
-  notTypes,
-  ids, // used for getting initial values of resources
-  baseModel,
-  user,
-  supported,
-}: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Resource[]> => {
-  const preselectedVersions: number[] = [];
-  if ((!ids || ids.length === 0) && !query) {
-    const featuredCollection = await dbRead.collection
-      .findFirst({
-        where: { userId: -1, name: 'Generator' },
-        select: {
-          items: {
+export const getGenerationResources = async (
+  input: GetGenerationResourcesInput & { user?: SessionUser }
+) => {
+  return await getPagedData<GetGenerationResourcesInput, Generation.Resource[]>(
+    input,
+    async ({
+      take,
+      skip,
+      query,
+      types,
+      notTypes,
+      ids, // used for getting initial values of resources
+      baseModel,
+      supported,
+    }) => {
+      const preselectedVersions: number[] = [];
+      if ((!ids || ids.length === 0) && !query) {
+        const featuredCollection = await dbRead.collection
+          .findFirst({
+            where: { userId: -1, name: 'Generator' },
             select: {
-              model: {
+              items: {
                 select: {
-                  name: true,
-                  type: true,
-                  modelVersions: {
-                    select: { id: true, name: true },
-                    where: { status: 'Published' },
-                    orderBy: { index: 'asc' },
-                    take: 1,
+                  model: {
+                    select: {
+                      name: true,
+                      type: true,
+                      modelVersions: {
+                        select: { id: true, name: true },
+                        where: { status: 'Published' },
+                        orderBy: { index: 'asc' },
+                        take: 1,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-        },
-      })
-      .catch(() => null);
+          })
+          .catch(() => null);
 
-    if (featuredCollection)
-      preselectedVersions.push(
-        ...featuredCollection.items.flatMap((x) => x.model?.modelVersions.map((x) => x.id) ?? [])
-      );
+        if (featuredCollection)
+          preselectedVersions.push(
+            ...featuredCollection.items.flatMap(
+              (x) => x.model?.modelVersions.map((x) => x.id) ?? []
+            )
+          );
 
-    ids = preselectedVersions;
-  }
+        ids = preselectedVersions;
+      }
 
-  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
-  if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
-  if (!!types?.length)
-    sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
-  if (!!notTypes?.length)
-    sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
-  if (query) {
-    const pgQuery = '%' + query + '%';
-    sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
-  }
-  if (baseModel) {
-    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-    if (baseModelSet)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
-  }
+      const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
+      if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
+      if (!!types?.length)
+        sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
+      if (!!notTypes?.length)
+        sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
+      if (query) {
+        const pgQuery = '%' + query + '%';
+        sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
+      }
+      if (baseModel) {
+        const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
+        if (baseModelSet)
+          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+      }
 
-  let orderBy = 'mv.index';
-  if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
+      let orderBy = 'mv.index';
+      if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
 
-  const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
-    SELECT
-      mv.id,
-      mv.index,
-      mv.name,
-      mv."trainedWords",
-      m.id "modelId",
-      m.name "modelName",
-      m.type "modelType",
-      mv."baseModel"
-    FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    ${Prisma.raw(
-      supported
-        ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
-        : ''
-    )}
-    ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
-    WHERE ${Prisma.join(sqlAnd, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)}
-    LIMIT ${take}
-  `;
+      const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
+        SELECT
+          mv.id,
+          mv.index,
+          mv.name,
+          mv."trainedWords",
+          m.id "modelId",
+          m.name "modelName",
+          m.type "modelType",
+          mv."baseModel"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        ${Prisma.raw(
+          supported
+            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
+            : ''
+        )}
+        ${Prisma.raw(
+          orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : ''
+        )}
+        WHERE ${Prisma.join(sqlAnd, ' AND ')}
+        ORDER BY ${Prisma.raw(orderBy)}
+        LIMIT ${take}
+        OFFSET ${skip}
+      `;
+      const rowCount = await dbRead.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*)
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        ${Prisma.raw(
+          supported
+            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
+            : ''
+        )}
+        WHERE ${Prisma.join(sqlAnd, ' AND ')}
+      `;
+      const [{ count }] = rowCount;
 
-  return results.map((resource) => ({
-    ...resource,
-    strength: 1,
-  }));
+      return {
+        items: results.map((resource) => ({
+          ...resource,
+          strength: 1,
+        })),
+        count,
+      };
+    }
+  );
 };
 
 const getResourceData = async (modelVersionIds: number[]) => {
