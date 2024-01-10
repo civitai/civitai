@@ -2,13 +2,13 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { MODELS_SEARCH_INDEX } from '../../../../server/common/constants';
+import { ARTICLES_SEARCH_INDEX } from '../../../../server/common/constants';
 import { updateDocs } from '../../../../server/meilisearch/client';
 import { withRetries } from '../../../../server/utils/errorHandling';
 import { userWithCosmeticsSelect } from '../../../../server/selectors/user.selector';
 
 const BATCH_SIZE = 10000;
-const INDEX_ID = MODELS_SEARCH_INDEX;
+const INDEX_ID = ARTICLES_SEARCH_INDEX;
 const WHERE = (idOffset: number) => ({
   id: { gt: idOffset },
   publishedAt: {
