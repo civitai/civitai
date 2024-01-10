@@ -54,8 +54,6 @@ import { ClubsInfinite } from '../../../../components/Club/Infinite/ClubsInfinit
 const querySchema = z.object({ id: z.coerce.number() });
 
 export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  useSSG: true,
   resolver: async ({ session, features, ctx, ssg }) => {
     if (!features?.clubs) return { notFound: true };
 
@@ -96,7 +94,12 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) await ssg.club.getById.prefetch({ id });
 
-    return { props: { id } };
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: true,
+      },
+    };
   },
 });
 

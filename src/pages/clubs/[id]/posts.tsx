@@ -12,6 +12,20 @@ import { PostsQueryInput } from '../../../server/schema/post.schema';
 import { PostFiltersDropdown } from '../../../components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite, { PostsInfiniteState } from '../../../components/Post/Infinite/PostsInfinite';
 import { PostCard } from '../../../components/Cards/PostCard';
+import { createServerSideProps } from '../../../server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.clubs) return { notFound: true };
+
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: false,
+      },
+    };
+  },
+});
 
 const ClubImagePosts = () => {
   const router = useRouter();

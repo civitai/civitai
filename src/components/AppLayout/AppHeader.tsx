@@ -337,18 +337,6 @@ export function AppHeader({
         ),
         rel: 'nofollow',
       },
-      {
-        href: '/clubs/create',
-        visible: !isMuted && features.createClubs,
-        redirectReason: 'create-club',
-        label: (
-          <Group align="center" spacing="xs">
-            <IconClubs stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            <Text>Create a club</Text>
-          </Group>
-        ),
-        rel: 'nofollow',
-      },
     ],
     [features.bounties, features.imageTraining, isMuted, theme]
   );

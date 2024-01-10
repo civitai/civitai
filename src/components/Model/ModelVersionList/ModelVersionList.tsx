@@ -33,9 +33,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 import { ModelById } from '~/types/router';
-import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
-import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
-import { ClubRequirementIndicator } from '../../Club/ClubRequirementNotice';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 const useStyles = createStyles((theme) => ({
@@ -215,16 +212,6 @@ export function ModelVersionList({
               compact
             >
               <Group spacing={8} noWrap>
-                {access?.requiresClub && features.clubs && (
-                  <ThemeIcon
-                    radius="xl"
-                    title="This version is only available to club members"
-                    size="sm"
-                    variant="light"
-                  >
-                    <IconClubs stroke={2.5} size={16} />
-                  </ThemeIcon>
-                )}
                 {features.imageGeneration && version.canGenerate && (
                   <ThemeIcon
                     title="This version is available for image generation"
@@ -321,13 +308,6 @@ export function ModelVersionList({
                     >
                       Manage images
                     </Menu.Item>
-                  )}
-                  {features.clubs && (
-                    <AddToClubMenuItem entityType="ModelVersion" entityId={version.id} />
-                  )}
-
-                  {features.clubs && (
-                    <ClubPostFromResourceMenuItem entityType="ModelVersion" entityId={version.id} />
                   )}
                 </Menu.Dropdown>
               </Menu>

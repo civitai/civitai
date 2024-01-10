@@ -1,6 +1,8 @@
 import { Badge, BadgeProps, Group, MantineNumberSize } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
+import OneKeyMap from '@essentials/one-key-map';
+import trieMemoize from 'trie-memoize';
 
 export function Collection<T>({
   items,
@@ -20,11 +22,15 @@ export function Collection<T>({
   const renderedItems = (
     <>
       {displayedItems.map((item, index) => (
-        <Fragment key={index}>{renderItem(item, index)}</Fragment>
+        <Fragment key={'displayed' + index}>
+          {createRenderElement(renderItem, index, item)}
+        </Fragment>
       ))}
       {collapsedItems.length > 0 && opened
         ? collapsedItems.map((item, index) => (
-            <Fragment key={index}>{renderItem(item, index)}</Fragment>
+            <Fragment key={'collapsed' + index}>
+              {createRenderElement(renderItem, index, item)}
+            </Fragment>
           ))
         : null}
       {collapsedItems.length > 0 &&
@@ -65,3 +71,9 @@ type Props<T> = {
   grouped?: boolean;
   badgeProps?: Omit<BadgeProps, 'children'>;
 };
+
+// supposedly ~5.5x faster than createElement without the memo
+const createRenderElement = trieMemoize(
+  [OneKeyMap, {}, WeakMap],
+  (RenderComponent, index, item) => <RenderComponent index={index} {...item} />
+);

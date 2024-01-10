@@ -3,7 +3,6 @@ import { loadStripe, Stripe } from '@stripe/stripe-js';
 import { useRef, useEffect } from 'react';
 import { env } from '~/env/client.mjs';
 import { useRouter } from 'next/router';
-import { useRouterParams } from '~/hooks/useRouterParams';
 import { z } from 'zod';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 import { showSuccessNotification } from '~/utils/notifications';

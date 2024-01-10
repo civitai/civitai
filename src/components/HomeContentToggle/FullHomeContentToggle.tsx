@@ -106,7 +106,14 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
     label: (
       <Link href={value.url} passHref>
         <Anchor variant="text">
-          <Group align="center" spacing={8} onClick={() => set(key as HomeOptions)} noWrap>
+          <Group
+            align="center"
+            spacing={8}
+            onClick={() => {
+              if (key !== 'clubs') set(key as HomeOptions);
+            }}
+            noWrap
+          >
             <ThemeIcon
               size={30}
               color={activePath === key ? theme.colors.dark[7] : 'transparent'}

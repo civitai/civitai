@@ -112,10 +112,6 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
     });
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
-    const [entityClubDetails] = await getClubDetailsForResource({
-      entityType: 'ModelVersion',
-      entityIds: [version.id],
-    });
 
     return {
       ...version,
@@ -135,7 +131,6 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         trainedWords: resource.trainedWords,
         strength: (settings as any)?.strength,
       })),
-      clubs: entityClubDetails?.clubs ?? [],
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;
