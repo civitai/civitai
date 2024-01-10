@@ -399,7 +399,7 @@ export const generation = {
   },
   maxValues: {
     seed: 4294967295,
-    steps: 80,
+    steps: 50,
     quantity: 10,
     clipSkip: 10,
   },

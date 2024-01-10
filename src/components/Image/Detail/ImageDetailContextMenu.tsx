@@ -122,15 +122,13 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
                 </Menu.Item>
               )}
             </TosViolationButton>
-            {csamReports && (
-              <ReportCsamButton>
-                {({ onClick }) => (
-                  <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={onClick}>
-                    Report CSAM
-                  </Menu.Item>
-                )}
-              </ReportCsamButton>
-            )}
+            <ReportCsamButton>
+              {({ onClick }) => (
+                <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={onClick}>
+                  Report CSAM
+                </Menu.Item>
+              )}
+            </ReportCsamButton>
 
             <RescanImageButton>
               {({ onClick, isLoading }) => (
