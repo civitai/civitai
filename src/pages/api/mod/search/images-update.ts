@@ -151,7 +151,7 @@ const updateUserDetails = (idOffset: number) =>
   });
 
 export default ModEndpoint(
-  async function updateModelSearchIndex(req: NextApiRequest, res: NextApiResponse) {
+  async function updateImageSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
     const updateMethod: ((idOffset: number) => Promise<number>) | null =
