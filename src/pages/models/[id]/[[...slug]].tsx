@@ -112,9 +112,6 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { ClubRequirementNotice } from '~/components/Club/ClubRequirementNotice';
-import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
-import { ClubPostFromResourceMenuItem } from '~/components/Club/ClubPostFromResourceMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -225,7 +222,6 @@ export default function ModelDetailsV2({
 
   const [access] = entities;
   const hasAccess = access?.hasAccess;
-  const requiresClub = access?.requiresClub;
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -439,10 +435,6 @@ export default function ModelDetailsV2({
   }, [publishedVersions, selectedVersion, modelVersionId]);
 
   if (loadingModel) return <PageLoader />;
-
-  if (!hasAccess && model?.unlisted) {
-    return <NotFound />;
-  }
 
   // Handle missing and deleted models
   const modelDoesntExist = !model;
@@ -817,35 +809,6 @@ export default function ModelDetailsV2({
                         )}
                       </ToggleLockModel>
                     )}
-                    {isCreator && features.clubs && selectedVersion && (
-                      <AddToClubMenuItem
-                        entityId={selectedVersion.id}
-                        entityType="ModelVersion"
-                        resource={{
-                          ...model,
-                          rank: {
-                            collectedCount: model.rank?.collectedCountAllTime ?? 0,
-                            downloadCount: model.rank?.downloadCountAllTime ?? 0,
-                            favoriteCount: model.rank?.favoriteCountAllTime ?? 0,
-                            rating: model.rank?.ratingAllTime ?? 0,
-                            ratingCount: model.rank?.ratingCountAllTime ?? 0,
-                            tippedAmountCount: model.rank?.tippedAmountCountAllTime ?? 0,
-                            commentCount: model.rank?.commentCountAllTime ?? 0,
-                          },
-                          // @ts-ignore TODO: Fix. Image is appearing properly.
-                          image: versionImages[0] ?? null,
-                          version: selectedVersion,
-                          versions: model.modelVersions,
-                        }}
-                      />
-                    )}
-
-                    {features.clubs && selectedVersion && (
-                      <ClubPostFromResourceMenuItem
-                        entityType="ModelVersion"
-                        entityId={selectedVersion.id}
-                      />
-                    )}
                   </Menu.Dropdown>
                 </Menu>
               </Group>
@@ -948,7 +911,6 @@ export default function ModelDetailsV2({
                   : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
               </AlertWithIcon>
             )}
-            <ClubRequirementNotice entityType="ModelVersion" entityId={modelVersionId} />
           </Stack>
           <Group spacing={4} noWrap>
             {isOwner ? (

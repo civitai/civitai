@@ -17,7 +17,7 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 
 export function PostsCard({
-  data: { image, id, stats, imageCount, clubRequirement, user, modelVersionId },
+  data: { image, id, stats, imageCount, user, modelVersionId },
   height,
 }: {
   data: PostsInfiniteModel;
@@ -32,104 +32,75 @@ export function PostsCard({
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
       {inView && (
         <>
-          <ImageGuardReportContext.Provider
-            value={{
-              getMenuItems: ({ menuItems }) => {
-                const items = menuItems.map((item) => item.component);
-                if (modelVersionId) {
-                  return items;
-                }
-                if (currentUser?.id === user.id && features.clubs) {
-                  items.push(
-                    <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={id} />
-                  );
-                }
+          <ImageGuard
+            images={[image]}
+            connect={{ entityId: id, entityType: 'post' }}
+            render={(image) => (
+              <ImageGuard.Content>
+                {({ safe }) => (
+                  <>
+                    {image.meta && 'civitaiResources' in (image.meta as object) && (
+                      <OnsiteIndicator />
+                    )}
+                    <Group
+                      position="apart"
+                      align="start"
+                      spacing={4}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        width: '100%',
+                        left: 0,
+                        zIndex: 10,
+                        padding: theme.spacing.sm,
+                      }}
+                    >
+                      <ImageGuard.ToggleConnect position="static" />
 
-                return items;
-              },
-            }}
-          >
-            <ImageGuard
-              images={[image]}
-              connect={{ entityId: id, entityType: 'post' }}
-              render={(image) => (
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <>
-                      {image.meta && 'civitaiResources' in (image.meta as object) && (
-                        <OnsiteIndicator />
+                      <Stack spacing="xs" ml="auto">
+                        <ImageGuard.Report context="post" position="static" withinPortal />
+                      </Stack>
+                    </Group>
+
+                    <RoutedDialogLink name="postDetail" state={{ postId: id }}>
+                      {!safe ? (
+                        <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                          <MediaHash {...image} />
+                        </AspectRatio>
+                      ) : (
+                        <EdgeMedia
+                          src={image.url}
+                          name={image.name ?? image.id.toString()}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : image.name ?? undefined
+                          }
+                          type={image.type}
+                          width={450}
+                          placeholder="empty"
+                          style={{ width: '100%', position: 'relative' }}
+                        />
                       )}
-                      <Group
-                        position="apart"
-                        align="start"
-                        spacing={4}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          width: '100%',
-                          left: 0,
-                          zIndex: 10,
-                          padding: theme.spacing.sm,
-                        }}
-                      >
-                        <ImageGuard.ToggleConnect position="static" />
-
-                        <Stack spacing="xs" ml="auto">
-                          <ImageGuard.Report context="post" position="static" withinPortal />
-                          {clubRequirement?.requiresClub && (
-                            <Tooltip
-                              label="This post requires joining a club to read its contents."
-                              withinPortal
-                              maw={350}
-                            >
-                              <ThemeIcon size={30} radius="xl" color="blue">
-                                <IconClubs stroke={2.5} size={16} />
-                              </ThemeIcon>
-                            </Tooltip>
-                          )}
-                        </Stack>
-                      </Group>
-
-                      <RoutedDialogLink name="postDetail" state={{ postId: id }}>
-                        {!safe ? (
-                          <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        ) : (
-                          <EdgeMedia
-                            src={image.url}
-                            name={image.name ?? image.id.toString()}
-                            alt={
-                              image.meta
-                                ? truncate(image.meta.prompt, {
-                                    length: constants.altTruncateLength,
-                                  })
-                                : image.name ?? undefined
-                            }
-                            type={image.type}
-                            width={450}
-                            placeholder="empty"
-                            style={{ width: '100%', position: 'relative' }}
-                          />
-                        )}
-                      </RoutedDialogLink>
-                      <PostReactions
-                        className={classes.reactions}
-                        imageCount={imageCount}
-                        metrics={{
-                          likeCount: stats?.likeCount,
-                          dislikeCount: stats?.dislikeCount,
-                          heartCount: stats?.heartCount,
-                          laughCount: stats?.laughCount,
-                          cryCount: stats?.cryCount,
-                        }}
-                      />
-                    </>
-                  )}
-                </ImageGuard.Content>
-              )}
-            />
-          </ImageGuardReportContext.Provider>
+                    </RoutedDialogLink>
+                    <PostReactions
+                      className={classes.reactions}
+                      imageCount={imageCount}
+                      metrics={{
+                        likeCount: stats?.likeCount,
+                        dislikeCount: stats?.dislikeCount,
+                        heartCount: stats?.heartCount,
+                        laughCount: stats?.laughCount,
+                        cryCount: stats?.cryCount,
+                      }}
+                    />
+                  </>
+                )}
+              </ImageGuard.Content>
+            )}
+          />
         </>
       )}
     </MasonryCard>

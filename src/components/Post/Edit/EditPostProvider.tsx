@@ -9,7 +9,6 @@ import { useCFUploadStore } from '~/store/cf-upload.store';
 import { PostImage } from '~/server/selectors/post.selector';
 import { getDataFromFile } from '~/utils/metadata';
 import { MediaType } from '@prisma/client';
-import { ClubResourceSchema } from '~/server/schema/club.schema';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -50,8 +49,6 @@ type EditPostProps = {
   images: ImageProps[];
   reorder: boolean;
   selectedImageId?: number;
-  clubs?: ClubResourceSchema[];
-  unlisted: boolean;
   deleting: boolean;
 };
 
@@ -65,8 +62,6 @@ interface EditPostState extends EditPostProps {
   setImage: (id: number, updateFn: (images: PostEditImage) => PostEditImage) => void;
   setImages: (updateFn: (images: PostEditImage[]) => PostEditImage[]) => void;
   setSelectedImageId: (id?: number) => void;
-  setClubs: (clubs?: ClubResourceSchema[]) => void;
-  toggleUnlisted: (value?: boolean) => void;
   upload: (
     { postId, modelVersionId }: { postId: number; modelVersionId?: number },
     files: File[]
@@ -95,8 +90,6 @@ const processPost = (post?: PostEditDetail) => {
     tags: post?.tags ?? [],
     images: post?.images ? prepareImages(post.images) : [],
     modelVersionId: post?.modelVersionId ?? undefined,
-    clubs: post?.clubs ?? [],
-    unlisted: post?.unlisted ?? false,
   };
 };
 
@@ -165,14 +158,6 @@ const createEditPostStore = ({
           setSelectedImageId: (id) =>
             set((state) => {
               state.selectedImageId = id;
-            }),
-          setClubs: (clubs) =>
-            set((state) => {
-              state.clubs = clubs;
-            }),
-          toggleUnlisted: (value) =>
-            set((state) => {
-              state.unlisted = value ?? !state.unlisted;
             }),
           upload: async ({ postId, modelVersionId }, files) => {
             set((state) => {
@@ -257,7 +242,6 @@ const createEditPostStore = ({
               state.images = data.images;
               state.objectUrls = [];
               state.modelVersionId = data.modelVersionId;
-              state.clubs = data.clubs;
             });
           },
           setDeleting: (value) =>

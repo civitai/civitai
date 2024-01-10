@@ -111,7 +111,6 @@ export const upsertModelVersion = async ({
   monetization,
   settings,
   recommendedResources,
-  clubs,
   templateId,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
@@ -169,14 +168,6 @@ export const upsertModelVersion = async ({
       ),
     ]);
 
-    if (clubs) {
-      await upsertClubResource({
-        entityType: 'ModelVersion',
-        entityId: version.id,
-        clubs,
-        userId: model.userId,
-      });
-    }
     return version;
   } else {
     const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
@@ -278,15 +269,6 @@ export const upsertModelVersion = async ({
           : undefined,
       },
     });
-
-    if (clubs) {
-      await upsertClubResource({
-        entityType: 'ModelVersion',
-        entityId: version.id,
-        clubs,
-        userId: model.userId,
-      });
-    }
 
     return version;
   }

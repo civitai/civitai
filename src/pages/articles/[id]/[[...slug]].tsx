@@ -237,7 +237,6 @@ export default function ArticleDetailsPage({
                 />
               </>
             )}
-            <ClubRequirementIndicator entityId={article.id} entityType="Article" size="sm" />
           </Group>
         </Stack>
         <Grid>
@@ -251,7 +250,6 @@ export default function ArticleDetailsPage({
               >
                 <EdgeMedia src={article.cover} width={1320} />
               </Box>
-              <ClubRequirementNotice entityId={article.id} entityType="Article" />
               {article.content && (
                 <article>
                   <RenderHtml html={article.content} />

@@ -1,3 +1,4 @@
+// @ts-nocheck Leaving the file as is in case we ever wanna come back to it a bit easier.
 import { Button, Checkbox, Stack, Text } from '@mantine/core';
 
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
@@ -36,7 +37,7 @@ export function EditPostClubs() {
 
   return (
     <Stack mt="lg">
-      {/* <ManagePostUnlistedStatus /> */}
+      <ManagePostUnlistedStatus />
       <Text size="sm" tt="uppercase" weight="bold">
         Make this resource part of a club
       </Text>
@@ -71,7 +72,7 @@ export function ManagePostUnlistedStatus() {
 
   const toggleCheckbox = () => {
     toggleUnlisted();
-    mutate({ id, unlisted: !unlisted }, { onError: () => toggleUnlisted(false) });
+    mutate({ id }, { onError: () => toggleUnlisted(false) });
   };
 
   if (!features.clubs || !hasClubs) return null;

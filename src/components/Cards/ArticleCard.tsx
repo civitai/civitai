@@ -81,17 +81,6 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
 
             <Stack ml="auto">
               <ArticleContextMenu article={data} />
-              {data.requiresClub && (
-                <Tooltip
-                  label="This article requires joining a club to read its contents."
-                  withinPortal
-                  maw={350}
-                >
-                  <ThemeIcon size={30} radius="xl" color="blue">
-                    <IconClubs stroke={2.5} size={16} />
-                  </ThemeIcon>
-                </Tooltip>
-              )}
             </Stack>
           </Group>
           {cover && (

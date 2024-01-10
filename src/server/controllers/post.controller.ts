@@ -199,34 +199,6 @@ export const updatePostHandler = async ({
           entityId: updatedPost.id,
         });
       }
-
-      if (input.clubs && !isScheduled && !updatedPost.modelVersionId) {
-        // Get user clubs:
-        const userClubs = await userContributingClubs({
-          userId: ctx.user.id,
-          clubIds: input.clubs.map((c) => c.clubId),
-        });
-
-        const canCreatePostClubs = userClubs.filter(
-          (c) =>
-            c.userId === ctx.user.id ||
-            ctx.user.isModerator ||
-            c.admin?.permissions?.includes(ClubAdminPermission.ManagePosts)
-        );
-
-        if (canCreatePostClubs.length > 0) {
-          // Now create the clubPost based off of the image post:
-          await dbWrite.clubPost.createMany({
-            data: canCreatePostClubs.map((c) => ({
-              clubId: c.id,
-              entityId: updatedPost.id,
-              entityType: 'Post',
-              membersOnly: updatedPost.unlisted ?? input.unlisted ?? false,
-              createdById: updatedPost.userId,
-            })),
-          });
-        }
-      }
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;

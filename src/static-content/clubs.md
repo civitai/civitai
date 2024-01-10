@@ -1,8 +1,6 @@
 ---
 title: Clubs temporarily disabled
- ---
-
-## Clubs temporarily disabled
+---
 
 The day after releasing Clubs, we made an [open call for feedback](https://civitai.com/articles/3636/call-for-feedback-on-sustainable-community-development) about how to help make the community sustainable in a way that works.
 

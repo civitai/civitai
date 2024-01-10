@@ -159,12 +159,6 @@ export function PostDetail({ postId }: { postId: number }) {
                 )}
               </Group>
               <Group spacing="xs" position="right" sx={{ flex: '1 0 !important' }} noWrap>
-                <ClubRequirementIndicator
-                  entityId={post.id}
-                  entityType="Post"
-                  radius="xl"
-                  size="md"
-                />
                 <Button
                   size="md"
                   radius="xl"
@@ -234,7 +228,6 @@ export function PostDetail({ postId }: { postId: number }) {
                 <FollowUserButton userId={post.user.id} size="md" compact />
               </Group>
             </Group>
-            <ClubRequirementNotice entityId={post.id} entityType="Post" />
           </Stack>
           <Container size="sm">
             <PostImages postId={post.id} images={images} isLoading={imagesLoading} />

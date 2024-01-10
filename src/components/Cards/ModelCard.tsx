@@ -60,7 +60,6 @@ import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuIte
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
-import { ClubPostFromResourceMenuItem } from '../Club/ClubPostFromResourceMenuItem';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
@@ -147,16 +146,6 @@ export function ModelCard({ data, forceInView }: Props) {
         onClick={() =>
           openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
         }
-      />,
-    ]);
-  }
-
-  if (features.clubs) {
-    contextMenuItems = contextMenuItems.concat([
-      <ClubPostFromResourceMenuItem
-        key="create-club-post-from-resource"
-        entityType="Model"
-        entityId={data.id}
       />,
     ]);
   }
@@ -309,17 +298,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                       </Menu.Dropdown>
                                     </Menu>
                                   )}
-                                  {data.requiresClub && (
-                                    <Tooltip
-                                      label="This model requires joining a club to get access to it."
-                                      withinPortal
-                                      maw={350}
-                                    >
-                                      <ThemeIcon size={30} radius="xl" color="blue">
-                                        <IconClubs stroke={2.5} size={16} />
-                                      </ThemeIcon>
-                                    </Tooltip>
-                                  )}
+
                                   {features.imageGeneration && data.canGenerate && (
                                     <HoverActionButton
                                       label="Create"

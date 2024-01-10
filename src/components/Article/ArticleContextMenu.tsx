@@ -17,8 +17,6 @@ import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
-import { AddToClubMenuItem } from '~/components/Club/AddToClubMenuItem';
-import { ClubPostFromResourceMenuItem } from '../Club/ClubPostFromResourceMenuItem';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
@@ -170,12 +168,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             )}
           </>
         )}
-        {isOwner && features.clubs && (
-          <AddToClubMenuItem entityType="Article" entityId={article.id} />
-        )}
-        {features.clubs && (
-          <ClubPostFromResourceMenuItem entityType="Article" entityId={article.id} />
-        )}
         {(!isOwner || isModerator) && (
           <LoginRedirect reason="report-article">
             <Menu.Item
@@ -196,5 +188,5 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 }
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
-  article: Omit<ArticleGetAll['items'][number], 'stats' | 'requiresClub'>;
+  article: Omit<ArticleGetAll['items'][number], 'stats'>;
 };
