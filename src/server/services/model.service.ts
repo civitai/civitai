@@ -68,7 +68,10 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
+import {
+  getUnavailableResources,
+  prepareModelInOrchestrator,
+} from '~/server/services/generation/generation.service';
 import { entityRequiresClub } from '~/server/services/common.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 
@@ -1006,6 +1009,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   //   nextCursor = nextItem?.id;
   // }
 
+  const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
     isPrivate,
@@ -1018,7 +1022,9 @@ export const getModelsWithImagesAndModelVersions = async ({
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;
 
-        const canGenerate = !!version.generationCoverage?.covered;
+        const canGenerate =
+          !!version.generationCoverage?.covered &&
+          unavailableGenResources.indexOf(version.id) === -1;
         const requiresClub =
           clubRequirement.find((r) => r.entityId === version.id)?.requiresClub ?? false;
         return {
@@ -1626,6 +1632,7 @@ export const getModelsByCategory = async ({
       })
     : [];
 
+  const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
     items: items.map(({ items, ...c }) => ({
@@ -1637,7 +1644,9 @@ export const getModelsByCategory = async ({
           const [image] = images.filter((i) => i.modelVersionId === version.id);
           if (!image) return null;
 
-          const canGenerate = !!version.generationCoverage?.covered;
+          const canGenerate =
+            !!version.generationCoverage?.covered &&
+            unavailableGenResources.indexOf(version.id) === -1;
 
           return {
             ...model,

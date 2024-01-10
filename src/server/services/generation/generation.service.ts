@@ -46,7 +46,7 @@ import { redis } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
-import { fromJson } from '~/utils/json-helpers';
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -115,7 +115,7 @@ export const getGenerationResources = async ({
   supported,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Resource[]> => {
   const preselectedVersions: number[] = [];
-  if (!ids && !query) {
+  if ((!ids || ids.length === 0) && !query) {
     const featuredCollection = await dbRead.collection
       .findFirst({
         where: { userId: -1, name: 'Generator' },
@@ -601,11 +601,13 @@ export async function bulkDeleteGeneratedImages({
 }
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
+  const unavailableGenResources = await getUnavailableResources();
   const result = await dbRead.generationCoverage.findFirst({
     where: { modelVersionId: id },
     select: { covered: true },
   });
-  return result?.covered ?? false;
+
+  return (result?.covered ?? false) && unavailableGenResources.indexOf(id) === -1;
 }
 
 export async function getGenerationStatus() {
@@ -795,5 +797,34 @@ export async function getUnstableResources() {
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
-  return cachedData;
+  return cachedData ?? [];
+}
+
+export async function getUnavailableResources() {
+  const cachedData = await redis
+    .hGet('system:features', 'generation:unavailable-resources')
+    .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
+    .catch(() => [] as number[]); // fallback to empty array if redis fails
+
+  return cachedData ?? [];
+}
+
+export async function toggleUnavailableResource({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const unavailableResources = await getUnavailableResources();
+  const index = unavailableResources.indexOf(id);
+  if (index > -1) unavailableResources.splice(index, 1);
+  else unavailableResources.push(id);
+
+  await redis.hSet(
+    'system:features',
+    'generation:unavailable-resources',
+    toJson(unavailableResources)
+  );
+
+  return unavailableResources;
 }
