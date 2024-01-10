@@ -139,7 +139,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? false,
     recommendedResources: version?.recommendedResources ?? [],
-    clubs: version?.clubs ?? [],
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -581,16 +580,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               }
             />
           </Stack>
-          {features.clubs && hasClubs && (
-            <>
-              <Divider label="Club options" />
-              <InputClubResourceManagementInput
-                label="Make this resource part of a club"
-                description="This will make this resource available to club members only. People will still see this resource in the public list, but will be required to join the club to use it."
-                name="clubs"
-              />
-            </>
-          )}
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading })}
       </Form>

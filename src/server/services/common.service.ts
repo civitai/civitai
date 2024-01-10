@@ -248,10 +248,9 @@ export const entityRequiresClub = async ({
     case 'ModelVersion':
       query = Prisma.sql`
         SELECT
-          mmv.id as "entityId",
+          mv.id as "entityId",
           mv."availability" as "availability"
         FROM "ModelVersion" mv 
-        JOIN "Model" mmv ON mv."modelId" = mmv.id
         WHERE mv.id IN (${Prisma.join(entityIds, ', ')})
         `;
 

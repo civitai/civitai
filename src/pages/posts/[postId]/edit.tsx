@@ -11,7 +11,6 @@ import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
-import { EditPostClubs } from '../../../components/Post/Edit/EditPostClubs';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 export default function PostEdit() {
@@ -37,7 +36,6 @@ export default function PostEdit() {
               </Badge>
             </Group>
             <EditPostControls />
-            <EditPostClubs />
             <EditPostReviews />
           </Stack>
         </ContainerGrid.Col>

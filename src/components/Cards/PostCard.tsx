@@ -28,83 +28,46 @@ export function PostCard({ data }: Props) {
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
       <div className={classes.root}>
-        {data.image && (
-          <ImageGuardReportContext.Provider
-            value={{
-              getMenuItems: ({ menuItems }) => {
-                const items = menuItems.map((item) => item.component);
-                if (data.modelVersionId) {
-                  return items;
-                }
-
-                if (
-                  currentUser?.id === data.user.id &&
-                  features.clubs &&
-                  // Avoids adding it twice.
-                  !menuItems.find((item) => item.key === 'add-to-club')
-                ) {
-                  items.push(
-                    <AddToClubMenuItem key="add-to-club" entityType="Post" entityId={data.id} />
-                  );
-                }
-
-                return items;
-              },
-            }}
-          >
-            <ImageGuard
-              images={[data.image]}
-              connect={{ entityId: data.id, entityType: 'post' }}
-              render={(image) => (
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <>
-                      <Group
-                        position="apart"
-                        align="start"
-                        spacing={4}
-                        className={cx(classes.contentOverlay, classes.top)}
-                      >
-                        <ImageGuard.ToggleConnect position="static" />
-                        <Stack spacing="xs" ml="auto">
-                          <ImageGuard.Report context="post" position="static" withinPortal />
-                          {data.clubRequirement?.requiresClub && (
-                            <Tooltip
-                              label="This post requires joining a club to read its contents."
-                              withinPortal
-                              maw={350}
-                            >
-                              <ThemeIcon size={30} radius="xl" color="blue">
-                                <IconClubs stroke={2.5} size={16} />
-                              </ThemeIcon>
-                            </Tooltip>
-                          )}
-                        </Stack>
-                      </Group>
-                      {!safe ? (
-                        <MediaHash {...data.image} />
-                      ) : (
-                        <EdgeMedia
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={
-                            image.meta
-                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                              : image.name ?? undefined
-                          }
-                          type={image.type}
-                          width={IMAGE_CARD_WIDTH}
-                          placeholder="empty"
-                          className={classes.image}
-                        />
-                      )}
-                    </>
+        <ImageGuard
+          images={[data.image]}
+          connect={{ entityId: data.id, entityType: 'post' }}
+          render={(image) => (
+            <ImageGuard.Content>
+              {({ safe }) => (
+                <>
+                  <Group
+                    position="apart"
+                    align="start"
+                    spacing={4}
+                    className={cx(classes.contentOverlay, classes.top)}
+                  >
+                    <ImageGuard.ToggleConnect position="static" />
+                    <Stack spacing="xs" ml="auto">
+                      <ImageGuard.Report context="post" position="static" withinPortal />
+                    </Stack>
+                  </Group>
+                  {!safe ? (
+                    <MediaHash {...data.image} />
+                  ) : (
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={
+                        image.meta
+                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                          : image.name ?? undefined
+                      }
+                      type={image.type}
+                      width={IMAGE_CARD_WIDTH}
+                      placeholder="empty"
+                      className={classes.image}
+                    />
                   )}
-                </ImageGuard.Content>
+                </>
               )}
-            />
-          </ImageGuardReportContext.Provider>
-        )}
+            </ImageGuard.Content>
+          )}
+        />
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
           spacing="sm"

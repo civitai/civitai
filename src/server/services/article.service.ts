@@ -42,7 +42,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { entityRequiresClub, hasEntityAccess } from '~/server/services/common.service';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { getPrivateEntityAccessForUser } from './user-cache.service';
@@ -53,7 +53,6 @@ type ArticleRaw = {
   title: string;
   publishedAt: Date | null;
   nsfw: boolean;
-  unlisted: boolean;
   availability: Availability;
   userId: number | null;
   stats:
@@ -405,11 +404,6 @@ export const getArticles = async ({
       nextCursor = nextItem?.cursorId || undefined;
     }
 
-    const clubRequirement = await entityRequiresClub({
-      entityIds: articles.map((article) => article.id),
-      entityType: 'Article',
-    });
-
     const profilePictures = await dbRead.image.findMany({
       where: { id: { in: articles.map((a) => a.user.profilePictureId).filter(isDefined) } },
       select: { ...profileImageSelect, ingestion: true },
@@ -428,26 +422,14 @@ export const getArticles = async ({
 
         if (sessionUser?.isModerator || a.userId === sessionUser?.id) return true;
 
-        // Hide posts where the user does not have permission.
-        if (
-          a.unlisted &&
-          a.availability === Availability.Private &&
-          !privateArticleAccessIds.includes(a.id)
-        ) {
-          return false;
-        }
-
         return true;
       })
       .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
-        const requiresClub =
-          clubRequirement.find((r) => r.entityId === article.id)?.requiresClub ?? undefined;
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
 
         return {
           ...article,
-          requiresClub,
           tags: tags.map(({ tag }) => ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
@@ -553,12 +535,6 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
-    if (!access.hasAccess && article.unlisted) throw throwAuthorizationError();
-
-    const [entityClubDetails] = await getClubDetailsForResource({
-      entityType: 'Article',
-      entityIds: [article.id],
-    });
 
     const articleCategories = await getCategoryTags('article');
     const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = !access.hasAccess
@@ -576,7 +552,6 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
-      clubs: entityClubDetails?.clubs ?? [],
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -625,7 +600,6 @@ export const upsertArticle = async ({
   userId,
   tags,
   attachments,
-  clubs,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
@@ -665,15 +639,6 @@ export const upsertArticle = async ({
 
         return article;
       });
-
-      if (clubs) {
-        await upsertClubResource({
-          entityType: 'Article',
-          entityId: result.id,
-          clubs,
-          userId: result.userId,
-        });
-      }
 
       return result;
     }
@@ -755,15 +720,6 @@ export const upsertArticle = async ({
         type: 'published',
         entityType: 'article',
         entityId: result.id,
-      });
-    }
-
-    if (clubs) {
-      await upsertClubResource({
-        entityType: 'Article',
-        entityId: result.id,
-        clubs,
-        userId: result.userId,
       });
     }
 

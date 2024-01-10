@@ -74,10 +74,6 @@ export const upsertArticleInput = z.object({
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
-  // TODO.articles: check what's going to be stored on metadata
-  // metadata: z.object({}).nullish(),
-  clubs: z.array(clubResourceSchema).optional(),
-  unlisted: z.boolean().optional(),
 });
 
 export type GetArticlesByCategorySchema = z.infer<typeof getArticlesByCategorySchema>;

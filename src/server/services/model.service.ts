@@ -69,7 +69,6 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
-import { entityRequiresClub } from '~/server/services/common.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -985,10 +984,6 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
-  const clubRequirement = await entityRequiresClub({
-    entityIds: modelVersionIds.map((id) => id),
-    entityType: 'ModelVersion',
-  });
 
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
@@ -1019,8 +1014,6 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!versionImages.length && !showImageless) return null;
 
         const canGenerate = !!version.generationCoverage?.covered;
-        const requiresClub =
-          clubRequirement.find((r) => r.entityId === version.id)?.requiresClub ?? false;
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
@@ -1037,7 +1030,6 @@ export const getModelsWithImagesAndModelVersions = async ({
           version,
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
-          requiresClub,
         };
       })
       .filter(isDefined),
