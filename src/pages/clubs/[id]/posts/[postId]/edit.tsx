@@ -12,6 +12,20 @@ import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubAdminPermission } from '@prisma/client';
+import { createServerSideProps } from '../../../../../server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.clubs) return { notFound: true };
+
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: false,
+      },
+    };
+  },
+});
 
 export default function ClubPostEdit() {
   const router = useRouter();

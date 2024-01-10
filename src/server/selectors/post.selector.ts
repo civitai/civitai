@@ -39,7 +39,6 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   modelVersionId: true,
   userId: true,
   publishedAt: true,
-  unlisted: true,
   images: {
     orderBy: { index: 'asc' },
     select: editPostImageSelect,

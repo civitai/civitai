@@ -110,7 +110,6 @@ export function ModelVersionDetails({
   });
 
   const [access] = entities;
-  const requiresClub = access?.requiresClub;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -198,7 +197,6 @@ export function ModelVersionDetails({
   const archived = model.mode === ModelModifier.Archived;
 
   const modelDetails: DescriptionTableProps['items'] = [
-    { label: 'Access', value: 'Club membership', visible: features.clubs && requiresClub },
     {
       label: 'Type',
       value: (

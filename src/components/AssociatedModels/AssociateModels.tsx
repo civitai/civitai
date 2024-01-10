@@ -35,9 +35,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 
-type State = Array<
-  Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number; requiresClub?: boolean }
->;
+type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
 export function AssociateModels({
   fromId,

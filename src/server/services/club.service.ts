@@ -615,6 +615,10 @@ export const upsertClubResource = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
+  if (true) {
+    return; // Disabled for now
+  }
+
   const [clubRequirement] = await entityRequiresClub({
     entityType,
     entityIds: [entityId],

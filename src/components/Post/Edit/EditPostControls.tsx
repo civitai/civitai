@@ -61,8 +61,6 @@ export function ManagePostStatus() {
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
   const isReordering = useEditPostContext((state) => state.reorder);
-  const clubs = useEditPostContext((state) => state.clubs);
-  const unlisted = useEditPostContext((state) => state.unlisted);
 
   const { mutate, isLoading } = trpc.post.update.useMutation({
     onError(error) {
@@ -79,14 +77,11 @@ export function ManagePostStatus() {
     if (!currentUser) return;
     const publishedAt = new Date();
     mutate(
-      { id, publishedAt, clubs, unlisted },
+      { id, publishedAt },
       {
         onSuccess: async () => {
           setPublishedAt(publishedAt);
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
-          if (clubs?.length) {
-            await queryUtils.clubPost.getInfiniteClubPosts.invalidate();
-          }
 
           if (returnUrl) router.push(returnUrl);
           else router.push(`/user/${currentUser.username}/posts`);

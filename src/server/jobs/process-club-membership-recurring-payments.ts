@@ -1,4 +1,4 @@
-import { createJob } from './job';
+import { UNRUNNABLE_JOB_CRON, createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import dayjs from 'dayjs';
 import { throwInsufficientFundsError } from '~/server/utils/errorHandling';
@@ -21,7 +21,7 @@ const logger = ({ type = 'error', data = {} }: { type?: string; data?: MixedObje
 };
 export const processClubMembershipRecurringPayments = createJob(
   'process-club-membership-recurring-payments',
-  '0 * * * *',
+  UNRUNNABLE_JOB_CRON,
   async () => {
     const now = dayjs();
 

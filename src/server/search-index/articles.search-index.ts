@@ -8,7 +8,6 @@ import {
 import { Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
-import { entityRequiresClub } from '~/server/services/common.service';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -136,18 +135,9 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const clubRequirement = await entityRequiresClub({
-    entityIds: articles.map(({ id }) => id),
-    entityType: 'Article',
-  });
-
   const indexReadyRecords = articles.map(({ tags, stats, ...articleRecord }) => {
-    const requiresClub =
-      clubRequirement.find((r) => r.entityId === articleRecord.id)?.requiresClub ?? false;
-
     return {
       ...articleRecord,
-      requiresClub,
       stats: stats
         ? {
             favoriteCount: stats.favoriteCountAllTime,

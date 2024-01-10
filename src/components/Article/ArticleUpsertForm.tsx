@@ -92,7 +92,6 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
     cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
-    clubs: article?.clubs ?? [],
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
   const clearStorage = useFormStorage({
@@ -183,16 +182,6 @@ export function ArticleUpsertForm({ article }: Props) {
               withAsterisk
               stickyToolbar
             />
-            {features.clubs && hasClubs && (
-              <>
-                <Divider label="Club options" />
-                <InputClubResourceManagementInput
-                  label="Make this resource part of a club"
-                  description="This will make this resource available to club members only. People will still see this resource in the public list, but will be required to join the club to use it."
-                  name="clubs"
-                />
-              </>
-            )}
           </Stack>
         </ContainerGrid.Col>
         <ContainerGrid.Col xs={12} md={4}>

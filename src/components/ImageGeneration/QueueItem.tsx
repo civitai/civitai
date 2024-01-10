@@ -126,7 +126,7 @@ export function QueueItem({ request }: Props) {
       : undefined;
   if (!request.alternativesAvailable) fullCoverageModels = undefined;
   const isFullCoverageModel =
-    fullCoverageModels?.some((x) => x.id === request.resources[0].id) ?? false;
+    fullCoverageModels?.some((x) => x.id === request.resources[0]?.id) ?? false;
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =

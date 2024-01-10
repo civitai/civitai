@@ -48,7 +48,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { profileImageSelect } from '../selectors/image.selector';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getClubDetailsForResource, upsertClubResource } from './club.service';
-import { entityRequiresClub, hasEntityAccess } from './common.service';
+import { hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
 import { getPrivateEntityAccessForUser } from './user-cache.service';
@@ -64,7 +64,6 @@ type GetAllPostsRaw = {
   profilePictureId: number | null;
   publishedAt: Date | null;
   cursorId: Date | number | null;
-  unlisted: boolean;
   modelVersionId: number | null;
   collectionId: number | null;
   availability: Availability;
@@ -328,11 +327,6 @@ export const getPostsInfinite = async ({
 
   const profilePictures = await getProfilePicturesForUsers(userIds);
 
-  const clubRequirement = await entityRequiresClub({
-    entityType: 'Post',
-    entityIds: postsRaw.map(({ id }) => id),
-  });
-
   const userEntityAccess = await getPrivateEntityAccessForUser({ userId: user?.id });
   const privatePostAccessIds = userEntityAccess
     .filter((x) => x.entityType === 'Post')
@@ -378,15 +372,6 @@ export const getPostsInfinite = async ({
         // Allow mods and owners to view all.
         if (user?.isModerator || p.userId === user?.id) return true;
 
-        // Hide posts where the user does not have permission.
-        if (
-          p.unlisted &&
-          p.availability === Availability.Private &&
-          !privatePostAccessIds.includes(p.id)
-        ) {
-          return false;
-        }
-
         // Hide posts from unpublished model versions:
         if (
           p.modelVersionId &&
@@ -427,7 +412,6 @@ export const getPostsInfinite = async ({
           },
           stats,
           image,
-          clubRequirement: clubRequirement.find((r) => r.entityId === post.id),
         };
       })
       .filter((x) => x.imageCount !== 0),
@@ -498,15 +482,9 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
     images,
   };
 
-  const [entityClubDetails] = await getClubDetailsForResource({
-    entityType: 'Post',
-    entityIds: [post.id],
-  });
-
   return {
     ...castedPost,
     tags: castedPost.tags.flatMap((x) => x.tag),
-    clubs: entityClubDetails?.clubs ?? [],
   };
 };
 
@@ -532,21 +510,14 @@ export const createPost = async ({
     images,
   };
 
-  const [entityClubDetails] = await getClubDetailsForResource({
-    entityType: 'Post',
-    entityIds: [result.id],
-  });
-
   return {
     ...result,
     tags: result.tags.flatMap((x) => x.tag),
-    clubs: entityClubDetails?.clubs ?? [],
   };
 };
 
 export const updatePost = async ({
   id,
-  clubs,
   userId,
   isModerator,
   ...data
@@ -559,17 +530,6 @@ export const updatePost = async ({
       detail: data.detail !== undefined ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
-
-  if (post && clubs && userId) {
-    // Update the resource itself:
-    await upsertClubResource({
-      userId,
-      isModerator,
-      entityId: post.id,
-      entityType: 'Post',
-      clubs: clubs ?? [],
-    });
-  }
 
   return post;
 };

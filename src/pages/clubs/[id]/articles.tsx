@@ -12,6 +12,20 @@ import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import { createServerSideProps } from '../../../server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.clubs) return { notFound: true };
+
+    return {
+      redirect: {
+        destination: '/content/clubs',
+        permanent: false,
+      },
+    };
+  },
+});
 
 const ClubArticles = () => {
   const router = useRouter();
