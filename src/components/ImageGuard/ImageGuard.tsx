@@ -1,8 +1,10 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
   Box,
   Button,
+  Center,
   Group,
   HoverCard,
   MantineSize,
@@ -53,6 +55,7 @@ import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { useImageStore } from '~/store/image.store';
 
 export type ImageGuardConnect = {
   entityType:
@@ -215,11 +218,12 @@ const useImageGuardContentContext = () => {
 };
 function ImageGuardContentProvider({
   children,
-  image,
+  image: initialImage,
 }: {
   children: React.ReactNode;
   image: ImageProps;
 }) {
+  const image = useImageStore(initialImage);
   const { connect } = useImageGuardContext();
   const currentUser = useCurrentUser();
   const shouldBlur = currentUser?.blurNsfw ?? true;
@@ -257,7 +261,13 @@ function ImageGuardContentProvider({
         isModerator,
       }}
     >
-      {children}
+      {image.tosViolation ? (
+        <Center w="100%" h="100%">
+          <Alert color="red">TOS Violation</Alert>
+        </Center>
+      ) : (
+        children
+      )}
     </ImageGuardContentCtx.Provider>
   );
 }

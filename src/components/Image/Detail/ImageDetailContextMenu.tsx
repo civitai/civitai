@@ -23,6 +23,7 @@ import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { ReportReason } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useReportCsamImages } from '~/components/Image/image.utils';
+import { imageStore } from '~/store/image.store';
 
 /*
 TODO.gallery
@@ -35,7 +36,8 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const queryUtils = trpc.useContext();
-  const { csamReports } = useFeatureFlags();
+
+  if (!image) return null;
 
   const handleClose = () => {
     setLoading(false);
@@ -55,12 +57,9 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
 
   const handleTosViolationSuccess = () => {
     handleClose();
-    queryUtils.image.getInfinite.invalidate();
-    queryUtils.image.getImagesAsPostsInfinite.invalidate();
+    imageStore.setImage(image.id, { tosViolation: true });
     router.back();
   };
-
-  if (!image) return null;
 
   return (
     <Menu opened={opened} onChange={setOpened} closeOnClickOutside={!loading}>
