@@ -12,13 +12,12 @@ export const createSelectStore = <T extends Key = Key>() => {
     immer((set) => ({
       selected: {},
       setSelected: (keys) =>
-        set(
-          (state) =>
-            (state.selected = keys.reduce<Record<Key, boolean>>(
-              (acc, key) => ({ ...acc, [key]: true }),
-              {}
-            ))
-        ),
+        set((state) => {
+          state.selected = keys.reduce<Record<Key, boolean>>(
+            (acc, key) => ({ ...acc, [key]: true }),
+            {}
+          );
+        }),
       toggle: (key, value) =>
         set((state) => {
           const _value = value ?? !state.selected[key];
