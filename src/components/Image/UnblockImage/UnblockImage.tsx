@@ -2,6 +2,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { imageStore } from '~/store/image.store';
 
 export function UnblockImage({
   children,
@@ -27,6 +28,7 @@ export function UnblockImage({
   const currentUser = useCurrentUser();
   const { mutate, isLoading } = trpc.image.moderate.useMutation({
     async onSuccess(_, { ids: [id] }) {
+      imageStore.setImage(imageId, { ingestion: 'Scanned', blockedFor: undefined });
       await onSuccess?.(id);
       closeModal('unblock-confirm');
     },

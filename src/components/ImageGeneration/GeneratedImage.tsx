@@ -52,7 +52,7 @@ export function GeneratedImage({
   const { classes } = useStyles();
   const user = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const selected = generationImageSelect.useSelected(image.id);
+  const selected = generationImageSelect.useIsSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
   const { copied, copy } = useClipboard();
 

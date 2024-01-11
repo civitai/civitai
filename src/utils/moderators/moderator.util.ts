@@ -5,7 +5,7 @@ export const getImageEntityUrl = (image: {
   postId?: number | null;
   metadata?: { profilePicture?: boolean; username?: number } | null;
 }) => {
-  if (image.postId) return `/posts/${image.postId}`;
+  // if (image.postId) return `/posts/${image.postId}`;
   if (image.metadata?.username) return `/user/${image.metadata.username}`;
 
   switch (image.entityType) {

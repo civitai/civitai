@@ -598,7 +598,6 @@ export default function BountyEntryDetailsPage({
                   entityType="image"
                   entityId={activeImage.id}
                   canAdd
-                  canAddModerated={isModerator}
                   collapsible
                   px="sm"
                 />
@@ -668,7 +667,6 @@ export default function BountyEntryDetailsPage({
                     entityType="image"
                     entityId={activeImage.id}
                     canAdd
-                    canAddModerated={isModerator}
                     collapsible
                     px="sm"
                   />

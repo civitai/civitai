@@ -1,8 +1,10 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
   Box,
   Button,
+  Center,
   Group,
   HoverCard,
   MantineSize,
@@ -33,7 +35,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import Router, { useRouter } from 'next/router';
-import React, { cloneElement, createContext, useCallback, useContext, useState } from 'react';
+import React, { cloneElement, createContext, useContext, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -47,13 +49,13 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isNsfwImage } from '~/server/common/model-helpers';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { SimpleUser } from '~/server/selectors/user.selector';
-import { useImageStore } from '~/store/images.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { constants } from '~/server/common/constants';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { useImageStore } from '~/store/image.store';
 
 export type ImageGuardConnect = {
   entityType:
@@ -216,11 +218,12 @@ const useImageGuardContentContext = () => {
 };
 function ImageGuardContentProvider({
   children,
-  image,
+  image: initialImage,
 }: {
   children: React.ReactNode;
   image: ImageProps;
 }) {
+  const image = useImageStore(initialImage);
   const { connect } = useImageGuardContext();
   const currentUser = useCurrentUser();
   const shouldBlur = currentUser?.blurNsfw ?? true;
@@ -230,14 +233,11 @@ function ImageGuardContentProvider({
     connect ? state.showingConnections[getConnectionKey(connect)] : undefined
   );
 
-  const imageStore = useImageStore(
-    useCallback((state) => state.images[image.id.toString()] ?? {}, [image.id])
-  );
   const userId: number | undefined = (image as any).userId ?? (image as any).user?.id;
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const showing = showConnection ?? showImage;
-  const nsfw = imageStore.nsfw ?? isNsfwImage(image);
+  const nsfw = isNsfwImage(image);
   const nsfwWithBlur = nsfw && shouldBlur;
   const unsafe = nsfwWithBlur && !showing;
   const safe = !unsafe;
@@ -261,7 +261,13 @@ function ImageGuardContentProvider({
         isModerator,
       }}
     >
-      {children}
+      {image.tosViolation ? (
+        <Center w="100%" h="100%">
+          <Alert color="red">TOS Violation</Alert>
+        </Center>
+      ) : (
+        children
+      )}
     </ImageGuardContentCtx.Provider>
   );
 }

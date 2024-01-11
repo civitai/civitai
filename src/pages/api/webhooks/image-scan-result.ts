@@ -24,6 +24,9 @@ import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { updateImageTagIdsForImages } from '~/server/services/image.service';
+import { signalClient } from '~/utils/signal-client';
+import { SignalMessages } from '~/server/common/enums';
+import { scanJobsSchema } from '~/server/schema/image.schema';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -81,24 +84,20 @@ export default WebhookEndpoint(async function imageTags(req, res) {
         });
         break;
       case Status.Unscannable:
-        let { scanJobs } = (await dbWrite.image.findUnique({
+        const image = await dbWrite.image.findUnique({
           where: { id: data.id },
           select: { scanJobs: true },
-        })) ?? { scanJobs: {} };
+        });
 
-        if (typeof scanJobs !== 'object') scanJobs = {};
-
-        let retryCount = 0;
-        if (scanJobs && 'retryCount' in scanJobs) {
-          retryCount = scanJobs.retryCount as number;
-          retryCount++;
-        }
+        const scanJobs = scanJobsSchema.parse(image?.scanJobs ?? {});
+        scanJobs.retryCount = scanJobs.retryCount ?? 0;
+        scanJobs.retryCount++;
 
         await dbWrite.image.updateMany({
           where: { id: data.id, ingestion: { in: pendingStates } },
           data: {
             ingestion: ImageIngestionStatus.Error,
-            scanJobs: { ...scanJobs, retryCount },
+            scanJobs: scanJobs as any,
           },
         });
         break;
@@ -233,23 +232,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
       `);
-
-      // Update search index
-      await imagesSearchIndex.queueUpdate([
-        {
-          id,
-          action: SearchIndexUpdateQueueAction.Update,
-        },
-      ]);
     }
-  } catch (e: any) {
-    await logScanResultError({ id, message: e.message, error: e });
-    throw new Error(e.message);
-  }
 
-  try {
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
-    const tags =
+    const tagsOnImage =
       (
         await dbWrite.tagsOnImage.findMany({
           where: { imageId: id, automated: true, disabled: false },
@@ -261,7 +247,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       hasMinorTag = false,
       hasCartoonTag = false,
       nsfw = false;
-    for (const { name, type } of tags) {
+    for (const { name, type } of tagsOnImage) {
       if (type === TagType.Moderation) nsfw = true;
       if (minorTags.includes(name)) hasMinorTag = true;
       else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
@@ -333,10 +319,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {
-      // Clear cached image tags after completing scans
-      await updateImageTagIdsForImages(id);
-
-      await dbWrite.$executeRaw`
+      const [{ ingestion }] = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus }[]>`
         WITH scan_count AS (
           SELECT id, COUNT(*) as count
           FROM "Image",
@@ -346,14 +329,37 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
         )
         UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
-        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length};
+        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length}
+        RETURNING "ingestion";
       `;
+      data.ingestion = ingestion;
 
-      const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
-      const isProfilePicture = imageMetadata?.profilePicture === true;
-      if (isProfilePicture) {
-        await deleteUserProfilePictureCache(image.userId);
+      if (ingestion === 'Scanned') {
+        // Clear cached image tags after completing scans
+        await updateImageTagIdsForImages(id);
+
+        const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
+        const isProfilePicture = imageMetadata?.profilePicture === true;
+        if (isProfilePicture) {
+          await deleteUserProfilePictureCache(image.userId);
+        }
+
+        // Update search index
+        await imagesSearchIndex.queueUpdate([
+          {
+            id,
+            action: SearchIndexUpdateQueueAction.Update,
+          },
+        ]);
       }
+    }
+
+    if (data.ingestion) {
+      await signalClient.send({
+        target: SignalMessages.ImageIngestionStatus,
+        data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
+        userId: image.userId,
+      });
     }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
