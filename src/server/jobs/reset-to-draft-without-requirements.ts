@@ -17,10 +17,8 @@ export const resetToDraftWithoutRequirements = createJob(
       WHERE
         mv.status = 'Published'
         AND m.status = 'Published'
-        AND (
-          m."userId" = -1 OR
-          NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId")
-        )
+        AND m."userId" != -1
+        AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId")
         AND m."deletedAt" IS NULL;
     `;
 
