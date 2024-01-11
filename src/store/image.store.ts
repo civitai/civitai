@@ -16,7 +16,7 @@ type ImageStore = {
 };
 
 const useStore = create<ImageStore>((set) => ({
-  setImage: (id, data) => set((state) => ({ [id]: { ...state[id], data } })),
+  setImage: (id, data) => set((state) => ({ [id]: { ...state[id], ...data } })),
 }));
 
 export const imageStore = {

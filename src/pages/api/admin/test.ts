@@ -23,7 +23,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   // });
   signalClient.send({
     target: 'image-ingestion:status',
-    data: { imageId: 4196376, ingestion: ImageIngestionStatus.Scanned },
+    data: { imageId: 175719, ingestion: ImageIngestionStatus.Blocked, blockedFor: 'being rude' },
     userId: 5,
   });
 

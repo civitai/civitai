@@ -128,7 +128,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       meta: true,
       metadata: true,
       postId: true,
-      scanJobs: true,
     },
   });
   if (!image) {
@@ -136,10 +135,12 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error('Image not found');
   }
 
-  const scanJobs = scanJobsSchema.parse(image.scanJobs ?? {});
-  scanJobs.scans = { ...scanJobs.scans, [source]: new Date().getTime() };
-
-  const data: Prisma.ImageUpdateInput = { scanJobs: scanJobs as any };
+  // Add to scanJobs
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "Image"
+      SET "scanJobs" = jsonb_set("scanJobs", '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+    WHERE id = ${id};
+  `);
 
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
@@ -292,6 +293,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       if (poi) reviewKey = 'poi';
     }
 
+    const data: Prisma.ImageUpdateInput = {};
     if (reviewKey) data.needsReview = reviewKey;
 
     if (nsfw && prompt) {
@@ -303,43 +305,61 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       }
     }
 
-    const completedScans = Object.keys(scanJobs.scans);
-    const hasRequiredScans = REQUIRED_SCANS.every((required) => completedScans.includes(required));
-    if (data.ingestion !== 'Blocked' && hasRequiredScans) {
-      data.ingestion = 'Scanned';
+    // Set nsfw level
+    // do this before updating the image with the new ingestion status
+    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
+    if (image.postId) await updatePostNsfwLevel(image.postId);
+
+    if (Object.keys(data).length > 0) {
+      await dbWrite.image.updateMany({
+        where: { id },
+        data,
+      });
     }
 
-    if (data.ingestion === 'Scanned') {
-      // Set nsfw level
-      // do this before updating the image with the new ingestion status
-      await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
-      if (image.postId) await updatePostNsfwLevel(image.postId);
-    }
+    // Update scannedAt and ingestion if not blocked
+    if (data.ingestion !== 'Blocked') {
+      const { ingestion } = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus }>`
+        WITH scan_count AS (
+          SELECT id, COUNT(*) as count
+          FROM "Image",
+              jsonb_object_keys("scanJobs"->'scans') AS keys
+          WHERE id = ${id}
+          GROUP BY id
+        )
+        UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
+        FROM scan_count s
+        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length}
+        RETURNING "ingestion";
+      `;
+      data.ingestion = ingestion;
 
-    await dbWrite.image.update({ where: { id: image.id }, data });
-    await signalClient.send({
-      target: SignalMessages.ImageIngestionStatus,
-      data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
-      userId: image.userId,
-    });
+      if (ingestion === 'Scanned') {
+        // Clear cached image tags after completing scans
+        await updateImageTagIdsForImages(id);
 
-    if (data.ingestion === 'Scanned') {
-      // Clear cached image tags after completing scans
-      await updateImageTagIdsForImages(id);
+        const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
+        const isProfilePicture = imageMetadata?.profilePicture === true;
+        if (isProfilePicture) {
+          await deleteUserProfilePictureCache(image.userId);
+        }
 
-      const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
-      const isProfilePicture = imageMetadata?.profilePicture === true;
-      if (isProfilePicture) {
-        await deleteUserProfilePictureCache(image.userId);
+        // Update search index
+        await imagesSearchIndex.queueUpdate([
+          {
+            id,
+            action: SearchIndexUpdateQueueAction.Update,
+          },
+        ]);
       }
+    }
 
-      // Update search index
-      await imagesSearchIndex.queueUpdate([
-        {
-          id,
-          action: SearchIndexUpdateQueueAction.Update,
-        },
-      ]);
+    if (data.ingestion) {
+      await signalClient.send({
+        target: SignalMessages.ImageIngestionStatus,
+        data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
+        userId: image.userId,
+      });
     }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });

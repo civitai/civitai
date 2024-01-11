@@ -14,10 +14,9 @@ import {
 } from '@mantine/core';
 import { ImageIngestionStatus, CosmeticType } from '@prisma/client';
 import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@tabler/icons-react';
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useImageIngestionContext } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -34,36 +33,26 @@ import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
+import { useImageStore } from '~/store/image.store';
 
-export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
+export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
   const { classes, cx } = useStyles();
   const { images } = useImagesContext();
   const features = useFeatureFlags();
 
-  const ingestionData = useImageIngestionContext(
-    useCallback(
-      (state) => state.images[image.id] ?? { ingestion: ImageIngestionStatus.Scanned },
-      [image.id]
-    )
-  );
-  const pending = useImageIngestionContext(
-    useCallback((state) => state.pending[image.id] ?? { attempts: 0, success: true }, [image.id])
-  );
-  const isBlocked = ingestionData.ingestion === ImageIngestionStatus.Blocked;
-  const isLoading = pending.attempts < 30 && !pending.success;
-  const loadingFailed = !isLoading && !ingestionData;
+  const image = useImageStore(data);
+
+  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
+  const isPending = image.ingestion === ImageIngestionStatus.Pending;
+  const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
     return image.tags.filter((x) => x.type === 'Moderation');
   }, [image.tags]);
 
-  const showVotes =
-    tags &&
-    Array.isArray(tags) &&
-    !!tags.length &&
-    ingestionData.ingestion === ImageIngestionStatus.Scanned;
+  const showVotes = !!tags?.length && isScanned;
 
   const onSite = image.meta && 'civitaiResources' in image.meta;
   const notPublished = image.publishedAt === null;
@@ -173,8 +162,8 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               <div className={classes.footer}>
                                 <VotableTags entityType="image" entityId={image.id} tags={tags} />
                               </div>
-                            ) : ingestionData.ingestion !== ImageIngestionStatus.Blocked ? (
-                              isLoading ? (
+                            ) : !isBlocked ? (
+                              isPending ? (
                                 <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
                                   <Stack spacing={4}>
                                     <Group spacing={8} noWrap>
@@ -189,11 +178,6 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                                     </Text>
                                   </Stack>
                                 </Box>
-                              ) : loadingFailed ? (
-                                <Alert className={classes.info} variant="filled" color="yellow">
-                                  There are no tags associated with this image yet. Tags will be
-                                  assigned to this image soon.
-                                </Alert>
                               ) : (
                                 <Group className={classes.info} spacing={4} position="apart" noWrap>
                                   <Reactions

@@ -14,11 +14,10 @@ import {
   Code,
   BadgeProps,
   Button,
-  Skeleton,
   Loader,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -36,11 +35,6 @@ import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
-import { isDefined } from '~/utils/type-guards';
-import {
-  ImageIngestionProvider,
-  useImageIngestionContext,
-} from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
@@ -89,23 +83,9 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
 }
 
 function ImageController({ image }: { image: PostEditImage }) {
-  const {
-    id,
-    url,
-    previewUrl,
-    name,
-    nsfw,
-    width,
-    height,
-    hash,
-    meta,
-    generationProcess,
-    needsReview,
-    resourceHelper,
-    blockedFor,
-    type,
-    ingestion,
-  } = useImageStore(image);
+  const { id, url, previewUrl, name, meta, resourceHelper, blockedFor, type, ingestion } =
+    useImageStore(image);
+
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const [withBorder, setWithBorder] = useState(false);
