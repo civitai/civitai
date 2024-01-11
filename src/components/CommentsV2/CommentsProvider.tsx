@@ -9,6 +9,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
+import { ThreadSort } from '../../server/common/enums';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -39,6 +40,8 @@ type ChildProps = {
   highlighted?: number;
   hiddenCount: number;
   forceLocked?: boolean;
+  sort: ThreadSort;
+  setSort: (sort: ThreadSort) => void;
 };
 
 type CommentsContext = CommentConnectorInput & ChildProps;
@@ -76,6 +79,7 @@ export function CommentsProvider({
 
   const [showMore, setShowMore] = useState(false);
   const toggleShowMore = () => setShowMore((b) => !b);
+  const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
 
   const { data: thread, isInitialLoading: isLoading } = trpc.commentv2.getThreadDetails.useQuery(
     { entityId, entityType, hidden },
@@ -86,7 +90,16 @@ export function CommentsProvider({
       },
     }
   );
-  const initialComments = useMemo(() => thread?.comments ?? [], [thread?.comments]);
+  const initialComments = useMemo(() => {
+    const comments = thread?.comments ?? [];
+
+    if (sort === ThreadSort.Newest) return [...comments].reverse();
+    if (sort === ThreadSort.MostReactions)
+      return [...comments].sort((a, b) => b.reactions.length - a.reactions.length);
+
+    return comments;
+  }, [thread?.comments, sort]);
+
   const { data: hiddenCount = 0 } = trpc.commentv2.getCount.useQuery({
     entityId,
     entityType,
@@ -137,6 +150,8 @@ export function CommentsProvider({
         highlighted,
         hiddenCount,
         forceLocked,
+        sort,
+        setSort,
       }}
     >
       {children({
@@ -153,6 +168,8 @@ export function CommentsProvider({
         highlighted,
         hiddenCount,
         forceLocked,
+        sort,
+        setSort,
       })}
     </CommentsCtx.Provider>
   );
