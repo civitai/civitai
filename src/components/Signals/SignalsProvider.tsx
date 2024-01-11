@@ -118,50 +118,6 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
     }
   }, [accessToken, createWorker, worker]);
 
-  // useEffect(() => {
-  //   const createWorker = () => {
-  //     if (!data?.accessToken || loadingRef.current) return;
-  //     loadingRef.current = true;
-  //     createSignalWorker({
-  //       token: data.accessToken,
-  //       onConnected: () => {
-  //         console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
-  //         setConnected(true);
-  //       },
-  //       onReconnected: () => {
-  //         console.debug('signal service reconnected'); // eslint-disable-line no-console
-  //         if (session.data?.user?.id) {
-  //           queryUtils.buzz.getBuzzAccount.invalidate();
-  //         }
-  //       },
-  //       onClosed: (message) => {
-  //         // A closed connection will not recover on its own.
-  //         console.debug({ type: 'SignalsProvider :: signal service closed', message }); // eslint-disable-line no-console
-  //         setConnected(false);
-
-  //         setTimeout(() => {
-  //           console.debug('SignalsProvider :: attempting to re-crate the connection...'); // eslint-disable-line no-console
-  //           createWorker();
-  //         }, 5000);
-  //       },
-  //       onError: (message) =>
-  //         console.error({ type: 'SignalsProvider :: signal service error', message }),
-  //     }).then((worker) => {
-  //       setWorker(worker);
-  //       loadingRef.current = false;
-  //       worker.subscribe(({ available }) => {
-  //         if (!available) {
-  //           setWorker(null);
-  //           worker.close();
-  //           createWorker();
-  //         }
-  //       });
-  //     });
-  //   };
-
-  //   if (data?.accessToken) createWorker();
-  // }, [data?.accessToken]);
-
   return (
     <SignalContext.Provider
       value={{
