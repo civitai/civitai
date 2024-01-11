@@ -7,6 +7,7 @@ import {
   getCsamsToReport,
   processCsamReport,
 } from '~/server/services/csam.service';
+import { logToDb } from '~/utils/logging';
 
 const sendCsamReportsJob = createJob(
   'send-csam-reports',
@@ -14,8 +15,12 @@ const sendCsamReportsJob = createJob(
   async () => {
     const reports = await getCsamsToReport();
     // wait for each process to finish before going to the next
-    for (const report of reports) {
-      await processCsamReport(report);
+    try {
+      for (const report of reports) {
+        await processCsamReport(report);
+      }
+    } catch (e: any) {
+      logToDb('send-csam-reports', { message: e.message, error: e });
     }
   },
   { dedicated: true }
@@ -27,8 +32,12 @@ const archiveCsamReportDataJob = createJob(
   async () => {
     const reports = await getCsamsToArchive();
     // wait for each process to finish before going to the next
-    for (const report of reports) {
-      await archiveCsamDataForReport(report);
+    try {
+      for (const report of reports) {
+        await archiveCsamDataForReport(report);
+      }
+    } catch (e: any) {
+      logToDb('archive-csam-reports', { message: e.message, error: e });
     }
   },
   { dedicated: true }
