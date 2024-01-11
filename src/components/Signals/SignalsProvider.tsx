@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { SignalMessages } from '~/server/common/enums';
 import { useSession } from 'next-auth/react';
@@ -66,22 +66,24 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
     enabled: !!session.data?.user,
   });
   const queryUtils = trpc.useContext();
+  const accessToken = data?.accessToken;
+  const userId = session.data?.user?.id;
+  const connectingRef = useRef(false);
 
-  useEffect(() => {
-    const createWorker = () => {
-      if (!data || loadingRef.current) {
-        return;
-      }
+  const createWorker = useCallback(
+    (accessToken: string) => {
+      if (loadingRef.current) return;
       loadingRef.current = true;
       createSignalWorker({
-        token: data.accessToken,
+        token: accessToken,
         onConnected: () => {
           console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
           setConnected(true);
+          connectingRef.current = false;
         },
         onReconnected: () => {
           console.debug('signal service reconnected'); // eslint-disable-line no-console
-          if (session.data?.user?.id) {
+          if (userId) {
             queryUtils.buzz.getBuzzAccount.invalidate();
           }
         },
@@ -89,31 +91,76 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
           // A closed connection will not recover on its own.
           console.debug({ type: 'SignalsProvider :: signal service closed', message }); // eslint-disable-line no-console
           setConnected(false);
-
-          setTimeout(() => {
-            console.debug('SignalsProvider :: attempting to re-crate the connection...'); // eslint-disable-line no-console
-            createWorker();
-          }, 5000);
+          queryUtils.signals.getAccessToken.invalidate();
         },
         onError: (message) =>
           console.error({ type: 'SignalsProvider :: signal service error', message }),
       }).then((worker) => {
         setWorker(worker);
         loadingRef.current = false;
-        worker.subscribe(({ available }) => {
-          if (!available) {
-            setWorker(null);
-            worker.close();
-            createWorker();
-          }
-        });
+        connectingRef.current = true;
       });
-    };
+    },
+    [userId]
+  );
 
-    if (data?.accessToken) createWorker();
+  useEffect(() => {
+    if (!accessToken) return;
+    if (!worker) createWorker(accessToken);
+    // this should cause the effect to run the timeout when the access token changes
+    else if (!connected && !connectingRef.current) {
+      worker.close();
+      const timeout = setTimeout(() => {
+        console.debug('SignalsProvider :: attempting to re-create the connection...');
+        createWorker(accessToken);
+      }, 5000);
+      return () => clearTimeout(timeout);
+    }
+  }, [accessToken, createWorker, worker]);
 
-    return () => worker?.close();
-  }, [data?.accessToken]);
+  // useEffect(() => {
+  //   const createWorker = () => {
+  //     if (!data?.accessToken || loadingRef.current) return;
+  //     loadingRef.current = true;
+  //     createSignalWorker({
+  //       token: data.accessToken,
+  //       onConnected: () => {
+  //         console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
+  //         setConnected(true);
+  //       },
+  //       onReconnected: () => {
+  //         console.debug('signal service reconnected'); // eslint-disable-line no-console
+  //         if (session.data?.user?.id) {
+  //           queryUtils.buzz.getBuzzAccount.invalidate();
+  //         }
+  //       },
+  //       onClosed: (message) => {
+  //         // A closed connection will not recover on its own.
+  //         console.debug({ type: 'SignalsProvider :: signal service closed', message }); // eslint-disable-line no-console
+  //         setConnected(false);
+
+  //         setTimeout(() => {
+  //           console.debug('SignalsProvider :: attempting to re-crate the connection...'); // eslint-disable-line no-console
+  //           createWorker();
+  //         }, 5000);
+  //       },
+  //       onError: (message) =>
+  //         console.error({ type: 'SignalsProvider :: signal service error', message }),
+  //     }).then((worker) => {
+  //       setWorker(worker);
+  //       loadingRef.current = false;
+  //       worker.subscribe(({ available }) => {
+  //         if (!available) {
+  //           setWorker(null);
+  //           worker.close();
+  //           createWorker();
+  //         }
+  //       });
+  //     });
+  //   };
+
+  //   if (data?.accessToken) createWorker();
+  // }, [data?.accessToken]);
 
   return (
     <SignalContext.Provider

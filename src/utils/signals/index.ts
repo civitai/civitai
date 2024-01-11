@@ -21,6 +21,7 @@ export const createSignalWorker = async ({
   token: string;
   onConnected?: () => void;
   onReconnected?: () => void;
+  /** A closed connection will not recover on its own. */
   onClosed?: (message?: string) => void;
   onError?: (message?: string) => void;
 }) => {
@@ -36,7 +37,7 @@ export const createSignalWorker = async ({
   }));
 
   const worker = new SharedWorker(new URL('./worker.ts', import.meta.url), {
-    name: 'civitai-signals',
+    name: 'civitai-signals:1.1',
     type: 'module',
   });
 
@@ -79,7 +80,10 @@ export const createSignalWorker = async ({
 
       await pingDeferred.promise
         .then(() => getState().update((state) => ({ ...state, available: true })))
-        .catch(() => getState().update((state) => ({ ...state, available: false })));
+        .catch(() => {
+          getState().update((state) => ({ ...state, available: false }));
+          onClosed?.('connection to shared worker lost');
+        });
       pingDeferred = undefined;
     }
   };
