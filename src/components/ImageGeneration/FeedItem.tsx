@@ -31,7 +31,7 @@ export function FeedItem({
   // onCheckboxClick,
   onCreateVariantClick,
 }: Props) {
-  const selected = generationImageSelect.useSelected(image.id);
+  const selected = generationImageSelect.useIsSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
   const [showActions, setShowActions] = useSessionStorage<boolean>({
     key: 'showAllActions',

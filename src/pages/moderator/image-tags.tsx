@@ -14,7 +14,6 @@ import {
   Title,
   TooltipProps,
 } from '@mantine/core';
-import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
   IconBan,
@@ -27,7 +26,7 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -38,38 +37,94 @@ import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
+import { createSelectStore } from '~/store/select.store';
 
-// export const getServerSideProps = createServerSideProps({
-//   useSession: true,
-//   resolver: async ({ session }) => {
-//     if (!session?.user?.isModerator || session.user?.bannedAt) {
-//       return {
-//         redirect: {
-//           destination: '/',
-//           permanent: false,
-//         },
-//       };
-//     }
-//   },
-// });
+const imageSelectStore = createSelectStore<number>();
 
 export default function ImageTags() {
-  const queryUtils = trpc.useContext();
-  const [selected, selectedHandlers] = useListState([] as number[]);
-
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
-    trpc.image.getModeratorReviewQueue.useInfiniteQuery(
-      { tagReview: true },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
+  const filters = { tagReview: true };
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+    trpc.image.getModeratorReviewQueue.useInfiniteQuery(filters, {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
+  useEffect(() => {
+    return () => imageSelectStore.setSelected([]);
+  }, []);
+
+  return (
+    <Container size="xl">
+      <Stack>
+        <Paper
+          withBorder
+          shadow="lg"
+          p="xs"
+          sx={{
+            display: 'inline-flex',
+            float: 'right',
+            alignSelf: 'flex-end',
+            marginRight: 6,
+            position: 'sticky',
+            top: 'calc(var(--mantine-header-height,0) + 16px)',
+            marginBottom: -80,
+            zIndex: 10,
+          }}
+        >
+          <ModerationControls images={images} filters={filters} />
+        </Paper>
+
+        <Stack spacing={0} mb="lg">
+          <Title order={1}>Tags Needing Review</Title>
+          <Text color="dimmed">
+            These are images with moderation tags that users have voted to remove.
+          </Text>
+        </Stack>
+
+        {isLoading ? (
+          <Center py="xl">
+            <Loader size="xl" />
+          </Center>
+        ) : images.length ? (
+          <MasonryGrid
+            items={images}
+            isRefetching={isRefetching}
+            isFetchingNextPage={isFetchingNextPage}
+            render={ImageGridItem}
+          />
+        ) : (
+          <NoContent mt="lg" message="There are no tags that need review" />
+        )}
+        {hasNextPage && (
+          <InViewLoader
+            loadFn={fetchNextPage}
+            loadCondition={!isRefetching}
+            style={{ gridColumn: '1/-1' }}
+          >
+            <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Loader />
+            </Center>
+          </InViewLoader>
+        )}
+      </Stack>
+    </Container>
+  );
+}
+
+function ModerationControls<T extends { id: number }>({
+  images,
+  filters,
+}: {
+  images: T[];
+  filters?: Record<string, unknown>;
+}) {
+  const selected = imageSelectStore.useSelection();
+
+  const queryUtils = trpc.useContext();
   const moderateTagsMutation = trpc.tag.moderateTags.useMutation({
     async onMutate({ entityIds, disable }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();
@@ -92,19 +147,14 @@ export default function ImageTags() {
     },
   });
 
-  const handleSelect = (id: number, checked: boolean) => {
-    const idIndex = selected.indexOf(id);
-    if (checked && idIndex == -1) selectedHandlers.append(id);
-    else if (!checked && idIndex != -1) selectedHandlers.remove(idIndex);
-  };
-
   const handleSelectAll = () => {
-    if (selected.length === images.length) handleClearAll();
-    else selectedHandlers.setState(images.map((x) => x.id));
+    const selected = imageSelectStore.getSelected();
+    if (selected.length === images.length) imageSelectStore.setSelected([]);
+    else imageSelectStore.setSelected(images.map((x) => x.id));
   };
 
   const handleClearAll = () => {
-    selectedHandlers.setState([]);
+    imageSelectStore.setSelected([]);
   };
 
   const handleSelected = (disable: boolean) => {
@@ -122,7 +172,7 @@ export default function ImageTags() {
 
   const handleRefresh = () => {
     handleClearAll();
-    refetch();
+    queryUtils.image.getModeratorReviewQueue.invalidate(filters);
     showNotification({
       id: 'refreshing',
       title: 'Refreshing',
@@ -138,110 +188,51 @@ export default function ImageTags() {
   };
 
   return (
-    <Container size="xl">
-      <Stack>
-        <Paper
-          withBorder
-          shadow="lg"
-          p="xs"
-          sx={{
-            display: 'inline-flex',
-            float: 'right',
-            alignSelf: 'flex-end',
-            marginRight: 6,
-            position: 'sticky',
-            top: 'calc(var(--mantine-header-height,0) + 16px)',
-            marginBottom: -80,
-            zIndex: 10,
-          }}
-        >
-          <Group noWrap spacing="xs">
-            <ButtonTooltip label="Select all" {...tooltipProps}>
-              <ActionIcon variant="outline" onClick={handleSelectAll}>
-                <IconSquareCheck size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-            <ButtonTooltip label="Clear selection" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-                <IconSquareOff size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-            <PopConfirm
-              message={`Are you sure you want to approve ${selected.length} tag removal(s)?`}
-              position="bottom-end"
-              onConfirm={() => handleSelected(true)}
-              withArrow
-            >
-              <ButtonTooltip label="Approve selected" {...tooltipProps}>
-                <ActionIcon variant="outline" disabled={!selected.length} color="green">
-                  <IconCheck size="1.25rem" />
-                </ActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-            <PopConfirm
-              message={`Are you sure you want to decline ${selected.length} tag removal(s)?`}
-              position="bottom-end"
-              onConfirm={() => handleSelected(false)}
-              withArrow
-            >
-              <ButtonTooltip label="Decline selected" {...tooltipProps}>
-                <ActionIcon variant="outline" disabled={!selected.length} color="red">
-                  <IconBan size="1.25rem" />
-                </ActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-            <ButtonTooltip label="Refresh" {...tooltipProps}>
-              <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
-                <IconReload size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-          </Group>
-        </Paper>
-
-        <Stack spacing={0} mb="lg">
-          <Title order={1}>Tags Needing Review</Title>
-          <Text color="dimmed">
-            These are images with moderation tags that users have voted to remove.
-          </Text>
-        </Stack>
-
-        {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : images.length ? (
-          <MasonryGrid
-            items={images}
-            isRefetching={isRefetching}
-            isFetchingNextPage={isFetchingNextPage}
-            render={(props) => (
-              <ImageGridItem
-                {...props}
-                selected={selected.includes(props.data.id)}
-                onSelect={handleSelect}
-              />
-            )}
-          />
-        ) : (
-          <NoContent mt="lg" message="There are no tags that need review" />
-        )}
-        {hasNextPage && (
-          <InViewLoader
-            loadFn={fetchNextPage}
-            loadCondition={!isRefetching}
-            style={{ gridColumn: '1/-1' }}
-          >
-            <Center p="xl" sx={{ height: 36 }} mt="md">
-              <Loader />
-            </Center>
-          </InViewLoader>
-        )}
-      </Stack>
-    </Container>
+    <Group noWrap spacing="xs">
+      <ButtonTooltip label="Select all" {...tooltipProps}>
+        <ActionIcon variant="outline" onClick={handleSelectAll}>
+          <IconSquareCheck size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+      <ButtonTooltip label="Clear selection" {...tooltipProps}>
+        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+          <IconSquareOff size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+      <PopConfirm
+        message={`Are you sure you want to approve ${selected.length} tag removal(s)?`}
+        position="bottom-end"
+        onConfirm={() => handleSelected(true)}
+        withArrow
+      >
+        <ButtonTooltip label="Approve selected" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+            <IconCheck size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <PopConfirm
+        message={`Are you sure you want to decline ${selected.length} tag removal(s)?`}
+        position="bottom-end"
+        onConfirm={() => handleSelected(false)}
+        withArrow
+      >
+        <ButtonTooltip label="Decline selected" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+            <IconBan size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <ButtonTooltip label="Refresh" {...tooltipProps}>
+        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+          <IconReload size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+    </Group>
   );
 }
 
-function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: ImageGridItemProps) {
+function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -260,11 +251,13 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
   const needsReview = tags.toReview.length > 0;
   const entityUrl = getImageEntityUrl(image);
 
+  const selected = imageSelectStore.useIsSelected(image.id);
+
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
       <Card.Section
         sx={{ height: `${height}px`, cursor: 'pointer' }}
-        onClick={() => onSelect(image.id, !selected)}
+        onClick={() => imageSelectStore.toggle(image.id)}
       >
         <Checkbox
           checked={selected}
@@ -362,6 +355,4 @@ type ImageGridItemProps = {
   data: ImageModerationReviewQueueImage;
   index: number;
   width: number;
-  selected: boolean;
-  onSelect: (id: number, checked: boolean) => void;
 };
