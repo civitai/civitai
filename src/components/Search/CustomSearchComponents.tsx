@@ -4,7 +4,6 @@ import {
   SearchBoxProps,
   SortByProps,
   useClearRefinements,
-  useConfigure,
   useRange,
   useRefinementList,
   useSearchBox,
@@ -44,7 +43,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const useSearchInputStyles = createStyles((theme) => ({
+const useSearchInputStyles = createStyles(() => ({
   root: {
     [containerQuery.smallerThan('md')]: {
       height: '100%',
@@ -64,7 +63,7 @@ const useSearchInputStyles = createStyles((theme) => ({
 
 export function SortBy({ title, ...props }: SortByProps & { title: string }) {
   const { classes } = useStyles();
-  const { options, refine, currentRefinement, ...args } = useSortBy(props);
+  const { options, refine, currentRefinement } = useSortBy(props);
 
   if (options.length === 0) {
     return null;
@@ -211,7 +210,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
                 checked={item.isRefined}
                 onClick={() => refine(item.value)}
               >
-                {getDisplayName(item.label)}
+                {getDisplayName(item.label, { splitNumbers: false })}
               </Chip>
             ))}
           </Group>
