@@ -1,4 +1,4 @@
-import { GetByIdInput, PaginationInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
@@ -11,13 +11,14 @@ import {
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { Availability, ModelType, Prisma } from '@prisma/client';
+import { Availability, ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -49,7 +50,8 @@ import { cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { getPagedData, getPagination } from '~/server/utils/pagination-helpers';
+import { getPagedData } from '~/server/utils/pagination-helpers';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -853,6 +855,20 @@ export async function toggleUnavailableResource({
     'generation:unavailable-resources',
     toJson(unavailableResources)
   );
+
+  const modelVersion = await dbRead.modelVersion.findUnique({
+    where: { id },
+    select: { modelId: true },
+  });
+  if (modelVersion)
+    modelsSearchIndex
+      .queueUpdate([
+        {
+          id: modelVersion.modelId,
+          action: SearchIndexUpdateQueueAction.Update,
+        },
+      ])
+      .catch(handleLogError);
 
   return unavailableResources;
 }
