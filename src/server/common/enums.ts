@@ -185,3 +185,9 @@ export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
 }
+
+export enum ThreadSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+  MostReactions = 'Most Reactions',
+}

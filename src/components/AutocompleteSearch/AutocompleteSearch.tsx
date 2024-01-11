@@ -2,7 +2,6 @@ import {
   ActionIcon,
   AutocompleteItem,
   AutocompleteProps,
-  CloseButton,
   Code,
   Group,
   HoverCard,
@@ -60,6 +59,7 @@ import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderIte
 import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -67,7 +67,7 @@ const meilisearch = instantMeiliSearch(
   { primaryKey: 'id' }
 );
 
-type Props = Omit<AutocompleteProps, 'data'> & {
+type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   onClear?: VoidFunction;
   onSubmit?: VoidFunction;
   searchBoxProps?: SearchBoxProps;
@@ -276,6 +276,8 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   const [searchPageQuery, setSearchPageQuery] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
+  const { trackSearch } = useTrackEvent();
+
   const {
     models: hiddenModels,
     images: hiddenImages,
@@ -353,15 +355,13 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   }));
 
   const handleSubmit = () => {
-    if (query) {
+    if (search) {
       router.push(
-        `/search/${indexName}?query=${encodeURIComponent(query)}&${
+        `/search/${indexName}?query=${encodeURIComponent(search)}&${
           searchPageQuery.length ? `${searchPageQuery}` : ''
         }`,
         undefined,
-        {
-          shallow: false,
-        }
+        { shallow: false }
       );
 
       blurInput();
@@ -373,6 +373,22 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   const handleClear = () => {
     setSearch('');
     onClear?.();
+  };
+
+  const handleItemClick = (item: AutocompleteItem) => {
+    if (item.hit) {
+      // when an item is clicked
+      router.push(processHitUrl(item.hit));
+      trackSearch({ query: search, index: SearchPathToIndexMap[indexName] }).catch(() => null);
+    } else {
+      // when view more is clicked
+      router.push(`/search/${indexName}?query=${encodeURIComponent(item.value)}`, undefined, {
+        shallow: false,
+      });
+    }
+
+    setSelectedItem(item);
+    onSubmit?.();
   };
 
   useHotkeys([
@@ -394,7 +410,6 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
     setQuery(cleanedSearch);
     setFilters(filters);
     setSearchPageQuery(searchPageQuery);
-
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, query]);
 
@@ -463,20 +478,7 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
             ['Escape', blurInput],
             ['Enter', handleSubmit],
           ])}
-          onItemSubmit={(item) => {
-            item.hit
-              ? router.push(processHitUrl(item.hit)) // when a model is clicked
-              : router.push(
-                  `/search/${indexName}?query=${encodeURIComponent(item.value)}`,
-                  undefined,
-                  {
-                    shallow: false,
-                  }
-                ); // when view more is clicked
-
-            setSelectedItem(item);
-            onSubmit?.();
-          }}
+          onItemSubmit={handleItemClick}
           itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
           rightSection={
             <HoverCard withArrow width={300} shadow="sm" openDelay={500}>

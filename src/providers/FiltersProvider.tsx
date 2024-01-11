@@ -24,6 +24,7 @@ import {
   PostSort,
   QuestionSort,
   QuestionStatus,
+  ThreadSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
@@ -147,6 +148,11 @@ const videoFilterSchema = imageFilterSchema.omit({
   excludeCrossPosts: true,
 });
 
+type ThreadFilterSchema = z.infer<typeof threadFilterSchema>;
+const threadFilterSchema = z.object({
+  sort: z.nativeEnum(ThreadSort).default(ThreadSort.Newest),
+});
+
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -162,6 +168,7 @@ type StorageState = {
   bounties: BountyFilterSchema;
   clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
+  threads: ThreadFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
@@ -185,6 +192,7 @@ type StoreState = FilterState & {
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
   setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
+  setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -204,6 +212,7 @@ const localStorageSchemas: LocalStorageSchema = {
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
   clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
+  threads: { key: 'thread-filters', schema: threadFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -289,6 +298,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
       setVideoFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
+      setThreadFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
     }))
   );
 
@@ -355,6 +366,7 @@ export function useSetFilters(type: FilterSubTypes) {
           bounties: state.setBountyFilters,
           clubs: state.setClubFilters,
           videos: state.setVideoFilters,
+          threads: state.setThreadFilters,
         }[type]),
       [type]
     )
