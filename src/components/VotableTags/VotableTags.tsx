@@ -9,6 +9,7 @@ import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useUpdateHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 
@@ -26,16 +27,16 @@ export function VotableTags({
   limit = 6,
   tags: initialTags,
   canAdd = false,
-  canAddModerated = false,
   collapsible = false,
   ...props
 }: GalleryTagProps) {
+  const currentUser = useCurrentUser();
   const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
   );
   canAdd = canAdd && !initialTags;
-  canAddModerated = canAddModerated && !initialTags;
+  const canAddModerated = canAdd && !!currentUser?.isModerator;
 
   const handleVote = useVoteForTags({ entityType: type, entityId: id });
 
@@ -124,6 +125,5 @@ type GalleryTagProps = {
   limit?: number;
   tags?: VotableTagModel[];
   canAdd?: boolean;
-  canAddModerated?: boolean;
   collapsible?: boolean;
 } & Omit<GroupProps, 'id'>;

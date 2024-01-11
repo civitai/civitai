@@ -190,7 +190,7 @@ function ImageController({ image }: { image: PostEditImage }) {
         </Card>
       )}
 
-      {isScanned && <VotableTags entityType="image" entityId={id} p="xs" canAdd canAddModerated />}
+      {isScanned && <VotableTags entityType="image" entityId={id} p="xs" canAdd />}
 
       <Group className={classes.actions}>
         {meta ? (
