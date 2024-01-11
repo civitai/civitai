@@ -51,7 +51,7 @@ class NcmecCaller extends HttpCaller {
     const json = await parseStringPromise(xmlResponse);
     if (!response.ok) {
       console.dir({ json, xmlInput, data }, { depth: null });
-      throw new Error('failed to initialize ncmec report');
+      throw new Error(xmlInput);
     }
     return Ncmec.reportResponseSchema.parse(json).reportResponse;
   }
