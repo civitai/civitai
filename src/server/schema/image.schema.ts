@@ -303,3 +303,12 @@ export const imageReviewQueueInputSchema = z.object({
   reportReview: z.boolean().optional(),
   tagIds: z.array(z.number()).optional(),
 });
+
+export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
+export const scanJobsSchema = z
+  .object({
+    scans: z.record(z.string(), z.number()).default({}),
+    retryCount: z.number().optional(),
+  })
+  .passthrough();
+// .catchall(z.string());

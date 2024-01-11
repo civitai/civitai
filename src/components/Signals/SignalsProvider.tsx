@@ -24,16 +24,21 @@ type SignalCallback = (data: any) => void;
 
 export const useSignalConnection = (message: SignalMessages, cb: SignalCallback) => {
   const { connected, worker } = useSignalContext();
+  const cbRef = useRef(cb);
+  // any updates to cb will be assigned to cbRef.current
+  cbRef.current = cb;
 
   useEffect(() => {
+    const callback = (args: any) => cbRef.current(args);
+
     if (connected && worker) {
-      worker.on(message, cb);
+      worker.on(message, callback);
     }
 
     return () => {
-      worker?.off(message, cb);
+      worker?.off(message, callback);
     };
-  }, [connected, worker]);
+  }, [connected, worker, message]);
 };
 
 function FakeSignalProvider({ children }: { children: React.ReactNode }) {

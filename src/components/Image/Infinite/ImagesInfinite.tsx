@@ -9,12 +9,11 @@ import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { IconCloudOff } from '@tabler/icons-react';
-import { ImageIngestionStatus, MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { ImageGetInfinite } from '~/types/router';
-import { ImageIngestionProvider } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 
@@ -76,25 +75,20 @@ export default function ImagesInfinite({
       ) : !!images.length || hasNextPage ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <ImageIngestionProvider
-            ids={images
-              .filter((image) => image.ingestion !== ImageIngestionStatus.Scanned)
-              .map(({ id }) => id)}
-          >
-            <ImagesProvider images={images}>
-              <MasonryColumns
-                data={images}
-                imageDimensions={(data) => {
-                  const width = data?.width ?? 450;
-                  const height = data?.height ?? 450;
-                  return { width, height };
-                }}
-                maxItemHeight={600}
-                render={MasonryItem ?? ImagesCard}
-                itemId={(data) => data.id}
-              />
-            </ImagesProvider>
-          </ImageIngestionProvider>
+
+          <ImagesProvider images={images}>
+            <MasonryColumns
+              data={images}
+              imageDimensions={(data) => {
+                const width = data?.width ?? 450;
+                const height = data?.height ?? 450;
+                return { width, height };
+              }}
+              maxItemHeight={600}
+              render={MasonryItem ?? ImagesCard}
+              itemId={(data) => data.id}
+            />
+          </ImagesProvider>
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}

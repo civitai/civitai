@@ -138,6 +138,7 @@ export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',
   TrainingUpdate = 'training:update',
+  ImageIngestionStatus = 'image-ingestion:status',
 }
 
 export enum BountySort {

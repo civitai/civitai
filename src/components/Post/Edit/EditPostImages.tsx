@@ -14,11 +14,10 @@ import {
   Code,
   BadgeProps,
   Button,
-  Skeleton,
   Loader,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -36,17 +35,13 @@ import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
-import { isDefined } from '~/utils/type-guards';
-import {
-  ImageIngestionProvider,
-  useImageIngestionContext,
-} from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { useImageStore } from '~/store/image.store';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -54,11 +49,6 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
   const images = useEditPostContext((state) => state.images);
-
-  const imageIds = images
-    .filter((x) => x.discriminator === 'image' && x.data.ingestion !== ImageIngestionStatus.Scanned)
-    .map((x) => (x.discriminator === 'image' ? x.data.id : undefined))
-    .filter(isDefined);
 
   const handleDrop = async (files: File[]) => {
     if (currentUser?.muted) return;
@@ -78,60 +68,34 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
         max={max}
         accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
       />
-      <ImageIngestionProvider ids={imageIds}>
-        <Stack>
-          {images.map(({ discriminator: type, data }, index) => (
-            <Fragment key={index}>
-              {type === 'image' && <ImageController image={data} />}
-              {type === 'upload' && <ImageUpload {...data} />}
-              {type === 'blocked' && <ImageBlocked {...data} />}
-            </Fragment>
-          ))}
-        </Stack>
-      </ImageIngestionProvider>
+      <Stack>
+        {images.map(({ discriminator: type, data }, index) => (
+          <Fragment key={index}>
+            {type === 'image' && <ImageController image={data} />}
+            {type === 'upload' && <ImageUpload {...data} />}
+            {type === 'blocked' && <ImageBlocked {...data} />}
+          </Fragment>
+        ))}
+      </Stack>
       <EditImageDrawer />
     </Stack>
   );
 }
 
-function ImageController({
-  image: {
-    id,
-    url,
-    previewUrl,
-    name,
-    nsfw,
-    width,
-    height,
-    hash,
-    meta,
-    generationProcess,
-    needsReview,
-    resourceHelper,
-    blockedFor,
-    mimeType,
-    type,
-    metadata,
-  },
-}: {
-  image: PostEditImage;
-}) {
+function ImageController({ image }: { image: PostEditImage }) {
+  const { id, url, previewUrl, name, meta, resourceHelper, blockedFor, type, ingestion } =
+    useImageStore(image);
+
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const [withBorder, setWithBorder] = useState(false);
   const removeImage = useEditPostContext((state) => state.removeImage);
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
-  const data = useImageIngestionContext(useCallback((state) => state.images[id] ?? {}, [id]));
-  const setImages = useImageIngestionContext(useCallback((state) => state.setImages, []));
-  const unblockImage = (imageId: number) =>
-    setImages({ [imageId]: { ingestion: ImageIngestionStatus.Scanned } });
-  const pending = useImageIngestionContext(
-    useCallback((state) => state.pending[id] ?? { attempts: 0, success: false }, [id])
-  );
-  const isBlocked = data?.ingestion === ImageIngestionStatus.Blocked;
-  const isLoading = pending.attempts < 30 && !pending.success;
-  const loadingFailed = !isLoading && !data;
+  const isPending = ingestion === ImageIngestionStatus.Pending;
+  const isBlocked = ingestion === ImageIngestionStatus.Blocked;
+  const isScanned = ingestion === ImageIngestionStatus.Scanned;
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
@@ -144,74 +108,16 @@ function ImageController({
         className={cx({ [classes.blocked]: isBlocked })}
       />
 
-      {(!data || data.ingestion !== ImageIngestionStatus.Blocked) && (
-        <>
-          {isLoading ? (
-            <Group p="xs" sx={{ width: '100%' }} spacing="xs" noWrap>
-              <Loader size={20} />
-              <Skeleton height={20} />
-            </Group>
-          ) : loadingFailed ? (
-            <Alert color="yellow" m="xs">
-              There are no tags associated with this image yet. Tags will be assigned to this image
-              soon.
-            </Alert>
-          ) : !!data.tags?.length ? (
-            <VotableTags
-              entityType="image"
-              entityId={id}
-              p="xs"
-              canAdd
-              canAddModerated
-              tags={data.tags}
-            />
-          ) : null}
-          <>
-            <Group className={classes.actions}>
-              {meta ? (
-                <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-                  Generation Data
-                </Badge>
-              ) : (
-                <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
-                  Missing Generation Data
-                </Badge>
-              )}
-              {resourceHelper.length ? (
-                <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-                  Resources: {resourceHelper.length}
-                </Badge>
-              ) : (
-                <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
-                  Missing Resources
-                </Badge>
-              )}
-              <Menu position="bottom-end" withinPortal>
-                <Menu.Target>
-                  <ActionIcon size="lg" variant="transparent" p={0}>
-                    <IconDotsVertical
-                      size={24}
-                      color="#fff"
-                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                    />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-                  <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-                    {({ onClick, isLoading }) => (
-                      <Menu.Item color="red" onClick={onClick}>
-                        Delete image
-                      </Menu.Item>
-                    )}
-                  </DeleteImage>
-                </Menu.Dropdown>
-              </Menu>
-            </Group>
-          </>
-        </>
+      {isPending && (
+        <Alert color="yellow" p="xs" w="100%" radius={0}>
+          <Group position="center" spacing="xs">
+            <Loader size="xs" />
+            <Text align="center">Analyzing image</Text>
+          </Group>
+        </Alert>
       )}
-      {data?.ingestion === ImageIngestionStatus.Blocked && (
+
+      {isBlocked && (
         <Card
           radius={0}
           p={0}
@@ -249,38 +155,84 @@ function ImageController({
           >
             <Stack align="flex-end" spacing={0}>
               <Text>This image has been flagged as a TOS violation.</Text>
-              <Group grow w="100%">
-                <UnblockImage imageId={id} onSuccess={(id) => unblockImage(id)} skipConfirm>
-                  {({ onClick, isLoading }) => (
-                    <Button
-                      onClick={onClick}
-                      loading={isLoading}
-                      color="gray.6"
-                      mt="xs"
-                      leftIcon={<IconArrowBackUp size={20} />}
-                    >
-                      Unblock
-                    </Button>
-                  )}
-                </UnblockImage>
-                <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)} skipConfirm>
-                  {({ onClick, isLoading }) => (
-                    <Button
-                      onClick={onClick}
-                      loading={isLoading}
-                      color="red.7"
-                      mt="xs"
-                      leftIcon={<IconTrash size={20} />}
-                    >
-                      Delete
-                    </Button>
-                  )}
-                </DeleteImage>
-              </Group>
+              {currentUser?.isModerator && (
+                <Group grow w="100%">
+                  <UnblockImage imageId={id} skipConfirm>
+                    {({ onClick, isLoading }) => (
+                      <Button
+                        onClick={onClick}
+                        loading={isLoading}
+                        color="gray.6"
+                        mt="xs"
+                        leftIcon={<IconArrowBackUp size={20} />}
+                      >
+                        Unblock
+                      </Button>
+                    )}
+                  </UnblockImage>
+                  <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)} skipConfirm>
+                    {({ onClick, isLoading }) => (
+                      <Button
+                        onClick={onClick}
+                        loading={isLoading}
+                        color="red.7"
+                        mt="xs"
+                        leftIcon={<IconTrash size={20} />}
+                      >
+                        Delete
+                      </Button>
+                    )}
+                  </DeleteImage>
+                </Group>
+              )}
             </Stack>
           </Alert>
         </Card>
       )}
+
+      {isScanned && <VotableTags entityType="image" entityId={id} p="xs" canAdd canAddModerated />}
+
+      <Group className={classes.actions}>
+        {meta ? (
+          <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+            Generation Data
+          </Badge>
+        ) : (
+          <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
+            Missing Generation Data
+          </Badge>
+        )}
+        {resourceHelper.length ? (
+          <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+            Resources: {resourceHelper.length}
+          </Badge>
+        ) : (
+          <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
+            Missing Resources
+          </Badge>
+        )}
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <ActionIcon size="lg" variant="transparent" p={0}>
+              <IconDotsVertical
+                size={24}
+                color="#fff"
+                style={{ filter: `drop-shadow(0 0 2px #000)` }}
+              />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
+            <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item color="red" onClick={onClick}>
+                  Delete image
+                </Menu.Item>
+              )}
+            </DeleteImage>
+          </Menu.Dropdown>
+        </Menu>
+      </Group>
     </Card>
   );
 }
