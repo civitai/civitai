@@ -25,11 +25,10 @@ export const getServerSideProps = createServerSideProps({
       where: { id },
       select: { userId: true, status: true, publishedAt: true, deletedAt: true },
     });
-    if (!model || model.deletedAt) return { notFound: true };
 
     const isModerator = session.user?.isModerator ?? false;
-    const isOwner = model.userId === session.user?.id || isModerator;
-    if (!isOwner || model.status !== ModelStatus.Draft)
+    const isOwner = model?.userId === session.user?.id || isModerator;
+    if (!isOwner || model?.status !== ModelStatus.Draft)
       return {
         redirect: {
           destination: `/models/${params.id}`,
