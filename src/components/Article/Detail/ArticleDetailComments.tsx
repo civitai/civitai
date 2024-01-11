@@ -4,6 +4,8 @@ import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
+import { SortFilter } from '../../Filters';
+import { ThreadSort } from '../../../server/common/enums';
 
 type ArticleDetailCommentsProps = {
   articleId: number;
@@ -28,29 +30,47 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
         badges={[{ userId, label: 'op', color: 'violet' }]}
         forceLocked={!hasAccess}
       >
-        {({ data, created, isLoading, remaining, showMore, hiddenCount, toggleShowMore }) =>
+        {({
+          data,
+          created,
+          isLoading,
+          remaining,
+          showMore,
+          hiddenCount,
+          toggleShowMore,
+          sort,
+          setSort,
+        }) =>
           isLoading ? (
             <Center mt="xl">
               <Loader variant="bars" />
             </Center>
           ) : (
             <Stack mt="xl" spacing="xl">
-              <Group spacing="md">
-                <Title order={2} id="comments">
-                  Comments
-                </Title>
-                {hiddenCount > 0 && (
-                  <Button variant="subtle" size="xs" onClick={() => setOpened(true)} compact>
-                    <Group spacing={4} position="center">
-                      <IconMessageCancel size={16} />
-                      <Text inherit inline>
-                        {`See ${hiddenCount} more hidden ${
-                          hiddenCount > 1 ? 'comments' : 'comment'
-                        }`}
-                      </Text>
-                    </Group>
-                  </Button>
-                )}
+              <Group position="apart">
+                <Group spacing="md">
+                  <Title order={2} id="comments">
+                    Comments
+                  </Title>
+                  {hiddenCount > 0 && (
+                    <Button variant="subtle" size="xs" onClick={() => setOpened(true)} compact>
+                      <Group spacing={4} position="center">
+                        <IconMessageCancel size={16} />
+                        <Text inherit inline>
+                          {`See ${hiddenCount} more hidden ${
+                            hiddenCount > 1 ? 'comments' : 'comment'
+                          }`}
+                        </Text>
+                      </Group>
+                    </Button>
+                  )}
+                </Group>
+                <SortFilter
+                  variant="button"
+                  type="threads"
+                  value={sort}
+                  onChange={(v) => setSort(v as ThreadSort)}
+                />
               </Group>
               <CreateComment />
               {data?.map((comment) => (
