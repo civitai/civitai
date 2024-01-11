@@ -319,7 +319,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {
-      const { ingestion } = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus }>`
+      const [{ ingestion }] = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus }[]>`
         WITH scan_count AS (
           SELECT id, COUNT(*) as count
           FROM "Image",
