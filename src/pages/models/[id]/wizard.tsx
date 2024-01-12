@@ -1,6 +1,6 @@
 import { ModelStatus } from '@prisma/client';
 import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
-import { dbWrite } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 
@@ -21,7 +21,8 @@ export const getServerSideProps = createServerSideProps({
     const id = Number(params.id);
     if (!isNumber(id)) return { notFound: true };
 
-    const model = await dbWrite.model.findFirst({
+    const db = await getDbWithoutLag('model', id);
+    const model = await db.model.findFirst({
       where: { id },
       select: { userId: true, status: true, publishedAt: true, deletedAt: true },
     });

@@ -32,7 +32,7 @@ export default function GenerationResourceModal({
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
-  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
+  const { data, isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
     {
       types,
       query: debounced,
@@ -60,7 +60,7 @@ export default function GenerationResourceModal({
           autoFocus
         />
       </Stack>
-      {isLoading ? (
+      {isLoading || !data ? (
         <Center p="xl">
           <Loader />
         </Center>
@@ -68,7 +68,7 @@ export default function GenerationResourceModal({
         <>
           {!debounced?.length && <Divider label="Popular Resources" labelPosition="center" />}
           <Stack spacing={0}>
-            {data
+            {(data?.items ?? [])
               .filter((resource) => !notIds.includes(resource.id))
               .map((resource) => (
                 <Stack

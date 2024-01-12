@@ -22,6 +22,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
+import { getUnavailableResources } from '../services/generation/generation.service';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -278,6 +279,8 @@ const onFetchItemsToIndex = async ({
         };
       });
 
+      const unavailableGenResources = await getUnavailableResources();
+
       const indexReadyRecords = models
         .map((modelRecord) => {
           const { user, modelVersions, tagsOnModels, hashes, rank, ...model } = modelRecord;
@@ -294,7 +297,9 @@ const onFetchItemsToIndex = async ({
             return null;
           }
 
-          const canGenerate = modelVersions.some((x) => x.generationCoverage?.covered);
+          const canGenerate = modelVersions.some(
+            (x) => x.generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1
+          );
 
           const category = tagsOnModels.find((tagOnModel) =>
             modelCategoriesIds.includes(tagOnModel.tag.id)
@@ -312,7 +317,8 @@ const onFetchItemsToIndex = async ({
             versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
               ...x,
               hashes: hashes.map((hash) => hash.hash),
-              canGenerate: generationCoverage?.covered,
+              canGenerate:
+                generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
             })),
             triggerWords: [
               ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),

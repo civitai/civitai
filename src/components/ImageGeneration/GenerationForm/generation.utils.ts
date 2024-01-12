@@ -19,6 +19,7 @@ import { trpc } from '~/utils/trpc';
 import { Generation } from '~/server/services/generation/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -39,7 +40,7 @@ export const useDerivedGenerationState = () => {
   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
   });
-  const allUnstableResources = useUnstableResources();
+  const { unstableResources: allUnstableResources } = useUnsupportedResources();
 
   const { baseModel, isFullCoverageModel } = useGenerationFormStore(
     useCallback(
@@ -115,14 +116,50 @@ export const useGenerationStatus = () => {
   };
 };
 
-export const useUnstableResources = () => {
-  const { data: unstableResources } = trpc.generation.getUnstableResources.useQuery(undefined, {
-    cacheTime: Infinity,
-    staleTime: Infinity,
-    trpc: { context: { skipBatch: true } },
-  });
+export const useUnsupportedResources = () => {
+  const queryUtils = trpc.useUtils();
 
-  return unstableResources ?? [];
+  const { data: unstableResources = [] } = trpc.generation.getUnstableResources.useQuery(
+    undefined,
+    {
+      cacheTime: Infinity,
+      staleTime: Infinity,
+      trpc: { context: { skipBatch: true } },
+    }
+  );
+  const { data: unavailableResources = [] } = trpc.generation.getUnavailableResources.useQuery(
+    undefined,
+    {
+      cacheTime: Infinity,
+      staleTime: Infinity,
+      trpc: { context: { skipBatch: true } },
+    }
+  );
+
+  const toggleUnavailableResourceMutation = trpc.generation.toggleUnavailableResource.useMutation({
+    onSuccess: async () => {
+      await queryUtils.generation.getUnavailableResources.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Error updating resource availability',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const handleToggleUnavailableResource = useCallback(
+    (id: number) => {
+      return toggleUnavailableResourceMutation.mutateAsync({ id });
+    },
+    [toggleUnavailableResourceMutation]
+  );
+
+  return {
+    unstableResources,
+    unavailableResources,
+    toggleUnavailableResource: handleToggleUnavailableResource,
+    toggling: toggleUnavailableResourceMutation.isLoading,
+  };
 };
 
 export const getFormData = (

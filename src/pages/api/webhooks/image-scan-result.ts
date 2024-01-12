@@ -138,7 +138,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   // Add to scanJobs
   await dbWrite.$executeRawUnsafe(`
     UPDATE "Image"
-      SET "scanJobs" = jsonb_set("scanJobs", '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+      SET "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
     WHERE id = ${id};
   `);
 
@@ -319,7 +319,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {
-      const [{ ingestion }] = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus }[]>`
+      const [{ ingestion } = { ingestion: ImageIngestionStatus.Pending }] = await dbWrite.$queryRaw<
+        { ingestion: ImageIngestionStatus }[]
+      >`
         WITH scan_count AS (
           SELECT id, COUNT(*) as count
           FROM "Image",

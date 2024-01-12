@@ -11,13 +11,14 @@ import {
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { Availability, ModelType, Prisma } from '@prisma/client';
+import { Availability, ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -46,9 +47,11 @@ import { redis } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
-import { fromJson } from '~/utils/json-helpers';
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
+import { getPagedData } from '~/server/utils/pagination-helpers';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -104,96 +107,123 @@ function mapGenerationResource(
 }
 
 const baseModelSetsArray = Object.values(baseModelSets);
-export const getGenerationResources = async ({
-  take,
-  query,
-  types,
-  notTypes,
-  ids, // used for getting initial values of resources
-  baseModel,
-  user,
-  supported,
-}: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Resource[]> => {
-  const preselectedVersions: number[] = [];
-  if (!ids && !query) {
-    const featuredCollection = await dbRead.collection
-      .findFirst({
-        where: { userId: -1, name: 'Generator' },
-        select: {
-          items: {
+export const getGenerationResources = async (
+  input: GetGenerationResourcesInput & { user?: SessionUser }
+) => {
+  return await getPagedData<GetGenerationResourcesInput, Generation.Resource[]>(
+    input,
+    async ({
+      take,
+      skip,
+      query,
+      types,
+      notTypes,
+      ids, // used for getting initial values of resources
+      baseModel,
+      supported,
+    }) => {
+      const preselectedVersions: number[] = [];
+      if ((!ids || ids.length === 0) && !query) {
+        const featuredCollection = await dbRead.collection
+          .findFirst({
+            where: { userId: -1, name: 'Generator' },
             select: {
-              model: {
+              items: {
                 select: {
-                  name: true,
-                  type: true,
-                  modelVersions: {
-                    select: { id: true, name: true },
-                    where: { status: 'Published' },
-                    orderBy: { index: 'asc' },
-                    take: 1,
+                  model: {
+                    select: {
+                      name: true,
+                      type: true,
+                      modelVersions: {
+                        select: { id: true, name: true },
+                        where: { status: 'Published' },
+                        orderBy: { index: 'asc' },
+                        take: 1,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-        },
-      })
-      .catch(() => null);
+          })
+          .catch(() => null);
 
-    if (featuredCollection)
-      preselectedVersions.push(
-        ...featuredCollection.items.flatMap((x) => x.model?.modelVersions.map((x) => x.id) ?? [])
-      );
+        if (featuredCollection)
+          preselectedVersions.push(
+            ...featuredCollection.items.flatMap(
+              (x) => x.model?.modelVersions.map((x) => x.id) ?? []
+            )
+          );
 
-    ids = preselectedVersions;
-  }
+        ids = preselectedVersions;
+      }
 
-  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
-  if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
-  if (!!types?.length)
-    sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
-  if (!!notTypes?.length)
-    sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
-  if (query) {
-    const pgQuery = '%' + query + '%';
-    sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
-  }
-  if (baseModel) {
-    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-    if (baseModelSet)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
-  }
+      const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
+      if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
+      if (!!types?.length)
+        sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
+      if (!!notTypes?.length)
+        sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
+      if (query) {
+        const pgQuery = '%' + query + '%';
+        sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
+      }
+      if (baseModel) {
+        const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
+        if (baseModelSet)
+          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+      }
 
-  let orderBy = 'mv.index';
-  if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
+      let orderBy = 'mv.index';
+      if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
 
-  const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
-    SELECT
-      mv.id,
-      mv.index,
-      mv.name,
-      mv."trainedWords",
-      m.id "modelId",
-      m.name "modelName",
-      m.type "modelType",
-      mv."baseModel"
-    FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    ${Prisma.raw(
-      supported
-        ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
-        : ''
-    )}
-    ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
-    WHERE ${Prisma.join(sqlAnd, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)}
-    LIMIT ${take}
-  `;
+      const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
+        SELECT
+          mv.id,
+          mv.index,
+          mv.name,
+          mv."trainedWords",
+          m.id "modelId",
+          m.name "modelName",
+          m.type "modelType",
+          mv."baseModel"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        ${Prisma.raw(
+          supported
+            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
+            : ''
+        )}
+        ${Prisma.raw(
+          orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : ''
+        )}
+        WHERE ${Prisma.join(sqlAnd, ' AND ')}
+        ORDER BY ${Prisma.raw(orderBy)}
+        LIMIT ${take}
+        OFFSET ${skip}
+      `;
+      const rowCount = await dbRead.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*)
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        ${Prisma.raw(
+          supported
+            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
+            : ''
+        )}
+        WHERE ${Prisma.join(sqlAnd, ' AND ')}
+      `;
+      const [{ count }] = rowCount;
 
-  return results.map((resource) => ({
-    ...resource,
-    strength: 1,
-  }));
+      return {
+        items: results.map((resource) => ({
+          ...resource,
+          strength: 1,
+        })),
+        count,
+      };
+    }
+  );
 };
 
 const getResourceData = async (modelVersionIds: number[]) => {
@@ -601,11 +631,13 @@ export async function bulkDeleteGeneratedImages({
 }
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
+  const unavailableGenResources = await getUnavailableResources();
   const result = await dbRead.generationCoverage.findFirst({
     where: { modelVersionId: id },
     select: { covered: true },
   });
-  return result?.covered ?? false;
+
+  return (result?.covered ?? false) && unavailableGenResources.indexOf(id) === -1;
 }
 
 export async function getGenerationStatus() {
@@ -795,5 +827,48 @@ export async function getUnstableResources() {
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
-  return cachedData;
+  return cachedData ?? [];
+}
+
+export async function getUnavailableResources() {
+  const cachedData = await redis
+    .hGet('system:features', 'generation:unavailable-resources')
+    .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
+    .catch(() => [] as number[]); // fallback to empty array if redis fails
+
+  return cachedData ?? [];
+}
+
+export async function toggleUnavailableResource({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const unavailableResources = await getUnavailableResources();
+  const index = unavailableResources.indexOf(id);
+  if (index > -1) unavailableResources.splice(index, 1);
+  else unavailableResources.push(id);
+
+  await redis.hSet(
+    'system:features',
+    'generation:unavailable-resources',
+    toJson(unavailableResources)
+  );
+
+  const modelVersion = await dbRead.modelVersion.findUnique({
+    where: { id },
+    select: { modelId: true },
+  });
+  if (modelVersion)
+    modelsSearchIndex
+      .queueUpdate([
+        {
+          id: modelVersion.modelId,
+          action: SearchIndexUpdateQueueAction.Update,
+        },
+      ])
+      .catch(handleLogError);
+
+  return unavailableResources;
 }
