@@ -68,7 +68,10 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
+import {
+  getUnavailableResources,
+  prepareModelInOrchestrator,
+} from '~/server/services/generation/generation.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
 
@@ -1005,6 +1008,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   //   nextCursor = nextItem?.id;
   // }
 
+  const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
     isPrivate,
@@ -1017,7 +1021,10 @@ export const getModelsWithImagesAndModelVersions = async ({
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;
 
-        const canGenerate = !!version.generationCoverage?.covered;
+        const canGenerate =
+          !!version.generationCoverage?.covered &&
+          unavailableGenResources.indexOf(version.id) === -1;
+
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
@@ -1626,6 +1633,7 @@ export const getModelsByCategory = async ({
       })
     : [];
 
+  const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
     items: items.map(({ items, ...c }) => ({
@@ -1637,7 +1645,9 @@ export const getModelsByCategory = async ({
           const [image] = images.filter((i) => i.modelVersionId === version.id);
           if (!image) return null;
 
-          const canGenerate = !!version.generationCoverage?.covered;
+          const canGenerate =
+            !!version.generationCoverage?.covered &&
+            unavailableGenResources.indexOf(version.id) === -1;
 
           return {
             ...model,

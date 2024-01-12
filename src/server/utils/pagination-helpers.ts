@@ -68,18 +68,19 @@ export async function getPagedData<TQuery extends PaginationInput, TData>(
   { page, limit, ...rest }: TQuery,
   fn: (
     args: { skip?: number; take?: number } & Omit<TQuery, 'page' | 'limit'>
-  ) => Promise<{ items: TData; count?: number }>
+  ) => Promise<{ items: TData; count?: number | bigint }>
 ) {
   const take = !page ? undefined : limit;
   const skip = !page ? undefined : (page - 1) * limit;
 
   const { items, count } = await fn({ skip, take, ...rest });
+  const totalItems = Number(count) ?? 0;
 
   return {
     currentPage: page,
     pageSize: take,
-    totalPages: !!take && !!count ? Math.ceil(count / take) : 1,
-    totalItems: count,
+    totalPages: !!take && !!count ? Math.ceil(totalItems / take) : 1,
+    totalItems,
     items,
   };
 }
