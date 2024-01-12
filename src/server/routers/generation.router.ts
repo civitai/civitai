@@ -16,7 +16,9 @@ import {
   getGenerationRequests,
   getGenerationResources,
   getGenerationStatus,
+  getUnavailableResources,
   getUnstableResources,
+  toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import {
   guardedProcedure,
@@ -90,4 +92,12 @@ export const generationRouter = router({
   getUnstableResources: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getUnstableResources()),
+  getUnavailableResources: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(() => getUnavailableResources()),
+  toggleUnavailableResource: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
+    ),
 });

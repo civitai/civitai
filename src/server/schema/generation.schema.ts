@@ -13,7 +13,8 @@ import { imageSchema } from './image.schema';
 
 export type GetGenerationResourcesInput = z.infer<typeof getGenerationResourcesSchema>;
 export const getGenerationResourcesSchema = z.object({
-  take: z.number().default(10),
+  limit: z.number().default(10),
+  page: z.number().default(1),
   query: z.string().optional(),
   types: z.nativeEnum(ModelType).array().optional(),
   notTypes: z.nativeEnum(ModelType).array().optional(),
