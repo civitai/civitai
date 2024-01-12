@@ -305,9 +305,13 @@ const onFetchItemsToIndex = async ({
             lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
             user,
             category: category?.tag,
-            version,
-            versions: modelVersions.map(({ generationCoverage, files, ...x }) => ({
+            version: {
+              ...version,
+              hashes: version.hashes.map((hash) => hash.hash),
+            },
+            versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
               ...x,
+              hashes: hashes.map((hash) => hash.hash),
               canGenerate: generationCoverage?.covered,
             })),
             triggerWords: [
