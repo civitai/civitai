@@ -67,8 +67,11 @@ import {
   useState,
 } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { EventButton } from '~/components/EventButton/EventButton';
 import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -82,15 +85,13 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
-import { UserBuzz } from '../User/UserBuzz';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
-import { constants } from '~/server/common/constants';
-import { EventButton } from '~/components/EventButton/EventButton';
-import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { UserBuzz } from '../User/UserBuzz';
 
 const HEADER_HEIGHT = 70;
 
@@ -751,6 +752,7 @@ export function AppHeader({
               )}
               {currentUser?.showNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
+              {currentUser && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
             </Group>
             {!currentUser ? (

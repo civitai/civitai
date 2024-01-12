@@ -53,8 +53,10 @@ const singleChatSelect = {
   // messages: {}
 };
 
+// TODO are we using this?
+
 /**
- * Get a single chat, with messages and members
+ * Get a single chat
  */
 export const getChatHandler = async ({
   input,
@@ -94,6 +96,7 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
 
     return await dbWrite.chat.findMany({
       where: { chatMembers: { some: { userId } } },
+      orderBy: { createdAt: 'desc' },
       select: {
         ...singleChatSelect,
         messages: {
@@ -102,12 +105,13 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
           select: {
             content: true,
             contentType: true,
-            user: {
-              select: {
-                id: true,
-                username: true,
-              },
-            },
+            // TODO is below necessary?
+            // user: {
+            //   select: {
+            //     id: true,
+            //     username: true,
+            //   },
+            // },
           },
         },
         // TODO figure out how to get number of unread messages here
@@ -149,7 +153,18 @@ export const createChatHandler = async ({
 
     const existing = await dbWrite.chat.findFirst({
       where: { hash },
-      select: singleChatSelect,
+      // select: {
+      //   ...singleChatSelect,
+      //   messages: {
+      //     orderBy: { createdAt: 'desc' },
+      //     take: 1,
+      //     select: {
+      //       content: true,
+      //       contentType: true,
+      //     },
+      //   },
+      // },
+      select: { id: true },
     });
     console.log(existing);
 
@@ -199,7 +214,17 @@ export const createChatHandler = async ({
       where: {
         id: createdChat.id,
       },
-      select: singleChatSelect,
+      select: {
+        ...singleChatSelect,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            content: true,
+            contentType: true,
+          },
+        },
+      },
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -378,31 +403,28 @@ export const getInfiniteMessagesHandler = async ({
       throw throwNotFoundError(`No chat found for ID (${input.chatId})`);
     }
 
-    return await dbWrite.chatMessage.findMany({
+    const items = await dbWrite.chatMessage.findMany({
       where: { chatId: input.chatId },
       take: input.limit,
       cursor: input.cursor ? { id: input.cursor } : undefined,
       orderBy: [{ id: input.direction }],
     });
+
+    let nextCursor: number | undefined;
+    if (items.length > input.limit) {
+      const nextItem = items.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return {
+      nextCursor,
+      items: items,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
-
-//   message: router({
-//         return db.query.message.findMany({
-//           where: and(
-//             eq(message.chatId, input.chatId),
-//             input.before ? lt(message.createdAt, new Date(input.before)) : undefined,
-//             input.after ? gt(message.createdAt, new Date(input.after)) : undefined
-//           ),
-//           orderBy: desc(message.createdAt),
-//           limit: input.limit === 0 ? undefined : input.limit,
-//         });
-//       }),
-
-//       }),
 
 /**
  * Create a message

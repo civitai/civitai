@@ -8,7 +8,7 @@ export function showErrorNotification({
   title,
   autoClose = 3000,
 }: {
-  error: Error | { message: string }[];
+  error: Error | { message: string } | { message: string }[];
   reason?: string;
   title?: string;
   autoClose?: number | false;
