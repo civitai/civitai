@@ -108,6 +108,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'canGenerate',
     'fileFormats',
     'lastVersionAtUnix',
+    'versions.hashes',
   ];
 
   if (
@@ -186,7 +187,6 @@ const onFetchItemsToIndex = async ({
           hashes: {
             select: modelHashSelect,
             where: {
-              hashType: ModelHashType.SHA256,
               fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
             },
           },
@@ -310,9 +310,13 @@ const onFetchItemsToIndex = async ({
             lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
             user,
             category: category?.tag,
-            version,
-            versions: modelVersions.map(({ generationCoverage, files, ...x }) => ({
+            version: {
+              ...version,
+              hashes: version.hashes.map((hash) => hash.hash),
+            },
+            versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
               ...x,
+              hashes: hashes.map((hash) => hash.hash),
               canGenerate:
                 generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
             })),
