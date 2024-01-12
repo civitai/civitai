@@ -570,10 +570,13 @@ const queryFilters: Record<
 };
 
 function checkAIR(index: string, query: string) {
-  const { AIR } = queryFilters[index];
+  const filterAttributes = queryFilters[index] ?? {};
 
-  if (!AIR) return null;
+  if (filterAttributes?.AIR) {
+    return null;
+  }
 
+  const { AIR } = filterAttributes;
   const [match] = query.matchAll(AIR);
 
   if (!match) return null;
