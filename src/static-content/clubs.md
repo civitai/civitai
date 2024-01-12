@@ -1,13 +1,15 @@
 ---
-title: Clubs temporarily disabled
+title: Clubs disabled permenantly
 ---
 
-The day after releasing Clubs, we made an [open call for feedback](https://civitai.com/articles/3636/call-for-feedback-on-sustainable-community-development) about how to help make the community sustainable in a way that works.
+We've heard you. Based on your insightful feedback ([see here](https://civitai.com/articles/3636)), we've decided to permanently disable the Clubs feature. Your concerns about the potential pitfalls of Clubs were well-founded, and we're taking action.
 
-We received your feedback loud and clear about the perceived dangers of what a program like Clubs could lead to and have disabled them while they get a full rework.
+While Clubs had its benefits, such as fostering community engagement and support for creators, we acknowledge that it wasn't the right approach for Civitai.
 
-Aspects of the clubs system have obvious pro's such as serving as a gathering place for like-minded community engagement and creator support, however it was clear Clubs in its current form was the wrong way to implement it. Instead, Clubs will become user led sections of the site where users can freely share their resources, content  and ideas (think Sub-Reddits on Reddit). Meanwhile we'll be introducing other, more transparent ways for creators to get support from their fans.
+For those who've invested in Clubs, we've got you covered:
+- If you're currently a club member, expect a full Buzz refund.
+- If you purchased Buzz for club membership, please reach out to us at support@civitai.com for a refund.
 
-If you're already a member of a club you'll be refunded your Buzz spent in full, if you bought Buzz that was then spent on a club membership you can contact us at support@civitai.com for a refund. 
+Looking ahead, we're excited about new ways to support both our community and creators sustainably. Check out [our latest article](https://civitai.com/articles/3694) detailing our future plans. The article includes a survey that will help shape the future of Civitai, so please take a moment to review it and then take the survey.
 
-We love this community and hope to share our plans to better it in the next few days. 
+Thank you for being a part of this journey. Let's continue to shape Civitai together.
