@@ -25,6 +25,7 @@ import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
 import { upsertClubResource } from '~/server/services/club.service';
 import { modelsSearchIndex } from '~/server/search-index';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -39,11 +40,13 @@ export const getModelVersionRunStrategies = async ({
     },
   });
 
-export const getVersionById = <TSelect extends Prisma.ModelVersionSelect>({
+export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return dbRead.modelVersion.findUnique({ where: { id }, select });
+  const db = await getDbWithoutLag('modelVersion', id);
+  const result = await db.modelVersion.findUnique({ where: { id }, select });
+  return result;
 };
 
 export const getDefaultModelVersion = async ({
@@ -53,7 +56,8 @@ export const getDefaultModelVersion = async ({
   modelId: number;
   modelVersionId?: number;
 }) => {
-  const result = await dbRead.model.findUnique({
+  const db = await getDbWithoutLag('model', modelId);
+  const result = await db.model.findUnique({
     where: { id: modelId },
     select: {
       modelVersions: {
@@ -167,6 +171,7 @@ export const upsertModelVersion = async ({
         dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
+    await preventReplicationLag('modelVersion', version.id);
 
     return version;
   } else {
@@ -269,64 +274,17 @@ export const upsertModelVersion = async ({
           : undefined,
       },
     });
+    await preventReplicationLag('modelVersion', version.id);
 
     return version;
   }
-
-  // if (!id) {
-  //   // if it's a new version, we set it at the top of the list
-  //   // and increment the index of all other versions
-  //   const existingVersions = await dbRead.modelVersion.findMany({ where: { modelId } });
-
-  //   const currentVersionIndex = existingVersions.length > 0 ? existingVersions[0].index ?? -1 : -1;
-  //   const newVersionIndex = currentVersionIndex + 1;
-
-  //   const updatedVersions = existingVersions.map((version) => {
-  //     const parsedIndex = Number(version.index);
-
-  //     if (parsedIndex === 0) {
-  //       return { ...version, index: newVersionIndex };
-  //     } else if (parsedIndex >= newVersionIndex) {
-  //       return { ...version, index: parsedIndex + 1 };
-  //     } else {
-  //       return version;
-  //     }
-  //   });
-
-  //   const [version] = await dbWrite.$transaction([
-  //     // create the new version
-  //     dbWrite.modelVersion.create({
-  //       data: {
-  //         ...data,
-  //         index: 0,
-  //         modelId,
-  //       },
-  //     }),
-  //     // update the index of all other versions
-  //     ...updatedVersions.map(({ id, index }) =>
-  //       dbWrite.modelVersion.update({
-  //         where: { id },
-  //         data: { index: index as number },
-  //       })
-  //     ),
-  //   ]);
-
-  //   return version;
-  // }
-
-  // // Otherwise, we just update the version
-  // const version = await dbWrite.modelVersion.update({
-  //   where: { id },
-  //   data,
-  // });
-
-  // return version;
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
   const version = await dbWrite.$transaction(async (tx) => {
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
+    await preventReplicationLag('modelVersion', deleted.modelId);
 
     return deleted;
   });
@@ -334,11 +292,13 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
   return version;
 };
 
-export const updateModelVersionById = ({
+export const updateModelVersionById = async ({
   id,
   data,
 }: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
-  return dbWrite.modelVersion.update({ where: { id }, data });
+  const result = await dbWrite.modelVersion.update({ where: { id }, data });
+  await preventReplicationLag('model', result.modelId);
+  await preventReplicationLag('modelVersion', id);
 };
 
 export const publishModelVersionById = async ({
@@ -372,6 +332,8 @@ export const publishModelVersionById = async ({
 
   if (!republishing) await updateModelLastVersionAt({ id: version.modelId });
   await prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel });
+  await preventReplicationLag('model', version.modelId);
+  await preventReplicationLag('modelVersion', id);
 
   return version;
 };
@@ -417,6 +379,8 @@ export const unpublishModelVersionById = async ({
         { id: updatedVersion.model.id, action: SearchIndexUpdateQueueAction.Update },
       ]);
       await updateModelLastVersionAt({ id: updatedVersion.model.id, tx });
+      await preventReplicationLag('model', updatedVersion.model.id);
+      await preventReplicationLag('modelVersion', updatedVersion.id);
 
       return updatedVersion;
     },

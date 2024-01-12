@@ -70,8 +70,9 @@ import {
 } from './../schema/model.schema';
 import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
 
-export const getModel = <TSelect extends Prisma.ModelSelect>({
+export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
   user,
   select,
@@ -82,13 +83,16 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   const OR: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ status: ModelStatus.Published }];
   // if (user?.id) OR.push({ userId: user.id, deletedAt: null });
 
-  return dbRead.model.findFirst({
+  const db = await getDbWithoutLag('model', id);
+  const result = await db.model.findFirst({
     where: {
       id,
       // OR: !user?.isModerator ? OR : undefined,
     },
     select,
   });
+
+  return result;
 };
 
 type ModelRaw = {
@@ -478,7 +482,7 @@ export const getModelsRaw = async ({
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
-        SELECT  
+        SELECT
           mv."modelId" "modelId",
           MAX(mv."id") "modelVersionId"
         FROM "EntityAccess" ea
@@ -1178,8 +1182,8 @@ export const upsertModel = async ({
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
-  if (!id || templateId)
-    return dbWrite.model.create({
+  if (!id || templateId) {
+    const result = await dbWrite.model.create({
       select: { id: true, nsfw: true },
       data: {
         ...data,
@@ -1201,12 +1205,14 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           : undefined,
       },
     });
-  else {
+    await preventReplicationLag('model', result.id);
+    return result;
+  } else {
     if (tagsOnModels) {
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
-    return dbWrite.model.update({
+    const result = await dbWrite.model.update({
       select: { id: true, nsfw: true },
       where: { id },
       data: {
@@ -1237,6 +1243,8 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           : undefined,
       },
     });
+    await preventReplicationLag('model', id);
+    return result;
   }
 };
 

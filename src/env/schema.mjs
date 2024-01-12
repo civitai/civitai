@@ -124,6 +124,7 @@ export const serverSchema = z.object({
     start: z.date().optional(),
     end: z.date().optional()
   })).optional(),
+  REPLICATION_LAG_DELAY: z.coerce.number().default(0),
 });
 
 /**
