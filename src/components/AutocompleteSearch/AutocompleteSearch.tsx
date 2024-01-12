@@ -572,7 +572,7 @@ const queryFilters: Record<
 function checkAIR(index: string, query: string) {
   const filterAttributes = queryFilters[index] ?? {};
 
-  if (filterAttributes?.AIR) {
+  if (!filterAttributes?.AIR) {
     return null;
   }
 
