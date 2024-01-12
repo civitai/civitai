@@ -107,6 +107,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'canGenerate',
     'fileFormats',
     'lastVersionAtUnix',
+    'versions.hashes',
   ];
 
   if (
@@ -185,7 +186,6 @@ const onFetchItemsToIndex = async ({
           hashes: {
             select: modelHashSelect,
             where: {
-              hashType: ModelHashType.SHA256,
               fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
             },
           },

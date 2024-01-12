@@ -401,6 +401,14 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
     // and user didn't select from the list
     if (debouncedSearch === query || selectedItem) return;
 
+    // Check if the query is an AIR
+    const air = checkAIR(indexName, debouncedSearch);
+    if (air) {
+      // If it is, redirect to the appropriate page
+      router.push(air);
+      return;
+    }
+
     const {
       query: cleanedSearch,
       filters,
@@ -545,12 +553,14 @@ const IndexRenderItem: Record<string, React.FC> = {
 
 const queryFilters: Record<
   string,
-  { filters: Record<string, RegExp>; searchPageMap: Record<string, string> }
+  { AIR?: RegExp; filters: Record<string, RegExp>; searchPageMap: Record<string, string> }
 > = {
   models: {
+    AIR: /^civitai:(?<modelId>\d+)@(?<modelVersionId>\d+)/g,
     filters: {
       'tags.name': /(^|\s+)(?<not>!|-)?#(?<value>\w+)/g,
       'user.username': /(^|\s+)(?<not>!|-)?@(?<value>\w+)/g,
+      'versions.hashes': /(^|\s+)(?<not>!|-)?hash:(?<value>[A-Za-z0-9_.-]+)/g,
     },
     searchPageMap: {
       'user.username': 'users',
@@ -558,6 +568,28 @@ const queryFilters: Record<
     },
   },
 };
+
+function checkAIR(index: string, query: string) {
+  const { AIR } = queryFilters[index];
+
+  if (!AIR) return null;
+
+  const [match] = query.matchAll(AIR);
+
+  if (!match) return null;
+
+  if (index === 'models') {
+    const modelId = match?.groups?.modelId;
+    const modelVersionId = match?.groups?.modelVersionId;
+
+    if (!modelId || !modelVersionId) return null;
+
+    return `/models/${modelId}?modelVersionId=${modelVersionId}`;
+  }
+
+  return null;
+}
+
 function parseQuery(index: string, query: string) {
   const filterAttributes = queryFilters[index];
   const filters = [];
