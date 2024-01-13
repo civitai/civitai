@@ -405,12 +405,13 @@ export const getInfiniteMessagesHandler = async ({
 
     const items = await dbWrite.chatMessage.findMany({
       where: { chatId: input.chatId },
-      take: input.limit,
+      take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
       orderBy: [{ id: input.direction }],
     });
 
     let nextCursor: number | undefined;
+
     if (items.length > input.limit) {
       const nextItem = items.pop();
       nextCursor = nextItem?.id;
@@ -418,7 +419,7 @@ export const getInfiniteMessagesHandler = async ({
 
     return {
       nextCursor,
-      items: items,
+      items,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

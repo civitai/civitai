@@ -113,5 +113,6 @@ export type ClubAdminInvite = RouterOutput['clubAdmin']['getInvitesPaged']['item
 export type ClubAdmin = RouterOutput['clubAdmin']['getAdminsPaged']['items'][number];
 export type ClubPostResource = RouterOutput['clubPost']['resourcePostCreateDetails'];
 
-// type ChatRouter = RouterOutput['chat'];
-// export type CreateChatType = ChatRouter['createChat'];
+type ChatRouter = RouterOutput['chat'];
+// export type ChatCreateType = ChatRouter['createChat'];
+export type ChatAllMessages = ChatRouter['getInfiniteMessages']['items'];

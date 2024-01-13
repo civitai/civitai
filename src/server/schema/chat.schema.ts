@@ -41,6 +41,6 @@ export type GetInfiniteMessages = z.infer<typeof getInfiniteMessages>;
 export const getInfiniteMessages = infiniteQuerySchema.merge(
   z.object({
     chatId: z.number(),
-    direction: z.enum(['asc', 'desc']).optional().default('desc'),
+    direction: z.enum(['asc', 'desc']).optional().default('asc'),
   })
 );
