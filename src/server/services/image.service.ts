@@ -170,6 +170,10 @@ export const moderateImages = async ({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
       data: { disabled: true },
     });
+
+    // Update nsfw level of image
+    if (reviewType === 'poi')
+      await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels('{${ids.join(',')}}'::int[]);`);
   }
 };
 
