@@ -32,7 +32,7 @@ import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
-import { getTagsNeedingReview } from '~/server/services/system-cache';
+import { getModerationTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
@@ -151,15 +151,23 @@ export const moderateImages = async ({
   } else if (reviewAction === 'removeName') {
     removeNameReference(ids);
   } else {
+    // Approve
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { nsfw, needsReview, ingestion: 'Scanned' },
     });
 
     // Remove tags that triggered review
-    const tagIds = await getTagsNeedingReview();
+    const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
+
+    // And moderated tags for POI review (since no NSFW allowed)
+    if (reviewType === 'poi') {
+      const moderatedTags = await getModerationTags();
+      tagIds.push(...moderatedTags.map((x) => x.id));
+    }
+
     await dbWrite.tagsOnImage.updateMany({
-      where: { imageId: { in: ids }, tagId: { in: tagIds.map((x) => x.id) } },
+      where: { imageId: { in: ids }, tagId: { in: tagIds } },
       data: { disabled: true },
     });
   }
