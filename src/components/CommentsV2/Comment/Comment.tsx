@@ -233,7 +233,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
           </Box>
         )}
         {isExpanded && (
-          <Stack mt="md">
+          <Stack mt="md" style={{ borderLeft: '5px solid rgba(0,0,0,0.15)', paddingLeft: 8 }}>
             <CommentReplies commentId={comment.id} userId={comment.user.id} />
           </Stack>
         )}
