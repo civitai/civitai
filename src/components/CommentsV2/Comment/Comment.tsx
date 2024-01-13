@@ -8,6 +8,7 @@ import {
   Button,
   Box,
   createStyles,
+  Title,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useCommentsContext } from '../CommentsProvider';
@@ -36,6 +37,8 @@ import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import { useMutateComment } from '../commentv2.utils';
+import { ModelDiscussionComments } from '../../Model/Discussion/ModelDiscussionComments';
+import { CommentReplies } from '../CommentReplies';
 
 type Store = {
   id?: number;
@@ -72,6 +75,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
+  const [repliesOpen, setRepliesOpen] = useState(false);
 
   const isHighlighted = highlighted === comment.id;
   useEffect(() => {
@@ -79,6 +83,8 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
     const elem = document.getElementById(`comment-${comment.id}`);
     if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   }, [isHighlighted, comment.id]);
+
+  const replyCount = comment?.childThread?._count?.comments ?? 0;
 
   return (
     <Group
@@ -197,6 +203,18 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
                     </Group>
                   </Button>
                 )}
+                {replyCount > 0 && (
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    radius="xl"
+                    onClick={() => setRepliesOpen(!repliesOpen)}
+                    compact
+                  >
+                    {repliesOpen ? 'Hide' : 'Show'}{' '}
+                    {`${replyCount.toLocaleString()} ${replyCount === 1 ? 'Reply' : 'Replies'}`}
+                  </Button>
+                )}
               </Group>
             </>
           ) : (
@@ -205,8 +223,18 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
         </Stack>
         {canReply && replying && (
           <Box pt="sm">
-            <CreateComment autoFocus replyTo={comment.user} onCancel={() => setReplying(false)} />
+            <CreateComment
+              autoFocus
+              replyTo={comment.user}
+              onCancel={() => setReplying(false)}
+              replyToCommentId={comment.id}
+            />
           </Box>
+        )}
+        {repliesOpen && (
+          <Stack mt="md">
+            <CommentReplies commentId={comment.id} userId={comment.user.id} />
+          </Stack>
         )}
       </Stack>
     </Group>

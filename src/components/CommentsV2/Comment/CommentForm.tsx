@@ -25,11 +25,13 @@ export const CommentForm = ({
   onCancel,
   autoFocus,
   replyTo,
+  replyToCommentId,
 }: {
   comment?: { id: number; content: string };
   onCancel?: () => void;
   autoFocus?: boolean;
   replyTo?: SimpleUser;
+  replyToCommentId?: number;
 }) => {
   const { classes } = useStyles();
   const { entityId, entityType, isMuted, data } = useCommentsContext();
@@ -96,7 +98,12 @@ export const CommentForm = ({
   };
 
   const handleSubmit = (data: UpsertCommentV2Input) => {
-    mutate({ ...comment, ...data, entityId, entityType });
+    mutate({
+      ...comment,
+      ...data,
+      entityId: replyToCommentId ? replyToCommentId : entityId,
+      entityType: replyToCommentId ? 'comment' : entityType,
+    });
   };
 
   if (isMuted)
