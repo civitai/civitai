@@ -34,16 +34,16 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const getEarnings = (): (FeatureCardProps & { key: string })[] => [
-  {
-    key: 'referrals',
-    icon: <IconUsers size={32} />,
-    title: 'Referrals',
-    description: 'You & your friends can earn more Buzz!',
-    btnProps: {
-      href: '/user/account#referrals',
-      children: 'Invite a friend',
-    },
-  },
+  // {
+  //   key: 'referrals',
+  //   icon: <IconUsers size={32} />,
+  //   title: 'Referrals',
+  //   description: 'You & your friends can earn more Buzz!',
+  //   btnProps: {
+  //     href: '/user/account#referrals',
+  //     children: 'Invite a friend',
+  //   },
+  // },
   {
     key: 'bounties',
     icon: <IconMoneybag size={32} />,
