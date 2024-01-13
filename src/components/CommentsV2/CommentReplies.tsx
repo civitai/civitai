@@ -11,7 +11,7 @@ export function CommentReplies({ commentId, userId }: { commentId: number; userI
   if (userId) badges.push({ userId, label: 'op', color: 'violet' });
 
   return (
-    <CommentsProvider entityType="comment" entityId={commentId} limit={5} badges={badges} mt="md">
+    <CommentsProvider entityType="comment" entityId={commentId} limit={5} badges={badges}>
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center>

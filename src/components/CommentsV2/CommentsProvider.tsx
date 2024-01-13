@@ -42,6 +42,8 @@ type ChildProps = {
   forceLocked?: boolean;
   sort: ThreadSort;
   setSort: (sort: ThreadSort) => void;
+  expanded: number[];
+  toggleExpanded: (commentId: number) => void;
 };
 
 type CommentsContext = CommentConnectorInput & ChildProps;
@@ -76,6 +78,8 @@ export function CommentsProvider({
   const created = useNewCommentStore(
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
   );
+  const expanded = useNewCommentStore(useCallback((state) => state.expandedComments, []));
+  const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
 
   const [showMore, setShowMore] = useState(false);
   const toggleShowMore = () => setShowMore((b) => !b);
@@ -152,6 +156,8 @@ export function CommentsProvider({
         forceLocked,
         sort,
         setSort,
+        expanded,
+        toggleExpanded,
       }}
     >
       {children({
@@ -170,6 +176,8 @@ export function CommentsProvider({
         forceLocked,
         sort,
         setSort,
+        expanded,
+        toggleExpanded,
       })}
     </CommentsCtx.Provider>
   );
@@ -189,6 +197,8 @@ export function CommentsProvider({
 type StoreProps = {
   /** dictionary of [entityType_entityId]: [...comments] */
   comments: Record<string, CommentV2Model[]>;
+  expandedComments: number[];
+  toggleExpanded: (commentId: number) => void;
   addComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   editComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   deleteComment: (entityType: string, entityId: number, commentId: number) => void;
@@ -200,6 +210,15 @@ export const useNewCommentStore = create<StoreProps>()(
   immer((set, get) => {
     return {
       comments: {},
+      expandedComments: [],
+      toggleExpanded: (commentId: number) =>
+        set((state) => {
+          if (state.expandedComments.includes(commentId)) {
+            state.expandedComments = state.expandedComments.filter((x) => x !== commentId);
+          } else {
+            state.expandedComments.push(commentId);
+          }
+        }),
       addComment: (entityType, entityId, comment) =>
         set((state) => {
           const key = getKey(entityType, entityId);

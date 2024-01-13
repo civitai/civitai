@@ -63,7 +63,7 @@ export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProp
 }
 
 export function CommentContent({ comment, ...groupProps }: CommentProps) {
-  const { entityId, entityType, highlighted } = useCommentsContext();
+  const { entityId, entityType, highlighted, expanded, toggleExpanded } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
 
   const { classes, cx } = useStyles();
@@ -75,9 +75,9 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
-  const [repliesOpen, setRepliesOpen] = useState(false);
 
   const isHighlighted = highlighted === comment.id;
+
   useEffect(() => {
     if (!isHighlighted) return;
     const elem = document.getElementById(`comment-${comment.id}`);
@@ -85,6 +85,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
   }, [isHighlighted, comment.id]);
 
   const replyCount = comment?.childThread?._count?.comments ?? 0;
+  const isExpanded = expanded.includes(comment.id);
 
   return (
     <Group
@@ -208,10 +209,10 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
                     variant="subtle"
                     size="xs"
                     radius="xl"
-                    onClick={() => setRepliesOpen(!repliesOpen)}
+                    onClick={() => toggleExpanded(comment.id)}
                     compact
                   >
-                    {repliesOpen ? 'Hide' : 'Show'}{' '}
+                    {isExpanded ? 'Hide' : 'Show'}{' '}
                     {`${replyCount.toLocaleString()} ${replyCount === 1 ? 'Reply' : 'Replies'}`}
                   </Button>
                 )}
@@ -231,7 +232,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
             />
           </Box>
         )}
-        {repliesOpen && (
+        {isExpanded && (
           <Stack mt="md">
             <CommentReplies commentId={comment.id} userId={comment.user.id} />
           </Stack>

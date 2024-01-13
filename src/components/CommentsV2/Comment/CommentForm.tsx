@@ -34,7 +34,18 @@ export const CommentForm = ({
   replyToCommentId?: number;
 }) => {
   const { classes } = useStyles();
-  const { entityId, entityType, isMuted, data } = useCommentsContext();
+  const {
+    entityId: contextEntityId,
+    entityType: contextEntityType,
+    isMuted,
+    data,
+    expanded,
+    toggleExpanded,
+  } = useCommentsContext();
+
+  const entityId = replyToCommentId ? replyToCommentId : contextEntityId;
+  const entityType = replyToCommentId ? 'comment' : contextEntityType;
+
   const editorRef = useRef<EditorCommandsRef | null>(null);
   const [focused, setFocused] = useState(autoFocus);
   const defaultValues = { ...comment, entityId, entityType };
@@ -80,6 +91,10 @@ export const CommentForm = ({
         queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
         store.addComment(entityType, entityId, response);
       }
+
+      if (replyToCommentId && !expanded.includes(replyToCommentId)) {
+        toggleExpanded(replyToCommentId);
+      }
       // update comment count
       handleCancel();
     },
@@ -101,8 +116,8 @@ export const CommentForm = ({
     mutate({
       ...comment,
       ...data,
-      entityId: replyToCommentId ? replyToCommentId : entityId,
-      entityType: replyToCommentId ? 'comment' : entityType,
+      entityId,
+      entityType,
     });
   };
 
