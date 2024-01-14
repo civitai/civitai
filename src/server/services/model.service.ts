@@ -1275,6 +1275,14 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" = 'poi'
+            -- And there aren't any other poi models used by these images
+            AND NOT EXISTS (
+              SELECT 1
+              FROM "ImageResource" irr
+              JOIN "ModelVersion" mvv ON mvv.id = irr."modelVersionId"
+              JOIN "Model" mm ON mm.id = mvv."modelId"
+              WHERE mm.poi AND mm.id != ${id} AND irr."imageId" = i.id
+            )
         `;
       }
     }
