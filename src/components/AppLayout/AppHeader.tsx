@@ -725,7 +725,8 @@ export function AppHeader({
               </Menu>
             )}
             <SupportButton />
-            <EventButton />
+            {/* Disabled until next event */}
+            {/* <EventButton /> */}
           </Group>
         </Grid.Col>
         <Grid.Col
