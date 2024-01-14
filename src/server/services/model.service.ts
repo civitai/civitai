@@ -8,6 +8,7 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
+  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -1215,12 +1216,13 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
     await preventReplicationLag('model', result.id);
     return result;
   } else {
-    if (tagsOnModels) {
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
+    const beforeUpdate = await dbRead.model.findUnique({
+      where: { id },
+      select: { poi: true },
+    });
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfw: true },
+      select: { id: true, nsfw: true, poi: true },
       where: { id },
       data: {
         ...data,
@@ -1251,6 +1253,37 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       },
     });
     await preventReplicationLag('model', id);
+
+    // Handle POI change
+    const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
+    if (poiChanged) {
+      if (result.poi) {
+        // Mark all nsfw images as needing review
+        await dbWrite.$executeRaw`
+          UPDATE "Image" i SET "needsReview" = 'poi'
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" IS NULL
+            AND i.nsfw != ${NsfwLevel.None}::"NsfwLevel"
+        `;
+      } else {
+        // Remove review status from all images in poi queue
+        await dbWrite.$executeRaw`
+          UPDATE "Image" i SET "needsReview" = null
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" = 'poi'
+        `;
+      }
+    }
+
+    // Update search index if listing changes
+    if (tagsOnModels || poiChanged) {
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    }
+
     return result;
   }
 };
