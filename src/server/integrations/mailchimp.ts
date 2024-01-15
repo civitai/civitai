@@ -69,7 +69,13 @@ const setSubscription = newsletterHandler(
     } else {
       if (subscribed) return;
       // They are active and they want to unsubscribe
-      await client.lists.deleteListMember(env.NEWSLETTER_ID as string, createSubscriberHash(email));
+      await client.lists.updateListMember(
+        env.NEWSLETTER_ID as string,
+        createSubscriberHash(email),
+        {
+          status: 'unsubscribed',
+        }
+      );
     }
   }
 );
