@@ -98,6 +98,7 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
+import { getUnavailableResources } from '../services/generation/generation.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -135,9 +136,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     });
 
     const modelCategories = await getCategoryTags('model');
+    const unavailableGenResources = await getUnavailableResources();
+
     return {
       ...model,
-      canGenerate: filteredVersions.some((version) => !!version.generationCoverage?.covered),
+      canGenerate: filteredVersions.some(
+        (version) =>
+          !!version.generationCoverage?.covered &&
+          unavailableGenResources.indexOf(version.id) === -1
+      ),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
       tagsOnModels: model.tagsOnModels
@@ -162,7 +169,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canDownload =
           model.mode !== ModelModifier.Archived &&
           (!earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator);
-        const canGenerate = !!version.generationCoverage?.covered;
+        const canGenerate =
+          !!version.generationCoverage?.covered &&
+          unavailableGenResources.indexOf(version.id) === -1;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);

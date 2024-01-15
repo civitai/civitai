@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { modelFileSelect } from './modelFile.selector';
+import { modelHashSelect } from './modelHash.selector';
+import { ModelFileType } from '../common/constants';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
@@ -50,4 +52,10 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
   baseModel: true,
   baseModelType: true,
   files: { select: { metadata: true }, where: { type: 'Model' } },
+  hashes: {
+    select: modelHashSelect,
+    where: {
+      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+    },
+  },
 });
