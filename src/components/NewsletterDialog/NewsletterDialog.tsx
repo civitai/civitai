@@ -46,7 +46,7 @@ export function NewsletterDialog() {
 
   const form = useForm({
     schema: updateSubscriptionSchema,
-    defaultValues: { email: undefined, subscribed: true },
+    defaultValues: { email: currentUser?.email ?? '', subscribed: true },
   });
 
   const {
@@ -127,9 +127,13 @@ export function NewsletterDialog() {
 
         <Form form={form} onSubmit={handleSubscribe}>
           <Group spacing={8} align="flex-start" position="right">
-            {!currentUser && (
-              <InputText placeholder="hello@civitai.com" name="email" style={{ flex: 1 }} />
-            )}
+            <InputText
+              placeholder="hello@civitai.com"
+              name="email"
+              type={currentUser ? 'hidden' : undefined}
+              hidden={!!currentUser}
+              style={{ flex: 1 }}
+            />
             <InputText name="subscribed" type="hidden" style={{ display: 'none' }} hidden />
             <Button type="submit" loading={updateNewsletterSubscriptionMutation.isLoading}>
               Subscribe
