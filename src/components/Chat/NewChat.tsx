@@ -20,7 +20,6 @@ export function NewChat({
   const [selectedUsers, setSelectedUsers] = useState<UserSearchIndexRecord[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useUtils();
 
   const { mutate } = trpc.chat.createChat.useMutation({
     onSuccess: (data) => {
@@ -29,18 +28,6 @@ export function NewChat({
           title: 'Failed to fetch chat.',
           error: { message: 'Please try refreshing the page.' },
           autoClose: false,
-        });
-      } else {
-        queryUtils.chat.getAllByUser.setData(undefined, (old) => {
-          if (!('hash' in data)) {
-            // chat already exists
-            if (!old) return [];
-            return old;
-          } else {
-            // proper typing would be nice but typescript is being cranky
-            if (!old) return [data] as any;
-          }
-          return [data, ...old];
         });
       }
 

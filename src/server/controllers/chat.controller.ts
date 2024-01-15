@@ -599,38 +599,6 @@ export const isTypingHandler = async ({
 
     const { chatId, isTyping } = input;
 
-    // if (input.chatMemberId !== userId) {
-    //   return;
-    // }
-    //
-    // const existing = await dbWrite.chatMember.findFirst({
-    //   where: { id: input.chatMemberId },
-    //   select: {
-    //     chat: {
-    //       select: {
-    //         chatMembers: {
-    //           select: {
-    //             userId: true,
-    //           },
-    //         },
-    //       },
-    //     },
-    //   },
-    // });
-    //
-    // if (!existing) return;
-    //
-    // for (const cm of existing.chat.chatMembers) {
-    //   fetch(
-    //     `${env.SIGNALS_ENDPOINT}/users/${cm.userId}/signals/${SignalMessages.ChatTypingStatus}`,
-    //     {
-    //       method: 'POST',
-    //       headers: { 'Content-Type': 'application/json' },
-    //       body: JSON.stringify({ chatMemberId: input.chatMemberId, isTyping: input.isTyping }),
-    //     }
-    //   ).catch();
-    // }
-
     const existing = await dbWrite.chat.findFirst({
       where: { id: chatId },
       select: {
@@ -649,7 +617,7 @@ export const isTypingHandler = async ({
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId, isTyping }),
+        body: JSON.stringify({ chatId, userId, isTyping }),
       }
     ).catch();
   } catch {}

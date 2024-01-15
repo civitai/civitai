@@ -61,7 +61,6 @@ export function ExistingChat({
   existingChat: number;
 }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useUtils();
   // TODO reset chat message when clicking different group
   const [chatMsg, setChatMsg] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
@@ -83,27 +82,7 @@ export function ExistingChat({
 
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
-    async onSuccess(data) {
-      await queryUtils.chat.getInfiniteMessages.cancel();
-
-      queryUtils.chat.getInfiniteMessages.setInfiniteData(
-        { chatId: existingChat },
-        produce((old) => {
-          if (!old) {
-            return {
-              pages: [],
-              pageParams: [],
-            };
-          }
-
-          const lastPage = old.pages[old.pages.length - 1];
-
-          lastPage.items.push(data);
-        })
-      );
-
-      // TODO update last message of get all
-
+    async onSuccess(_data) {
       setIsSending(false);
       setChatMsg('');
     },

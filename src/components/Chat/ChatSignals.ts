@@ -10,6 +10,8 @@ export const useChatNewMessageSignal = () => {
 
   const onUpdate = useCallback(
     (updated: ChatAllMessages[number]) => {
+      // queryUtils.chat.getInfiniteMessages.cancel();
+
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
         { chatId: updated.chatId },
         produce((old) => {
@@ -26,7 +28,16 @@ export const useChatNewMessageSignal = () => {
         })
       );
 
-      // TODO update last message of get all
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const thisChat = old.find((o) => o.id === updated.chatId);
+          if (!thisChat) return old;
+          thisChat.messages = [{ content: updated.content, contentType: updated.contentType }];
+        })
+      );
     },
     [queryUtils]
   );
