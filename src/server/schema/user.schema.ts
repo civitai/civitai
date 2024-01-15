@@ -166,3 +166,8 @@ export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSche
 export const completeOnboardStepSchema = z.object({
   step: z.nativeEnum(OnboardingStep).optional(),
 });
+
+export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
+export const userSettingsSchema = z.object({
+  newsletterDialogLastSeenAt: z.date().nullish(),
+});

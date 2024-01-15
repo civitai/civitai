@@ -18,10 +18,7 @@ export const modelModerationCategories: ModerationCategory[] = [
   {
     label: 'Violence',
     value: 'violence',
-    children: [
-      { label: 'Intense Violence/Gore', value: 'graphic violence or gore' },
-      { label: 'Weapons Display', value: 'weapons' },
-    ],
+    children: [{ label: 'Intense Violence/Gore', value: 'graphic violence or gore' }],
   },
   {
     label: 'Visually Disturbing',
@@ -76,7 +73,6 @@ export const moderationCategories: ModerationCategory[] = [
       { label: 'Intense Violence/Gore', value: 'graphic violence or gore' },
       { label: 'Physical Violence', value: 'physical violence' },
       { label: 'Weapon-related Violence', value: 'weapon violence' },
-      { label: 'Weapons Display', value: 'weapons' },
       { label: 'Self-harm', value: 'self injury', hidden: true },
     ],
   },

@@ -33,7 +33,7 @@ export function EdgeVideo({
 
   return (
     // extra div wrapper to prevent positioning errors of parent components that make their child absolute
-    <div {...wrapperProps}>
+    <div {...wrapperProps} className={classes.iosScroll}>
       <div
         style={{
           position: 'relative',
@@ -91,5 +91,16 @@ const useStyles = createStyles((theme) => ({
     position: 'absolute',
     bottom: theme.spacing.xs,
     right: theme.spacing.xs,
+  },
+  iosScroll: {
+    '&::after': {
+      position: 'absolute',
+      top: '0px',
+      right: '0px',
+      bottom: '0px',
+      left: '0px',
+      content: '""',
+      zIndex: 10,
+    },
   },
 }));

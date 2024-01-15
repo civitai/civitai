@@ -8,6 +8,7 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
+  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -68,10 +69,14 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
+import {
+  getUnavailableResources,
+  prepareModelInOrchestrator,
+} from '~/server/services/generation/generation.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
 
-export const getModel = <TSelect extends Prisma.ModelSelect>({
+export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
   user,
   select,
@@ -82,13 +87,16 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   const OR: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ status: ModelStatus.Published }];
   // if (user?.id) OR.push({ userId: user.id, deletedAt: null });
 
-  return dbRead.model.findFirst({
+  const db = await getDbWithoutLag('model', id);
+  const result = await db.model.findFirst({
     where: {
       id,
       // OR: !user?.isModerator ? OR : undefined,
     },
     select,
   });
+
+  return result;
 };
 
 type ModelRaw = {
@@ -205,30 +213,30 @@ export const getModelsRaw = async ({
   if (query) {
     const lowerQuery = query?.toLowerCase();
 
-    AND.push(
-      Prisma.join(
-        [
-          Prisma.sql`
-          m."name" ILIKE ${`%${query}%`}
-        `,
-          Prisma.sql`
-          EXISTS (
-            SELECT 1 FROM "ModelVersion" mvq
-            JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
-            JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-            WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
-          )
-        `,
-          Prisma.sql`
-          EXISTS (
-            SELECT 1 FROM "ModelVersion" mvq
-            WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
-          )
-        `,
-        ],
-        ' OR '
-      )
-    );
+    AND.push(Prisma.sql`(
+        ${Prisma.join(
+          [
+            Prisma.sql`
+            m."name" ILIKE ${`%${query}%`}
+          `,
+            Prisma.sql`
+            EXISTS (
+              SELECT 1 FROM "ModelVersion" mvq
+              JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
+              JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
+              WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
+            )
+          `,
+            Prisma.sql`
+            EXISTS (
+              SELECT 1 FROM "ModelVersion" mvq
+              WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
+            )
+          `,
+          ],
+          ' OR '
+        )}
+      )`);
   }
 
   if (needsReview && sessionUser?.isModerator) {
@@ -478,7 +486,7 @@ export const getModelsRaw = async ({
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
-        SELECT  
+        SELECT
           mv."modelId" "modelId",
           MAX(mv."id") "modelVersionId"
         FROM "EntityAccess" ea
@@ -1001,6 +1009,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   //   nextCursor = nextItem?.id;
   // }
 
+  const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
     isPrivate,
@@ -1013,7 +1022,10 @@ export const getModelsWithImagesAndModelVersions = async ({
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;
 
-        const canGenerate = !!version.generationCoverage?.covered;
+        const canGenerate =
+          !!version.generationCoverage?.covered &&
+          unavailableGenResources.indexOf(version.id) === -1;
+
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
@@ -1178,8 +1190,8 @@ export const upsertModel = async ({
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
-  if (!id || templateId)
-    return dbWrite.model.create({
+  if (!id || templateId) {
+    const result = await dbWrite.model.create({
       select: { id: true, nsfw: true },
       data: {
         ...data,
@@ -1201,13 +1213,16 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           : undefined,
       },
     });
-  else {
-    if (tagsOnModels) {
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
+    await preventReplicationLag('model', result.id);
+    return result;
+  } else {
+    const beforeUpdate = await dbRead.model.findUnique({
+      where: { id },
+      select: { poi: true },
+    });
 
-    return dbWrite.model.update({
-      select: { id: true, nsfw: true },
+    const result = await dbWrite.model.update({
+      select: { id: true, nsfw: true, poi: true },
       where: { id },
       data: {
         ...data,
@@ -1237,6 +1252,47 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           : undefined,
       },
     });
+    await preventReplicationLag('model', id);
+
+    // Handle POI change
+    const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
+    if (poiChanged) {
+      if (result.poi) {
+        // Mark all nsfw images as needing review
+        await dbWrite.$executeRaw`
+          UPDATE "Image" i SET "needsReview" = 'poi'
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" IS NULL
+            AND i.nsfw != ${NsfwLevel.None}::"NsfwLevel"
+        `;
+      } else {
+        // Remove review status from all images in poi queue
+        await dbWrite.$executeRaw`
+          UPDATE "Image" i SET "needsReview" = null
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" = 'poi'
+            -- And there aren't any other poi models used by these images
+            AND NOT EXISTS (
+              SELECT 1
+              FROM "ImageResource" irr
+              JOIN "ModelVersion" mvv ON mvv.id = irr."modelVersionId"
+              JOIN "Model" mm ON mm.id = mvv."modelId"
+              WHERE mm.poi AND mm.id != ${id} AND irr."imageId" = i.id
+            )
+        `;
+      }
+    }
+
+    // Update search index if listing changes
+    if (tagsOnModels || poiChanged) {
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    }
+
+    return result;
   }
 };
 
@@ -1618,6 +1674,7 @@ export const getModelsByCategory = async ({
       })
     : [];
 
+  const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
     items: items.map(({ items, ...c }) => ({
@@ -1629,7 +1686,9 @@ export const getModelsByCategory = async ({
           const [image] = images.filter((i) => i.modelVersionId === version.id);
           if (!image) return null;
 
-          const canGenerate = !!version.generationCoverage?.covered;
+          const canGenerate =
+            !!version.generationCoverage?.covered &&
+            unavailableGenResources.indexOf(version.id) === -1;
 
           return {
             ...model,

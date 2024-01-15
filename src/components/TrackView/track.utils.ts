@@ -1,9 +1,10 @@
 import { trpc } from '~/utils/trpc';
-import { TrackActionInput, TrackShareInput } from '~/server/schema/track.schema';
+import { TrackActionInput, TrackSearchInput, TrackShareInput } from '~/server/schema/track.schema';
 
 export const useTrackEvent = () => {
   const { mutateAsync: trackShare } = trpc.track.trackShare.useMutation();
   const { mutateAsync: trackAction } = trpc.track.addAction.useMutation();
+  const { mutateAsync: trackSearch } = trpc.track.trackSearch.useMutation();
 
   const handleTrackShare = (data: TrackShareInput) => {
     return trackShare(data);
@@ -13,5 +14,13 @@ export const useTrackEvent = () => {
     return trackAction(data);
   };
 
-  return { trackShare: handleTrackShare, trackAction: handleTrackAction };
+  const handleTrackSearch = (data: TrackSearchInput) => {
+    return trackSearch(data);
+  };
+
+  return {
+    trackShare: handleTrackShare,
+    trackAction: handleTrackAction,
+    trackSearch: handleTrackSearch,
+  };
 };

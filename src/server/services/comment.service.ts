@@ -4,6 +4,7 @@ import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { userMetrics } from '~/server/metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -45,7 +46,8 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const comments = await dbRead.comment.findMany({
+  const db = await getDbWithoutLag('commentModel', modelId);
+  const comments = await db.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
@@ -113,7 +115,7 @@ export const getUserReactionByCommentId = ({
   return dbRead.commentReaction.findFirst({ where: { reaction, userId, commentId } });
 };
 
-export const createOrUpdateComment = ({
+export const createOrUpdateComment = async ({
   ownerId,
   ...input
 }: CommentUpsertInput & { ownerId: number; locked: boolean }) => {
@@ -127,7 +129,7 @@ export const createOrUpdateComment = ({
       message: 'This comment is locked and cannot be updated',
     });
 
-  return dbWrite.comment.upsert({
+  const result = await dbWrite.comment.upsert({
     where: { id: id ?? -1 },
     create: { ...commentInput, userId: ownerId },
     update: { ...commentInput },
@@ -138,6 +140,8 @@ export const createOrUpdateComment = ({
       nsfw: true,
     },
   });
+  await preventReplicationLag('commentModel', input.modelId);
+  return result;
 };
 
 export const toggleHideComment = async ({
@@ -149,21 +153,22 @@ export const toggleHideComment = async ({
   // Only comment owner, model owner, or moderator can hide comment
   if (!isModerator) AND.push(Prisma.sql`(m."userId" = ${userId} OR c."userId" = ${userId})`);
 
-  const comments = await dbWrite.$queryRaw<{ hidden: boolean }[]>`
+  const [comment] = await dbWrite.$queryRaw<{ hidden: boolean; modelId: number }[]>`
     SELECT
-      c.hidden
+      c.hidden, c."modelId"
     FROM "Comment" c
     JOIN "Model" m ON m.id = c."modelId"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  if (!comments.length) throw throwNotFoundError(`You don't have permission to hide this comment`);
-  const hidden = comments[0].hidden;
+  if (!comment) throw throwNotFoundError(`You don't have permission to hide this comment`);
+  const hidden = comment.hidden;
 
   await dbWrite.comment.updateMany({
     where: { id },
     data: { hidden: !hidden },
   });
+  await preventReplicationLag('commentModel', comment.modelId);
 };
 
 export const deleteCommentById = async ({ id }: GetByIdInput) => {
@@ -175,20 +180,27 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
 
   const deleted = await dbWrite.comment.delete({ where: { id } });
   if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+  await preventReplicationLag('commentModel', modelId);
 
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
 
   return deleted;
 };
 
-export const updateCommentById = ({
+export const updateCommentById = async ({
   id,
   data,
 }: {
   id: number;
   data: Prisma.CommentUpdateInput;
 }) => {
-  return dbWrite.comment.update({ where: { id }, data, select: getAllCommentsSelect });
+  const results = await dbWrite.comment.update({
+    where: { id },
+    data,
+    select: getAllCommentsSelect,
+  });
+  await preventReplicationLag('commentModel', results.modelId);
+  return results;
 };
 
 export const updateCommentReportStatusByReason = ({

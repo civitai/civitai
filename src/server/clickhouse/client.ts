@@ -350,4 +350,8 @@ export class Tracker {
   public file(values: { type: FileActivity; entityType: string; entityId: number }) {
     return this.track('files', values);
   }
+
+  public search(values: { query: string; index: string; filters?: any }) {
+    return this.track('search', values);
+  }
 }

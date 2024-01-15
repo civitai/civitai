@@ -1,14 +1,15 @@
+import { ModelStatus } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
+import { dbWrite } from '~/server/db/client';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { MODELS_SEARCH_INDEX } from '../../../../server/common/constants';
 import { updateDocs } from '../../../../server/meilisearch/client';
-import { ModelStatus } from '@prisma/client';
 import { getModelVersionsForSearchIndex } from '../../../../server/selectors/modelVersion.selector';
-import { isDefined } from '../../../../utils/type-guards';
-import { withRetries } from '../../../../server/utils/errorHandling';
 import { userWithCosmeticsSelect } from '../../../../server/selectors/user.selector';
+import { withRetries } from '../../../../server/utils/errorHandling';
+import { isDefined } from '../../../../utils/type-guards';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
@@ -49,10 +50,13 @@ const updateGenerationCoverage = (idOffset: number) =>
       return -1;
     }
 
+    const unavailableGenResources = await getUnavailableResources();
     const updateIndexReadyRecords = records
       .map(({ id, modelVersions }) => {
         const [version] = modelVersions;
-        const canGenerate = modelVersions.some((x) => x.generationCoverage?.covered);
+        const canGenerate = modelVersions.some(
+          (x) => x.generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1
+        );
 
         if (!version) {
           return null;
@@ -60,10 +64,15 @@ const updateGenerationCoverage = (idOffset: number) =>
 
         return {
           id,
-          version,
-          versions: modelVersions.map(({ generationCoverage, files, ...x }) => ({
+          version: {
+            ...version,
+            hashes: version.hashes.map((hash) => hash.hash),
+          },
+          versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
             ...x,
-            canGenerate: generationCoverage?.covered,
+            hashes: hashes.map((hash) => hash.hash),
+            canGenerate:
+              generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
           })),
           canGenerate,
         };

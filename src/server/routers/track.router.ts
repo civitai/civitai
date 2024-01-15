@@ -1,4 +1,9 @@
-import { addViewSchema, trackActionSchema, trackShareSchema } from '~/server/schema/track.schema';
+import {
+  addViewSchema,
+  trackActionSchema,
+  trackSearchSchema,
+  trackShareSchema,
+} from '~/server/schema/track.schema';
 import { publicProcedure, router } from '~/server/trpc';
 
 export const trackRouter = router({
@@ -9,4 +14,7 @@ export const trackRouter = router({
   addAction: publicProcedure
     .input(trackActionSchema)
     .mutation(({ input, ctx }) => ctx.track.action(input)),
+  trackSearch: publicProcedure
+    .input(trackSearchSchema)
+    .mutation(({ input, ctx }) => ctx.track.search(input)),
 });

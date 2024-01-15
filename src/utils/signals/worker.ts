@@ -51,7 +51,7 @@ const getConnection = async ({ token }: { token: string }) => {
       emitter.emit('connectionError', { message: JSON.stringify(error) })
     );
     connection.onclose((error) =>
-      emitter.emit('connectionError', { message: JSON.stringify(error) })
+      emitter.emit('connectionClosed', { message: JSON.stringify(error) })
     );
 
     // send a ping every 5 minutes

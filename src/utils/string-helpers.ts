@@ -10,10 +10,10 @@ function getUrlDomain(url: string) {
   return new URL(url).hostname.split('.').slice(-2).join('.');
 }
 
-export function splitUppercase(value: string) {
+export function splitUppercase(value: string, options?: { splitNumbers?: boolean }) {
   return value
     .trim()
-    .split(/([A-Z][a-z]+|[0-9]+)/)
+    .split(options?.splitNumbers ? /([A-Z][a-z]+|[0-9]+)/ : /([A-Z][a-z]+)/)
     .map((word) => word.trim())
     .filter(Boolean)
     .join(' ');
@@ -30,8 +30,9 @@ const nameOverrides: Record<string, string> = {
   ClubMembership: 'Club Memebership',
 };
 
-export function getDisplayName(value: string) {
-  return nameOverrides[value] ?? splitUppercase(value);
+export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
+  const { splitNumbers = true } = options ?? {};
+  return nameOverrides[value] ?? splitUppercase(value, { splitNumbers });
 }
 
 export function getInitials(value: string) {
