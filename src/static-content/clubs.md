@@ -1,5 +1,5 @@
 ---
-title: Clubs disabled permenantly
+title: Clubs disabled permanently
 ---
 
 We've heard you. Based on your insightful feedback ([see here](https://civitai.com/articles/3636)), we've decided to permanently disable the Clubs feature. Your concerns about the potential pitfalls of Clubs were well-founded, and we're taking action.
