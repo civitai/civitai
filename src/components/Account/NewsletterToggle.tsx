@@ -31,6 +31,7 @@ export function NewsletterToggle({
       queryUtils.newsletter.getSubscription.setData(undefined, (old) => ({
         ...(old ?? {}),
         subscribed,
+        showNewsletterDialog: false,
       }));
 
       return { prev };
