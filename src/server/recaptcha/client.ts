@@ -1,7 +1,9 @@
 import { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
 import { env } from '~/env/server.mjs';
 
-const client = new RecaptchaEnterpriseServiceClient();
+const client = new RecaptchaEnterpriseServiceClient({
+  projectId: env.RECAPTCHA_PROJECT_ID,
+});
 
 export async function createRecaptchaAssesment({
   token,

@@ -154,6 +154,8 @@ export const getPaymentIntentHandler = async ({
       recaptchaAction: 'STRIPE_TRANSACTION',
     });
 
+    // TODO: use the riskScore to determine if we should allow a paymentIntent to even be created.
+    // Atm - blocked due to gcloud credentials not available.
     console.log(riskScore);
 
     const result = await getPaymentIntent({
