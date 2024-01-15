@@ -1,4 +1,4 @@
-import { Center, Stack, Alert, Text, Divider } from '@mantine/core';
+import { Stack, Alert, Text, Divider } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
@@ -89,7 +89,7 @@ export function EditPostReviews() {
           <Stack>
             {reviews.pending.map((resource, index) => (
               <EditResourceReview
-                key={resource.modelVersionId ?? resource.name ?? index}
+                key={resource.id ?? resource.name ?? index}
                 id={resource.reviewId}
                 rating={resource.reviewRating}
                 details={resource.reviewDetails}
@@ -106,7 +106,7 @@ export function EditPostReviews() {
                 <Divider label="Previously reviewed" />
                 {reviews.previous.map((resource, index) => (
                   <EditResourceReview
-                    key={resource.modelVersionId ?? resource.name ?? index}
+                    key={resource.id ?? resource.name ?? index}
                     id={resource.reviewId}
                     rating={resource.reviewRating}
                     details={resource.reviewDetails}
