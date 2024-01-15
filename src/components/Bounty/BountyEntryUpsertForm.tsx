@@ -2,6 +2,8 @@ import {
   ActionIcon,
   Anchor,
   Button,
+  Checkbox,
+  Divider,
   Group,
   HoverCard,
   Input,
@@ -91,6 +93,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const [bountyEntryImages, setBountyEntryImages] = useState<BountyEntryGetById['images']>(
     bountyEntry?.images ?? []
   );
+  const [ownershipAcknowledgement, setOwnershipAcknowledgement] = useState(false);
 
   const currency = getBountyCurrency(bounty);
   const maxAmount = getMainBountyAmount(bounty);
@@ -589,7 +592,16 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             </Text>
           )}
         </AlertWithIcon> */}
-
+        {!bountyEntry && (
+          <>
+            <Divider />
+            <Checkbox
+              checked={ownershipAcknowledgement}
+              onChange={(event) => setOwnershipAcknowledgement(event.currentTarget.checked)}
+              label="By submitting an entry you consent that in the event that you win the bounty, the creator of the bounty has ownership over your entry, and can do with it what they will."
+            />
+          </>
+        )}
         <Group mt="xl" position="right">
           <NavigateBack url={`/bounties/${bounty.id}`}>
             {({ onClick }) => (
@@ -598,9 +610,10 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               </Button>
             )}
           </NavigateBack>
+
           <Button
             loading={bountyEntryUpsertMutation.isLoading && !creating}
-            disabled={bountyEntryUpsertMutation.isLoading}
+            disabled={bountyEntryUpsertMutation.isLoading || !ownershipAcknowledgement}
             onClick={() => setCreating(false)}
             type="submit"
           >

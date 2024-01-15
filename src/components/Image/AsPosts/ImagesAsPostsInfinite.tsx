@@ -48,6 +48,7 @@ import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
+import { NextLink } from '@mantine/next';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -73,6 +74,7 @@ type ImagesAsPostsInfiniteProps = {
   modelVersions?: ModelVersionsProps[];
   generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
   showModerationOptions?: boolean;
+  showPOIWarning?: boolean;
 };
 
 const LIMIT = 50;
@@ -83,6 +85,7 @@ export default function ImagesAsPostsInfinite({
   selectedVersionId,
   generationOptions,
   showModerationOptions,
+  showPOIWarning,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -247,6 +250,25 @@ export default function ImagesAsPostsInfinite({
                 </Group>
               )}
             </Group>
+            {showPOIWarning && (
+              <Text size="sm" color="dimmed" lh={1.1}>
+                This resource is intended to depict a real person. All images that use this resource
+                are scanned for mature themes and manually reviewed by a moderator in accordance
+                with our{' '}
+                <Text
+                  component={NextLink}
+                  href="/content/rules/real-people"
+                  variant="link"
+                  td="underline"
+                >
+                  real person policy
+                </Text>
+                .{' '}
+                <Text td="underline" component="span">
+                  If you see an image that violates this policy, please report it immediately.
+                </Text>
+              </Text>
+            )}
             <Group position="apart" spacing={0}>
               <SortFilter type="modelImages" />
               <Group spacing={4}>
