@@ -41,6 +41,7 @@ export const CommentForm = ({
     data,
     expanded,
     toggleExpanded,
+    parentThreadId,
   } = useCommentsContext();
 
   const entityId = replyToCommentId ? replyToCommentId : contextEntityId;
@@ -118,6 +119,7 @@ export const CommentForm = ({
       ...data,
       entityId,
       entityType,
+      parentThreadId: replyToCommentId ? parentThreadId : undefined,
     });
   };
 

@@ -14,6 +14,7 @@ export const upsertComment = async ({
   userId,
   entityType,
   entityId,
+  parentThreadId,
   ...data
 }: UpsertCommentV2Input & { userId: number }) => {
   // only check for threads on comment create
@@ -21,13 +22,26 @@ export const upsertComment = async ({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
+
+  console.log('parentThreadId', parentThreadId);
+
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {
       if (!thread) {
+        const parentThread = parentThreadId
+          ? await tx.thread.findUnique({ where: { id: parentThreadId } })
+          : undefined;
+
         thread = await tx.thread.create({
-          data: { [`${entityType}Id`]: entityId },
-          select: { id: true, locked: true },
+          data: {
+            [`${entityType}Id`]: entityId,
+            parentThreadId: parentThread?.id ?? parentThreadId,
+            rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? parentThreadId,
+          },
+          select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
         });
+
+        console.log('thread', thread, parentThread);
       }
       return await tx.commentV2.create({
         data: {

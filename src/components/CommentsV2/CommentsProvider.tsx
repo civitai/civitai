@@ -55,12 +55,6 @@ export const useCommentsContext = () => {
   return context;
 };
 
-const entityAccessEntityTypeMap = {
-  post: 'Post',
-  article: 'Article',
-  clubPost: 'ClubPost',
-};
-
 export function CommentsProvider({
   entityType,
   entityId,
@@ -158,6 +152,7 @@ export function CommentsProvider({
         setSort,
         expanded,
         toggleExpanded,
+        parentThreadId: thread?.id,
       }}
     >
       {children({

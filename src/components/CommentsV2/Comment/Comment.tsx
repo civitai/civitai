@@ -114,6 +114,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
             <Text color="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
+            ({comment.threadId})
           </Group>
 
           {/* CONTROLS */}
