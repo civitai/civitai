@@ -23,6 +23,8 @@ import { useTrackEvent } from '../TrackView/track.utils';
 import { closeAllModals } from '@mantine/modals';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
+import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
+import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
 
 const StripeTransactionModal = ({
   unitAmount,
@@ -189,19 +191,37 @@ const { openModal, Modal } = createContextModal<Props>({
     const stripePromise = useStripePromise();
     const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
 
+    const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
+      RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
+    );
+
     const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
-      { unitAmount, currency, metadata, paymentMethodTypes },
-      { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
+      {
+        unitAmount,
+        currency,
+        metadata,
+        paymentMethodTypes,
+        recaptchaToken: recaptchaToken as string,
+      },
+      {
+        enabled: !!unitAmount && !!currency && !!recaptchaToken,
+        refetchOnMount: 'always',
+        cacheTime: 0,
+      }
     );
 
     const clientSecret = data?.clientSecret;
 
-    if (isLoading || isFetching || isLoadingPaymentMethods) {
+    if (isLoading || isFetching || isLoadingPaymentMethods || isLoadingRecaptcha) {
       return (
         <Center>
           <Loader variant="bars" />
         </Center>
       );
+    }
+
+    if (!recaptchaToken) {
+      throw new Error('Failed to get recaptcha token');
     }
 
     if (!clientSecret) {
