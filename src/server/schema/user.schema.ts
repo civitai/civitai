@@ -169,5 +169,5 @@ export const completeOnboardStepSchema = z.object({
 
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
-  showNewsletterDialogAt: z.date().nullish(),
+  newsletterDialogLastSeenAt: z.date().nullish(),
 });

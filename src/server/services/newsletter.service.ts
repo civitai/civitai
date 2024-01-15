@@ -30,7 +30,8 @@ export async function getSubscription(email?: string) {
   return {
     subscribed,
     showNewsletterDialog:
-      !!settings?.showNewsletterDialogAt && new Date(settings.showNewsletterDialogAt) <= new Date(),
+      !settings?.newsletterDialogLastSeenAt ||
+      new Date(settings.newsletterDialogLastSeenAt) <= new Date(),
   };
 }
 
@@ -43,7 +44,7 @@ export async function postponeSubscription(userId: number) {
     data: {
       settings: {
         ...(user.settings as UserSettingsSchema),
-        showNewsletterDialogAt: dayjs().add(1, 'week').toDate(),
+        newsletterDialogLastSeenAt: dayjs().add(1, 'week').toDate(),
       },
     },
   });
