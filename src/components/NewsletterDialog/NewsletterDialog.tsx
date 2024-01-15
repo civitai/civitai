@@ -9,7 +9,7 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const REFETCH_TIMEOUT = 1000; // 30 seconds
+const REFETCH_TIMEOUT = 30000; // 30 seconds
 
 const useStyles = createStyles((theme) => ({
   dialogRoot: {
@@ -115,7 +115,7 @@ export function NewsletterDialog() {
         }}
       />
       <Stack spacing="md" p="md">
-        <Stack spacing={4} sx={{ zIndex: 10 }}>
+        <Stack spacing={4}>
           <Text size="md" weight={600}>
             Stay in the loop!
           </Text>
