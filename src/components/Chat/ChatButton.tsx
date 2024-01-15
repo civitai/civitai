@@ -24,7 +24,6 @@ export function ChatButton() {
       <Indicator color="red" disabled={true}>
         <ActionIcon
           variant={opened ? 'filled' : undefined}
-          // probably use store for global open state
           onClick={() => setOpened((val) => !val)}
         >
           <IconMessage2 />
@@ -33,25 +32,17 @@ export function ChatButton() {
       <Portal target={'main'}>
         <div className={classes.absolute} style={{ display: opened ? 'block' : 'none' }}>
           <Card
-            shadow="md"
-            withBorder
+            p={0}
             radius={4}
+            withBorder
+            shadow="md"
             sx={{
               width: '100%',
               height: '100%',
               overflow: 'hidden',
-              // position: 'absolute',
-              // bottom: '100%',
-              // marginBottom: 4,
-              // right: 0,
-              // zIndex: 200,
-              // height: 600,
             }}
-            p={0}
           >
-            {/*<Center h="100%">*/}
             <ChatWindow setOpened={setOpened} />
-            {/*</Center>*/}
           </Card>
         </div>
       </Portal>

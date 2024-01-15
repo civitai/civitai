@@ -57,7 +57,7 @@ export function ChatList({
           />
         </ActionIcon>
       </Group>
-      {/*<Divider />*/}
+      {/* TODO search  */}
       <Box p="sm" pt={0}>
         <Input
           icon={<IconSearch size={16} />}
@@ -70,7 +70,7 @@ export function ChatList({
         />
       </Box>
       <Divider />
-      <Box h="100%">
+      <Box h="100%" sx={{ overflowY: 'auto' }}>
         {isLoading ? (
           <Center h="100%">
             <Loader />

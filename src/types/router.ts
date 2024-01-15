@@ -119,3 +119,4 @@ export type GenerationGetResources = GenerationRouter['getResources']['items'];
 type ChatRouter = RouterOutput['chat'];
 // export type ChatCreateType = ChatRouter['createChat'];
 export type ChatAllMessages = ChatRouter['getInfiniteMessages']['items'];
+export type ChatCreateChat = ChatRouter['createChat'];

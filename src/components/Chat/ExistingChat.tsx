@@ -12,12 +12,21 @@ import {
 } from '@mantine/core';
 import { IconSend, IconX } from '@tabler/icons-react';
 import produce from 'immer';
-import React, { Dispatch, SetStateAction, useMemo, useState } from 'react';
+import React, {
+  Dispatch,
+  MutableRefObject,
+  SetStateAction,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -53,8 +62,11 @@ export function ExistingChat({
 }) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  // TODO reset chat message when clicking different group
   const [chatMsg, setChatMsg] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
+  const lastReadRef = useRef<HTMLDivElement>(null);
+  const debouncer = useDebouncer(1000);
 
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
@@ -89,6 +101,9 @@ export function ExistingChat({
           lastPage.items.push(data);
         })
       );
+
+      // TODO update last message of get all
+
       setIsSending(false);
       setChatMsg('');
     },
@@ -102,11 +117,22 @@ export function ExistingChat({
     },
   });
 
+  const { mutate: doIsTyping } = trpc.chat.isTyping.useMutation();
+
   const allChats = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+
+  useEffect(() => {
+    if (!allChats.length) return;
+    // TODO this doesn't quite scroll all the way down, need to add some padding here
+    lastReadRef.current?.scrollIntoView({ block: 'end', inline: 'nearest' });
+  }, [allChats]);
 
   const handleChatTyping = (value: string) => {
     setChatMsg(value);
-    // TODO: send signal for isTyping, debounced
+    // handle not typing timeout
+    // debouncer(() => doIsTyping({
+    //   chatMemberId:
+    // }));
   };
 
   // TODO handle replies (reference)
@@ -161,12 +187,11 @@ export function ExistingChat({
           </Center>
         ) : allChats.length > 0 ? (
           <Stack sx={{ overflowWrap: 'break-word' }}>
-            <DisplayMessages chats={allChats} />
+            <DisplayMessages chats={allChats} lastReadRef={lastReadRef} />
             {hasNextPage && (
               <InViewLoader
                 loadFn={fetchNextPage}
                 loadCondition={!isRefetching} //  && hasNextPage
-                // style={{ gridColumn: '1/-1' }}
               >
                 <Center p="xl" sx={{ height: 36 }} mt="md">
                   <Loader />
@@ -199,15 +224,26 @@ export function ExistingChat({
   );
 }
 
-function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
+function DisplayMessages({
+  chats,
+  lastReadRef,
+}: {
+  chats: ChatAllMessages;
+  lastReadRef: MutableRefObject<HTMLDivElement | null>;
+}) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+
+  // TODO adjust for lastread
+  const lastReadId = chats[chats.length - 1].id;
+
+  // TODO animation on new message received, not when getting all
 
   return (
     <>
       {chats.map((c) => (
         // TODO probably combine messages if within a certain amount of time
-        <Stack key={c.id}>
+        <Stack ref={c.id === lastReadId ? lastReadRef : undefined} key={c.id}>
           <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
             <UserAvatar userId={c.userId} withUsername />
             <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>

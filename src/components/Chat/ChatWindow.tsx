@@ -19,7 +19,7 @@ export function ChatWindow({ setOpened }: { setOpened: Dispatch<SetStateAction<b
   return (
     <Grid h="100%" m={0}>
       {/* List and Search Panel */}
-      <Grid.Col span={4} p={0} className={classes.chatBorder}>
+      <Grid.Col span={4} p={0} h="100%" className={classes.chatBorder}>
         <ChatList
           existingChat={existingChat}
           setNewChat={setNewChat}

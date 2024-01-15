@@ -1,6 +1,8 @@
 import { ChatMemberStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
+import { env } from '~/env/server.mjs';
+import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -8,7 +10,8 @@ import {
   AddUsersInput,
   CreateChatInput,
   CreateMessageInput,
-  GetInfiniteMessages,
+  GetInfiniteMessagesInput,
+  IsTypingInput,
   ModifyUserInput,
   UpdateMessageInput,
 } from '~/server/schema/chat.schema';
@@ -17,6 +20,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 
 const maxChats = 100;
@@ -166,7 +170,6 @@ export const createChatHandler = async ({
       // },
       select: { id: true },
     });
-    console.log(existing);
 
     if (existing) return existing;
 
@@ -209,8 +212,16 @@ export const createChatHandler = async ({
       return newChat;
     });
 
+    for (const cmId of dedupedUserIds) {
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${createdChat.id}`),
+      }).catch();
+    }
+
     // TODO I don't like the idea of querying after an insert, but it's just easier than merging all the data together
-    return await dbWrite.chat.findFirst({
+    const insertedChat = await dbWrite.chat.findFirst({
       where: {
         id: createdChat.id,
       },
@@ -226,6 +237,17 @@ export const createChatHandler = async ({
         },
       },
     });
+
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${createdChat.id}/signals/${SignalMessages.ChatNewRoom}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(insertedChat as ChatCreateChat),
+      }
+    ).catch();
+
+    return insertedChat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -302,6 +324,14 @@ export const addUsersHandler = async ({
       });
     });
 
+    for (const cmId of usersToAdd) {
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${input.chatId}`),
+      }).catch();
+    }
+
     // TODO return data?
     return;
   } catch (error) {
@@ -365,6 +395,15 @@ export const modifyUserHandler = async ({
 
     // TODO should we adjust the hash on leave/kicked?
 
+    // TODO adjust membership options
+    /*
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${chatMemberId.userId}/groups`, {
+        method: 'POST', // DELETE
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${input.chatId}`),
+      }).catch();
+     */
+
     return await dbWrite.chatMember.update({
       where: { id: chatMemberId },
       data: { ...rest, ...extra },
@@ -382,7 +421,7 @@ export const getInfiniteMessagesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteMessages;
+  input: GetInfiniteMessagesInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
@@ -479,9 +518,29 @@ export const createMessageHandler = async ({
       }
     }
 
-    return await dbWrite.chatMessage.create({
+    const resp = await dbWrite.chatMessage.create({
       data: { ...input, userId },
     });
+
+    // for (const cm of chat.chatMembers) {
+    //   if (cm.userId === userId) continue;
+    //   fetch(`${env.SIGNALS_ENDPOINT}/users/${cm.userId}/signals/${SignalMessages.ChatNewMessage}`, {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify(resp as ChatAllMessages[number]),
+    //   }).catch();
+    // }
+
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resp as ChatAllMessages[number]),
+      }
+    ).catch();
+
+    return resp;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -513,6 +572,8 @@ export const updateMessageHandler = async ({
       throw throwBadRequestError(`Could not find message with id: (${messageId})`);
     }
 
+    // TODO signal
+
     return await dbWrite.chatMessage.update({
       where: { id: input.messageId },
       data: { ...rest, editedAt: new Date() },
@@ -521,4 +582,75 @@ export const updateMessageHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+/**
+ * Send isTyping signal
+ */
+export const isTypingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: IsTypingInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+
+    const { chatId, isTyping } = input;
+
+    // if (input.chatMemberId !== userId) {
+    //   return;
+    // }
+    //
+    // const existing = await dbWrite.chatMember.findFirst({
+    //   where: { id: input.chatMemberId },
+    //   select: {
+    //     chat: {
+    //       select: {
+    //         chatMembers: {
+    //           select: {
+    //             userId: true,
+    //           },
+    //         },
+    //       },
+    //     },
+    //   },
+    // });
+    //
+    // if (!existing) return;
+    //
+    // for (const cm of existing.chat.chatMembers) {
+    //   fetch(
+    //     `${env.SIGNALS_ENDPOINT}/users/${cm.userId}/signals/${SignalMessages.ChatTypingStatus}`,
+    //     {
+    //       method: 'POST',
+    //       headers: { 'Content-Type': 'application/json' },
+    //       body: JSON.stringify({ chatMemberId: input.chatMemberId, isTyping: input.isTyping }),
+    //     }
+    //   ).catch();
+    // }
+
+    const existing = await dbWrite.chat.findFirst({
+      where: { id: chatId },
+      select: {
+        chatMembers: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (!existing?.chatMembers.map((cm) => cm.userId).includes(userId)) return;
+
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId, isTyping }),
+      }
+    ).catch();
+  } catch {}
 };

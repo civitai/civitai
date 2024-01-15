@@ -37,10 +37,16 @@ export const updateMessageInput = z.object({
 });
 
 // maybe increase default limit from 20
-export type GetInfiniteMessages = z.infer<typeof getInfiniteMessages>;
-export const getInfiniteMessages = infiniteQuerySchema.merge(
+export type GetInfiniteMessagesInput = z.infer<typeof getInfiniteMessagesInput>;
+export const getInfiniteMessagesInput = infiniteQuerySchema.merge(
   z.object({
     chatId: z.number(),
     direction: z.enum(['asc', 'desc']).optional().default('asc'),
   })
 );
+
+export type IsTypingInput = z.infer<typeof isTypingInput>;
+export const isTypingInput = z.object({
+  chatId: z.number(),
+  isTyping: z.boolean(),
+});

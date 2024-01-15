@@ -85,7 +85,6 @@ export function NewChat({
       <QuickSearchDropdown
         supportedIndexes={['users']}
         onItemSelected={(_entity, item) => {
-          console.log(item);
           const newUsers = [...selectedUsers, item as UserSearchIndexRecord];
           // TODO make this a constant
           if (newUsers.length > 9) {
