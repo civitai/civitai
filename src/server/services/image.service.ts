@@ -1201,6 +1201,8 @@ export const getImagesForModelVersion = async ({
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
 
   const imageWhere: Prisma.Sql[] = [
+    // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
+    Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" IS NULL`,
   ];
@@ -1247,7 +1249,7 @@ export const getImagesForModelVersion = async ({
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-        JOIN "Model" m ON m.id = mv."modelId" AND m."userId" = p."userId"
+        JOIN "Model" m ON m.id = mv."modelId"
         WHERE ${Prisma.join(imageWhere, ' AND ')}
       ) ranked
       WHERE ranked.row_num <= ${imagesPerVersion}
