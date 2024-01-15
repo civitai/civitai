@@ -54,7 +54,7 @@ import { articleMetrics, imageMetrics, userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
-import { ProfileImage } from '../selectors/image.selector';
+import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { constants } from '~/server/common/constants';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -120,6 +120,9 @@ export const getUserCreator = async ({
             },
           },
         },
+      },
+      profilePicture: {
+        select: profileImageSelect,
       },
       _count: {
         select: {
