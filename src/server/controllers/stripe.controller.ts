@@ -156,7 +156,10 @@ export const getPaymentIntentHandler = async ({
 
     // TODO: use the riskScore to determine if we should allow a paymentIntent to even be created.
     // Atm - blocked due to gcloud credentials not available.
-    console.log(riskScore);
+    if ((riskScore || 0) < 0.7)
+      throw throwAuthorizationError(
+        'We are unable to process your payment at this time. Please try again later.'
+      );
 
     const result = await getPaymentIntent({
       ...input,
