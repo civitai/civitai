@@ -49,6 +49,7 @@ export const paymentIntentCreationSchema = z.object({
   currency: z.nativeEnum(Currency),
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
+  recaptchaToken: z.string(),
 });
 
 export type GetPaymentIntentsForBuzzSchema = z.infer<typeof getPaymentIntentsForBuzzSchema>;
