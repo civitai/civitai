@@ -100,13 +100,6 @@ export function ImageDetail() {
               [classes.active]: active,
             })}
           >
-            {image.nsfw === 'None' && (
-              <Card.Section p="xs">
-                <Center>
-                  <AscendeumAd adunit="/19191187/ascendeum_test1" height={250} width={300} />
-                </Center>
-              </Card.Section>
-            )}
             <Card.Section py="xs" withBorder inheritPadding>
               <Group position="apart" spacing={8}>
                 <UserAvatar
@@ -316,6 +309,11 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
+                {image.nsfw === 'None' && (
+                  <Center>
+                    <AscendeumAd adunit="/19191187/ascendeum_test1" height={250} width={300} />
+                  </Center>
+                )}
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

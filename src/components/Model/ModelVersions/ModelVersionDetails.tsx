@@ -86,6 +86,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
+import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
 
 export function ModelVersionDetails({
   model,
@@ -922,6 +923,9 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
+          <Center>
+            <AscendeumAd adunit="/19191187/ascendeum_test2" height={250} width={300} />
+          </Center>
         </Stack>
       </ContainerGrid.Col>
 

@@ -71,7 +71,7 @@ export default function ModelsPage() {
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
+        maxColumnCount={5}
         maxSingleColumnWidth={450}
       >
         <MasonryContainer fluid>
