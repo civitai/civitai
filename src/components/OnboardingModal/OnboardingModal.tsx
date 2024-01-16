@@ -13,7 +13,6 @@ import {
   createStyles,
   StackProps,
   ThemeIcon,
-  Badge,
   TextInput,
   ButtonProps,
 } from '@mantine/core';
@@ -35,7 +34,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { constants } from '~/server/common/constants';
+import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency, OnboardingStep } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
@@ -46,6 +45,8 @@ import {
 } from '~/server/common/user-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
+import { RecaptchaNotice, RecaptchaWidget } from '../Recaptcha/RecaptchaWidget';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -72,7 +73,7 @@ const referralSchema = z.object({
 
 export default function OnboardingModal() {
   const user = useCurrentUser();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { code, source } = useReferralsContext();
   const { classes, theme } = useStyles();
   const features = useFeatureFlags();
@@ -129,6 +130,10 @@ export default function OnboardingModal() {
     }
   );
 
+  const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
+    RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
+  );
+
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
   const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
   const { mutate: completeStep, isLoading: completeStepLoading } =
@@ -177,7 +182,7 @@ export default function OnboardingModal() {
   };
   const handleCompleteStep = (step: OnboardingStep) => {
     completeStep(
-      { step },
+      { step, recaptchaToken },
       {
         onSuccess: (result) => {
           if (result.onboardingSteps.length > 0) {
@@ -380,107 +385,115 @@ export default function OnboardingModal() {
         </Stepper.Step>
         <Stepper.Step label="Buzz" description="Power-up your experience">
           <Container size="sm" px={0}>
-            <Stack spacing="xl">
-              <Text>
-                {`On Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
-                <IconProgressBolt
-                  color={theme.colors.yellow[7]}
-                  size={20}
-                  style={{ verticalAlign: 'middle' }}
-                />
-                {` Buzz Dashboard.`}
-              </Text>
-              <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
-                <SpendingBuzz asList />
-                <EarningBuzz asList />
-              </Group>
-              <StepperTitle
-                title="Getting Started"
-                description={
-                  <Text>
-                    To get you started, we will grant you{' '}
-                    <Text span>
-                      {user && (
-                        <CurrencyBadge
-                          currency={Currency.BUZZ}
-                          unitAmount={getUserBuzzBonusAmount(user)}
-                        />
-                      )}
-                    </Text>
-                    {user?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
-                  </Text>
-                }
-              />
-              <Group position="apart">
-                <CancelButton size="lg">Sign Out</CancelButton>
-                <Button
-                  size="lg"
-                  onClick={handleCompleteBuzzStep}
-                  loading={completeStepLoading || referrerRefetching}
-                >
-                  Done
-                </Button>
-              </Group>
-              {showReferral && (
-                <Button
-                  variant="subtle"
-                  mt="-md"
-                  onClick={() =>
-                    setUserReferral((current) => ({
-                      ...current,
-                      showInput: !current.showInput,
-                      code,
-                    }))
-                  }
-                >
-                  Have a referral code? Click here to claim a bonus
-                </Button>
-              )}
-
-              {showReferral && userReferral.showInput && (
-                <TextInput
-                  size="lg"
-                  label="Referral Code"
+            {isLoadingRecaptcha ? (
+              <Center py="lg">
+                <Loader size="lg" />
+              </Center>
+            ) : (
+              <Stack spacing="xl">
+                <Text>
+                  {`On Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
+                  <IconProgressBolt
+                    color={theme.colors.yellow[7]}
+                    size={20}
+                    style={{ verticalAlign: 'middle' }}
+                  />
+                  {` Buzz Dashboard.`}
+                </Text>
+                <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
+                  <SpendingBuzz asList />
+                  <EarningBuzz asList />
+                </Group>
+                <StepperTitle
+                  title="Getting Started"
                   description={
-                    <Text size="sm">
-                      Both you and the person who referred you will receive{' '}
+                    <Text>
+                      To get you started, we will grant you{' '}
                       <Text span>
-                        <CurrencyBadge
-                          currency={Currency.BUZZ}
-                          unitAmount={constants.buzz.referralBonusAmount}
-                        />
-                      </Text>{' '}
-                      bonus with a valid referral code.
+                        {user && (
+                          <CurrencyBadge
+                            currency={Currency.BUZZ}
+                            unitAmount={getUserBuzzBonusAmount(user)}
+                          />
+                        )}
+                      </Text>
+                      {user?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
                     </Text>
                   }
-                  error={referralError}
-                  value={userReferral.code ?? ''}
-                  onChange={(e) =>
-                    setUserReferral((current) => ({ ...current, code: e.target.value }))
-                  }
-                  rightSection={
-                    userReferral.code &&
-                    userReferral.code.length > constants.referrals.referralCodeMinLength &&
-                    (referrerLoading || referrerRefetching) ? (
-                      <Loader size="sm" mr="xs" />
-                    ) : (
-                      userReferral.code &&
-                      userReferral.code.length > constants.referrals.referralCodeMinLength && (
-                        <ThemeIcon
-                          variant="outline"
-                          color={referrer ? 'green' : 'red'}
-                          radius="xl"
-                          mr="xs"
-                        >
-                          {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
-                        </ThemeIcon>
-                      )
-                    )
-                  }
-                  autoFocus
                 />
-              )}
-            </Stack>
+                <Group position="apart">
+                  <CancelButton size="lg">Sign Out</CancelButton>
+                  <Button
+                    size="lg"
+                    onClick={handleCompleteBuzzStep}
+                    loading={completeStepLoading || referrerRefetching}
+                  >
+                    Done
+                  </Button>
+                </Group>
+                <RecaptchaNotice />
+                {showReferral && (
+                  <Button
+                    variant="subtle"
+                    mt="-md"
+                    onClick={() =>
+                      setUserReferral((current) => ({
+                        ...current,
+                        showInput: !current.showInput,
+                        code,
+                      }))
+                    }
+                  >
+                    Have a referral code? Click here to claim a bonus
+                  </Button>
+                )}
+
+                {showReferral && userReferral.showInput && (
+                  <TextInput
+                    size="lg"
+                    label="Referral Code"
+                    description={
+                      <Text size="sm">
+                        Both you and the person who referred you will receive{' '}
+                        <Text span>
+                          <CurrencyBadge
+                            currency={Currency.BUZZ}
+                            unitAmount={constants.buzz.referralBonusAmount}
+                          />
+                        </Text>{' '}
+                        bonus with a valid referral code.
+                      </Text>
+                    }
+                    error={referralError}
+                    value={userReferral.code ?? ''}
+                    onChange={(e) =>
+                      setUserReferral((current) => ({ ...current, code: e.target.value }))
+                    }
+                    rightSection={
+                      userReferral.code &&
+                      userReferral.code.length > constants.referrals.referralCodeMinLength &&
+                      (referrerLoading || referrerRefetching) ? (
+                        <Loader size="sm" mr="xs" />
+                      ) : (
+                        userReferral.code &&
+                        userReferral.code.length > constants.referrals.referralCodeMinLength && (
+                          <ThemeIcon
+                            variant="outline"
+                            color={referrer ? 'green' : 'red'}
+                            radius="xl"
+                            mr="xs"
+                          >
+                            {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
+                          </ThemeIcon>
+                        )
+                      )
+                    }
+                    autoFocus
+                  />
+                )}
+              </Stack>
+            )}
+            <RecaptchaWidget />
           </Container>
         </Stepper.Step>
       </Stepper>
