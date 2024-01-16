@@ -440,6 +440,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const minUnitAmount = bounty.minBenefactorUnitAmount;
   const [addToBountyModalOpen, setAddToBountyModalOpen] = useState<boolean>(false);
   const [addToBountyAmount, setAddToBountyAmount] = useState<number>(minUnitAmount);
+  const isOwner = bounty?.user && bounty?.user?.id === currentUser?.id;
 
   const { trackAction } = useTrackEvent();
 
@@ -621,6 +622,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const files = bounty.files ?? [];
   const filesCount = files.length;
+  const hasEntries = (entries?.length ?? 0) > 0;
 
   return (
     <Stack spacing="md">
@@ -790,6 +792,15 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             </Text>
           )}
         </Alert>
+      )}
+      {bounty.complete && !loadingEntries && hasEntries && isOwner && (
+        <Button
+          onClick={() => {
+            console.log('welp');
+          }}
+        >
+          Make awarded entry public
+        </Button>
       )}
 
       <Accordion

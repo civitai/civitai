@@ -40,6 +40,7 @@ type WizardState = {
 const querySchema = z.object({
   id: z.coerce.number().optional(),
   templateId: z.coerce.number().optional(),
+  bountyId: z.coerce.number().optional(),
 });
 
 const CreateSteps = ({
@@ -270,13 +271,17 @@ function getWizardUrl({
   id,
   step,
   templateId,
+  bountyId,
 }: {
   step: number;
   id?: number;
   templateId?: number;
+  bountyId?: number;
 }) {
   if (!id) return '';
-  return `/models/${id}/wizard?step=${step}${templateId ? `&templateId=${templateId}` : ''}`;
+  return `/models/${id}/wizard?step=${step}${templateId ? `&templateId=${templateId}` : ''}${
+    bountyId ? `&bountyId=${bountyId}` : ''
+  }`;
 }
 
 export function ModelWizard() {
@@ -286,6 +291,7 @@ export function ModelWizard() {
   const result = querySchema.safeParse(router.query);
   const id = result.success ? result.data.id : undefined;
   const templateId = result.success ? result.data.templateId : undefined;
+  const bountyId = result.success ? result.data.bountyId : undefined;
   const isNew = router.pathname.includes('/create');
   const [state, setState] = useState<WizardState>({ step: 1 });
   const [opened, setOpened] = useState(false);
