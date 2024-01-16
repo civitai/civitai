@@ -79,6 +79,7 @@ function SortableImage({ image, sortableId }: ItemProps) {
     transition,
     cursor: isDragging ? 'grabbing' : 'pointer',
     zIndex: isDragging ? 1 : undefined,
+    touchAction: 'none',
   };
 
   return (

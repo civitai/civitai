@@ -29,7 +29,8 @@ type Props = {
 } & React.ComponentPropsWithoutRef<'div'>;
 
 export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
-  ({ image, children, isPrimary, disabled, id, ...props }, ref) => { //eslint-disable-line
+  ({ image, children, isPrimary, disabled, id, ...props }, ref) => {
+    //eslint-disable-line
     const { classes, cx } = useStyles({ isPrimary });
     const [ready, setReady] = useState(false);
 
@@ -42,6 +43,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
       transform: CSS.Transform.toString(transform),
       transition,
       cursor: isDragging ? 'grabbing' : !isDisabled ? 'pointer' : 'auto',
+      touchAction: 'none',
     };
 
     if (!image) return null;
