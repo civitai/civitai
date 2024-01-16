@@ -79,6 +79,7 @@ function SortableItem({ id, children, disabled = false }: SortableItemProps) {
     transform: CSS.Transform.toString(transform),
     transition,
     cursor: isDragging ? 'grabbing' : !disabled ? 'pointer' : 'auto',
+    touchAction: 'none',
   };
 
   return (

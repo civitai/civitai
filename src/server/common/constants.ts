@@ -532,3 +532,7 @@ export const CacheTTL = {
   week: 60 * 60 * 24 * 7,
   month: 60 * 60 * 24 * 30,
 } as const;
+
+export const RECAPTCHA_ACTIONS = {
+  STRIPE_TRANSACTION: 'STRIPE_TRANSACTION',
+};

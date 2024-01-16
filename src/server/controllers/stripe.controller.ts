@@ -19,6 +19,7 @@ import * as Schema from '../schema/stripe.schema';
 
 import { getPlans } from '~/server/services/stripe.service';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { createRecaptchaAssesment } from '../recaptcha/client';
 
 export const getPlansHandler = async () => {
   return await getPlans();
@@ -143,6 +144,20 @@ export const getPaymentIntentHandler = async ({
     const { id, email, customerId } = ctx.user;
 
     if (!email) throw throwAuthorizationError('email required');
+
+    const { recaptchaToken } = input;
+
+    if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+
+    const riskScore = await createRecaptchaAssesment({
+      token: recaptchaToken,
+      recaptchaAction: 'STRIPE_TRANSACTION',
+    });
+
+    if ((riskScore || 0) < 0.7)
+      throw throwAuthorizationError(
+        'We are unable to process your payment at this time. Please try again later.'
+      );
 
     const result = await getPaymentIntent({
       ...input,

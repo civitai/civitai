@@ -508,3 +508,8 @@ export async function getTopContributors({
     ])
   );
 }
+
+export async function pingBuzzService() {
+  const response = await fetch(`${env.BUZZ_ENDPOINT}`);
+  return response.ok;
+}

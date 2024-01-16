@@ -270,6 +270,7 @@ function SortableHomeBlock({
     transition,
     cursor: isDragging ? 'grabbing' : 'grab',
     zIndex: isDragging ? 1 : undefined,
+    touchAction: 'none',
   };
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
   const homeBlockName = metadata?.title || homeBlock.collection?.name;
