@@ -48,6 +48,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { RecaptchaWidget } from '../components/Recaptcha/RecaptchaWidget';
+import { AscendeumAdsProvider } from '~/components/AscendeumAds/AscendeumAdsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -120,35 +121,37 @@ function MyApp(props: CustomAppProps) {
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
         <FeatureFlagsProvider flags={flags}>
           <SignalProvider>
-            <CivitaiSessionProvider>
-              <CivitaiPosthogProvider>
-                <CookiesProvider value={cookies}>
-                  <ReferralsProvider>
-                    <FiltersProvider value={filters}>
-                      <HiddenPreferencesProvider>
-                        <CivitaiLinkProvider>
-                          <NotificationsProvider zIndex={9999}>
-                            <BrowserRouterProvider>
-                              <BaseLayout>
-                                <CustomModalsProvider>
-                                  <RecaptchaWidget />
-                                  <TosProvider>
-                                    {getLayout(<Component {...pageProps} />)}
-                                  </TosProvider>
-                                  <StripeSetupSuccessProvider />
-                                  <DialogProvider />
-                                  <RoutedDialogProvider />
-                                </CustomModalsProvider>
-                              </BaseLayout>
-                            </BrowserRouterProvider>
-                          </NotificationsProvider>
-                        </CivitaiLinkProvider>
-                      </HiddenPreferencesProvider>
-                    </FiltersProvider>
-                  </ReferralsProvider>
-                </CookiesProvider>
-              </CivitaiPosthogProvider>
-            </CivitaiSessionProvider>
+            <AscendeumAdsProvider>
+              <CivitaiSessionProvider>
+                <CivitaiPosthogProvider>
+                  <CookiesProvider value={cookies}>
+                    <ReferralsProvider>
+                      <FiltersProvider value={filters}>
+                        <HiddenPreferencesProvider>
+                          <CivitaiLinkProvider>
+                            <NotificationsProvider zIndex={9999}>
+                              <BrowserRouterProvider>
+                                <BaseLayout>
+                                  <CustomModalsProvider>
+                                    <RecaptchaWidget />
+                                    <TosProvider>
+                                      {getLayout(<Component {...pageProps} />)}
+                                    </TosProvider>
+                                    <StripeSetupSuccessProvider />
+                                    <DialogProvider />
+                                    <RoutedDialogProvider />
+                                  </CustomModalsProvider>
+                                </BaseLayout>
+                              </BrowserRouterProvider>
+                            </NotificationsProvider>
+                          </CivitaiLinkProvider>
+                        </HiddenPreferencesProvider>
+                      </FiltersProvider>
+                    </ReferralsProvider>
+                  </CookiesProvider>
+                </CivitaiPosthogProvider>
+              </CivitaiSessionProvider>
+            </AscendeumAdsProvider>
           </SignalProvider>
         </FeatureFlagsProvider>
       </SessionProvider>

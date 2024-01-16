@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Card,
+  Center,
   CloseButton,
   createStyles,
   Divider,
@@ -49,6 +50,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { generationPanel } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -98,6 +100,13 @@ export function ImageDetail() {
               [classes.active]: active,
             })}
           >
+            {image.nsfw === 'None' && (
+              <Card.Section p="xs">
+                <Center>
+                  <AscendeumAd adunit="/19191187/ascendeum_test1" height={250} width={300} />
+                </Center>
+              </Card.Section>
+            )}
             <Card.Section py="xs" withBorder inheritPadding>
               <Group position="apart" spacing={8}>
                 <UserAvatar
