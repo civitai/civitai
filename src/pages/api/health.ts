@@ -6,8 +6,9 @@ import { getRandomInt } from '~/utils/number-helpers';
 import osu from 'node-os-utils';
 import { clickhouse } from '~/server/clickhouse/client';
 import client from 'prom-client';
+import { pingBuzzService } from '~/server/services/buzz.service';
 
-const checks = ['write', 'read', 'redis', 'clickhouse', 'overall'] as const;
+const checks = ['write', 'read', 'redis', 'clickhouse', 'overall', 'buzz'] as const;
 const counters = (() =>
   checks.reduce((agg, name) => {
     agg[name] = new client.Counter({
@@ -45,7 +46,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       .catch(() => false)) ?? true;
   if (!clickhouseCheck) counters.clickhouse.inc();
 
-  const healthy = writeDbCheck && readDbCheck && redisCheck && clickhouseCheck;
+  const buzzCheck = await pingBuzzService();
+  if (!buzzCheck) counters.buzz.inc();
+
+  const healthy = writeDbCheck && readDbCheck && redisCheck && clickhouseCheck && buzzCheck;
   if (!healthy) counters.overall.inc();
   // const includeCPUCheck = await redis.get(`system:health-check:include-cpu-check`);
   // let freeCPU: number | undefined;
@@ -62,6 +66,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     readDb: readDbCheck,
     redis: redisCheck,
     clickhouse: clickhouseCheck,
+    buzz: buzzCheck,
     // freeCPU,
   });
 });
