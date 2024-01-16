@@ -12,6 +12,7 @@ import {
   CreateMessageInput,
   GetInfiniteMessagesInput,
   IsTypingInput,
+  isTypingOutput,
   ModifyUserInput,
   UpdateMessageInput,
 } from '~/server/schema/chat.schema';
@@ -605,20 +606,33 @@ export const isTypingHandler = async ({
         chatMembers: {
           select: {
             userId: true,
+            user: {
+              select: {
+                username: true,
+              },
+            },
           },
         },
       },
     });
 
-    if (!existing?.chatMembers.map((cm) => cm.userId).includes(userId)) return;
+    const existingUser = existing?.chatMembers.find((cm) => cm.userId === userId);
+    if (!existingUser) return;
 
     fetch(
       `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId, userId, isTyping }),
+        body: JSON.stringify({
+          chatId,
+          userId,
+          isTyping,
+          username: existingUser.user.username,
+        } as isTypingOutput),
       }
     ).catch();
-  } catch {}
+  } catch {
+    // explicitly not reporting errors here, as it's just a transient signal
+  }
 };

@@ -10,28 +10,37 @@ import {
   Text,
   Textarea,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { IconSend, IconX } from '@tabler/icons-react';
-import produce from 'immer';
+import { throttle } from 'lodash-es';
 import React, {
   Dispatch,
   MutableRefObject,
   SetStateAction,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { SignalMessages } from '~/server/common/enums';
+import { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 // TODO handle enter key for send, shift enter for new line (when it matters)
 // TODO handle scrolldown (ideally to last read)
+
+type TypingStatus = {
+  [key: string]: boolean;
+};
 
 const useStyles = createStyles((theme) => ({
   chatMessage: {
@@ -51,6 +60,22 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[4],
     alignSelf: 'flex-end',
   },
+  chatInput: {
+    borderRadius: 0,
+    borderLeft: 0,
+    borderTop: 0,
+    borderBottom: 0,
+  },
+  isTypingBox: {
+    position: 'sticky',
+    bottom: 0,
+    backdropFilter: 'blur(16px)',
+    display: 'inline-flex',
+    // backgroundColor:
+    //   theme.colorScheme === 'dark'
+    //     ? theme.fn.rgba(theme.colors.green[7], 0.1)
+    //     : theme.fn.rgba(theme.colors.green[2], 0.1),
+  },
 }));
 
 export function ExistingChat({
@@ -61,11 +86,15 @@ export function ExistingChat({
   existingChat: number;
 }) {
   const currentUser = useCurrentUser();
+  const { classes } = useStyles();
   // TODO reset chat message when clicking different group
   const [chatMsg, setChatMsg] = useState<string>('');
+  const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
   const [isSending, setIsSending] = useState(false);
   const lastReadRef = useRef<HTMLDivElement>(null);
-  const debouncer = useDebouncer(1000);
+  const { connected, worker } = useSignalContext();
+  const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
+  const [typingText, setTypingText] = useState<string | null>(null);
 
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
@@ -106,12 +135,88 @@ export function ExistingChat({
     lastReadRef.current?.scrollIntoView({ block: 'end', inline: 'nearest' });
   }, [allChats]);
 
+  useEffect(() => {
+    setTypingStatus({});
+    setTypingText(null);
+  }, [existingChat]);
+
+  const handleIsTyping = useCallback(
+    (d: unknown) => {
+      const data = d as isTypingOutput;
+
+      if (data.userId === currentUser?.id) return;
+      if (data.chatId !== existingChat) return;
+
+      const newEntry = {
+        [data.username]: data.isTyping,
+      };
+
+      const newTotalStatus = { ...typingStatus, ...newEntry };
+
+      const isTypingArray = Object.entries(newTotalStatus)
+        .map(([tsU, tsV]) => {
+          if (tsV) return tsU;
+        })
+        .filter(isDefined);
+
+      // TODO this sometimes flips back and forth for multiple users, overwriting itself. why?
+      const isTypingText =
+        isTypingArray.length > 1
+          ? `${isTypingArray.length} people are typing`
+          : isTypingArray.length === 1
+          ? `${isTypingArray[0]} is typing`
+          : null;
+
+      setTypingStatus(newTotalStatus);
+      setTypingText(isTypingText);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [existingChat]
+  );
+
+  useEffect(() => {
+    if (connected && worker) {
+      worker.on(SignalMessages.ChatTypingStatus, handleIsTyping);
+    }
+
+    return () => {
+      worker?.off(SignalMessages.ChatTypingStatus, handleIsTyping);
+    };
+  }, [connected, worker, handleIsTyping]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    doIsTyping({
+      chatId: existingChat,
+      userId: currentUser?.id,
+      isTyping: false,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedChatMsg]);
+
+  const throttledTyping = useMemo(
+    () =>
+      throttle(
+        () => {
+          if (!currentUser) return;
+          doIsTyping({
+            chatId: existingChat,
+            userId: currentUser.id,
+            isTyping: true,
+          });
+        },
+        2000,
+        { leading: true, trailing: true }
+      ),
+    [currentUser, doIsTyping, existingChat]
+  );
+
   const handleChatTyping = (value: string) => {
     setChatMsg(value);
-    // handle not typing timeout
-    // debouncer(() => doIsTyping({
-    //   chatMemberId:
-    // }));
+    if (!currentUser) return;
+
+    throttledTyping();
   };
 
   // TODO handle replies (reference)
@@ -183,6 +288,12 @@ export function ExistingChat({
             <Text>Start the conversation below!</Text>
           </Center>
         )}
+        {!!typingText && (
+          <Group className={classes.isTypingBox}>
+            <Text size="xs">{typingText}</Text>
+            <Loader variant="dots" />
+          </Group>
+        )}
       </Box>
       <Divider />
       <Group spacing={0}>
@@ -194,8 +305,15 @@ export function ExistingChat({
           maxRows={4}
           value={chatMsg}
           onChange={(event) => handleChatTyping(event.currentTarget.value)}
+          classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
         />
-        <ActionIcon h="100%" w={60} onClick={sendMessage} disabled={isSending || !chatMsg.length}>
+        <ActionIcon
+          h="100%"
+          w={60}
+          onClick={sendMessage}
+          disabled={isSending || !chatMsg.length}
+          sx={{ borderRadius: 0 }}
+        >
           {isSending ? <Loader /> : <IconSend />}
         </ActionIcon>
       </Group>
@@ -220,9 +338,14 @@ function DisplayMessages({
 
   return (
     <>
-      {chats.map((c) => (
+      {chats.map((c, idx) => (
         // TODO probably combine messages if within a certain amount of time
-        <Stack ref={c.id === lastReadId ? lastReadRef : undefined} key={c.id}>
+        <Stack
+          ref={c.id === lastReadId ? lastReadRef : undefined}
+          key={c.id}
+          spacing="xs"
+          style={idx === chats.length - 1 ? { marginBottom: 12 } : {}}
+        >
           <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
             <UserAvatar userId={c.userId} withUsername />
             <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
@@ -237,7 +360,6 @@ function DisplayMessages({
           </Box>
         </Stack>
       ))}
-      {/* TODO "x" is typing triple dot here */}
     </>
   );
 }

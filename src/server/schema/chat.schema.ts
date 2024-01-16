@@ -48,5 +48,7 @@ export const getInfiniteMessagesInput = infiniteQuerySchema.merge(
 export type IsTypingInput = z.infer<typeof isTypingInput>;
 export const isTypingInput = z.object({
   chatId: z.number(),
+  userId: z.number(),
   isTyping: z.boolean(),
 });
+export type isTypingOutput = IsTypingInput & { username: string };
