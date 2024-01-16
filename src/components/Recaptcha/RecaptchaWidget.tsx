@@ -1,6 +1,7 @@
 import Script from 'next/script';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '../../env/client.mjs';
+import { Anchor, Text, TextProps } from '@mantine/core';
 
 export function RecaptchaWidget() {
   const user = useCurrentUser();
@@ -14,6 +15,16 @@ export function RecaptchaWidget() {
         });
       }}
     />
+  );
+}
+
+export function RecaptchaNotice(props: TextProps) {
+  return (
+    <Text size="xs" {...props}>
+      This site is protected by reCAPTCHA and the Google
+      <Anchor href="https://policies.google.com/privacy">Privacy Policy</Anchor> and
+      <Anchor href="https://policies.google.com/terms">Terms of Service</Anchor> apply.
+    </Text>
   );
 }
 

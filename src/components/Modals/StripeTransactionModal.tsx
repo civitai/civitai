@@ -7,6 +7,7 @@ import {
   Divider,
   Loader,
   useMantineTheme,
+  Title,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
 import React, { useState } from 'react';
@@ -25,6 +26,27 @@ import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
 import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
 import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
+import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { IconAlertCircle } from '@tabler/icons-react';
+
+const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
+  <Stack>
+    <Title order={3}>Whoops!</Title>
+    <AlertWithIcon
+      icon={<IconAlertCircle />}
+      color="red"
+      iconColor="red"
+      title="Sorry, it looks like there was an error"
+    >
+      {error}
+    </AlertWithIcon>
+
+    <Center>
+      <Button onClick={onClose}>Close this window</Button>
+    </Center>
+  </Stack>
+);
 
 const StripeTransactionModal = ({
   unitAmount,
@@ -195,7 +217,7 @@ const { openModal, Modal } = createContextModal<Props>({
       RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
     );
 
-    const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
+    const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
       {
         unitAmount,
         currency,
@@ -220,21 +242,29 @@ const { openModal, Modal } = createContextModal<Props>({
       );
     }
 
+    const handleClose = () => {
+      context.close();
+    };
+
     if (!recaptchaToken) {
-      throw new Error('Failed to get recaptcha token');
+      return <Error error="Unable to get recaptcha token." onClose={handleClose} />;
     }
 
     if (!clientSecret) {
-      throw new Error('Failed to create client secret');
+      return (
+        <Error
+          error={
+            error?.message ??
+            'We are unable to connect you with Stripe services to perform a transaction. Please try again later.'
+          }
+          onClose={handleClose}
+        />
+      );
     }
 
     const options: StripeElementsOptions = {
       clientSecret,
       appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
-    };
-
-    const handleClose = () => {
-      context.close();
     };
 
     return (
@@ -248,6 +278,7 @@ const { openModal, Modal } = createContextModal<Props>({
           metadata={metadata}
           {...props}
         />
+        <RecaptchaNotice />
       </Elements>
     );
   },
