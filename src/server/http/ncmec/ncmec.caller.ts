@@ -3,6 +3,9 @@ import { HttpCaller } from '~/server/http/httpCaller';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { parseStringPromise, Builder } from 'xml2js';
 
+// DOCUMENTATION
+// https://report.cybertip.org/ispws/documentation
+
 class NcmecCaller extends HttpCaller {
   private static instance: NcmecCaller;
 

@@ -274,6 +274,7 @@ export function ImagesAsPostsCard({
                                 )}
                                 <ImageGuard.Report
                                   additionalMenuItems={moderationOptions(image.id)}
+                                  withinPortal
                                 />
                                 <ImageGuard.ToggleConnect position="top-left" />
                                 <RoutedDialogLink
