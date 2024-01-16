@@ -159,6 +159,9 @@ const StripeTransactionModal = ({
             {errorMessage}
           </Text>
         )}
+
+        <RecaptchaNotice />
+
         <Group position="right">
           <Button
             variant="filled"
@@ -280,7 +283,6 @@ const { openModal, Modal } = createContextModal<Props>({
           metadata={metadata}
           {...props}
         />
-        <RecaptchaNotice />
       </Elements>
     );
   },
