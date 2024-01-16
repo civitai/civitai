@@ -100,7 +100,6 @@ const useStyles = createStyles((theme) => ({
       bottom: '0px',
       left: '0px',
       content: '""',
-      zIndex: 10,
     },
   },
 }));

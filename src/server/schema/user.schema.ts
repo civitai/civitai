@@ -165,6 +165,7 @@ export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
 export const completeOnboardStepSchema = z.object({
   step: z.nativeEnum(OnboardingStep).optional(),
+  recaptchaToken: z.string().nullish(),
 });
 
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;

@@ -7,7 +7,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
@@ -88,6 +88,7 @@ import {
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import { isProd } from '~/env/other';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { createRecaptchaAssesment } from '../recaptcha/client';
 
 export const getAllUsersHandler = async ({
   input,
@@ -234,6 +235,21 @@ export const completeOnboardingHandler = async ({
 
     if (!input.step) {
       input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
+    }
+
+    // Check recaptcha for Buzz step
+    if (input.step === 'Buzz') {
+      const { recaptchaToken } = input;
+      if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+
+      const riskScore = await createRecaptchaAssesment({
+        token: recaptchaToken,
+        recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
+      });
+      if (!riskScore || riskScore < 0.5)
+        throw throwAuthorizationError(
+          'We are unable to complete onboarding right now. Please try again later'
+        );
     }
 
     const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);

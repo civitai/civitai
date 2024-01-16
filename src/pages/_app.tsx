@@ -47,6 +47,7 @@ import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterP
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
+import { RecaptchaWidget } from '../components/Recaptcha/RecaptchaWidget';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -130,6 +131,7 @@ function MyApp(props: CustomAppProps) {
                             <BrowserRouterProvider>
                               <BaseLayout>
                                 <CustomModalsProvider>
+                                  <RecaptchaWidget />
                                   <TosProvider>
                                     {getLayout(<Component {...pageProps} />)}
                                   </TosProvider>
