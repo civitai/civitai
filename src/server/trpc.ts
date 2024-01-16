@@ -77,6 +77,17 @@ export const isFlagProtected = (flag: keyof FeatureAccess) =>
     return next({ ctx: { user: ctx.user as SessionUser } });
   });
 
+const isOnboarded = t.middleware(({ ctx, next }) => {
+  const { user } = ctx;
+  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (user.onboardingSteps && user.onboardingSteps.length > 0)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You must complete the onboarding process before performing this action',
+    });
+  return next({ ctx: { ...ctx, user } });
+});
+
 /**
  * Protected procedure
  **/
@@ -92,3 +103,5 @@ export const moderatorProcedure = protectedProcedure.use(isMod);
  * based on muted/banned properties
  */
 export const guardedProcedure = protectedProcedure.use(isMuted);
+
+export const verifiedProcedure = protectedProcedure.use(isOnboarded);
