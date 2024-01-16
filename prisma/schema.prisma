@@ -2580,6 +2580,7 @@ model ChatMember {
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 }
 
+// TODO capital letter?
 enum ChatMessageType {
   markdown
 }

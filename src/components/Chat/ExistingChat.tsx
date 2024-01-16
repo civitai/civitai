@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Box,
+  Button,
   Center,
   createStyles,
   Divider,
@@ -11,7 +12,9 @@ import {
   Textarea,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { ChatMemberStatus } from '@prisma/client';
 import { IconSend, IconX } from '@tabler/icons-react';
+import produce from 'immer';
 import { throttle } from 'lodash-es';
 import Link from 'next/link';
 import React, {
@@ -55,9 +58,6 @@ const useStyles = createStyles((theme) => ({
     maxWidth: '70%',
     whiteSpace: 'pre-line',
   },
-  otherMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-  },
   myDetails: {
     flexDirection: 'row-reverse',
   },
@@ -65,6 +65,9 @@ const useStyles = createStyles((theme) => ({
     // backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5),
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[4],
     alignSelf: 'flex-end',
+  },
+  otherMessage: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
   },
   chatInput: {
     borderRadius: 0,
@@ -93,14 +96,17 @@ export function ExistingChat({
 }) {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
+  const { connected, worker } = useSignalContext();
+  const queryUtils = trpc.useUtils();
+
+  const lastReadRef = useRef<HTMLDivElement>(null);
   // TODO reset chat message when clicking different group
   const [chatMsg, setChatMsg] = useState<string>('');
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
   const [isSending, setIsSending] = useState(false);
-  const lastReadRef = useRef<HTMLDivElement>(null);
-  const { connected, worker } = useSignalContext();
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
   const [typingText, setTypingText] = useState<string | null>(null);
+  const [isJoining, setIsJoining] = useState(false);
 
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
@@ -115,11 +121,66 @@ export function ExistingChat({
 
   const { data: allChatData, isLoading: allChatLoading } = trpc.chat.getAllByUser.useQuery();
 
+  const thisChat = allChatData?.find((c) => c.id === existingChat);
+  const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
+  const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
+
+  const { mutate: modifyMembership } = trpc.chat.modifyUser.useMutation({
+    onSuccess(data) {
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+          const tChat = old.find((c) => c.id === existingChat);
+          const tMember = tChat?.chatMembers?.find((cm) => cm.userId === data.userId);
+          if (!tMember) return old;
+          tMember.status = data.status;
+          tMember.joinedAt = data.joinedAt;
+        })
+      );
+      setIsJoining(false);
+    },
+    onError(error) {
+      setIsJoining(false);
+      showErrorNotification({
+        title: 'Failed to update chat membership.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
+
+  const handleJoinChat = () => {
+    if (!myMember || !currentUser) {
+      showErrorNotification({
+        title: 'Failed to update chat membership.',
+        error: new Error('Could not find membership or user'),
+        autoClose: false,
+      });
+      return;
+    }
+    setIsJoining(true);
+    modifyMembership({
+      chatMemberId: myMember.id,
+      status: ChatMemberStatus.Joined,
+    });
+  };
+
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
-    async onSuccess() {
+    onSuccess() {
       setIsSending(false);
       setChatMsg('');
+
+      if (!currentUser) return;
+
+      const newEntry = {
+        [currentUser.username]: false,
+      };
+      const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
+
+      setTypingStatus(newTotalStatus);
+      setTypingText(isTypingText);
     },
     onError(error) {
       setIsSending(false);
@@ -146,6 +207,25 @@ export function ExistingChat({
     setTypingText(null);
   }, [existingChat]);
 
+  function getTypingStatus(newEntry: { [p: string]: boolean }) {
+    const newTotalStatus = { ...typingStatus, ...newEntry };
+
+    const isTypingArray = Object.entries(newTotalStatus)
+      .map(([tsU, tsV]) => {
+        if (tsV) return tsU;
+      })
+      .filter(isDefined);
+
+    // TODO this sometimes flips back and forth for multiple users, overwriting itself. why?
+    const isTypingText =
+      isTypingArray.length > 1
+        ? `${isTypingArray.length} people are typing`
+        : isTypingArray.length === 1
+        ? `${isTypingArray[0]} is typing`
+        : null;
+    return { newTotalStatus, isTypingText };
+  }
+
   const handleIsTyping = useCallback(
     (d: unknown) => {
       const data = d as isTypingOutput;
@@ -157,21 +237,7 @@ export function ExistingChat({
         [data.username]: data.isTyping,
       };
 
-      const newTotalStatus = { ...typingStatus, ...newEntry };
-
-      const isTypingArray = Object.entries(newTotalStatus)
-        .map(([tsU, tsV]) => {
-          if (tsV) return tsU;
-        })
-        .filter(isDefined);
-
-      // TODO this sometimes flips back and forth for multiple users, overwriting itself. why?
-      const isTypingText =
-        isTypingArray.length > 1
-          ? `${isTypingArray.length} people are typing`
-          : isTypingArray.length === 1
-          ? `${isTypingArray[0]} is typing`
-          : null;
+      const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
 
       setTypingStatus(newTotalStatus);
       setTypingText(isTypingText);
@@ -251,18 +317,9 @@ export function ExistingChat({
             {/* TODO limit this to one line, then expand */}
             {/* TODO option to add users, maybe in an option icon next to X */}
             {/*  TODO improve useravatar to show loading */}
-            {allChatData
-              ?.find((c) => c.id === existingChat)
-              ?.chatMembers.filter((cm) => cm.userId !== currentUser?.id)
-              .map((cm) => (
-                <UserAvatar
-                  key={cm.userId}
-                  userId={cm.userId}
-                  size="sm"
-                  withUsername
-                  linkToProfile
-                />
-              ))}
+            {otherMembers?.map((cm) => (
+              <UserAvatar key={cm.userId} userId={cm.userId} size="sm" withUsername linkToProfile />
+            ))}
           </Group>
         )}
         <ActionIcon onClick={() => setOpened(false)}>
@@ -270,59 +327,84 @@ export function ExistingChat({
         </ActionIcon>
       </Group>
       <Divider />
-      <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }}>
-        {isRefetching || isLoading ? (
-          <Center h="100%">
-            <Loader />
-          </Center>
-        ) : allChats.length > 0 ? (
-          <Stack sx={{ overflowWrap: 'break-word' }}>
-            <DisplayMessages chats={allChats} lastReadRef={lastReadRef} />
-            {hasNextPage && (
-              <InViewLoader
-                loadFn={fetchNextPage}
-                loadCondition={!isRefetching} //  && hasNextPage
-              >
-                <Center p="xl" sx={{ height: 36 }} mt="md">
-                  <Loader />
-                </Center>
-              </InViewLoader>
+      {!myMember ? (
+        <Loader />
+      ) : myMember.status === ChatMemberStatus.Joined ? (
+        <>
+          <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }}>
+            {isRefetching || isLoading ? (
+              <Center h="100%">
+                <Loader />
+              </Center>
+            ) : allChats.length > 0 ? (
+              <Stack sx={{ overflowWrap: 'break-word' }}>
+                <DisplayMessages chats={allChats} lastReadRef={lastReadRef} />
+                {hasNextPage && (
+                  <InViewLoader
+                    loadFn={fetchNextPage}
+                    loadCondition={!isRefetching} //  && hasNextPage
+                  >
+                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Loader />
+                    </Center>
+                  </InViewLoader>
+                )}
+              </Stack>
+            ) : (
+              <Center h="100%">
+                <Text>Start the conversation below!</Text>
+              </Center>
             )}
-          </Stack>
-        ) : (
-          <Center h="100%">
-            <Text>Start the conversation below!</Text>
-          </Center>
-        )}
-        {!!typingText && (
-          <Group className={classes.isTypingBox}>
-            <Text size="xs">{typingText}</Text>
-            <Loader variant="dots" />
+            {!!typingText && (
+              <Group className={classes.isTypingBox}>
+                <Text size="xs">{typingText}</Text>
+                <Loader variant="dots" />
+              </Group>
+            )}
+          </Box>
+          <Divider />
+          <Group spacing={0}>
+            <Textarea
+              sx={{ flexGrow: 1 }}
+              placeholder="Send message"
+              autosize
+              minRows={1}
+              maxRows={4}
+              value={chatMsg}
+              onChange={(event) => handleChatTyping(event.currentTarget.value)}
+              classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
+            />
+            <ActionIcon
+              h="100%"
+              w={60}
+              onClick={sendMessage}
+              disabled={isSending || !chatMsg.length}
+              sx={{ borderRadius: 0 }}
+            >
+              {isSending ? <Loader /> : <IconSend />}
+            </ActionIcon>
           </Group>
-        )}
-      </Box>
-      <Divider />
-      <Group spacing={0}>
-        <Textarea
-          sx={{ flexGrow: 1 }}
-          placeholder="Send message"
-          autosize
-          minRows={1}
-          maxRows={4}
-          value={chatMsg}
-          onChange={(event) => handleChatTyping(event.currentTarget.value)}
-          classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-        />
-        <ActionIcon
-          h="100%"
-          w={60}
-          onClick={sendMessage}
-          disabled={isSending || !chatMsg.length}
-          sx={{ borderRadius: 0 }}
-        >
-          {isSending ? <Loader /> : <IconSend />}
-        </ActionIcon>
-      </Group>
+        </>
+      ) : myMember.status === ChatMemberStatus.Invited ? (
+        <Center h="100%">
+          <Stack>
+            <Text align="center">Join the chat?</Text>
+            <Group p="sm" position="center">
+              <Button disabled={isJoining} variant="light" color="gray" onClick={() => {}}>
+                Ignore
+              </Button>
+              <Button disabled={isJoining} onClick={handleJoinChat}>
+                Join
+              </Button>
+            </Group>
+          </Stack>
+        </Center>
+      ) : (
+        // TODO show old messages if kicked/left?
+        <Center h="100%">
+          <Text>Not a member of this chat.</Text>
+        </Center>
+      )}
     </Stack>
   );
 }
@@ -352,33 +434,41 @@ function DisplayMessages({
           spacing="xs"
           style={idx === chats.length - 1 ? { marginBottom: 12 } : {}}
         >
-          <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
-            <UserAvatar userId={c.userId} withUsername />
-            <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-          </Group>
-          {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
-          <ReactMarkdown
-            allowedElements={['a', 'strong', 'em', 'code', 'u', 'img', 'ul', 'li']} // TODO check more of these: 'pre'
-            rehypePlugins={[rehypeRaw, remarkGfm, remarkGemoji]}
-            unwrapDisallowed
-            components={{
-              a: ({ node, ...props }) => {
-                return (
-                  <Link href={props.href as string}>
-                    <a target={props.href?.includes('http') ? '_blank' : '_self'}>
-                      {props.children[0]}
-                    </a>
-                  </Link>
-                );
-              },
-            }}
-            className={cx(classes.chatMessage, 'markdown-content', {
-              [classes.otherMessage]: c.userId !== currentUser?.id,
-              [classes.myMessage]: c.userId === currentUser?.id,
-            })}
-          >
-            {c.content}
-          </ReactMarkdown>
+          {c.userId === -1 ? (
+            <Text className={cx(classes.chatMessage)} size="xs" py={0} sx={{ alignSelf: 'center' }}>
+              {c.content}
+            </Text>
+          ) : (
+            <>
+              <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
+                <UserAvatar userId={c.userId} withUsername />
+                <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
+              </Group>
+              {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+              <ReactMarkdown
+                allowedElements={['a', 'strong', 'em', 'code', 'u', 'img', 'ul', 'li']} // TODO check more of these: 'pre'
+                rehypePlugins={[rehypeRaw, remarkGfm, remarkGemoji]}
+                unwrapDisallowed
+                components={{
+                  a: ({ node, ...props }) => {
+                    return (
+                      <Link href={props.href as string}>
+                        <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                          {props.children[0]}
+                        </a>
+                      </Link>
+                    );
+                  },
+                }}
+                className={cx(classes.chatMessage, 'markdown-content', {
+                  [classes.otherMessage]: c.userId !== currentUser?.id,
+                  [classes.myMessage]: c.userId === currentUser?.id,
+                })}
+              >
+                {c.content}
+              </ReactMarkdown>
+            </>
+          )}
         </Stack>
       ))}
     </>

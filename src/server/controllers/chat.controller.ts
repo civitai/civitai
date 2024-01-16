@@ -1,4 +1,4 @@
-import { ChatMemberStatus } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server.mjs';
@@ -213,15 +213,14 @@ export const createChatHandler = async ({
       return newChat;
     });
 
-    for (const cmId of dedupedUserIds) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${createdChat.id}`),
-      }).catch();
-    }
+    // - add self to group
+    fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(`chat:${createdChat.id}`),
+    }).catch();
 
-    // TODO I don't like the idea of querying after an insert, but it's just easier than merging all the data together
+    // I don't like the idea of querying after an insert, but it's just easier than merging all the data together
     const insertedChat = await dbWrite.chat.findFirst({
       where: {
         id: createdChat.id,
@@ -239,14 +238,14 @@ export const createChatHandler = async ({
       },
     });
 
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${createdChat.id}/signals/${SignalMessages.ChatNewRoom}`,
-      {
+    // - sending new chat room signal without being part of the group
+    for (const cmId of dedupedUserIds) {
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(insertedChat as ChatCreateChat),
-      }
-    ).catch();
+      }).catch();
+    }
 
     return insertedChat;
   } catch (error) {
@@ -311,7 +310,7 @@ export const addUsersHandler = async ({
     mergedUsers.sort((a, b) => a - b);
     const hash = mergedUsers.join('-');
 
-    await dbWrite.$transaction(async (tx) => {
+    const insertedChat = await dbWrite.$transaction(async (tx) => {
       await tx.chatMember.createMany({
         data: usersToAdd.map((uta) => ({
           userId: uta,
@@ -319,17 +318,28 @@ export const addUsersHandler = async ({
           status: ChatMemberStatus.Invited,
         })),
       });
-      await tx.chat.update({
+      return tx.chat.update({
         where: { id: input.chatId },
         data: { hash },
+        select: {
+          ...singleChatSelect,
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: {
+              content: true,
+              contentType: true,
+            },
+          },
+        },
       });
     });
 
     for (const cmId of usersToAdd) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${input.chatId}`),
+        body: JSON.stringify(insertedChat as ChatCreateChat),
       }).catch();
     }
 
@@ -356,59 +366,79 @@ export const modifyUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const { chatMemberId, ...rest } = input;
+    const { chatMemberId, status, ...rest } = input;
+
+    const existing = await dbWrite.chatMember.findFirst({
+      where: { id: chatMemberId },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            username: true,
+          },
+        },
+        chat: {
+          select: {
+            id: true,
+            ownerId: true,
+          },
+        },
+      },
+    });
+
+    if (!existing) {
+      throw throwBadRequestError(`Could not find chat member`);
+    }
 
     if (
-      rest.status === ChatMemberStatus.Kicked ||
+      status === ChatMemberStatus.Kicked ||
       isDefined(rest.isMuted) ||
       isDefined(rest.lastViewedMessageId)
     ) {
-      const existing = await dbWrite.chatMember.findFirst({
-        where: { id: chatMemberId },
-        select: {
-          chat: {
-            select: {
-              ownerId: true,
-            },
-          },
-        },
-      });
-
       // i guess owners can kick themselves out :/
-      if (!existing || existing.chat.ownerId !== userId) {
+      if (existing.chat.ownerId !== userId) {
         throw throwBadRequestError(`Cannot modify users for a chat you are not the owner of`);
       }
-    } else if (!!rest.status) {
-      const existing = await dbWrite.chatMember.findFirst({
-        where: { id: chatMemberId },
-        select: { userId: true },
-      });
-      if (userId !== existing?.userId) {
+    } else if (!!status) {
+      if (userId !== existing.userId) {
         throw throwBadRequestError(`Cannot modify chat status for another user`);
       }
     }
 
     const extra = {
-      joinedAt: rest.status === ChatMemberStatus.Joined ? new Date() : undefined,
-      leftAt: rest.status === ChatMemberStatus.Left ? new Date() : undefined,
-      kickedAt: rest.status === ChatMemberStatus.Kicked ? new Date() : undefined,
+      joinedAt: status === ChatMemberStatus.Joined ? new Date() : undefined,
+      leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
+      kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
     };
 
     // TODO should we adjust the hash on leave/kicked?
 
-    // TODO adjust membership options
-    /*
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${chatMemberId.userId}/groups`, {
-        method: 'POST', // DELETE
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${input.chatId}`),
-      }).catch();
-     */
-
-    return await dbWrite.chatMember.update({
+    const resp = await dbWrite.chatMember.update({
       where: { id: chatMemberId },
-      data: { ...rest, ...extra },
+      data: { status, ...rest, ...extra },
     });
+
+    if (!!status && status !== ChatMemberStatus.Invited) {
+      // we want to await here to avoid race conditions
+      await fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+        method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${existing.chat.id}`),
+      });
+
+      const createdSystemMsg = await createMessageFn({
+        input: {
+          chatId: existing.chat.id,
+          contentType: ChatMessageType.markdown,
+          content: `${existing.user.username} ${
+            status === ChatMemberStatus.Joined ? 'joined' : 'left'
+          }.`,
+        },
+        userId: -1,
+      });
+    }
+
+    return resp;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -468,6 +498,70 @@ export const getInfiniteMessagesHandler = async ({
 };
 
 /**
+ * Create a message (direct)
+ */
+export const createMessageFn = async ({
+  input,
+  userId,
+}: {
+  input: CreateMessageInput;
+  userId: number;
+}) => {
+  const chat = await dbWrite.chat.findFirst({
+    where: {
+      id: input.chatId,
+      // chatMembers: { some: { userId } } // TODO if enabling, remove "includes" check below
+    },
+    select: {
+      chatMembers: {
+        select: {
+          userId: true,
+          status: true,
+        },
+      },
+    },
+  });
+
+  if (!chat) {
+    throw throwBadRequestError(`Could not find chat with id: (${input.chatId})`);
+  }
+
+  if (userId !== -1) {
+    const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
+    if (!thisMember) {
+      throw throwBadRequestError(`Not a member of this chat`);
+    }
+    if (!['Invited', 'Joined'].includes(thisMember.status)) {
+      throw throwBadRequestError(`Unable to post in this chat`);
+    }
+  }
+
+  if (input.referenceMessageId) {
+    const existingReference = await dbWrite.chatMessage.count({
+      where: { id: input.referenceMessageId },
+    });
+    if (existingReference === 0) {
+      throw throwBadRequestError(`Reference message does not exist: (${input.referenceMessageId})`);
+    }
+  }
+
+  const resp = await dbWrite.chatMessage.create({
+    data: { ...input, userId },
+  });
+
+  fetch(
+    `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(resp as ChatAllMessages[number]),
+    }
+  ).catch();
+
+  return resp;
+};
+
+/**
  * Create a message
  */
 export const createMessageHandler = async ({
@@ -479,69 +573,7 @@ export const createMessageHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-
-    const chat = await dbWrite.chat.findFirst({
-      where: {
-        id: input.chatId,
-        // chatMembers: { some: { userId } } // TODO if enabling, remove "includes" check below
-      },
-      select: {
-        chatMembers: {
-          select: {
-            userId: true,
-            status: true,
-          },
-        },
-      },
-    });
-
-    if (!chat) {
-      throw throwBadRequestError(`Could not find chat with id: (${input.chatId})`);
-    }
-
-    const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
-
-    if (!thisMember) {
-      throw throwBadRequestError(`Not a member of this chat`);
-    }
-    if (!['Invited', 'Joined'].includes(thisMember.status)) {
-      throw throwBadRequestError(`Unable to post in this chat`);
-    }
-
-    if (input.referenceMessageId) {
-      const existingReference = await dbWrite.chatMessage.count({
-        where: { id: input.referenceMessageId },
-      });
-      if (existingReference === 0) {
-        throw throwBadRequestError(
-          `Reference message does not exist: (${input.referenceMessageId})`
-        );
-      }
-    }
-
-    const resp = await dbWrite.chatMessage.create({
-      data: { ...input, userId },
-    });
-
-    // for (const cm of chat.chatMembers) {
-    //   if (cm.userId === userId) continue;
-    //   fetch(`${env.SIGNALS_ENDPOINT}/users/${cm.userId}/signals/${SignalMessages.ChatNewMessage}`, {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify(resp as ChatAllMessages[number]),
-    //   }).catch();
-    // }
-
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(resp as ChatAllMessages[number]),
-      }
-    ).catch();
-
-    return resp;
+    return await createMessageFn({ input, userId });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
