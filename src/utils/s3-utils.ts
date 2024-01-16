@@ -7,7 +7,7 @@ import {
   GetObjectCommand,
   GetObjectCommandInput,
   HeadObjectCommand,
-  PutBucketCorsCommand,
+  // PutBucketCorsCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
