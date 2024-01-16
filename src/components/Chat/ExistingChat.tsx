@@ -13,6 +13,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSend, IconX } from '@tabler/icons-react';
 import { throttle } from 'lodash-es';
+import Link from 'next/link';
 import React, {
   Dispatch,
   MutableRefObject,
@@ -23,6 +24,10 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGemoji from 'remark-gemoji';
+import remarkGfm from 'remark-gfm';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -48,6 +53,7 @@ const useStyles = createStyles((theme) => ({
     padding: theme.spacing.xs,
     width: 'max-content',
     maxWidth: '70%',
+    whiteSpace: 'pre-line',
   },
   otherMessage: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
@@ -111,7 +117,7 @@ export function ExistingChat({
 
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
-    async onSuccess(_data) {
+    async onSuccess() {
       setIsSending(false);
       setChatMsg('');
     },
@@ -125,7 +131,7 @@ export function ExistingChat({
     },
   });
 
-  const { mutate: doIsTyping } = trpc.chat.isTyping.useMutation();
+  const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
 
   const allChats = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
@@ -191,7 +197,7 @@ export function ExistingChat({
       chatId: existingChat,
       userId: currentUser?.id,
       isTyping: false,
-    });
+    }).catch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedChatMsg]);
 
@@ -204,7 +210,7 @@ export function ExistingChat({
             chatId: existingChat,
             userId: currentUser.id,
             isTyping: true,
-          });
+          }).catch();
         },
         2000,
         { leading: true, trailing: true }
@@ -350,14 +356,29 @@ function DisplayMessages({
             <UserAvatar userId={c.userId} withUsername />
             <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
           </Group>
-          <Box
-            className={cx(classes.chatMessage, {
+          {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+          <ReactMarkdown
+            allowedElements={['a', 'strong', 'em', 'code', 'u', 'img', 'ul', 'li']} // TODO check more of these: 'pre'
+            rehypePlugins={[rehypeRaw, remarkGfm, remarkGemoji]}
+            unwrapDisallowed
+            components={{
+              a: ({ node, ...props }) => {
+                return (
+                  <Link href={props.href as string}>
+                    <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                      {props.children[0]}
+                    </a>
+                  </Link>
+                );
+              },
+            }}
+            className={cx(classes.chatMessage, 'markdown-content', {
               [classes.otherMessage]: c.userId !== currentUser?.id,
               [classes.myMessage]: c.userId === currentUser?.id,
             })}
           >
             {c.content}
-          </Box>
+          </ReactMarkdown>
         </Stack>
       ))}
     </>

@@ -10,8 +10,15 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconCirclePlus, IconSearch, IconUser, IconUsers, IconX } from '@tabler/icons-react';
-import React, { Dispatch, SetStateAction } from 'react';
+import {
+  IconCirclePlus,
+  IconCloudOff,
+  IconSearch,
+  IconUser,
+  IconUsers,
+  IconX,
+} from '@tabler/icons-react';
+import React, { Dispatch, SetStateAction, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -43,6 +50,21 @@ export function ChatList({
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const [searchInput, setSearchInput] = useState<string>('');
+
+  // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats
+  //      or at least a new endpoint for searching
+  const filteredData =
+    searchInput.length > 0 && !!data
+      ? data.filter((d) => {
+          if (
+            d.chatMembers
+              .filter((cm) => cm.userId !== currentUser?.id)
+              .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
+          )
+            return d;
+        })
+      : data;
 
   return (
     <Stack spacing={0} h="100%">
@@ -57,13 +79,18 @@ export function ChatList({
           />
         </ActionIcon>
       </Group>
-      {/* TODO search  */}
       <Box p="sm" pt={0}>
         <Input
           icon={<IconSearch size={16} />}
           placeholder="Search"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
           rightSection={
-            <ActionIcon onClick={() => {}}>
+            <ActionIcon
+              onClick={() => {
+                setSearchInput('');
+              }}
+            >
               <IconX size={16} />
             </ActionIcon>
           }
@@ -75,14 +102,14 @@ export function ChatList({
           <Center h="100%">
             <Loader />
           </Center>
-        ) : !data || data.length === 0 ? (
-          <Stack p="sm">
-            <Text>No chats.</Text>
-            <Text>Get started by hitting the &quot;plus&quot;sign above.</Text>
+        ) : !filteredData || filteredData.length === 0 ? (
+          <Stack p="sm" align="center">
+            <Text>No chats yet.</Text>
+            <IconCloudOff size={36} />
           </Stack>
         ) : (
           <Stack p="xs" spacing={4}>
-            {data.map((d) => {
+            {filteredData.map((d) => {
               return (
                 <Group
                   key={d.id}
