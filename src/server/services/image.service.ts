@@ -64,6 +64,7 @@ import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
+import { baseS3Client } from '~/utils/s3-client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -88,8 +89,17 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     });
     if (!image) return;
 
-    if (isProd && !(await imageUrlInUse({ url: image.url, id })))
-      await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
+    if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
+      const { items } = await baseS3Client.listObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        prefix: image.url,
+      });
+      await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+      await baseS3Client.deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys: items.map((x) => x.Key).filter(isDefined),
+      });
+    }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
     await dbWrite.image.deleteMany({ where: { id } });

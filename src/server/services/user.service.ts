@@ -57,6 +57,8 @@ import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { constants } from '~/server/common/constants';
+import { baseS3Client } from '~/utils/s3-client';
+import { isDefined } from '~/utils/type-guards';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -574,7 +576,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
 export const removeAllContent = async ({ id }: { id: number }) => {
   const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
-  const images = await dbRead.image.findMany({ where: { userId: id }, select: { id: true } });
+  const images = await dbRead.image.findMany({
+    where: { userId: id },
+    select: { id: true, url: true },
+  });
   const articles = await dbRead.article.findMany({ where: { userId: id }, select: { id: true } });
   const collections = await dbRead.collection.findMany({
     where: { userId: id },
@@ -606,9 +611,23 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await dbWrite.post.deleteMany({ where: { userId: id } });
   await dbWrite.model.deleteMany({ where: { userId: id } });
 
-  // TODO - an implementation similar to the following
-  // loop through image
-  // imageService.deleteImageById
+  // remove images from s3 buckets before deleting them
+  try {
+    for (const image of images) {
+      const { items } = await baseS3Client.listObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        prefix: image.url,
+      });
+      await baseS3Client.deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys: items.map((x) => x.Key).filter(isDefined),
+      });
+    }
+    await baseS3Client.deleteManyObjects({
+      bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+      keys: images.map((x) => x.url),
+    });
+  } catch (e) {}
   await dbWrite.image.deleteMany({ where: { userId: id } });
 
   await modelsSearchIndex.queueUpdate(
