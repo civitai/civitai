@@ -94,7 +94,7 @@ const isOnboarded = t.middleware(({ ctx, next }) => {
 export const protectedProcedure = publicProcedure.use(isAuthed);
 
 /**
- * Protected procedure
+ * Moderator procedure
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
 
@@ -104,4 +104,8 @@ export const moderatorProcedure = protectedProcedure.use(isMod);
  */
 export const guardedProcedure = protectedProcedure.use(isMuted);
 
+/**
+ * Verified procedure to prevent users from making actions
+ * if they haven't completed the onboarding process
+ */
 export const verifiedProcedure = protectedProcedure.use(isOnboarded);
