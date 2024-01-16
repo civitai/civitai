@@ -42,6 +42,8 @@ const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
       {error}
     </AlertWithIcon>
 
+    <RecaptchaNotice />
+
     <Center>
       <Button onClick={onClose}>Close this window</Button>
     </Center>

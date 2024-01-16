@@ -21,8 +21,8 @@ export function RecaptchaWidget() {
 export function RecaptchaNotice(props: TextProps) {
   return (
     <Text size="xs" {...props}>
-      This site is protected by reCAPTCHA and the Google
-      <Anchor href="https://policies.google.com/privacy">Privacy Policy</Anchor> and
+      This site is protected by reCAPTCHA and the Google{' '}
+      <Anchor href="https://policies.google.com/privacy">Privacy Policy</Anchor> and{' '}
       <Anchor href="https://policies.google.com/terms">Terms of Service</Anchor> apply.
     </Text>
   );
