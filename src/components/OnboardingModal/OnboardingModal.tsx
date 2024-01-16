@@ -46,7 +46,7 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
-import { RecaptchaNotice, RecaptchaWidget } from '../Recaptcha/RecaptchaWidget';
+import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -493,7 +493,6 @@ export default function OnboardingModal() {
                 )}
               </Stack>
             )}
-            <RecaptchaWidget />
           </Container>
         </Stepper.Step>
       </Stepper>
