@@ -107,6 +107,7 @@
     "discord.js": "^14.7.1",
     "embla-carousel-react": "^7.0.3",
     "exifreader": "^4.13.0",
+    "framer-motion": "^10.18.0",
     "gray-matter": "^4.0.3",
     "idb-keyval": "^6.2.0",
     "immer": "^9.0.15",

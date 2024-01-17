@@ -3,23 +3,25 @@ import {
   Box,
   Button,
   Center,
+  createPolymorphicComponent,
   createStyles,
   Divider,
   Group,
   Loader,
   Stack,
+  StackProps,
   Text,
   Textarea,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
 import { IconSend, IconX } from '@tabler/icons-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
 import Link from 'next/link';
 import React, {
   Dispatch,
-  MutableRefObject,
   SetStateAction,
   useCallback,
   useEffect,
@@ -49,6 +51,8 @@ import { isDefined } from '~/utils/type-guards';
 type TypingStatus = {
   [key: string]: boolean;
 };
+
+const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
 const useStyles = createStyles((theme) => ({
   chatMessage: {
@@ -228,8 +232,11 @@ export function ExistingChat({
 
   useEffect(() => {
     if (!allChats.length) return;
-    // TODO this doesn't quite scroll all the way down, need to add some padding here
-    lastReadRef.current?.scrollIntoView({ block: 'end', inline: 'nearest' });
+
+    lastReadRef.current?.scrollTo(
+      0,
+      lastReadRef.current?.scrollHeight - lastReadRef.current?.clientHeight
+    );
   }, [allChats]);
 
   useEffect(() => {
@@ -361,14 +368,14 @@ export function ExistingChat({
         <Loader />
       ) : myMember.status === ChatMemberStatus.Joined ? (
         <>
-          <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }}>
+          <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
               <Stack sx={{ overflowWrap: 'break-word' }}>
-                <DisplayMessages chats={allChats} lastReadRef={lastReadRef} />
+                <DisplayMessages chats={allChats} />
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -436,30 +443,23 @@ export function ExistingChat({
   );
 }
 
-function DisplayMessages({
-  chats,
-  lastReadRef,
-}: {
-  chats: ChatAllMessages;
-  lastReadRef: MutableRefObject<HTMLDivElement | null>;
-}) {
+function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
 
-  // TODO adjust for lastread
-  const lastReadId = chats[chats.length - 1].id;
-
-  // TODO animation on new message received, not when getting all
-
   return (
-    <>
+    <AnimatePresence initial={false} mode="sync">
       {chats.map((c, idx) => (
         // TODO probably combine messages if within a certain amount of time
-        <Stack
-          ref={c.id === lastReadId ? lastReadRef : undefined}
+        <PStack
+          component={motion.div}
+          // ref={c.id === lastReadId ? lastReadRef : undefined}
           key={c.id}
           spacing="xs"
           style={idx === chats.length - 1 ? { marginBottom: 12 } : {}}
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ type: 'spring', duration: 0.4 }}
         >
           {c.userId === -1 ? (
             // <Group align="center" position="center">
@@ -518,8 +518,8 @@ function DisplayMessages({
               </ReactMarkdown>
             </>
           )}
-        </Stack>
+        </PStack>
       ))}
-    </>
+    </AnimatePresence>
   );
 }

@@ -2,9 +2,11 @@ import {
   ActionIcon,
   Box,
   Center,
+  createPolymorphicComponent,
   createStyles,
   Divider,
   Group,
+  GroupProps,
   Input,
   Loader,
   Stack,
@@ -18,9 +20,12 @@ import {
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import React, { Dispatch, SetStateAction, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+
+const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
 const useStyles = createStyles((theme) => ({
   selectChat: {
@@ -109,39 +114,29 @@ export function ChatList({
           </Stack>
         ) : (
           <Stack p="xs" spacing={4}>
-            {filteredData.map((d) => {
-              return (
-                <Group
-                  key={d.id}
-                  noWrap
-                  className={cx(classes.selectChat, {
-                    [classes.selectedChat]: d.id === existingChat,
-                  })}
-                  onClick={() => {
-                    setExistingChat(d.id);
-                    setNewChat(false);
-                  }}
-                >
-                  <Box>{d.chatMembers.length > 2 ? <IconUsers /> : <IconUser />}</Box>
-                  <Stack sx={{ overflow: 'hidden' }} spacing={0}>
-                    <Text
-                      size="sm"
-                      fw={500}
-                      sx={{
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        minWidth: 0,
-                      }}
-                    >
-                      {d.chatMembers
-                        .filter((cm) => cm.userId !== currentUser?.id)
-                        .map((cm) => cm.user.username)
-                        .join(', ')}
-                    </Text>
-                    {!!d.messages[0]?.content && (
+            <AnimatePresence initial={false} mode="sync">
+              {filteredData.map((d) => {
+                return (
+                  <PGroup
+                    key={d.id}
+                    component={motion.div}
+                    noWrap
+                    className={cx(classes.selectChat, {
+                      [classes.selectedChat]: d.id === existingChat,
+                    })}
+                    initial={{ y: -20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ type: 'spring', duration: 0.4 }}
+                    onClick={() => {
+                      setExistingChat(d.id);
+                      setNewChat(false);
+                    }}
+                  >
+                    <Box>{d.chatMembers.length > 2 ? <IconUsers /> : <IconUser />}</Box>
+                    <Stack sx={{ overflow: 'hidden' }} spacing={0}>
                       <Text
-                        size="xs"
+                        size="sm"
+                        fw={500}
                         sx={{
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
@@ -149,13 +144,29 @@ export function ChatList({
                           minWidth: 0,
                         }}
                       >
-                        {d.messages[0].content}
+                        {d.chatMembers
+                          .filter((cm) => cm.userId !== currentUser?.id)
+                          .map((cm) => cm.user.username)
+                          .join(', ')}
                       </Text>
-                    )}
-                  </Stack>
-                </Group>
-              );
-            })}
+                      {!!d.messages[0]?.content && (
+                        <Text
+                          size="xs"
+                          sx={{
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            minWidth: 0,
+                          }}
+                        >
+                          {d.messages[0].content}
+                        </Text>
+                      )}
+                    </Stack>
+                  </PGroup>
+                );
+              })}
+            </AnimatePresence>
           </Stack>
         )}
       </Box>

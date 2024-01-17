@@ -15,6 +15,8 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+// TODO add "message" button across app for user area, which will start a new message with that user selected
+
 export function ChatButton() {
   const [opened, setOpened] = useState(false);
   const { classes } = useStyles();
