@@ -102,7 +102,7 @@ const updateUserLeaderboardRank = createJob(
 );
 
 const updateUserDiscordLeaderboardRoles = createJob(
-  'update-user-leaderboard-rank',
+  'update-user-discord-leaderboard-roles',
   '10 0 * * *',
   async () => {
     if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
