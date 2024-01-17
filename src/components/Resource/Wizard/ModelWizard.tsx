@@ -72,12 +72,19 @@ const CreateSteps = ({
 
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
+  const bountyId = result.success ? result.data.bountyId : undefined;
 
   const { data: templateFields, isInitialLoading } = trpc.model.getTemplateFields.useQuery(
     // Explicit casting since we know it's a number at this point
     { id: templateId as number },
     { enabled: !!templateId }
   );
+  const { data: bountyFields, isInitialLoading: isBountyFieldsInitialLoading } =
+    trpc.model.getModelTemplateFieldsFromBounty.useQuery(
+      // Explicit casting since we know it's a number at this point
+      { id: bountyId as number },
+      { enabled: !!bountyId }
+    );
 
   return (
     <Stepper
@@ -93,14 +100,16 @@ const CreateSteps = ({
       {/* Step 1: Model Info */}
       <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
         <Stack pos="relative">
-          <LoadingOverlay visible={isInitialLoading} />
+          <LoadingOverlay visible={isInitialLoading || isBountyFieldsInitialLoading} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
           <ModelUpsertForm
-            model={model ?? templateFields}
+            model={model ?? templateFields ?? bountyFields}
             onSubmit={({ id }) => {
               if (editing) return goNext();
               router.replace(
-                `/models/${id}/wizard?step=2${templateId ? `&templateId=${templateId}` : ''}`
+                `/models/${id}/wizard?step=2${templateId ? `&templateId=${templateId}` : ''}${
+                  bountyId ? `&bountyId=${bountyId}` : ''
+                }`
               );
             }}
           >
@@ -120,8 +129,8 @@ const CreateSteps = ({
         <Stack>
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
-            model={model ?? templateFields}
-            version={modelVersion ?? templateFields?.version}
+            model={model ?? templateFields ?? bountyFields}
+            version={modelVersion ?? templateFields?.version ?? bountyFields?.version}
             onSubmit={goNext}
           >
             {({ loading }) => (
@@ -147,7 +156,11 @@ const CreateSteps = ({
         <Stack>
           <Title order={3}>Upload files</Title>
           <Files />
-          <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
+          <UploadStepActions
+            files={bountyFields?.files}
+            onBackClick={goBack}
+            onNextClick={goNext}
+          />
         </Stack>
       </Stepper.Step>
 
@@ -341,13 +354,20 @@ export function ModelWizard() {
       if (showTraining) return;
 
       if (!hasVersions)
-        router.replace(getWizardUrl({ id, step: 2, templateId }), undefined, { shallow: true });
+        router.replace(getWizardUrl({ id, step: 2, templateId, bountyId }), undefined, {
+          shallow: true,
+        });
       else if (!hasFiles)
-        router.replace(getWizardUrl({ id, step: 3, templateId }), undefined, { shallow: true });
-      else router.replace(getWizardUrl({ id, step: 4, templateId }), undefined, { shallow: true });
+        router.replace(getWizardUrl({ id, step: 3, templateId, bountyId }), undefined, {
+          shallow: true,
+        });
+      else
+        router.replace(getWizardUrl({ id, step: 4, templateId, bountyId }), undefined, {
+          shallow: true,
+        });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, hasVersions, id, isNew, model, templateId]);
+  }, [hasFiles, hasVersions, id, isNew, model, templateId, bountyId]);
 
   useEffect(() => {
     // set current step based on query param

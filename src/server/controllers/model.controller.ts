@@ -1,8 +1,10 @@
 import {
+  BountyType,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
   ModelStatus,
+  ModelType,
   ModelUploadType,
   Prisma,
   SearchIndexUpdateQueueAction,
@@ -1326,7 +1328,7 @@ export async function getModelTemplateFieldsHandler({
   }
 }
 
-export async function getModelTemplateFromBounty({
+export async function getModelTemplateFromBountyHandler({
   input,
   ctx,
 }: {
@@ -1346,16 +1348,31 @@ export async function getModelTemplateFromBounty({
 
     const { bounty } = awardedEntry;
 
+    if (
+      ![BountyType.LoraCreation, BountyType.ModelCreation, BountyType.EmbedCreation].some(
+        (t) => t === bounty.type
+      )
+    ) {
+      throw throwBadRequestError('This bounty type is not supported for model creation');
+    }
+
     const meta = bounty.details as BountyDetailsSchema;
     const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
+
+    const bountyTypeModelTypeMap: Record<string, ModelType> = {
+      [BountyType.LoraCreation]: ModelType.LORA,
+      [BountyType.ModelCreation]: ModelType.Checkpoint,
+      [BountyType.EmbedCreation]: ModelType.TextualInversion,
+    };
 
     return {
       nsfw: bounty.nsfw,
       poi: bounty.poi,
-      title: bounty.name,
+      name: bounty.name,
       description: bounty.description,
       status: ModelStatus.Draft,
       uploadType: ModelUploadType.Created,
+      type: bountyTypeModelTypeMap[bounty.type],
       version: {
         baseModel: meta.baseModel as BaseModel,
       },

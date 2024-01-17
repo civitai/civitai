@@ -532,7 +532,7 @@ function FileEditForm({
   );
 }
 
-export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
+export function UploadStepActions({ onBackClick, onNextClick, files: defaultFiles }: ActionProps) {
   const { startUpload, files, hasPending } = useFilesContext();
 
   return (
