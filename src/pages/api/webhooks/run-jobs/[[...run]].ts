@@ -39,6 +39,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
+import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -76,6 +77,7 @@ export const jobs: Job[] = [
   processClubMembershipRecurringPayments,
   ...csamJobs,
   resourceGenerationAvailability,
+  cacheCleanup,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -2,10 +2,11 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
 
-import { Tracker } from '~/server/clickhouse/client';
+import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
@@ -45,6 +46,24 @@ export default RateLimitedEndpoint(
       ).split(',');
       if (userBlacklist.includes(session.user.id.toString()))
         return errorResponse(403, 'Forbidden');
+    }
+
+    // Check if user has a concerning number of downloads
+    const isAuthed = !!session?.user;
+    const userKey = session?.user?.id?.toString() ?? ip;
+    if (!userKey) return errorResponse(403, 'Forbidden');
+    const downloadCountStr = await redis.hGet(REDIS_KEYS.DOWNLOAD.COUNT, userKey);
+    if (downloadCountStr) {
+      const downloadCount = Number(downloadCountStr);
+      const fallbackKey = isAuthed ? 'authed' : 'anon';
+      const downloadLimit = await redis.hmGet(REDIS_KEYS.DOWNLOAD.LIMITS, [userKey, fallbackKey]);
+      const limit = Number(downloadLimit?.[0] ?? downloadLimit?.[1] ?? 0);
+      if (limit !== 0 && downloadCount > limit) {
+        return errorResponse(
+          429,
+          `We've noticed an unusual amount of downloading from your account. Contact support@civitai.com or come back later.`
+        );
+      }
     }
 
     // Validate query params
@@ -114,6 +133,13 @@ export default RateLimitedEndpoint(
           modelVersionId,
         });
       }
+
+      // Increment download count for user
+      if (downloadCountStr) {
+        await redis.hIncrBy(REDIS_KEYS.DOWNLOAD.COUNT, userKey, 1);
+      } else {
+        await fetchDownloadCount(userKey);
+      }
     } catch (error) {
       // Don't return error to user
       console.error(error);
@@ -125,3 +151,18 @@ export default RateLimitedEndpoint(
   ['GET'],
   'download'
 );
+
+async function fetchDownloadCount(userKey: string) {
+  const res = await clickhouse?.query({
+    query: `
+      SELECT SUM(count) as count
+      FROM daily_user_downloads
+      WHERE userKey = '${userKey}' AND createdDate > toStartOfDay((subtractDays(now(), 7)));
+    `,
+    format: 'JSONEachRow',
+  });
+
+  const data = (await res?.json<{ count: number }[]>()) ?? [];
+  const count = data[0]?.count ?? 0;
+  await redis.hSet(REDIS_KEYS.DOWNLOAD.COUNT, userKey, count);
+}

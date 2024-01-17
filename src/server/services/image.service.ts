@@ -19,7 +19,7 @@ import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
 import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   GetEntitiesCoverImage,
@@ -978,7 +978,7 @@ async function tagLookup(imageId: number | number[], fromWrite = false) {
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await cachedObject<{ imageId: number; tags: number[] }>({
-    key: 'tagIdsForImages',
+    key: REDIS_KEYS.TAG_IDS_FOR_IMAGES,
     idKey: 'imageId',
     ids: imageIds,
     ttl: CacheTTL.day,
@@ -991,7 +991,7 @@ export async function clearImageTagIdsCache(imageId: number | number[]) {
   if (!imageIds.length) return;
 
   await redis.hDel(
-    'tagIdsForImages',
+    REDIS_KEYS.TAG_IDS_FOR_IMAGES,
     imageIds.map((x) => x.toString())
   );
 }
@@ -1004,7 +1004,7 @@ export async function updateImageTagIdsForImages(imageId: number | number[]) {
   const toCache = Object.fromEntries(
     Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
   );
-  await redis.hSet('tagIdsForImages', toCache);
+  await redis.hSet(REDIS_KEYS.TAG_IDS_FOR_IMAGES, toCache);
 }
 
 type GetImageRaw = GetAllImagesRaw & {
