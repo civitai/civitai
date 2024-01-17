@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 import { env } from '../../env/client.mjs';
+import { RecaptchaContext } from './RecaptchaWidget';
 
 export const useRecaptchaToken = (action?: string) => {
+  const ready = useContext(RecaptchaContext);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true); // Start as true.
   const [error, setError] = useState<Error | null>(null);
 
   const getToken = useCallback(async (action?: string) => {
-    if (!action) {
+    if (!action || !ready) {
       setLoading(false);
       return;
     }
@@ -27,8 +29,10 @@ export const useRecaptchaToken = (action?: string) => {
   }, []);
 
   useEffect(() => {
+    if (!ready) return;
+
     getToken(action);
-  }, [action]);
+  }, [ready, action]);
 
   return { token, loading, error, getToken };
 };

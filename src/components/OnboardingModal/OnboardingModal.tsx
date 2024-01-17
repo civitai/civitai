@@ -131,7 +131,7 @@ export default function OnboardingModal() {
   );
 
   const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
-    RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
+    RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING
   );
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
@@ -181,6 +181,16 @@ export default function OnboardingModal() {
     });
   };
   const handleCompleteStep = (step: OnboardingStep) => {
+    if (!recaptchaToken) {
+      showErrorNotification({
+        title: 'Cannot save',
+        error: new Error('Recaptcha token is missing'),
+        reason: 'An unknown error occurred. Please try again later',
+      });
+
+      return;
+    }
+
     completeStep(
       { step, recaptchaToken },
       {

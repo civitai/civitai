@@ -1,20 +1,25 @@
+import { createContext, useState } from 'react';
 import Script from 'next/script';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '../../env/client.mjs';
 import { Anchor, Text, TextProps } from '@mantine/core';
 
-export function RecaptchaWidget() {
-  const user = useCurrentUser();
-  if (!user) return null;
+export const RecaptchaContext = createContext<boolean | null>(null);
+
+export function RecaptchaWidgetProvider({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+
   return (
-    <Script
-      src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
-      onLoad={() => {
-        window?.grecaptcha.enterprise.ready(() => {
-          console.log('yei!');
-        });
-      }}
-    />
+    <RecaptchaContext.Provider value={ready}>
+      <Script
+        src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
+        onLoad={() => {
+          window?.grecaptcha.enterprise.ready(() => {
+            setReady(true);
+          });
+        }}
+      />
+      {children}
+    </RecaptchaContext.Provider>
   );
 }
 
