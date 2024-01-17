@@ -90,9 +90,13 @@ const useStyles = createStyles((theme) => ({
 export function ExistingChat({
   setOpened,
   existingChat,
+  setNewChat,
+  setExistingChat,
 }: {
   setOpened: Dispatch<SetStateAction<boolean>>;
   existingChat: number;
+  setNewChat: Dispatch<SetStateAction<boolean>>;
+  setExistingChat: Dispatch<SetStateAction<number | undefined>>;
 }) {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
@@ -131,14 +135,24 @@ export function ExistingChat({
         undefined,
         produce((old) => {
           if (!old) return old;
+
+          if (data.status !== ChatMemberStatus.Joined) {
+            return old.filter((c) => c.id !== existingChat);
+          }
+
           const tChat = old.find((c) => c.id === existingChat);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === data.userId);
           if (!tMember) return old;
+
           tMember.status = data.status;
           tMember.joinedAt = data.joinedAt;
         })
       );
       setIsJoining(false);
+      if (data.status !== ChatMemberStatus.Joined) {
+        setExistingChat(undefined);
+        setNewChat(true);
+      }
     },
     onError(error) {
       setIsJoining(false);
@@ -149,6 +163,22 @@ export function ExistingChat({
       });
     },
   });
+
+  const handleIgnoreChat = () => {
+    if (!myMember || !currentUser) {
+      showErrorNotification({
+        title: 'Failed to update chat membership.',
+        error: new Error('Could not find membership or user'),
+        autoClose: false,
+      });
+      return;
+    }
+    setIsJoining(true);
+    modifyMembership({
+      chatMemberId: myMember.id,
+      status: ChatMemberStatus.Ignored,
+    });
+  };
 
   const handleJoinChat = () => {
     if (!myMember || !currentUser) {
@@ -340,10 +370,7 @@ export function ExistingChat({
               <Stack sx={{ overflowWrap: 'break-word' }}>
                 <DisplayMessages chats={allChats} lastReadRef={lastReadRef} />
                 {hasNextPage && (
-                  <InViewLoader
-                    loadFn={fetchNextPage}
-                    loadCondition={!isRefetching} //  && hasNextPage
-                  >
+                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
@@ -390,7 +417,7 @@ export function ExistingChat({
           <Stack>
             <Text align="center">Join the chat?</Text>
             <Group p="sm" position="center">
-              <Button disabled={isJoining} variant="light" color="gray" onClick={() => {}}>
+              <Button disabled={isJoining} variant="light" color="gray" onClick={handleIgnoreChat}>
                 Ignore
               </Button>
               <Button disabled={isJoining} onClick={handleJoinChat}>
@@ -435,7 +462,29 @@ function DisplayMessages({
           style={idx === chats.length - 1 ? { marginBottom: 12 } : {}}
         >
           {c.userId === -1 ? (
-            <Text className={cx(classes.chatMessage)} size="xs" py={0} sx={{ alignSelf: 'center' }}>
+            // <Group align="center" position="center">
+            //   <Text size="xs">{formatDate(c.createdAt)}</Text>
+            //   <Text
+            //     className={cx(classes.chatMessage)}
+            //     size="xs"
+            //     py={0}
+            //     sx={{
+            //       // alignSelf: 'center',
+            //       border: '1px solid gray',
+            //     }}
+            //   >
+            //     {c.content}
+            //   </Text>
+            // </Group>
+            <Text
+              className={cx(classes.chatMessage)}
+              size="xs"
+              py={0}
+              sx={{
+                alignSelf: 'center',
+                border: '1px solid gray',
+              }}
+            >
               {c.content}
             </Text>
           ) : (

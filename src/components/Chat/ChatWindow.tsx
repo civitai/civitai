@@ -35,7 +35,12 @@ export function ChatWindow({ setOpened }: { setOpened: Dispatch<SetStateAction<b
             setExistingChat={setExistingChat}
           />
         ) : (
-          <ExistingChat setOpened={setOpened} existingChat={existingChat} />
+          <ExistingChat
+            setOpened={setOpened}
+            existingChat={existingChat}
+            setNewChat={setNewChat}
+            setExistingChat={setExistingChat}
+          />
         )}
       </Grid.Col>
     </Grid>

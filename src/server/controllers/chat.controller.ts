@@ -43,14 +43,14 @@ const singleChatSelect = {
       lastViewedMessageId: true,
       createdAt: true,
       joinedAt: true,
-      leftAt: true,
-      kickedAt: true,
-      unkickedAt: true,
+      // leftAt: true,
+      // kickedAt: true,
+      // unkickedAt: true,
       user: {
         select: {
           id: true,
           username: true,
-          image: true, // TODO is this right? or profilePicture?
+          // image: true, // is this right? or profilePicture?
         },
       },
     },
@@ -100,7 +100,7 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const { id: userId } = ctx.user;
 
     return await dbWrite.chat.findMany({
-      where: { chatMembers: { some: { userId } } },
+      where: { chatMembers: { some: { userId, status: { not: ChatMemberStatus.Ignored } } } },
       orderBy: { createdAt: 'desc' },
       select: {
         ...singleChatSelect,
@@ -407,6 +407,7 @@ export const modifyUserHandler = async ({
 
     const extra = {
       joinedAt: status === ChatMemberStatus.Joined ? new Date() : undefined,
+      ignoredAt: status === ChatMemberStatus.Ignored ? new Date() : undefined,
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
       kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
     };
@@ -426,16 +427,22 @@ export const modifyUserHandler = async ({
         body: JSON.stringify(`chat:${existing.chat.id}`),
       });
 
-      const createdSystemMsg = await createMessageFn({
-        input: {
-          chatId: existing.chat.id,
-          contentType: ChatMessageType.markdown,
-          content: `${existing.user.username} ${
-            status === ChatMemberStatus.Joined ? 'joined' : 'left'
-          }.`,
-        },
-        userId: -1,
-      });
+      if (status !== ChatMemberStatus.Ignored) {
+        await createMessageFn({
+          input: {
+            chatId: existing.chat.id,
+            contentType: ChatMessageType.Markdown,
+            content: `${existing.user.username} ${
+              status === ChatMemberStatus.Joined
+                ? 'joined'
+                : status === ChatMemberStatus.Left
+                ? 'left'
+                : 'was kicked'
+            }`,
+          },
+          userId: -1,
+        });
+      }
     }
 
     return resp;

@@ -2557,6 +2557,7 @@ model Chat {
 enum ChatMemberStatus {
   Invited
   Joined
+  Ignored
   Left
   Kicked
 }
@@ -2571,6 +2572,7 @@ model ChatMember {
   status              ChatMemberStatus
   lastViewedMessageId Int?
   joinedAt            DateTime?
+  ignoredAt           DateTime?
   leftAt              DateTime? // do we need a rejoin option?
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
@@ -2580,9 +2582,8 @@ model ChatMember {
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 }
 
-// TODO capital letter?
 enum ChatMessageType {
-  markdown
+  Markdown
 }
 
 model ChatMessage {
@@ -2591,7 +2592,7 @@ model ChatMessage {
   userId             Int // if -1, isSystemMessage
   chatId             Int
   content            String
-  contentType        ChatMessageType @default(markdown)
+  contentType        ChatMessageType @default(Markdown)
   // isSystemMessage Boolean @default(false)
   referenceMessageId Int?
   editedAt           DateTime?

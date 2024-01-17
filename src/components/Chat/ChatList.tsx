@@ -82,7 +82,7 @@ export function ChatList({
       <Box p="sm" pt={0}>
         <Input
           icon={<IconSearch size={16} />}
-          placeholder="Search"
+          placeholder="Search users"
           value={searchInput}
           onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
           rightSection={
