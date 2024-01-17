@@ -93,7 +93,7 @@ const useStyles = createStyles((theme) => ({
     right: theme.spacing.xs,
   },
   iosScroll: {
-    [`@media (max-width: ${theme.breakpoints.md}px)`]: {
+    [theme.fn.smallerThan('md')]: {
       '&::after': {
         position: 'absolute',
         top: '0px',
