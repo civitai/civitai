@@ -25,7 +25,7 @@ import { closeAllModals } from '@mantine/modals';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
 import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
-import { RECAPTCHA_ACTIONS, RecaptchaAction } from '../../server/common/constants';
+import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
@@ -220,7 +220,7 @@ const { openModal, Modal } = createContextModal<Props>({
       token: recaptchaToken,
       loading: isLoadingRecaptcha,
       error: recaptchaError,
-    } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION as RecaptchaAction);
+    } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
 
     const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
 

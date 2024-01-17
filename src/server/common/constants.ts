@@ -536,6 +536,6 @@ export const CacheTTL = {
 export const RECAPTCHA_ACTIONS = {
   STRIPE_TRANSACTION: 'STRIPE_TRANSACTION',
   COMPLETE_ONBOARDING: 'COMPLETE_ONBOARDING',
-};
+} as const;
 
 export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;

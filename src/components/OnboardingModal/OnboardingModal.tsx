@@ -34,7 +34,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { RECAPTCHA_ACTIONS, RecaptchaAction, constants } from '~/server/common/constants';
+import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency, OnboardingStep } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
@@ -131,7 +131,7 @@ export default function OnboardingModal() {
   );
 
   const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
-    RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING as RecaptchaAction
+    RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING
   );
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
