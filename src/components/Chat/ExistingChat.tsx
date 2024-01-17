@@ -325,7 +325,10 @@ export function ExistingChat({
     setChatMsg(value);
     if (!currentUser) return;
 
-    throttledTyping();
+    // only send signal if they're not erasing the chat
+    if (value.length) {
+      throttledTyping();
+    }
   };
 
   // TODO handle replies (reference)
@@ -406,6 +409,14 @@ export function ExistingChat({
               maxRows={4}
               value={chatMsg}
               onChange={(event) => handleChatTyping(event.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (!e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }
+              }}
               classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
             />
             <ActionIcon
