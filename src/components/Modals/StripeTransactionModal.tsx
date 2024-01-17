@@ -10,7 +10,7 @@ import {
   Title,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
@@ -25,7 +25,7 @@ import { closeAllModals } from '@mantine/modals';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
 import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
-import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
+import { RECAPTCHA_ACTIONS, RecaptchaAction } from '../../server/common/constants';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
@@ -216,30 +216,36 @@ const { openModal, Modal } = createContextModal<Props>({
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
+    const {
+      token: recaptchaToken,
+      loading: isLoadingRecaptcha,
+      error: recaptchaError,
+    } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION as RecaptchaAction);
+
     const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
 
-    const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
-      RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
-    );
-
-    const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
-      {
-        unitAmount,
-        currency,
-        metadata,
-        paymentMethodTypes,
-        recaptchaToken: recaptchaToken as string,
-      },
-      {
-        enabled: !!unitAmount && !!currency && !!recaptchaToken,
-        refetchOnMount: 'always',
-        cacheTime: 0,
-      }
-    );
+    const {
+      data,
+      isLoading,
+      error,
+      mutate: getPaymentIntentMutation,
+    } = trpc.stripe.getPaymentIntent.useMutation();
 
     const clientSecret = data?.clientSecret;
 
-    if (isLoading || isFetching || isLoadingPaymentMethods || isLoadingRecaptcha) {
+    useEffect(() => {
+      if (!!unitAmount && !!currency && !!recaptchaToken && !isLoading && !data) {
+        getPaymentIntentMutation({
+          unitAmount,
+          currency,
+          metadata,
+          paymentMethodTypes,
+          recaptchaToken: recaptchaToken as string,
+        });
+      }
+    }, [unitAmount, currency, recaptchaToken, isLoading, data]);
+
+    if (isLoading || isLoadingPaymentMethods || isLoadingRecaptcha) {
       return (
         <Center>
           <Loader variant="bars" />
@@ -252,7 +258,9 @@ const { openModal, Modal } = createContextModal<Props>({
     };
 
     if (!recaptchaToken) {
-      return <Error error="Unable to get recaptcha token." onClose={handleClose} />;
+      return (
+        <Error error={recaptchaError ?? 'Unable to get recaptcha token.'} onClose={handleClose} />
+      );
     }
 
     if (!clientSecret) {
