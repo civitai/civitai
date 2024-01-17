@@ -93,13 +93,15 @@ const useStyles = createStyles((theme) => ({
     right: theme.spacing.xs,
   },
   iosScroll: {
-    '&::after': {
-      position: 'absolute',
-      top: '0px',
-      right: '0px',
-      bottom: '0px',
-      left: '0px',
-      content: '""',
+    [`@media (max-width: ${theme.breakpoints.sm}px)`]: {
+      '&::after': {
+        position: 'absolute',
+        top: '0px',
+        right: '0px',
+        bottom: '0px',
+        left: '0px',
+        content: '""',
+      },
     },
   },
 }));
