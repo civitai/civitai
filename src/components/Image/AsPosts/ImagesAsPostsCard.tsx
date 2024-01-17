@@ -165,7 +165,10 @@ export function ImagesAsPostsCard({
                           {image.meta && 'civitaiResources' in (image.meta as object) && (
                             <OnsiteIndicator />
                           )}
-                          <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
+                          <ImageGuard.Report
+                            additionalMenuItems={moderationOptions(image.id)}
+                            withinPortal
+                          />
                           <ImageGuard.ToggleImage position="top-left" />
                           <RoutedDialogLink
                             name="imageDetail"
