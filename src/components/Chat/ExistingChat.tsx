@@ -45,9 +45,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-// TODO handle enter key for send, shift enter for new line (when it matters)
-// TODO handle scrolldown (ideally to last read)
-
 type TypingStatus = {
   [key: string]: boolean;
 };
