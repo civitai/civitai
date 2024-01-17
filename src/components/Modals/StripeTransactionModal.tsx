@@ -270,6 +270,7 @@ const { openModal, Modal } = createContextModal<Props>({
     const options: StripeElementsOptions = {
       clientSecret,
       appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+      locale: 'en',
     };
 
     return (
