@@ -11,7 +11,7 @@ const validModelFormats = constants.modelFileFormats.filter((format) => format !
 
 export function SettingsCard() {
   const user = useCurrentUser();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { toggles } = useFeatureFlags();
 
   const { mutate, isLoading } = trpc.user.update.useMutation({
@@ -109,7 +109,7 @@ export function SettingsCard() {
                 key={feature.key}
                 label={feature.displayName}
                 checked={toggles.values[feature.key]}
-                onChange={(e) => toggles.set(feature.key, e.target.checked)}
+                onChange={() => toggles.set(feature.key)}
                 description={feature.description}
               />
             ))}

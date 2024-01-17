@@ -1,35 +1,49 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { toggleableFeatures } from '~/server/services/feature-flags.service';
+import produce from 'immer';
+import { createContext, useContext, useMemo, useState } from 'react';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { useLocalStorage } from '@mantine/hooks';
+import { toggleableFeatures } from '~/server/services/feature-flags.service';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 const FeatureFlagsCtx = createContext<FeatureAccess>({} as FeatureAccess);
 
 export const useFeatureFlags = () => {
   const features = useContext(FeatureFlagsCtx);
-  const toggleable = useMemo(
-    () => toggleableFeatures.filter((x) => features[x.key as keyof FeatureAccess]),
-    [features]
-  );
-  const [toggled, setToggled] = useLocalStorage<Partial<FeatureAccess>>({
-    key: 'toggled-features',
-    defaultValue: toggleable.reduce(
-      (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
-      {}
-    ),
-  });
 
-  useEffect(() => {
-    const toToggle: Partial<FeatureAccess> = {};
-    for (const feature of toggleable) {
-      if (
-        toggled[feature.key as keyof FeatureAccess] === undefined &&
-        feature.default !== undefined
-      )
-        toToggle[feature.key] = feature.default;
-    }
-    if (Object.keys(toToggle).length > 0) setToggled((prev) => ({ ...prev, ...toToggle }));
-  }, [toggleable, toggled, setToggled]);
+  const queryUtils = trpc.useUtils();
+  const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
+    undefined,
+    { cacheTime: Infinity, staleTime: Infinity }
+  );
+  const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
+    async onMutate(payload) {
+      await queryUtils.user.getFeatureFlags.cancel();
+      const prevData = queryUtils.user.getFeatureFlags.getData();
+
+      queryUtils.user.getFeatureFlags.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return;
+          old[payload.feature] = !old[payload.feature];
+        })
+      );
+
+      return { prevData };
+    },
+    async onSuccess() {
+      await queryUtils.user.getFeatureFlags.invalidate();
+    },
+    onError(_error, _payload, context) {
+      showErrorNotification({
+        title: 'Failed to toggle feature',
+        error: new Error('Something went wrong, please try again later.'),
+      });
+      queryUtils.user.getFeatureFlags.setData(undefined, context?.prevData);
+    },
+  });
+  const handleToggle = (key: keyof FeatureAccess) => {
+    toggleFeatureFlagMutation.mutate({ feature: key });
+  };
 
   const featuresWithToggled = useMemo(() => {
     return Object.keys(features).reduce((acc, key) => {
@@ -47,23 +61,21 @@ export const useFeatureFlags = () => {
         };
       }
 
-      const isToggled = toggled[featureAccessKey] ?? toggleableFeature.default;
+      const isToggled = userFeatures
+        ? userFeatures[featureAccessKey] ?? toggleableFeature.default
+        : toggleableFeature.default;
       return { ...acc, [key]: hasFeature && isToggled } as FeatureAccess;
     }, {} as FeatureAccess);
-  }, [features, toggled]);
+  }, [features, userFeatures]);
 
   if (!features) throw new Error('useFeatureFlags can only be used inside FeatureFlagsCtx');
-
-  const setToggle = (key: keyof FeatureAccess, value: boolean) => {
-    setToggled((prev) => ({ ...prev, [key]: value }));
-  };
 
   return {
     ...featuresWithToggled,
     toggles: {
-      available: toggleable,
-      values: toggled,
-      set: setToggle,
+      available: toggleableFeatures,
+      values: userFeatures,
+      set: handleToggle,
     },
   };
 };
