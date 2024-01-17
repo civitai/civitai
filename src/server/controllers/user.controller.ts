@@ -246,6 +246,7 @@ export const completeOnboardingHandler = async ({
         token: recaptchaToken,
         recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
       });
+
       if (!riskScore || riskScore < 0.5)
         throw throwAuthorizationError(
           'We are unable to complete onboarding right now. Please try again later'

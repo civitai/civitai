@@ -154,6 +154,8 @@ export const useStripeTransaction = ({
       }
 
       setErrorMessage(error.message ?? 'Something went wrong.');
+      setProcessingPayment(false);
+
       return;
     }
 
