@@ -2,6 +2,7 @@ import {
   ActionIcon,
   AspectRatio,
   Box,
+  Button,
   Card,
   Center,
   Checkbox,
@@ -44,6 +45,7 @@ import { generationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useGenerationQualityFeedback } from './GenerationForm/generation.utils';
 import { GENERATION_QUALITY } from '~/server/schema/generation.schema';
+import { openGenQualityFeedbackModal } from '../Modals/GenerationQualityFeedbackModal';
 
 export function GeneratedImage({
   image,
@@ -118,8 +120,11 @@ export function GeneratedImage({
   };
 
   const handleThumbsDownClick = () => {
-    // TODO.genQuality: Open modal for additional feedback message
-    handleSendFeedback({ quality: GENERATION_QUALITY.BAD });
+    openGenQualityFeedbackModal({
+      jobId: image.hash,
+      onSubmit: () => setSelectedFeedback(GENERATION_QUALITY.BAD),
+      onFailed: () => setSelectedFeedback(null),
+    });
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
@@ -142,6 +147,7 @@ export function GeneratedImage({
           /> */}
           <Card
             p={0}
+            className={classes.imageWrapper}
             sx={(theme) => ({
               position: 'relative',
               boxShadow:
@@ -334,11 +340,11 @@ export function GeneratedImage({
             </Menu>
             {image.available && (
               <Group className={classes.info} w="100%" position="apart">
-                <Group spacing="xs">
+                <Group spacing={4} className={classes.actionsWrapper}>
                   {(!selectedFeedback || goodFeedbackSelected) && (
                     <ActionIcon
                       size="md"
-                      variant={goodFeedbackSelected ? 'filled' : 'filled'}
+                      variant={goodFeedbackSelected ? 'light' : undefined}
                       color={goodFeedbackSelected ? 'green' : undefined}
                       onClick={
                         !goodFeedbackSelected
@@ -352,7 +358,7 @@ export function GeneratedImage({
                   {(!selectedFeedback || badFeedbackSelected) && (
                     <ActionIcon
                       size="md"
-                      variant={badFeedbackSelected ? 'filled' : 'filled'}
+                      variant={badFeedbackSelected ? 'light' : undefined}
                       color={badFeedbackSelected ? 'red' : undefined}
                       onClick={!badFeedbackSelected ? handleThumbsDownClick : undefined}
                     >
@@ -384,46 +390,73 @@ export function GeneratedImage({
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  checkboxLabel: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    padding: theme.spacing.xs,
-    cursor: 'pointer',
-  },
-  checkbox: {
-    '& input:checked': {
-      borderColor: theme.white,
+const useStyles = createStyles((theme, _params, getRef) => {
+  const thumbActionRef = getRef('thumbAction');
+
+  return {
+    checkboxLabel: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      padding: theme.spacing.xs,
+      cursor: 'pointer',
     },
-  },
-  menuTarget: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    padding: theme.spacing.xs,
-    cursor: 'pointer',
-  },
-  info: {
-    bottom: 0,
-    right: 0,
-    padding: theme.spacing.xs,
-    position: 'absolute',
-    cursor: 'pointer',
-  },
-  iconBlocked: {
-    [containerQuery.smallerThan(380)]: {
-      display: 'none',
+    checkbox: {
+      '& input:checked': {
+        borderColor: theme.white,
+      },
     },
-  },
-  mistake: {
-    [containerQuery.largerThan(380)]: {
-      marginTop: theme.spacing.sm,
+    menuTarget: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      padding: theme.spacing.xs,
+      cursor: 'pointer',
     },
-  },
-  blockedMessage: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-}));
+    info: {
+      bottom: 0,
+      right: 0,
+      padding: theme.spacing.xs,
+      position: 'absolute',
+      cursor: 'pointer',
+    },
+    iconBlocked: {
+      [containerQuery.smallerThan(380)]: {
+        display: 'none',
+      },
+    },
+    mistake: {
+      [containerQuery.largerThan(380)]: {
+        marginTop: theme.spacing.sm,
+      },
+    },
+    blockedMessage: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    imageWrapper: {
+      [`&:hover .${thumbActionRef}`]: {
+        opacity: 1,
+        transition: 'opacity .3s',
+      },
+    },
+    actionsWrapper: {
+      ref: thumbActionRef,
+      borderRadius: theme.radius.sm,
+      background: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+        0.6
+      ),
+      backdropFilter: 'blur(5px) saturate(160%)',
+      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+      padding: 4,
+      opacity: 0,
+      transition: 'opacity .3s',
+
+      [theme.fn.smallerThan('sm')]: {
+        opacity: 0.7,
+      },
+    },
+  };
+});

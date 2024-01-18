@@ -16,6 +16,7 @@ import { openStripeTransactionModal } from '~/components/Modals/StripeTransactio
 import { ModalProps } from '@mantine/core';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
+import { openGenQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -50,6 +51,9 @@ const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEn
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
 const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClubPostModal'));
+const GenQualityFeedbackModal = dynamic(
+  () => import('~/components/Modals/GenerationQualityFeedbackModal')
+);
 
 const registry = {
   blockModelTags: {
@@ -111,6 +115,10 @@ const registry = {
   manageClubPostModal: {
     Component: ManageClubPostModal,
     fn: openManageClubPostModal,
+  },
+  imageGenQualityFeedbackModal: {
+    Component: GenQualityFeedbackModal,
+    fn: openGenQualityFeedbackModal,
   },
 };
 
