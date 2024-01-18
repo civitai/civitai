@@ -5,6 +5,7 @@ import {
   createGenerationRequestSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
+  sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
   bulkDeleteGeneratedImages,
@@ -18,6 +19,7 @@ import {
   getGenerationStatus,
   getUnavailableResources,
   getUnstableResources,
+  sendGenerationFeedback,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import {
@@ -100,4 +102,7 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
+  sendFeedback: protectedProcedure
+    .input(sendFeedbackSchema)
+    .mutation(({ input }) => sendGenerationFeedback(input)),
 });
