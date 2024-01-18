@@ -75,6 +75,19 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <Button
             component={NextLink}
             prefetch={false}
+            href="/advertise-with-us"
+            {...buttonProps}
+            variant="subtle"
+            color="yellow"
+            target="_blank"
+            rel="nofollow noreferrer"
+            px={mobile ? 5 : 'xs'}
+          >
+            Advertise 📰
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
             href="/content/tos"
             {...buttonProps}
             px={mobile ? 5 : 'xs'}
@@ -105,23 +118,50 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             href="/github/wiki/REST-API-Reference"
             {...buttonProps}
             target="_blank"
+            rel="nofollow noreferrer"
           >
             API
           </Button>
-          <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
+          <Button
+            component="a"
+            href="https://status.civitai.com"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
             Status
           </Button>
-          <Button component="a" href="/wiki" {...buttonProps} target="_blank">
+          <Button
+            component="a"
+            href="/wiki"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
             Wiki
           </Button>
-          <Button component="a" href="/education" {...buttonProps} target="_blank">
+          <Button
+            component="a"
+            href="/education"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
             Education
           </Button>
 
           <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
-          <Button component="a" href="/bugs" {...buttonProps} target="_blank" pl={4} pr="xs">
+          <Button
+            component="a"
+            href="/bugs"
+            {...buttonProps}
+            target="_blank"
+            pl={4}
+            pr="xs"
+            rel="nofollow noreferrer"
+          >
             🪲 Bugs
           </Button>
           <Button
@@ -133,6 +173,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             size={!fixed ? 'xs' : undefined}
             pl={4}
             pr="xs"
+            rel="nofollow noreferrer"
           >
             💡 Feature Requests
           </Button>
