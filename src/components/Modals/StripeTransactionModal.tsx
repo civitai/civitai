@@ -224,28 +224,25 @@ const { openModal, Modal } = createContextModal<Props>({
 
     const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
 
-    const {
-      data,
-      isLoading,
-      error,
-      mutate: getPaymentIntentMutation,
-    } = trpc.stripe.getPaymentIntent.useMutation();
+    const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
+      {
+        unitAmount,
+        currency,
+        metadata,
+        paymentMethodTypes,
+        recaptchaToken: recaptchaToken as string,
+      },
+      {
+        enabled: !!unitAmount && !!currency && !!recaptchaToken,
+        refetchOnMount: 'always',
+        cacheTime: 0,
+        trpc: { context: { skipBatch: true } },
+      }
+    );
 
     const clientSecret = data?.clientSecret;
 
-    useEffect(() => {
-      if (!!unitAmount && !!currency && !!recaptchaToken && !isLoading && !data) {
-        getPaymentIntentMutation({
-          unitAmount,
-          currency,
-          metadata,
-          paymentMethodTypes,
-          recaptchaToken: recaptchaToken as string,
-        });
-      }
-    }, [unitAmount, currency, recaptchaToken, isLoading, data]);
-
-    if (isLoading || isLoadingPaymentMethods || isLoadingRecaptcha) {
+    if (isLoading || isFetching || isLoadingPaymentMethods || isLoadingRecaptcha) {
       return (
         <Center>
           <Loader variant="bars" />

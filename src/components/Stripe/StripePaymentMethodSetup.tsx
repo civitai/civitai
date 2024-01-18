@@ -18,7 +18,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
 
   const { data, isLoading, isFetching } = trpc.stripe.getSetupIntent.useQuery(
     { paymentMethodTypes },
-    { refetchOnMount: 'always', cacheTime: 0 }
+    { refetchOnMount: 'always', cacheTime: 0, trpc: { context: { skipBatch: true } } }
   );
 
   const clientSecret = data?.clientSecret;
