@@ -199,6 +199,11 @@ export default defineNextConfig(withAxiom({
         source: '/education',
         destination: 'https://education.civitai.com',
         permanent: true,
+      },
+      {
+        source: '/advertise-with-us',
+        destination: 'https://forms.clickup.com/8459928/f/825mr-10211/MIN35AIDXBZ7BTD5MG',
+        permanent: true,
       }
     ];
   },

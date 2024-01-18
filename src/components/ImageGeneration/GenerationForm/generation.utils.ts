@@ -13,7 +13,7 @@ import { isDefined } from '~/utils/type-guards';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
-import { GenerateFormModel } from '~/server/schema/generation.schema';
+import { GenerateFormModel, SendFeedbackInput } from '~/server/schema/generation.schema';
 import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -415,3 +415,26 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
   target.selectionStart = selectionStart;
   target.selectionEnd = selectionEnd;
 }
+
+export const useGenerationQualityFeedback = () => {
+  const sendFeedbackMutation = trpc.generation.sendFeedback.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to send feedback',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleSendFeedback = useCallback(
+    (payload: SendFeedbackInput) => {
+      return sendFeedbackMutation.mutateAsync(payload);
+    },
+    [sendFeedbackMutation]
+  );
+
+  return {
+    sendFeedback: handleSendFeedback,
+    sending: sendFeedbackMutation.isLoading,
+  };
+};
