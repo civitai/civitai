@@ -47,6 +47,7 @@ import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterP
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
+import { RecaptchaWidgetProvider } from '../components/Recaptcha/RecaptchaWidget';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -128,16 +129,18 @@ function MyApp(props: CustomAppProps) {
                         <CivitaiLinkProvider>
                           <NotificationsProvider zIndex={9999}>
                             <BrowserRouterProvider>
-                              <BaseLayout>
-                                <CustomModalsProvider>
-                                  <TosProvider>
-                                    {getLayout(<Component {...pageProps} />)}
-                                  </TosProvider>
-                                  <StripeSetupSuccessProvider />
-                                  <DialogProvider />
-                                  <RoutedDialogProvider />
-                                </CustomModalsProvider>
-                              </BaseLayout>
+                              <RecaptchaWidgetProvider>
+                                <BaseLayout>
+                                  <CustomModalsProvider>
+                                    <TosProvider>
+                                      {getLayout(<Component {...pageProps} />)}
+                                    </TosProvider>
+                                    <StripeSetupSuccessProvider />
+                                    <DialogProvider />
+                                    <RoutedDialogProvider />
+                                  </CustomModalsProvider>
+                                </BaseLayout>
+                              </RecaptchaWidgetProvider>
                             </BrowserRouterProvider>
                           </NotificationsProvider>
                         </CivitaiLinkProvider>

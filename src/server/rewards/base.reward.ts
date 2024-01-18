@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
@@ -78,7 +78,7 @@ export function createBuzzEvent<T>({
         : [];
      */
 
-    const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
+    const typeCacheJson = (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, `${userId}:${type}`)) ?? '{}';
     const typeCache = JSON.parse(typeCacheJson);
     const eventCount = Object.keys(typeCache).length;
 
@@ -122,7 +122,8 @@ export function createBuzzEvent<T>({
     if (!isOnDemand) return false;
 
     // Get daily cache for user
-    const typeCacheJson = (await redis.hGet('buzz-events', `${key.toUserId}:${type}`)) ?? '{}';
+    const typeCacheJson =
+      (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, `${key.toUserId}:${type}`)) ?? '{}';
     const typeCache = JSON.parse(typeCacheJson);
     const cacheKey = hashifyObject(key);
 
@@ -138,7 +139,7 @@ export function createBuzzEvent<T>({
 
     // Update cache
     typeCache[cacheKey] = Date.now().toString();
-    await redis.hSet('buzz-events', `${key.toUserId}:${type}`, JSON.stringify(typeCache));
+    await redis.hSet(REDIS_KEYS.BUZZ_EVENTS, `${key.toUserId}:${type}`, JSON.stringify(typeCache));
 
     return toAward;
   };

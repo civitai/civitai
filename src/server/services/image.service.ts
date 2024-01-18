@@ -19,7 +19,7 @@ import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
 import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   GetEntitiesCoverImage,
@@ -64,6 +64,7 @@ import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
+import { baseS3Client } from '~/utils/s3-client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -88,8 +89,17 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     });
     if (!image) return;
 
-    if (isProd && !(await imageUrlInUse({ url: image.url, id })))
-      await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
+    if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
+      const { items } = await baseS3Client.listObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        prefix: image.url,
+      });
+      await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+      await baseS3Client.deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys: items.map((x) => x.Key).filter(isDefined),
+      });
+    }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
     await dbWrite.image.deleteMany({ where: { id } });
@@ -978,7 +988,7 @@ async function tagLookup(imageId: number | number[], fromWrite = false) {
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await cachedObject<{ imageId: number; tags: number[] }>({
-    key: 'tagIdsForImages',
+    key: REDIS_KEYS.TAG_IDS_FOR_IMAGES,
     idKey: 'imageId',
     ids: imageIds,
     ttl: CacheTTL.day,
@@ -991,7 +1001,7 @@ export async function clearImageTagIdsCache(imageId: number | number[]) {
   if (!imageIds.length) return;
 
   await redis.hDel(
-    'tagIdsForImages',
+    REDIS_KEYS.TAG_IDS_FOR_IMAGES,
     imageIds.map((x) => x.toString())
   );
 }
@@ -1004,7 +1014,7 @@ export async function updateImageTagIdsForImages(imageId: number | number[]) {
   const toCache = Object.fromEntries(
     Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
   );
-  await redis.hSet('tagIdsForImages', toCache);
+  await redis.hSet(REDIS_KEYS.TAG_IDS_FOR_IMAGES, toCache);
 }
 
 type GetImageRaw = GetAllImagesRaw & {
