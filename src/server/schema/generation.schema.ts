@@ -196,3 +196,14 @@ export const prepareModelSchema = z.object({
   id: z.number(),
   baseModel: z.string(),
 });
+
+export enum GENERATION_QUALITY {
+  GOOD = 'GOOD_QUALITY',
+  BAD = 'BAD_QUALITY',
+}
+export type SendFeedbackInput = z.infer<typeof sendFeedbackSchema>;
+export const sendFeedbackSchema = z.object({
+  jobId: z.string(),
+  reason: z.nativeEnum(GENERATION_QUALITY),
+  message: z.string().optional(),
+});

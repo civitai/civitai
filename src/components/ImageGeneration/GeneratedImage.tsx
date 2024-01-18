@@ -1,19 +1,20 @@
 import {
-  AspectRatio,
-  Loader,
-  Center,
-  Card,
-  Text,
-  Stack,
-  Checkbox,
   ActionIcon,
+  AspectRatio,
   Box,
+  Card,
+  Center,
+  Checkbox,
+  Group,
+  Loader,
   Menu,
-  createStyles,
+  Stack,
+  Text,
   ThemeIcon,
+  createStyles,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { useClipboard } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
   IconBan,
@@ -24,21 +25,25 @@ import {
   IconInfoHexagon,
   IconPlayerPlayFilled,
   IconPlayerTrackNextFilled,
+  IconThumbDown,
+  IconThumbUp,
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { Generation } from '~/server/services/generation/generation.types';
-import { generationStore } from '~/store/generation.store';
-import { constants } from '~/server/common/constants';
-import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { useInView } from '~/hooks/useInView';
-import { useRef } from 'react';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
+import { constants } from '~/server/common/constants';
+import { Generation } from '~/server/services/generation/generation.types';
+import { generationStore } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useGenerationQualityFeedback } from './GenerationForm/generation.utils';
+import { GENERATION_QUALITY } from '~/server/schema/generation.schema';
 
 export function GeneratedImage({
   image,
@@ -56,6 +61,11 @@ export function GeneratedImage({
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
   const { copied, copy } = useClipboard();
 
+  const [selectedFeedback, setSelectedFeedback] = useState<GENERATION_QUALITY | null>(null);
+
+  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
+  const { sendFeedback, sending } = useGenerationQualityFeedback();
+
   const handleImageClick = () => {
     if (!image || !image.available) return;
     dialogStore.trigger({
@@ -63,8 +73,6 @@ export function GeneratedImage({
       props: { image, request },
     });
   };
-
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
     const { resources, params } = request;
@@ -94,9 +102,33 @@ export function GeneratedImage({
     });
   };
 
+  const handleSendFeedback = async ({
+    quality,
+    message,
+  }: {
+    quality: GENERATION_QUALITY;
+    message?: string;
+  }) => {
+    if (sending) return;
+
+    setSelectedFeedback(quality);
+    await sendFeedback({ jobId: image.hash, reason: quality, message })
+      // Error handled in hook
+      .catch(() => setSelectedFeedback(null));
+  };
+
+  const handleThumbsDownClick = () => {
+    // TODO.genQuality: Open modal for additional feedback message
+    handleSendFeedback({ quality: GENERATION_QUALITY.BAD });
+  };
+
   const imageRef = useRef<HTMLImageElement>(null);
   const isLandscape = request.params.width > request.params.height;
   const removedForSafety = image.removedForSafety && image.available && !fullCoverage;
+
+  const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
+  const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
+
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -300,23 +332,51 @@ export function GeneratedImage({
                 )}
               </Menu.Dropdown>
             </Menu>
-            <ImageMetaPopover
-              meta={request.params}
-              zIndex={constants.imageGeneration.drawerZIndex + 1}
-              // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
-            >
-              <div className={classes.info}>
-                <ActionIcon variant="transparent" size="md">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </ActionIcon>
-              </div>
-            </ImageMetaPopover>
+            {image.available && (
+              <Group className={classes.info} w="100%" position="apart">
+                <Group spacing="xs">
+                  {(!selectedFeedback || goodFeedbackSelected) && (
+                    <ActionIcon
+                      size="md"
+                      variant={goodFeedbackSelected ? 'filled' : 'filled'}
+                      color={goodFeedbackSelected ? 'green' : undefined}
+                      onClick={
+                        !goodFeedbackSelected
+                          ? () => handleSendFeedback({ quality: GENERATION_QUALITY.GOOD })
+                          : undefined
+                      }
+                    >
+                      <IconThumbUp size={16} />
+                    </ActionIcon>
+                  )}
+                  {(!selectedFeedback || badFeedbackSelected) && (
+                    <ActionIcon
+                      size="md"
+                      variant={badFeedbackSelected ? 'filled' : 'filled'}
+                      color={badFeedbackSelected ? 'red' : undefined}
+                      onClick={!badFeedbackSelected ? handleThumbsDownClick : undefined}
+                    >
+                      <IconThumbDown size={16} />
+                    </ActionIcon>
+                  )}
+                </Group>
+                <ImageMetaPopover
+                  meta={request.params}
+                  zIndex={constants.imageGeneration.drawerZIndex + 1}
+                  // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
+                >
+                  <ActionIcon variant="transparent" size="md">
+                    <IconInfoCircle
+                      color="white"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
+                    />
+                  </ActionIcon>
+                </ImageMetaPopover>
+              </Group>
+            )}
           </Card>
         </>
       )}
