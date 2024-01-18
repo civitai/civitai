@@ -82,7 +82,10 @@ const schema = modelVersionUpsertSchema2
 type Schema = z.infer<typeof schema>;
 
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
-const querySchema = z.object({ templateId: z.coerce.number().optional() });
+const querySchema = z.object({
+  templateId: z.coerce.number().optional(),
+  bountyId: z.coerce.number().optional(),
+});
 
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
@@ -169,6 +172,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   }: Schema) => {
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
+    const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
 
     if (isDirty || !version?.id || templateId) {
       const recommendedResources =
@@ -189,6 +193,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         monetization: data.monetization,
         recommendedResources,
         templateId,
+        bountyId,
       });
 
       await queryUtils.modelVersion.getById.invalidate();

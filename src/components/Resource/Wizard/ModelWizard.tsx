@@ -105,6 +105,7 @@ const CreateSteps = ({
           <ModelUpsertForm
             model={model ?? templateFields ?? bountyFields}
             onSubmit={({ id }) => {
+              console.log(id);
               if (editing) return goNext();
               router.replace(
                 `/models/${id}/wizard?step=2${templateId ? `&templateId=${templateId}` : ''}${
@@ -156,11 +157,7 @@ const CreateSteps = ({
         <Stack>
           <Title order={3}>Upload files</Title>
           <Files />
-          <UploadStepActions
-            files={bountyFields?.files}
-            onBackClick={goBack}
-            onNextClick={goNext}
-          />
+          <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
         </Stack>
       </Stepper.Step>
 

@@ -50,6 +50,7 @@ const schema = modelUpsertSchema
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
   templateId: z.coerce.number().optional(),
+  bountyId: z.coerce.number().optional(),
 });
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
@@ -118,7 +119,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     },
   });
   const handleSubmit = ({ category, tagsOnModels = [], ...rest }: z.infer<typeof schema>) => {
-    if (isDirty) {
+    const bountyId = result.success ? result.data.bountyId : undefined;
+    if (isDirty || bountyId) {
       const templateId = result.success ? result.data.templateId : undefined;
       const selectedCategory = data?.items.find((cat) => cat.id === category);
       const tags =

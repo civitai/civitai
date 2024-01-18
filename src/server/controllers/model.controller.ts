@@ -1348,11 +1348,7 @@ export async function getModelTemplateFromBountyHandler({
 
     const { bounty } = awardedEntry;
 
-    if (
-      ![BountyType.LoraCreation, BountyType.ModelCreation, BountyType.EmbedCreation].some(
-        (t) => t === bounty.type
-      )
-    ) {
+    if (!constants.bounties.supportedBountyToModels.some((t) => t === bounty.type)) {
       throw throwBadRequestError('This bounty type is not supported for model creation');
     }
 
@@ -1360,9 +1356,8 @@ export async function getModelTemplateFromBountyHandler({
     const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
 
     const bountyTypeModelTypeMap: Record<string, ModelType> = {
-      [BountyType.LoraCreation]: ModelType.LORA,
       [BountyType.ModelCreation]: ModelType.Checkpoint,
-      [BountyType.EmbedCreation]: ModelType.TextualInversion,
+      [BountyType.LoraCreation]: ModelType.LORA,
     };
 
     return {

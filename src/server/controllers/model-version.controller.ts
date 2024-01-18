@@ -1,7 +1,7 @@
-import { ModelStatus } from '@prisma/client';
+import { BountyType, ModelStatus, ModelType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { BaseModel, BaseModelType } from '~/server/common/constants';
+import { BaseModel, BaseModelType, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -34,6 +34,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getClubDetailsForResource } from '~/server/services/club.service';
+import { dbRead } from '../db/client';
+import { getFilesByEntity } from '../services/file.service';
+import { createFile } from '../services/model-file.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -158,13 +161,15 @@ export const toggleNotifyEarlyAccessHandler = async ({
 };
 
 export const upsertModelVersionHandler = async ({
-  input,
+  input: { bountyId, ...input },
   ctx,
 }: {
   input: ModelVersionUpsertInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { id: userId } = ctx.user;
+
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }
@@ -197,6 +202,44 @@ export const upsertModelVersionHandler = async ({
           modelVersionId: version.id,
           nsfw: model.nsfw,
         });
+      }
+
+      if (bountyId) {
+        // Create model version files from the bounty.
+        const awardedEntry = await dbRead.bountyEntry.findFirst({
+          where: { bountyId, benefactors: { some: { userId } } },
+          select: { id: true, bounty: true },
+        });
+
+        if (
+          awardedEntry &&
+          constants.bounties.supportedBountyToModels.some((t) => t === awardedEntry?.bounty.type)
+        ) {
+          const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
+          console.log(files);
+
+          if (files.length) {
+            await Promise.all(
+              files.map((f) =>
+                createFile({
+                  modelVersionId: version.id,
+                  sizeKB: f.sizeKB,
+                  url: f.url,
+                  type: 'Model',
+                  metadata: {
+                    ...f.metadata,
+                    bountyId: awardedEntry.bounty.id,
+                    bountyEntryId: awardedEntry.id,
+                  },
+                  name: f.name,
+                  select: {
+                    id: true,
+                  },
+                })
+              )
+            );
+          }
+        }
       }
     }
 
