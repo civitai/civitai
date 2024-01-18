@@ -856,7 +856,10 @@ export const toggleMuteHandler = async ({
   const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-  const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
+  const updatedUser = await updateUserById({
+    id,
+    data: { mutedAt: user.muted ? null : new Date() },
+  });
   await invalidateSession(id);
 
   await ctx.track.userActivity({
@@ -995,7 +998,7 @@ export const reportProhibitedRequestHandler = async ({
       constants.imageGeneration.requestBlocking.muted -
       constants.imageGeneration.requestBlocking.notified;
     if (count >= limit) {
-      await updateUserById({ id: userId, data: { muted: true } });
+      await updateUserById({ id: userId, data: { mutedAt: new Date() } });
       await invalidateSession(userId);
 
       await ctx.track.userActivity({

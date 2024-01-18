@@ -103,7 +103,8 @@ model User {
   customerId          String?               @unique
   subscriptionId      String?
   subscription        CustomerSubscription?
-  muted               Boolean?              @default(false)
+  mutedAt             DateTime?
+  muted               Boolean /// @deprecated Use mutedAt. muted is now computed.
   bannedAt            DateTime?
   autoplayGifs        Boolean?              @default(true)
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
