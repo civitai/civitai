@@ -1249,12 +1249,19 @@ model Tag {
   @@unique([name])
 }
 
+enum TagsOnTagsType {
+  Parent
+  Replace
+  Append
+}
+
 model TagsOnTags {
   fromTagId Int
-  fromTag   Tag      @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
+  fromTag   Tag            @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
   toTagId   Int
-  toTag     Tag      @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  toTag     Tag            @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
+  type      TagsOnTagsType @default(Parent)
+  createdAt DateTime       @default(now())
 
   @@id([fromTagId, toTagId])
   @@index([toTagId], type: Hash)
