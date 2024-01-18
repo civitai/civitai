@@ -1,4 +1,4 @@
-import { createStyles, Stack, useMantineTheme, Center, Loader } from '@mantine/core';
+import { createStyles, Stack, useMantineTheme, Center, Loader, Group } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -53,8 +53,9 @@ export default function EventsPage() {
                 },
               })}
             />
-
-            {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+            <Group position="apart" spacing={8}>
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+            </Group>
 
             {isLoading ? (
               <Center p="xl">
