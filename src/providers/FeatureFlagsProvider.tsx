@@ -1,3 +1,4 @@
+import { useLocalStorage } from '@mantine/hooks';
 import produce from 'immer';
 import { createContext, useContext, useMemo, useState } from 'react';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -9,6 +10,13 @@ const FeatureFlagsCtx = createContext<FeatureAccess>({} as FeatureAccess);
 
 export const useFeatureFlags = () => {
   const features = useContext(FeatureFlagsCtx);
+  const [toggled, setToggled] = useLocalStorage<Partial<FeatureAccess>>({
+    key: 'toggled-features',
+    defaultValue: toggleableFeatures.reduce(
+      (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+      {} as Partial<FeatureAccess>
+    ),
+  });
 
   const queryUtils = trpc.useUtils();
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
@@ -24,7 +32,7 @@ export const useFeatureFlags = () => {
         undefined,
         produce((old) => {
           if (!old) return;
-          old[payload.feature] = !old[payload.feature];
+          old[payload.feature] = payload.value ?? !old[payload.feature];
         })
       );
 
@@ -41,8 +49,10 @@ export const useFeatureFlags = () => {
       queryUtils.user.getFeatureFlags.setData(undefined, context?.prevData);
     },
   });
-  const handleToggle = (key: keyof FeatureAccess) => {
-    toggleFeatureFlagMutation.mutate({ feature: key });
+
+  const handleToggle = (key: keyof FeatureAccess, value: boolean) => {
+    setToggled((prev) => ({ ...prev, [key]: value }));
+    toggleFeatureFlagMutation.mutate({ feature: key, value });
   };
 
   const featuresWithToggled = useMemo(() => {
@@ -62,11 +72,11 @@ export const useFeatureFlags = () => {
       }
 
       const isToggled = userFeatures
-        ? userFeatures[featureAccessKey] ?? toggleableFeature.default
+        ? userFeatures[featureAccessKey] ?? toggled[featureAccessKey] ?? toggleableFeature.default
         : toggleableFeature.default;
       return { ...acc, [key]: hasFeature && isToggled } as FeatureAccess;
     }, {} as FeatureAccess);
-  }, [features, userFeatures]);
+  }, [features, toggled, userFeatures]);
 
   if (!features) throw new Error('useFeatureFlags can only be used inside FeatureFlagsCtx');
 
@@ -74,7 +84,7 @@ export const useFeatureFlags = () => {
     ...featuresWithToggled,
     toggles: {
       available: toggleableFeatures,
-      values: userFeatures,
+      values: { ...toggled, ...userFeatures },
       set: handleToggle,
     },
   };

@@ -179,4 +179,5 @@ export type ToggleFeatureInput = z.infer<typeof toggleFeatureInputSchema>;
 export const toggleFeatureInputSchema = z.object({
   // Small hack, please see: https://github.com/colinhacks/zod/discussions/839#discussioncomment-6488540
   feature: z.enum([featureKey, ...otherKeys]),
+  value: z.boolean().optional(),
 });

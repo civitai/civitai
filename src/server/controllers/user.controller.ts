@@ -1147,8 +1147,8 @@ export const toggleUserFeatureFlagHandler = async ({
     const updatedFeatures: UserSettingsSchema['features'] = {
       ...features,
       [input.feature]: isDefined(features[input.feature])
-        ? !features[input.feature]
-        : !defaultToggleableFeatures[input.feature],
+        ? input.value ?? !features[input.feature]
+        : input.value ?? !defaultToggleableFeatures[input.feature],
     };
 
     const updatedUser = await updateUserById({

@@ -109,7 +109,7 @@ export function SettingsCard() {
                 key={feature.key}
                 label={feature.displayName}
                 checked={toggles.values[feature.key]}
-                onChange={() => toggles.set(feature.key)}
+                onChange={(e) => toggles.set(feature.key, e.target.checked)}
                 description={feature.description}
               />
             ))}
