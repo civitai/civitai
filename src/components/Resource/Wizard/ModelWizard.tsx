@@ -105,7 +105,6 @@ const CreateSteps = ({
           <ModelUpsertForm
             model={model ?? templateFields ?? bountyFields}
             onSubmit={({ id }) => {
-              console.log(id);
               if (editing) return goNext();
               router.replace(
                 `/models/${id}/wizard?step=2${templateId ? `&templateId=${templateId}` : ''}${

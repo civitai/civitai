@@ -1368,6 +1368,7 @@ export async function getModelTemplateFromBountyHandler({
       status: ModelStatus.Draft,
       uploadType: ModelUploadType.Created,
       type: bountyTypeModelTypeMap[bounty.type],
+
       version: {
         baseModel: meta.baseModel as BaseModel,
       },
