@@ -127,7 +127,9 @@ export const modelNotifications = createNotificationProcessor({
     displayName: 'New versions of liked models',
     prepareMessage: ({ details }) => ({
       message: `The ${details.modelName} model you liked has a new version: ${details.versionName}`,
-      url: `/models/${details.modelId}`,
+      url: `/models/${details.modelId}${
+        details.modelVersionId ? `?modelVersionId=${details.modelVersionId}` : ''
+      }`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_model_version AS (
