@@ -1854,6 +1854,14 @@ model UserCosmetic {
   @@id([userId, cosmeticId])
 }
 
+model BuzzClaim {
+  key                String    @id
+  transactionIdQuery String
+  amount             Int
+  availableStart     DateTime?
+  availableEnd       DateTime?
+}
+
 model Article {
   id           Int          @id @default(autoincrement())
   createdAt    DateTime?    @default(now())
