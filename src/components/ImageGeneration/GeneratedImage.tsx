@@ -1,19 +1,21 @@
 import {
-  AspectRatio,
-  Loader,
-  Center,
-  Card,
-  Text,
-  Stack,
-  Checkbox,
   ActionIcon,
+  AspectRatio,
   Box,
+  Button,
+  Card,
+  Center,
+  Checkbox,
+  Group,
+  Loader,
   Menu,
-  createStyles,
+  Stack,
+  Text,
   ThemeIcon,
+  createStyles,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { useClipboard } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
   IconBan,
@@ -24,21 +26,26 @@ import {
   IconInfoHexagon,
   IconPlayerPlayFilled,
   IconPlayerTrackNextFilled,
+  IconThumbDown,
+  IconThumbUp,
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { Generation } from '~/server/services/generation/generation.types';
-import { generationStore } from '~/store/generation.store';
-import { constants } from '~/server/common/constants';
-import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { useInView } from '~/hooks/useInView';
-import { useRef } from 'react';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
+import { constants } from '~/server/common/constants';
+import { Generation } from '~/server/services/generation/generation.types';
+import { generationStore } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useGenerationQualityFeedback } from './GenerationForm/generation.utils';
+import { GENERATION_QUALITY } from '~/server/schema/generation.schema';
+import { openGenQualityFeedbackModal } from '../Modals/GenerationQualityFeedbackModal';
 
 export function GeneratedImage({
   image,
@@ -56,6 +63,11 @@ export function GeneratedImage({
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
   const { copied, copy } = useClipboard();
 
+  const [selectedFeedback, setSelectedFeedback] = useState<GENERATION_QUALITY | null>(null);
+
+  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
+  const { sendFeedback, sending } = useGenerationQualityFeedback();
+
   const handleImageClick = () => {
     if (!image || !image.available) return;
     dialogStore.trigger({
@@ -63,8 +75,6 @@ export function GeneratedImage({
       props: { image, request },
     });
   };
-
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
     const { resources, params } = request;
@@ -94,9 +104,36 @@ export function GeneratedImage({
     });
   };
 
+  const handleSendFeedback = async ({
+    quality,
+    message,
+  }: {
+    quality: GENERATION_QUALITY;
+    message?: string;
+  }) => {
+    if (sending) return;
+
+    setSelectedFeedback(quality);
+    await sendFeedback({ jobId: image.hash, reason: quality, message })
+      // Error handled in hook
+      .catch(() => setSelectedFeedback(null));
+  };
+
+  const handleThumbsDownClick = () => {
+    openGenQualityFeedbackModal({
+      jobId: image.hash,
+      onSubmit: () => setSelectedFeedback(GENERATION_QUALITY.BAD),
+      onFailed: () => setSelectedFeedback(null),
+    });
+  };
+
   const imageRef = useRef<HTMLImageElement>(null);
   const isLandscape = request.params.width > request.params.height;
   const removedForSafety = image.removedForSafety && image.available && !fullCoverage;
+
+  const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
+  const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
+
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -110,6 +147,7 @@ export function GeneratedImage({
           /> */}
           <Card
             p={0}
+            className={classes.imageWrapper}
             sx={(theme) => ({
               position: 'relative',
               boxShadow:
@@ -300,23 +338,51 @@ export function GeneratedImage({
                 )}
               </Menu.Dropdown>
             </Menu>
-            <ImageMetaPopover
-              meta={request.params}
-              zIndex={constants.imageGeneration.drawerZIndex + 1}
-              // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
-            >
-              <div className={classes.info}>
-                <ActionIcon variant="transparent" size="md">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </ActionIcon>
-              </div>
-            </ImageMetaPopover>
+            {image.available && (
+              <Group className={classes.info} w="100%" position="apart">
+                <Group spacing={4} className={classes.actionsWrapper}>
+                  {(!selectedFeedback || goodFeedbackSelected) && (
+                    <ActionIcon
+                      size="md"
+                      variant={goodFeedbackSelected ? 'light' : undefined}
+                      color={goodFeedbackSelected ? 'green' : undefined}
+                      onClick={
+                        !goodFeedbackSelected
+                          ? () => handleSendFeedback({ quality: GENERATION_QUALITY.GOOD })
+                          : undefined
+                      }
+                    >
+                      <IconThumbUp size={16} />
+                    </ActionIcon>
+                  )}
+                  {(!selectedFeedback || badFeedbackSelected) && (
+                    <ActionIcon
+                      size="md"
+                      variant={badFeedbackSelected ? 'light' : undefined}
+                      color={badFeedbackSelected ? 'red' : undefined}
+                      onClick={!badFeedbackSelected ? handleThumbsDownClick : undefined}
+                    >
+                      <IconThumbDown size={16} />
+                    </ActionIcon>
+                  )}
+                </Group>
+                <ImageMetaPopover
+                  meta={request.params}
+                  zIndex={constants.imageGeneration.drawerZIndex + 1}
+                  // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
+                >
+                  <ActionIcon variant="transparent" size="md">
+                    <IconInfoCircle
+                      color="white"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
+                    />
+                  </ActionIcon>
+                </ImageMetaPopover>
+              </Group>
+            )}
           </Card>
         </>
       )}
@@ -324,46 +390,73 @@ export function GeneratedImage({
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  checkboxLabel: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    padding: theme.spacing.xs,
-    cursor: 'pointer',
-  },
-  checkbox: {
-    '& input:checked': {
-      borderColor: theme.white,
+const useStyles = createStyles((theme, _params, getRef) => {
+  const thumbActionRef = getRef('thumbAction');
+
+  return {
+    checkboxLabel: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      padding: theme.spacing.xs,
+      cursor: 'pointer',
     },
-  },
-  menuTarget: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    padding: theme.spacing.xs,
-    cursor: 'pointer',
-  },
-  info: {
-    bottom: 0,
-    right: 0,
-    padding: theme.spacing.xs,
-    position: 'absolute',
-    cursor: 'pointer',
-  },
-  iconBlocked: {
-    [containerQuery.smallerThan(380)]: {
-      display: 'none',
+    checkbox: {
+      '& input:checked': {
+        borderColor: theme.white,
+      },
     },
-  },
-  mistake: {
-    [containerQuery.largerThan(380)]: {
-      marginTop: theme.spacing.sm,
+    menuTarget: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      padding: theme.spacing.xs,
+      cursor: 'pointer',
     },
-  },
-  blockedMessage: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-}));
+    info: {
+      bottom: 0,
+      right: 0,
+      padding: theme.spacing.xs,
+      position: 'absolute',
+      cursor: 'pointer',
+    },
+    iconBlocked: {
+      [containerQuery.smallerThan(380)]: {
+        display: 'none',
+      },
+    },
+    mistake: {
+      [containerQuery.largerThan(380)]: {
+        marginTop: theme.spacing.sm,
+      },
+    },
+    blockedMessage: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    imageWrapper: {
+      [`&:hover .${thumbActionRef}`]: {
+        opacity: 1,
+        transition: 'opacity .3s',
+      },
+    },
+    actionsWrapper: {
+      ref: thumbActionRef,
+      borderRadius: theme.radius.sm,
+      background: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+        0.6
+      ),
+      backdropFilter: 'blur(5px) saturate(160%)',
+      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+      padding: 4,
+      opacity: 0,
+      transition: 'opacity .3s',
+
+      [theme.fn.smallerThan('sm')]: {
+        opacity: 0.7,
+      },
+    },
+  };
+});

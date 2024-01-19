@@ -7,6 +7,7 @@ import {
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
   PrepareModelInput,
+  SendFeedbackInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
@@ -873,3 +874,15 @@ export async function toggleUnavailableResource({
 
   return unavailableResources;
 }
+
+export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFeedbackInput) => {
+  const response = await orchestratorCaller.taintJobById({
+    id: jobId,
+    payload: { reason, context: { imageHash: jobId, message } },
+  });
+
+  if (response.status === 404) throw throwNotFoundError();
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+
+  return response;
+};
