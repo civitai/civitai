@@ -53,6 +53,8 @@ import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
+import { createLimiter } from '~/server/utils/rate-limiting';
+import { clickhouse } from '~/server/clickhouse/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -404,6 +406,25 @@ async function checkResourcesAccess(
   return true;
 }
 
+const generationLimiter = createLimiter({
+  counterKey: REDIS_KEYS.GENERATION.COUNT,
+  limitKey: REDIS_KEYS.GENERATION.LIMITS,
+  fetchCount: async (userKey) => {
+    const res = await clickhouse?.query({
+      query: `
+        SELECT COUNT(*) as count
+        FROM orchestration.textToImageJobs
+        WHERE toStartOfDay(createdAt) = today() AND userId = '${userKey}';
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    const count = data[0]?.count ?? 0;
+    return count;
+  },
+});
+
 export const createGenerationRequest = async ({
   userId,
   isModerator,
@@ -414,6 +435,12 @@ export const createGenerationRequest = async ({
   const status = await getGenerationStatus();
   if (!status.available && !isModerator)
     throw throwBadRequestError('Generation is currently disabled');
+
+  // Handle rate limiting
+  if (await generationLimiter.hasExceededLimit(userId.toString()))
+    throw throwRateLimitError(
+      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back later.`
+    );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
@@ -582,6 +609,9 @@ export const createGenerationRequest = async ({
     const message = await response.json();
     throw throwBadRequestError(message);
   }
+
+  generationLimiter.increment(userId.toString(), params.quantity);
+
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;

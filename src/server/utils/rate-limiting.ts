@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { handleMaintenanceMode } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import requestIp from 'request-ip';
-import { redisLegacy } from '~/server/redis/client';
+import { redis, redisLegacy } from '~/server/redis/client';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import { env } from '~/env/server.mjs';
 
@@ -63,3 +63,40 @@ export const RateLimitedEndpoint =
 
     await handler(req, res);
   };
+
+type GetLimiterOptions = {
+  counterKey: string;
+  limitKey: string;
+  fetchCount: (userKey: string) => Promise<number>;
+};
+export function createLimiter({ counterKey, limitKey, fetchCount }: GetLimiterOptions) {
+  async function getCount(userKey: string) {
+    const countStr = await redis.hGet(counterKey, userKey);
+    if (!countStr) return undefined;
+    return Number(countStr);
+  }
+
+  async function hasExceededLimit(userKey: string, fallbackKey = 'default') {
+    const count = await getCount(userKey);
+    if (count === undefined) return false;
+
+    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
+    const limit = Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
+    return limit !== 0 && count > limit;
+  }
+
+  async function increment(userKey: string, by = 1) {
+    const count = await getCount(userKey);
+    if (count === undefined) {
+      const fetchedCount = await fetchCount(userKey);
+      await redis.hSet(counterKey, userKey, fetchedCount);
+    } else {
+      await redis.hIncrBy(counterKey, userKey, by);
+    }
+  }
+
+  return {
+    hasExceededLimit,
+    increment,
+  };
+}

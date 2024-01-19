@@ -58,6 +58,8 @@ export const REDIS_KEYS = {
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
     RESOURCE_DATA: 'generation:resource-data',
+    COUNT: 'generation:count',
+    LIMITS: 'generation:limits',
   },
   SYSTEM: {
     FEATURES: 'system:features',
