@@ -27,6 +27,8 @@ export namespace Orchestrator {
 
   export type GetJobResponse = { serviceProviders: Record<string, ServiceProvider> };
 
+  export type TaintJobByIdPayload = { reason: string; context?: MixedObject };
+
   export namespace Training {
     export type CopyAssetJob = Orchestrator.Job<{ found?: boolean; fileSize?: number }>;
     export type CopyAssetJobPayload = {

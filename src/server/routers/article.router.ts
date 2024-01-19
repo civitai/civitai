@@ -12,6 +12,7 @@ import {
   getArticleById,
   getArticles,
   getArticlesByCategory,
+  getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
 } from '~/server/services/article.service';
@@ -27,6 +28,7 @@ export const articleRouter = router({
   getCivitaiNews: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),
+  getEvents: publicProcedure.query(() => getCivitaiEvents()),
   getByCategory: publicProcedure
     .input(getInfiniteArticlesSchema)
     .use(isFlagProtected('articles'))

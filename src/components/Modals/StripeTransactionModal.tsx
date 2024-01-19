@@ -10,7 +10,7 @@ import {
   Title,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
@@ -216,11 +216,13 @@ const { openModal, Modal } = createContextModal<Props>({
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
-    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
+    const {
+      token: recaptchaToken,
+      loading: isLoadingRecaptcha,
+      error: recaptchaError,
+    } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
 
-    const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
-      RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
-    );
+    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
 
     const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
       {
@@ -234,6 +236,7 @@ const { openModal, Modal } = createContextModal<Props>({
         enabled: !!unitAmount && !!currency && !!recaptchaToken,
         refetchOnMount: 'always',
         cacheTime: 0,
+        trpc: { context: { skipBatch: true } },
       }
     );
 
@@ -252,7 +255,9 @@ const { openModal, Modal } = createContextModal<Props>({
     };
 
     if (!recaptchaToken) {
-      return <Error error="Unable to get recaptcha token." onClose={handleClose} />;
+      return (
+        <Error error={recaptchaError ?? 'Unable to get recaptcha token.'} onClose={handleClose} />
+      );
     }
 
     if (!clientSecret) {
@@ -270,6 +275,7 @@ const { openModal, Modal } = createContextModal<Props>({
     const options: StripeElementsOptions = {
       clientSecret,
       appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+      locale: 'en',
     };
 
     return (

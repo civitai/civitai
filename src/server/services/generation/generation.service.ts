@@ -7,6 +7,7 @@ import {
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
   PrepareModelInput,
+  SendFeedbackInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
@@ -43,7 +44,7 @@ import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
@@ -52,6 +53,8 @@ import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
+import { createLimiter } from '~/server/utils/rate-limiting';
+import { clickhouse } from '~/server/clickhouse/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -228,7 +231,7 @@ export const getGenerationResources = async (
 
 const getResourceData = async (modelVersionIds: number[]) => {
   return await cachedArray<GenerationResourceSelect>({
-    key: 'generation:resource-data',
+    key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
     ids: modelVersionIds,
     idKey: 'id',
     lookupFn: async (ids) => {
@@ -266,7 +269,8 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
     : undefined;
 
   const alternativesAvailable =
-    ((await redis.hGet('system:features', 'generation:alternatives')) ?? 'false') === 'true';
+    ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
+    'true';
 
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
@@ -402,6 +406,25 @@ async function checkResourcesAccess(
   return true;
 }
 
+const generationLimiter = createLimiter({
+  counterKey: REDIS_KEYS.GENERATION.COUNT,
+  limitKey: REDIS_KEYS.GENERATION.LIMITS,
+  fetchCount: async (userKey) => {
+    const res = await clickhouse?.query({
+      query: `
+        SELECT COUNT(*) as count
+        FROM orchestration.textToImageJobs
+        WHERE toStartOfDay(createdAt) = today() AND userId = '${userKey}';
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    const count = data[0]?.count ?? 0;
+    return count;
+  },
+});
+
 export const createGenerationRequest = async ({
   userId,
   isModerator,
@@ -412,6 +435,12 @@ export const createGenerationRequest = async ({
   const status = await getGenerationStatus();
   if (!status.available && !isModerator)
     throw throwBadRequestError('Generation is currently disabled');
+
+  // Handle rate limiting
+  if (await generationLimiter.hasExceededLimit(userId.toString()))
+    throw throwRateLimitError(
+      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back later.`
+    );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
@@ -580,6 +609,9 @@ export const createGenerationRequest = async ({
     const message = await response.json();
     throw throwBadRequestError(message);
   }
+
+  generationLimiter.increment(userId.toString(), params.quantity);
+
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
@@ -642,7 +674,7 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 
 export async function getGenerationStatus() {
   const status = JSON.parse(
-    (await redis.hGet('system:features', 'generation:status')) ?? '{}'
+    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:status')) ?? '{}'
   ) as Generation.Status;
   status.available ??= true;
 
@@ -823,7 +855,7 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
 
 export async function getUnstableResources() {
   const cachedData = await redis
-    .hGet('system:features', 'generation:unstable-resources')
+    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -832,7 +864,7 @@ export async function getUnstableResources() {
 
 export async function getUnavailableResources() {
   const cachedData = await redis
-    .hGet('system:features', 'generation:unavailable-resources')
+    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -872,3 +904,15 @@ export async function toggleUnavailableResource({
 
   return unavailableResources;
 }
+
+export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFeedbackInput) => {
+  const response = await orchestratorCaller.taintJobById({
+    id: jobId,
+    payload: { reason, context: { imageHash: jobId, message } },
+  });
+
+  if (response.status === 404) throw throwNotFoundError();
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+
+  return response;
+};

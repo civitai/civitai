@@ -84,6 +84,10 @@ class OrchestratorCaller extends HttpCaller {
       payload: { $type: 'prepareModel', ...payload },
     });
   }
+
+  public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {
+    return this.put(`/v1/consumer/jobs/${id}`, { payload });
+  }
 }
 
 const orchestratorCaller = new OrchestratorCaller();

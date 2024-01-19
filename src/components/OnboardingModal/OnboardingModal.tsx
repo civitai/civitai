@@ -15,6 +15,8 @@ import {
   ThemeIcon,
   TextInput,
   ButtonProps,
+  Card,
+  Switch,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -75,7 +77,8 @@ export default function OnboardingModal() {
   const user = useCurrentUser();
   const utils = trpc.useUtils();
   const { code, source } = useReferralsContext();
-  const { classes, theme } = useStyles();
+  const { classes: stepperClasses, theme } = useStepperStyles();
+  const { classes } = useStyles();
   const features = useFeatureFlags();
 
   const [userReferral, setUserReferral] = useState(
@@ -131,7 +134,7 @@ export default function OnboardingModal() {
   );
 
   const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
-    RECAPTCHA_ACTIONS.STRIPE_TRANSACTION
+    RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING
   );
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
@@ -181,6 +184,16 @@ export default function OnboardingModal() {
     });
   };
   const handleCompleteStep = (step: OnboardingStep) => {
+    if (!recaptchaToken) {
+      showErrorNotification({
+        title: 'Cannot save',
+        error: new Error('Recaptcha token is missing'),
+        reason: 'An unknown error occurred. Please try again later',
+      });
+
+      return;
+    }
+
     completeStep(
       { step, recaptchaToken },
       {
@@ -235,7 +248,7 @@ export default function OnboardingModal() {
         active={activeStep > -1 ? activeStep : 0}
         color="green"
         allowNextStepsSelect={false}
-        classNames={classes}
+        classNames={stepperClasses}
       >
         <Stepper.Step label="Terms" description="Review our terms">
           <Stack>
@@ -355,21 +368,36 @@ export default function OnboardingModal() {
                 }
                 description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."
               />
+              <Card withBorder className={classes.newsletterCard}>
+                <Card.Section withBorder inheritPadding py="xs">
+                  <Group position="apart">
+                    <Text weight={500}>Send me the Civitai Newsletter!</Text>
+                    <NewsletterToggle>
+                      {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
+                        <Switch
+                          disabled={subscriptionLoading}
+                          checked={subscribed}
+                          onChange={({ target }) => setSubscribed(target.checked)}
+                        />
+                      )}
+                    </NewsletterToggle>
+                  </Group>
+                </Card.Section>
+
+                <Text lh={1.3} mt="xs">
+                  Biweekly updates on industry news, new Civitai features, trending resources,
+                  community contests, and more!
+                </Text>
+                <img
+                  src="/images/newsletter-banner.png"
+                  alt="Robot holding a newspaper"
+                  className={classes.newsletterBot}
+                />
+              </Card>
+              <ModerationCard cardless sections={['tags', 'nsfw']} instantRefresh={false} />
               <Text color="dimmed" size="xs">
                 You can adjust these preferences at any time from your account page.
               </Text>
-              <ModerationCard cardless sections={['tags', 'nsfw']} instantRefresh={false} />
-              <AlertWithIcon
-                color="yellow"
-                icon={<IconAlertCircle />}
-                iconColor="yellow"
-                size="sm"
-              >{`Despite AI and community moderation efforts, things are not always tagged correctly so you may still see content you wanted hidden.`}</AlertWithIcon>
-              <NewsletterToggle
-                label="Send me the Civitai Newsletter"
-                description="We'll send you model and creator highlights, AI news, as well as comprehensive guides from
-                leaders in the AI Content Universe. We hate spam as much as you do."
-              />
               <Group position="apart">
                 <CancelButton size="lg">Sign Out</CancelButton>
                 <Button
@@ -536,7 +564,7 @@ const CancelButton = ({
   );
 };
 
-const useStyles = createStyles((theme, _params, getRef) => ({
+const useStepperStyles = createStyles((theme, _params, getRef) => ({
   steps: {
     marginTop: 20,
     marginBottom: 20,
@@ -589,5 +617,50 @@ const useStyles = createStyles((theme, _params, getRef) => ({
       minWidth: 10,
       // display: 'none',
     },
+  },
+}));
+
+const useStyles = createStyles((theme) => ({
+  newsletterCard: {
+    position: 'relative',
+    overflow: 'visible',
+    borderColor: theme.colors.blue[5],
+    marginTop: 60,
+    [theme.fn.largerThan('sm')]: {
+      marginTop: 70,
+    },
+
+    '&::before': {
+      content: '""',
+      position: 'absolute',
+      left: '-3px',
+      top: '-3px',
+      background: theme.fn.linearGradient(
+        10,
+        theme.colors.blue[9],
+        theme.colors.blue[7],
+        theme.colors.blue[5],
+        theme.colors.cyan[9],
+        theme.colors.cyan[7],
+        theme.colors.cyan[5]
+      ),
+      backgroundSize: '200%',
+      borderRadius: theme.radius.sm,
+      width: 'calc(100% + 6px)',
+      height: 'calc(100% + 6px)',
+      filter: 'blur(4px)',
+      zIndex: -1,
+      animation: 'glowing 20s linear infinite',
+      transition: 'opacity .3s ease-in-out',
+    },
+  },
+  newsletterBot: {
+    objectPosition: 'top',
+    objectFit: 'cover',
+    position: 'absolute',
+    top: -100,
+    right: 0,
+    width: 200,
+    zIndex: -1,
   },
 }));

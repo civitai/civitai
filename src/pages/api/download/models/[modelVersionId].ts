@@ -2,13 +2,14 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
 
-import { Tracker } from '~/server/clickhouse/client';
+import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
+import { createLimiter, RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -18,6 +19,25 @@ const schema = z.object({
   format: z.enum(constants.modelFileFormats).optional(),
   size: z.enum(constants.modelFileSizes).optional(),
   fp: z.enum(constants.modelFileFp).optional(),
+});
+
+const downloadLimiter = createLimiter({
+  counterKey: REDIS_KEYS.DOWNLOAD.COUNT,
+  limitKey: REDIS_KEYS.DOWNLOAD.LIMITS,
+  fetchCount: async (userKey) => {
+    const res = await clickhouse?.query({
+      query: `
+        SELECT SUM(count) as count
+        FROM daily_user_downloads
+        WHERE userKey = '${userKey}' AND createdDate > toStartOfDay((subtractDays(now(), 7)));
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    const count = data[0]?.count ?? 0;
+    return count;
+  },
 });
 
 export default RateLimitedEndpoint(
@@ -45,6 +65,18 @@ export default RateLimitedEndpoint(
       ).split(',');
       if (userBlacklist.includes(session.user.id.toString()))
         return errorResponse(403, 'Forbidden');
+    }
+
+    // Check if user has a concerning number of downloads
+    const isAuthed = !!session?.user;
+    const userKey = session?.user?.id?.toString() ?? ip;
+    if (!userKey) return errorResponse(403, 'Forbidden');
+    const fallbackKey = isAuthed ? 'authed' : 'anon';
+    if (await downloadLimiter.hasExceededLimit(userKey, fallbackKey)) {
+      return errorResponse(
+        429,
+        `We've noticed an unusual amount of downloading from your account. Contact support@civitai.com or come back later.`
+      );
     }
 
     // Validate query params
@@ -114,6 +146,9 @@ export default RateLimitedEndpoint(
           modelVersionId,
         });
       }
+
+      // Increment download count for user
+      await downloadLimiter.increment(userKey);
     } catch (error) {
       // Don't return error to user
       console.error(error);

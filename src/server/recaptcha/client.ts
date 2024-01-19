@@ -1,9 +1,6 @@
 import { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
 import { env } from '~/env/server.mjs';
-
-const client = new RecaptchaEnterpriseServiceClient({
-  projectId: env.RECAPTCHA_PROJECT_ID,
-});
+import { isDev } from '../../env/other';
 
 export async function createRecaptchaAssesment({
   token,
@@ -12,6 +9,14 @@ export async function createRecaptchaAssesment({
   token: string;
   recaptchaAction: string;
 }) {
+  if (isDev) {
+    return 1; // Makes it so that you're always authorized on dev.
+  }
+
+  const client = new RecaptchaEnterpriseServiceClient({
+    projectId: env.RECAPTCHA_PROJECT_ID,
+  });
+
   // Create the reCAPTCHA client.
   const projectPath = client.projectPath(env.RECAPTCHA_PROJECT_ID);
 
