@@ -1,15 +1,15 @@
 import {
-  TagEngagementType,
   ArticleEngagementType,
   BountyEngagementType,
-  OnboardingStep,
-  NsfwLevel,
   MediaType,
+  NsfwLevel,
+  OnboardingStep,
+  TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-
 import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -171,4 +171,13 @@ export const completeOnboardStepSchema = z.object({
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
+  features: z.record(z.boolean()).optional(),
+});
+
+const [featureKey, ...otherKeys] = featureFlagKeys;
+export type ToggleFeatureInput = z.infer<typeof toggleFeatureInputSchema>;
+export const toggleFeatureInputSchema = z.object({
+  // Small hack, please see: https://github.com/colinhacks/zod/discussions/839#discussioncomment-6488540
+  feature: z.enum([featureKey, ...otherKeys]),
+  value: z.boolean().optional(),
 });

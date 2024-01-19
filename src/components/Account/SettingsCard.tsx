@@ -11,7 +11,7 @@ const validModelFormats = constants.modelFileFormats.filter((format) => format !
 
 export function SettingsCard() {
   const user = useCurrentUser();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { toggles } = useFeatureFlags();
 
   const { mutate, isLoading } = trpc.user.update.useMutation({
