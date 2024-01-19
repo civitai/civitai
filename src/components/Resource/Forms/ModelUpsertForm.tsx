@@ -125,7 +125,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       const selectedCategory = data?.items.find((cat) => cat.id === category);
       const tags =
         tagsOnModels && selectedCategory ? tagsOnModels.concat([selectedCategory]) : tagsOnModels;
-      upsertModelMutation.mutate({ ...rest, tagsOnModels: tags, templateId });
+      upsertModelMutation.mutate({ ...rest, tagsOnModels: tags, templateId, bountyId });
     } else onSubmit(defaultValues);
   };
 
@@ -198,7 +198,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               data={categories}
               loading={loadingCategories}
               searchable
-              withAsterisk
             />
             <InputTags
               name="tagsOnModels"

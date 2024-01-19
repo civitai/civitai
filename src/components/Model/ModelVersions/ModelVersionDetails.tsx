@@ -196,6 +196,8 @@ export function ModelVersionDetails({
 
   const archived = model.mode === ModelModifier.Archived;
 
+  console.log(model);
+
   const modelDetails: DescriptionTableProps['items'] = [
     {
       label: 'Type',
@@ -324,6 +326,19 @@ export function ModelVersionDetails({
         />
       ),
       visible: features.air,
+    },
+    {
+      label: (
+        <Group spacing="xs">
+          <Text weight={500}>Bounty</Text>
+        </Group>
+      ),
+      value: (
+        <Text variant="link" component="a" href={`/bounties/${model.meta.bountyId as number}`}>
+          Go to bounty
+        </Text>
+      ),
+      visible: model.meta && model.meta.bountyId,
     },
   ];
 
