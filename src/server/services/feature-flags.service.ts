@@ -82,7 +82,7 @@ const featureFlags = createFeatureFlags({
   clubs: ['public'],
   createClubs: ['mod', 'granted'],
 });
-export const featureFlagKeys = Object.keys(featureFlags);
+export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
 // --------------------------
 // Logic
@@ -136,7 +136,7 @@ type FeatureFlag = {
 function createFeatureFlags<T extends Record<string, FeatureFlag | FeatureAvailability[]>>(
   flags: T
 ) {
-  const features: { [K in keyof T]: FeatureFlag } = {} as any;
+  const features = {} as { [K in keyof T]: FeatureFlag };
   const envOverrides = getEnvOverrides();
 
   for (const [key, value] of Object.entries(flags)) {
