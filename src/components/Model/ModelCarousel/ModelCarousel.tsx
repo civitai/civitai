@@ -263,6 +263,7 @@ export function ModelCarousel({
                           meta={image.meta}
                           generationProcess={image.generationProcess ?? undefined}
                           imageId={image.id}
+                          mainResourceId={modelVersionId}
                         >
                           <ActionIcon className={classes.info} variant="transparent" size="lg">
                             <IconInfoCircle
