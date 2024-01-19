@@ -61,5 +61,14 @@ export const REDIS_KEYS = {
   },
   SYSTEM: {
     FEATURES: 'system:features',
+    MODERATION_TAGS: 'system:moderation-tags-2',
+    TAG_RULES: 'system:tag-rules',
+    BLOCKED_TAGS: 'system:blocked-tags',
+    HIDDEN_TAGS: 'system:hidden-tags-2',
+    SYSTEM_TAGS: 'system:tags',
+    PERMISSIONS: 'system:permissions',
+    TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
+    HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
   },
+  LIVE_NOW: 'live-now',
 } as const;

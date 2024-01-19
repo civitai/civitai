@@ -11,7 +11,7 @@ import { constants } from '~/server/common/constants';
 import { TagSort } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   AdjustTagsSchema,
   DeleteTagsSchema,
@@ -87,6 +87,10 @@ export const getTags = async ({
   includeAdminTags?: boolean;
 }) => {
   const AND = [Prisma.sql`t."unlisted" = ${unlisted}`];
+
+  // Exclude replaced tags
+  // Yeah, it's a little weird that the toTagId is what we exclude, but it's for a consistent hierarchy elsewhere...
+  AND.push(Prisma.sql`t.id NOT IN (SELECT "toTagId" FROM "TagsOnTags" WHERE type = 'Replace')`);
 
   if (query) AND.push(Prisma.sql`t."name" LIKE ${query + '%'}`);
   if (types?.length) AND.push(Prisma.sql`t."type"::text IN (${Prisma.join(types)})`);
@@ -350,7 +354,7 @@ export const addTagVotes = async ({
 };
 // #endregion
 
-export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
+export const addTags = async ({ tags, entityIds, entityType, relationship }: AdjustTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
@@ -389,15 +393,23 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'tag') {
+    if (!relationship) throw new Error('Relationship must be specified for tag tagging');
+
     await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnTags" ("fromTagId", "toTagId")
+      INSERT INTO "TagsOnTags" ("fromTagId", "toTagId", type)
       SELECT
-        fromTag."id", toTag."id"
+        fromTag."id", toTag."id", '${relationship}'::"TagsOnTagsType"
       FROM "Tag" toTag
       JOIN "Tag" fromTag ON fromTag.${tagSelector} IN (${tagIn})
       WHERE toTag."id" IN (${entityIds.join(', ')})
       ON CONFLICT DO NOTHING
     `);
+
+    // Bust cache for tag rules
+    // The changes with Replace and Append are handled in the `apply-tag-rules` job
+    if (relationship === 'Replace' || relationship === 'Append') {
+      await redis.del(REDIS_KEYS.SYSTEM.TAG_RULES);
+    }
 
     // Clear cache for affected system tags
     const systemTags = await getSystemTags();

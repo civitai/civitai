@@ -1,4 +1,4 @@
-import { TagTarget, TagType } from '@prisma/client';
+import { TagsOnTagsType, TagTarget, TagType } from '@prisma/client';
 import { z } from 'zod';
 import { taggableEntitySchema, tagVotableEntitySchema } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
@@ -79,6 +79,7 @@ export type RemoveTagVotesSchema = z.infer<typeof removeTagVotesSchema>;
 
 export const adjustTagsSchema = z.object({
   tags: tagIdsOrNamesSchema,
+  relationship: z.nativeEnum(TagsOnTagsType).optional(),
   entityIds: z.number().array(),
   entityType: taggableEntitySchema,
 });
