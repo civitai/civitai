@@ -439,7 +439,7 @@ export const createGenerationRequest = async ({
   // Handle rate limiting
   if (await generationLimiter.hasExceededLimit(userId.toString()))
     throw throwRateLimitError(
-      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back later.`
+      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back at 12am UTC.`
     );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
