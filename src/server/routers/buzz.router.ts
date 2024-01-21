@@ -8,6 +8,7 @@ import {
   getUserTransactionsHandler,
   withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
+import { getByIdStringSchema } from '~/server/schema/base.schema';
 import {
   completeStripeBuzzPurchaseTransactionInput,
   getBuzzAccountSchema,
@@ -16,6 +17,7 @@ import {
   userBuzzTransactionInputSchema,
   clubTransactionSchema,
 } from '~/server/schema/buzz.schema';
+import { claimBuzz, getClaimStatus } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
@@ -51,4 +53,10 @@ export const buzzRouter = router({
     .use(isFlagProtected('buzz'))
     .use(isFlagProtected('clubs'))
     .mutation(depositClubFundsHandler),
+  getClaimStatus: protectedProcedure
+    .input(getByIdStringSchema)
+    .query(({ input, ctx }) => getClaimStatus({ ...input, userId: ctx.user.id })),
+  claim: protectedProcedure
+    .input(getByIdStringSchema)
+    .mutation(({ input, ctx }) => claimBuzz({ ...input, userId: ctx.user.id })),
 });
