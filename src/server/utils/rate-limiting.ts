@@ -68,11 +68,27 @@ type GetLimiterOptions = {
   counterKey: string;
   limitKey: string;
   fetchCount: (userKey: string) => Promise<number>;
+  refetchInterval?: number; // in seconds
+  fetchOnUnknown?: boolean;
 };
-export function createLimiter({ counterKey, limitKey, fetchCount }: GetLimiterOptions) {
+export function createLimiter({
+  counterKey,
+  limitKey,
+  fetchCount,
+  refetchInterval = 60 * 60,
+  fetchOnUnknown = false,
+}: GetLimiterOptions) {
+  async function populateCount(userKey: string) {
+    const fetchedCount = await fetchCount(userKey);
+    await redis.set(`${counterKey}:${userKey}`, fetchedCount, {
+      EX: refetchInterval,
+    });
+    return fetchedCount;
+  }
+
   async function getCount(userKey: string) {
-    const countStr = await redis.hGet(counterKey, userKey);
-    if (!countStr) return undefined;
+    const countStr = await redis.get(`${counterKey}:${userKey}`);
+    if (!countStr) return fetchOnUnknown ? await populateCount(userKey) : undefined;
     return Number(countStr);
   }
 
@@ -87,12 +103,8 @@ export function createLimiter({ counterKey, limitKey, fetchCount }: GetLimiterOp
 
   async function increment(userKey: string, by = 1) {
     const count = await getCount(userKey);
-    if (count === undefined) {
-      const fetchedCount = await fetchCount(userKey);
-      await redis.hSet(counterKey, userKey, fetchedCount);
-    } else {
-      await redis.hIncrBy(counterKey, userKey, by);
-    }
+    if (count === undefined) await populateCount(userKey);
+    await redis.incrBy(`${counterKey}:${userKey}`, by);
   }
 
   return {

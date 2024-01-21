@@ -414,7 +414,7 @@ const generationLimiter = createLimiter({
       query: `
         SELECT COUNT(*) as count
         FROM orchestration.textToImageJobs
-        WHERE toStartOfDay(createdAt) = today() AND userId = '${userKey}';
+        WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
       `,
       format: 'JSONEachRow',
     });
@@ -439,7 +439,7 @@ export const createGenerationRequest = async ({
   // Handle rate limiting
   if (await generationLimiter.hasExceededLimit(userId.toString()))
     throw throwRateLimitError(
-      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back at 12am UTC.`
+      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back in 1 hour.`
     );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');

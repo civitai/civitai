@@ -25,11 +25,14 @@ const downloadLimiter = createLimiter({
   counterKey: REDIS_KEYS.DOWNLOAD.COUNT,
   limitKey: REDIS_KEYS.DOWNLOAD.LIMITS,
   fetchCount: async (userKey) => {
+    const isIP = userKey.includes(':') || userKey.includes('.');
     const res = await clickhouse?.query({
       query: `
-        SELECT SUM(count) as count
-        FROM daily_user_downloads
-        WHERE userKey = '${userKey}' AND createdDate > toStartOfDay((subtractDays(now(), 7)));
+        SELECT
+          COUNT(*) as count
+        FROM modelVersionEvents
+        WHERE type = 'Download' AND time > subtractHours(now(), 24)
+        ${isIP ? `AND ip = '${userKey}'` : `AND userId = ${userKey}`}
       `,
       format: 'JSONEachRow',
     });
