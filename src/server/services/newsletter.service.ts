@@ -1,21 +1,23 @@
 import { mailchimp } from '~/server/integrations/mailchimp';
 import { UpdateSubscriptionSchema } from '~/server/schema/newsletter.schema';
-import { dbRead, dbWrite } from '../db/client';
+import { dbRead } from '../db/client';
 import dayjs from 'dayjs';
 import { UserSettingsSchema } from '../schema/user.schema';
+import { setUserSetting } from '~/server/services/user.service';
 
 export async function updateSubscription({
-  sessionEmail,
+  userId,
+  username,
   ...input
-}: UpdateSubscriptionSchema & { username?: string; sessionEmail?: string }) {
-  const email = input.email || sessionEmail;
-  if (!email) throw new Error('No email provided');
+}: UpdateSubscriptionSchema & { username?: string; userId?: number }) {
+  if (!input.email) throw new Error('No email provided');
 
   await mailchimp.setSubscription({
-    email,
-    username: input.username,
+    username,
+    email: input.email!,
     subscribed: input.subscribed,
   });
+  if (userId) setUserSetting(userId, { newsletterSubscriber: input.subscribed });
 }
 
 export async function getSubscription(email?: string) {
@@ -36,16 +38,5 @@ export async function getSubscription(email?: string) {
 }
 
 export async function postponeSubscription(userId: number) {
-  const user = await dbWrite.user.findUnique({ where: { id: userId }, select: { settings: true } });
-  if (!user) return null;
-
-  await dbWrite.user.update({
-    where: { id: userId },
-    data: {
-      settings: {
-        ...(user.settings as UserSettingsSchema),
-        newsletterDialogLastSeenAt: dayjs().add(1, 'week').toDate(),
-      },
-    },
-  });
+  await setUserSetting(userId, { newsletterDialogLastSeenAt: dayjs().add(1, 'week').toDate() });
 }
