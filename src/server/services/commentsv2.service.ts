@@ -112,12 +112,14 @@ export const getCommentsThreadDetails = async ({
   entityId,
   entityType,
   hidden = false,
+  depth = 3,
 }: CommentConnectorInput) => {
-  return await dbRead.thread.findUnique({
+  const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: {
       id: true,
       locked: true,
+      rootThreadId: true,
       comments: {
         orderBy: { createdAt: 'asc' },
         where: { hidden },
@@ -125,6 +127,67 @@ export const getCommentsThreadDetails = async ({
       },
     },
   });
+
+  if (!mainThread) throw throwNotFoundError();
+
+  if (depth === 0) return mainThread;
+
+  type ChildThread = {
+    id: number;
+    parentThreadId: number | null;
+    generation: number;
+  };
+
+  const childThreadHierarchy = await dbRead.$queryRaw<ChildThread[]>`
+    WITH RECURSIVE generation AS (
+      SELECT id,
+          "parentThreadId",
+          1 AS "generationNumber"
+      FROM "Thread" t
+      WHERE t."parentThreadId" = ${mainThread?.id}
+    
+      UNION ALL
+    
+      SELECT "childThread".id,
+          "childThread"."parentThreadId",
+          "generationNumber"+1 AS "generationNumber"
+      FROM "Thread" "childThread"
+      JOIN generation g
+        ON g.id = "childThread"."parentThreadId"
+    )
+    SELECT
+      g.id,
+      g."generationNumber" as "generation",
+      "parentThread".id as "parentThreadId"
+    FROM generation g
+    JOIN "Thread" "parentThread"
+    ON g."parentThreadId" = "parentThread".id
+    WHERE "generationNumber" <= ${depth}
+    ORDER BY "generationNumber";
+  `;
+
+  const childThreadIds = childThreadHierarchy.map((c) => c.id);
+  const children = childThreadIds?.length
+    ? await dbRead.thread.findMany({
+        where: { id: { in: childThreadIds } },
+        select: {
+          id: true,
+          locked: true,
+          commentId: true, // All children are for comments.
+          rootThreadId: true,
+          comments: {
+            orderBy: { createdAt: 'asc' },
+            where: { hidden },
+            select: commentV2Select,
+          },
+        },
+      })
+    : [];
+
+  return {
+    ...mainThread,
+    children,
+  };
 };
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
