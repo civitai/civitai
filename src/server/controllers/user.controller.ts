@@ -30,7 +30,6 @@ import {
   ToggleUserArticleEngagementsInput,
   ToggleUserBountyEngagementsInput,
   UserByReferralCodeSchema,
-  UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -65,6 +64,8 @@ import {
   userByReferralCode,
   equipCosmetic,
   deleteUserProfilePictureCache,
+  getUserSettings,
+  setUserSetting,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -1112,10 +1113,7 @@ const defaultToggleableFeatures = toggleableFeatures.reduce(
 export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id } = ctx.user;
-    const user = await getUserById({ id, select: { settings: true } });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-    const { features } = user.settings as UserSettingsSchema;
+    const { features = {} } = await getUserSettings(id);
 
     return {
       ...defaultToggleableFeatures,
@@ -1135,27 +1133,18 @@ export const toggleUserFeatureFlagHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const user = await getUserById({ id, select: { settings: true } });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    const { features = {}, ...restSettings } = await getUserSettings(id);
 
-    const settings = user.settings as UserSettingsSchema;
-    const { features = {} } = settings;
-
-    const updatedFeatures: UserSettingsSchema['features'] = {
+    const updatedFeatures: Partial<FeatureAccess> = {
       ...features,
       [input.feature]: isDefined(features[input.feature])
         ? input.value ?? !features[input.feature]
         : input.value ?? !defaultToggleableFeatures[input.feature],
     };
 
-    const updatedUser = await updateUserById({
-      id,
-      data: {
-        settings: { ...settings, features: updatedFeatures },
-      },
-    });
+    await setUserSetting(id, { ...restSettings, features: updatedFeatures });
 
-    return (updatedUser.settings as UserSettingsSchema).features as FeatureAccess;
+    return updatedFeatures;
   } catch (error) {
     throw throwDbError(error);
   }
