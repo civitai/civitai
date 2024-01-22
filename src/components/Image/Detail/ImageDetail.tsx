@@ -50,7 +50,8 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { generationPanel } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { AdsterraAd } from '~/components/Ads/Adsterra/AdsterraAd';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -315,6 +316,7 @@ export function ImageDetail() {
                   nsfw={image.nsfw !== 'None'}
                   sizes={{ [0]: '300x250' }}
                 />
+                <AdsterraAd style={{ margin: '0 auto' }} />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

@@ -1,6 +1,6 @@
 import { Box, useMantineTheme } from '@mantine/core';
 import React from 'react';
-import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -52,7 +52,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
         <MasonryContainer>{children}</MasonryContainer>
       </MasonryProvider>
       <AscendeumAd
-        adunit="StickySidebar_B"
+        adunit="StickySidebar_A"
         sizes={{
           [theme.breakpoints.md]: '120x600',
           [xl]: '300x600',

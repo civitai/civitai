@@ -52,7 +52,7 @@ import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
 import { BrowsingMode } from '~/server/common/enums';
-import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -214,7 +214,7 @@ export default function ImagesAsPostsInfinite({
         })}
       >
         <AscendeumAd
-          adunit="StickySidebar_A"
+          adunit="StickySidebar_B"
           sizes={{
             [theme.breakpoints.md]: '120x600',
             [2030]: '300x600',

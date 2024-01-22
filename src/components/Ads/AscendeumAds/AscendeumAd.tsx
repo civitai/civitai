@@ -1,9 +1,9 @@
 import { Center, Paper, PaperProps, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
-import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/AscendeumAds/ads.utils';
-import { ascAdManager } from '~/components/AscendeumAds/client';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
+import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/Ads/ads.utils';
+import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -13,6 +13,7 @@ type AdContentProps<T extends AdUnitType> = {
   adunit: T;
   bidSizes: string;
   nsfw?: boolean;
+  style?: React.CSSProperties;
 };
 type AdProps<T extends AdUnitType> = Omit<AdContentProps<T>, 'bidSizes'> &
   PaperProps & {
@@ -61,24 +62,21 @@ export function AscendeumAd<T extends AdUnitType>({
     }
   }, [containerWidth]);
 
-  if (!bidSizes) return null;
+  if (!bidSizes || _nsfw || adsBlocked || !ready) return null;
   const { width, height, stringSizes } = bidSizes;
-  const renderAd = ready && canView && !_nsfw && inView;
+  const renderAd = ready && canView && inView;
+  const showAscendeumAd = renderAd && !_nsfw;
 
   return (
-    <Paper ref={ref} component={Center} withBorder {...paperProps} h={height} w={width}>
-      {adsBlocked ? (
-        <Text align="center" p="md">
-          Please consider turning off ad block to support us
-        </Text>
-      ) : (
-        renderAd && <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} />
+    <Paper ref={ref} component={Center} {...paperProps}>
+      {renderAd && (
+        <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
       )}
     </Paper>
   );
 }
 
-function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes }: AdContentProps<T>) {
+function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes, style }: AdContentProps<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const _adunit = `/21718562853/CivitAI/${adunit}`;
 
@@ -105,7 +103,7 @@ function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes }: AdConten
       data-aaad="true"
       data-aa-adunit={_adunit}
       data-aa-sizes={bidSizes}
-      style={{ height: '100%', width: '100%', overflow: 'hidden' }}
+      style={{ overflow: 'hidden', ...style }}
     />
   );
 }

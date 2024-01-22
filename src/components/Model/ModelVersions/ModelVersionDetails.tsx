@@ -85,7 +85,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
-import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export function ModelVersionDetails({
   model,

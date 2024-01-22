@@ -109,7 +109,7 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

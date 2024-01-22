@@ -4,9 +4,9 @@ import { createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { createAdFeed } from '~/components/AscendeumAds/ads.utils';
-import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
-import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
+import { createAdFeed } from '~/components/Ads/ads.utils';
+import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 type Props<TData> = {
   data: TData[];

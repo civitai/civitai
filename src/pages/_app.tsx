@@ -48,7 +48,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { RecaptchaWidgetProvider } from '../components/Recaptcha/RecaptchaWidget';
-import { AscendeumAdsProvider } from '~/components/AscendeumAds/AscendeumAdsProvider';
+import { AscendeumAdsProvider } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);

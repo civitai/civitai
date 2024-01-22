@@ -3,8 +3,8 @@ import {
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
 import { useMemo } from 'react';
-import { AdFeedItem, createAdFeed } from '~/components/AscendeumAds/ads.utils';
-import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
+import { AdFeedItem, createAdFeed } from '~/components/Ads/ads.utils';
+import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
