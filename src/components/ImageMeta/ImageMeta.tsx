@@ -28,6 +28,7 @@ type Props = {
   generationProcess?: ImageGenerationProcess;
   imageId?: number;
   onCreateClick?: () => void;
+  mainResourceId?: number;
 };
 type MetaDisplay = {
   label: string;
@@ -47,7 +48,13 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   scheduler: 'Scheduler',
 };
 
-export function ImageMeta({ meta, imageId, generationProcess = 'txt2img', onCreateClick }: Props) {
+export function ImageMeta({
+  meta,
+  imageId,
+  generationProcess = 'txt2img',
+  mainResourceId,
+  onCreateClick,
+}: Props) {
   const flags = useFeatureFlags();
 
   const metas = useMemo(() => {
@@ -85,7 +92,8 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img', onCrea
     { id: imageId as number },
     { enabled: flags.imageGeneration && !!imageId, trpc: { context: { skipBatch: true } } }
   );
-  const resourceId = data.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
+  const resourceId =
+    mainResourceId ?? data.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
 
   const { data: resourceCoverage } = trpc.generation.checkResourcesCoverage.useQuery(
     { id: resourceId as number },
@@ -262,6 +270,7 @@ export function ImageMetaPopover({
   generationProcess,
   children,
   imageId,
+  mainResourceId,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   const [opened, setOpened] = useState(false);
@@ -291,6 +300,7 @@ export function ImageMetaPopover({
             meta={meta}
             generationProcess={generationProcess}
             imageId={imageId}
+            mainResourceId={mainResourceId}
             onCreateClick={() => setOpened(false)}
           />
         </Popover.Dropdown>

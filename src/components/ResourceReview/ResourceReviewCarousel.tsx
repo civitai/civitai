@@ -133,6 +133,7 @@ export function ResourceReviewCarousel({
                             meta={image.meta}
                             generationProcess={image.generationProcess ?? undefined}
                             imageId={image.id}
+                            mainResourceId={image.modelVersionId ?? undefined}
                           >
                             <ActionIcon className={classes.info} variant="transparent" size="lg">
                               <IconInfoCircle

@@ -1508,6 +1508,7 @@ type GetImageByCategoryRaw = {
   ingestion: ImageIngestionStatus;
   needsReview: string | null;
   postId: number;
+  modelVersionId: number | null;
   username: string | null;
   userImage: string | null;
   createdAt: Date;
@@ -1657,6 +1658,7 @@ export const getImagesByCategory = async ({
         u.image AS "userImage",
         i."createdAt",
         p."publishedAt",
+        p."modelVersionId",
         u.id AS "userId",
         COALESCE(im."cryCount", 0) "cryCount",
         COALESCE(im."laughCount", 0) "laughCount",

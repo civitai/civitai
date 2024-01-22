@@ -78,6 +78,7 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
                   meta={image.meta as ImageMetaProps}
                   generationProcess={image.generationProcess ?? undefined}
                   imageId={image.id}
+                  mainResourceId={image.modelVersionId ?? undefined}
                 >
                   <ActionIcon className={classes.info} variant="transparent" size="lg">
                     <IconInfoCircle
