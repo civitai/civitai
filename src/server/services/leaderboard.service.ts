@@ -11,10 +11,13 @@ import {
 
 export async function isLeaderboardPopulated() {
   const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
-      SELECT
-        COUNT(DISTINCT "leaderboardId") = (SELECT COUNT(*) FROM "Leaderboard") as "populated"
-      FROM "LeaderboardResult"
-      WHERE date = current_date
+      SELECT (
+        SELECT
+          COUNT(DISTINCT lr."leaderboardId")
+        FROM "LeaderboardResult" lr
+        JOIN "Leaderboard" l ON l.id = lr."leaderboardId"
+        WHERE l.query != '' AND date = current_date::date
+      ) = (SELECT COUNT(*) FROM "Leaderboard" WHERE query != '') as "populated"
     `;
 
   return populated;

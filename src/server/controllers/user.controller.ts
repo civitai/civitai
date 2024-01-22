@@ -7,7 +7,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
@@ -24,11 +24,13 @@ import {
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
   ToggleBlockedTagSchema,
+  ToggleFeatureInput,
   ToggleFollowUserSchema,
   ToggleModelEngagementInput,
   ToggleUserArticleEngagementsInput,
   ToggleUserBountyEngagementsInput,
   UserByReferralCodeSchema,
+  UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -88,6 +90,9 @@ import {
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import { isProd } from '~/env/other';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { createRecaptchaAssesment } from '../recaptcha/client';
+import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
+import { isDefined } from '~/utils/type-guards';
 
 export const getAllUsersHandler = async ({
   input,
@@ -234,6 +239,22 @@ export const completeOnboardingHandler = async ({
 
     if (!input.step) {
       input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
+    }
+
+    // Check recaptcha for Buzz step
+    if (input.step === 'Buzz') {
+      const { recaptchaToken } = input;
+      if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+
+      const riskScore = await createRecaptchaAssesment({
+        token: recaptchaToken,
+        recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
+      });
+
+      if (!riskScore || riskScore < 0.5)
+        throw throwAuthorizationError(
+          'We are unable to complete onboarding right now. Please try again later'
+        );
     }
 
     const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);
@@ -1079,6 +1100,62 @@ export const deleteUserPaymentMethodHandler = async ({
       isModerator: !!ctx.user.isModerator,
       ...input,
     });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+const defaultToggleableFeatures = toggleableFeatures.reduce(
+  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+  {} as FeatureAccess
+);
+export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    const user = await getUserById({ id, select: { settings: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    const { features } = user.settings as UserSettingsSchema;
+
+    return {
+      ...defaultToggleableFeatures,
+      ...features,
+    } as FeatureAccess;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleUserFeatureFlagHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleFeatureInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const user = await getUserById({ id, select: { settings: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    const settings = user.settings as UserSettingsSchema;
+    const { features = {} } = settings;
+
+    const updatedFeatures: UserSettingsSchema['features'] = {
+      ...features,
+      [input.feature]: isDefined(features[input.feature])
+        ? input.value ?? !features[input.feature]
+        : input.value ?? !defaultToggleableFeatures[input.feature],
+    };
+
+    const updatedUser = await updateUserById({
+      id,
+      data: {
+        settings: { ...settings, features: updatedFeatures },
+      },
+    });
+
+    return (updatedUser.settings as UserSettingsSchema).features as FeatureAccess;
   } catch (error) {
     throw throwDbError(error);
   }

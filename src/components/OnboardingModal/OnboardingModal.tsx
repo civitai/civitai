@@ -13,9 +13,10 @@ import {
   createStyles,
   StackProps,
   ThemeIcon,
-  Badge,
   TextInput,
   ButtonProps,
+  Card,
+  Switch,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -35,7 +36,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { constants } from '~/server/common/constants';
+import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency, OnboardingStep } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
@@ -46,6 +47,8 @@ import {
 } from '~/server/common/user-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
+import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -72,9 +75,10 @@ const referralSchema = z.object({
 
 export default function OnboardingModal() {
   const user = useCurrentUser();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { code, source } = useReferralsContext();
-  const { classes, theme } = useStyles();
+  const { classes: stepperClasses, theme } = useStepperStyles();
+  const { classes } = useStyles();
   const features = useFeatureFlags();
 
   const [userReferral, setUserReferral] = useState(
@@ -129,6 +133,10 @@ export default function OnboardingModal() {
     }
   );
 
+  const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
+    RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING
+  );
+
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
   const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
   const { mutate: completeStep, isLoading: completeStepLoading } =
@@ -176,8 +184,18 @@ export default function OnboardingModal() {
     });
   };
   const handleCompleteStep = (step: OnboardingStep) => {
+    if (!recaptchaToken) {
+      showErrorNotification({
+        title: 'Cannot save',
+        error: new Error('Recaptcha token is missing'),
+        reason: 'An unknown error occurred. Please try again later',
+      });
+
+      return;
+    }
+
     completeStep(
-      { step },
+      { step, recaptchaToken },
       {
         onSuccess: (result) => {
           if (result.onboardingSteps.length > 0) {
@@ -230,7 +248,7 @@ export default function OnboardingModal() {
         active={activeStep > -1 ? activeStep : 0}
         color="green"
         allowNextStepsSelect={false}
-        classNames={classes}
+        classNames={stepperClasses}
       >
         <Stepper.Step label="Terms" description="Review our terms">
           <Stack>
@@ -350,21 +368,36 @@ export default function OnboardingModal() {
                 }
                 description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."
               />
+              <Card withBorder className={classes.newsletterCard}>
+                <Card.Section withBorder inheritPadding py="xs">
+                  <Group position="apart">
+                    <Text weight={500}>Send me the Civitai Newsletter!</Text>
+                    <NewsletterToggle>
+                      {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
+                        <Switch
+                          disabled={subscriptionLoading}
+                          checked={subscribed}
+                          onChange={({ target }) => setSubscribed(target.checked)}
+                        />
+                      )}
+                    </NewsletterToggle>
+                  </Group>
+                </Card.Section>
+
+                <Text lh={1.3} mt="xs">
+                  Biweekly updates on industry news, new Civitai features, trending resources,
+                  community contests, and more!
+                </Text>
+                <img
+                  src="/images/newsletter-banner.png"
+                  alt="Robot holding a newspaper"
+                  className={classes.newsletterBot}
+                />
+              </Card>
+              <ModerationCard cardless sections={['tags', 'nsfw']} instantRefresh={false} />
               <Text color="dimmed" size="xs">
                 You can adjust these preferences at any time from your account page.
               </Text>
-              <ModerationCard cardless sections={['tags', 'nsfw']} instantRefresh={false} />
-              <AlertWithIcon
-                color="yellow"
-                icon={<IconAlertCircle />}
-                iconColor="yellow"
-                size="sm"
-              >{`Despite AI and community moderation efforts, things are not always tagged correctly so you may still see content you wanted hidden.`}</AlertWithIcon>
-              <NewsletterToggle
-                label="Send me the Civitai Newsletter"
-                description="We'll send you model and creator highlights, AI news, as well as comprehensive guides from
-                leaders in the AI Content Universe. We hate spam as much as you do."
-              />
               <Group position="apart">
                 <CancelButton size="lg">Sign Out</CancelButton>
                 <Button
@@ -380,107 +413,114 @@ export default function OnboardingModal() {
         </Stepper.Step>
         <Stepper.Step label="Buzz" description="Power-up your experience">
           <Container size="sm" px={0}>
-            <Stack spacing="xl">
-              <Text>
-                {`On Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
-                <IconProgressBolt
-                  color={theme.colors.yellow[7]}
-                  size={20}
-                  style={{ verticalAlign: 'middle' }}
-                />
-                {` Buzz Dashboard.`}
-              </Text>
-              <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
-                <SpendingBuzz asList />
-                <EarningBuzz asList />
-              </Group>
-              <StepperTitle
-                title="Getting Started"
-                description={
-                  <Text>
-                    To get you started, we will grant you{' '}
-                    <Text span>
-                      {user && (
-                        <CurrencyBadge
-                          currency={Currency.BUZZ}
-                          unitAmount={getUserBuzzBonusAmount(user)}
-                        />
-                      )}
-                    </Text>
-                    {user?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
-                  </Text>
-                }
-              />
-              <Group position="apart">
-                <CancelButton size="lg">Sign Out</CancelButton>
-                <Button
-                  size="lg"
-                  onClick={handleCompleteBuzzStep}
-                  loading={completeStepLoading || referrerRefetching}
-                >
-                  Done
-                </Button>
-              </Group>
-              {showReferral && (
-                <Button
-                  variant="subtle"
-                  mt="-md"
-                  onClick={() =>
-                    setUserReferral((current) => ({
-                      ...current,
-                      showInput: !current.showInput,
-                      code,
-                    }))
-                  }
-                >
-                  Have a referral code? Click here to claim a bonus
-                </Button>
-              )}
-
-              {showReferral && userReferral.showInput && (
-                <TextInput
-                  size="lg"
-                  label="Referral Code"
+            {isLoadingRecaptcha ? (
+              <Center py="lg">
+                <Loader size="lg" />
+              </Center>
+            ) : (
+              <Stack spacing="xl">
+                <Text>
+                  {`On Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
+                  <IconProgressBolt
+                    color={theme.colors.yellow[7]}
+                    size={20}
+                    style={{ verticalAlign: 'middle' }}
+                  />
+                  {` Buzz Dashboard.`}
+                </Text>
+                <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
+                  <SpendingBuzz asList />
+                  <EarningBuzz asList />
+                </Group>
+                <StepperTitle
+                  title="Getting Started"
                   description={
-                    <Text size="sm">
-                      Both you and the person who referred you will receive{' '}
+                    <Text>
+                      To get you started, we will grant you{' '}
                       <Text span>
-                        <CurrencyBadge
-                          currency={Currency.BUZZ}
-                          unitAmount={constants.buzz.referralBonusAmount}
-                        />
-                      </Text>{' '}
-                      bonus with a valid referral code.
+                        {user && (
+                          <CurrencyBadge
+                            currency={Currency.BUZZ}
+                            unitAmount={getUserBuzzBonusAmount(user)}
+                          />
+                        )}
+                      </Text>
+                      {user?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
                     </Text>
                   }
-                  error={referralError}
-                  value={userReferral.code ?? ''}
-                  onChange={(e) =>
-                    setUserReferral((current) => ({ ...current, code: e.target.value }))
-                  }
-                  rightSection={
-                    userReferral.code &&
-                    userReferral.code.length > constants.referrals.referralCodeMinLength &&
-                    (referrerLoading || referrerRefetching) ? (
-                      <Loader size="sm" mr="xs" />
-                    ) : (
-                      userReferral.code &&
-                      userReferral.code.length > constants.referrals.referralCodeMinLength && (
-                        <ThemeIcon
-                          variant="outline"
-                          color={referrer ? 'green' : 'red'}
-                          radius="xl"
-                          mr="xs"
-                        >
-                          {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
-                        </ThemeIcon>
-                      )
-                    )
-                  }
-                  autoFocus
                 />
-              )}
-            </Stack>
+                <Group position="apart">
+                  <CancelButton size="lg">Sign Out</CancelButton>
+                  <Button
+                    size="lg"
+                    onClick={handleCompleteBuzzStep}
+                    loading={completeStepLoading || referrerRefetching}
+                  >
+                    Done
+                  </Button>
+                </Group>
+                <RecaptchaNotice />
+                {showReferral && (
+                  <Button
+                    variant="subtle"
+                    mt="-md"
+                    onClick={() =>
+                      setUserReferral((current) => ({
+                        ...current,
+                        showInput: !current.showInput,
+                        code,
+                      }))
+                    }
+                  >
+                    Have a referral code? Click here to claim a bonus
+                  </Button>
+                )}
+
+                {showReferral && userReferral.showInput && (
+                  <TextInput
+                    size="lg"
+                    label="Referral Code"
+                    description={
+                      <Text size="sm">
+                        Both you and the person who referred you will receive{' '}
+                        <Text span>
+                          <CurrencyBadge
+                            currency={Currency.BUZZ}
+                            unitAmount={constants.buzz.referralBonusAmount}
+                          />
+                        </Text>{' '}
+                        bonus with a valid referral code.
+                      </Text>
+                    }
+                    error={referralError}
+                    value={userReferral.code ?? ''}
+                    onChange={(e) =>
+                      setUserReferral((current) => ({ ...current, code: e.target.value }))
+                    }
+                    rightSection={
+                      userReferral.code &&
+                      userReferral.code.length > constants.referrals.referralCodeMinLength &&
+                      (referrerLoading || referrerRefetching) ? (
+                        <Loader size="sm" mr="xs" />
+                      ) : (
+                        userReferral.code &&
+                        userReferral.code.length > constants.referrals.referralCodeMinLength && (
+                          <ThemeIcon
+                            variant="outline"
+                            color={referrer ? 'green' : 'red'}
+                            radius="xl"
+                            mr="xs"
+                          >
+                            {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
+                          </ThemeIcon>
+                        )
+                      )
+                    }
+                    autoFocus
+                  />
+                )}
+              </Stack>
+            )}
           </Container>
         </Stepper.Step>
       </Stepper>
@@ -524,7 +564,7 @@ const CancelButton = ({
   );
 };
 
-const useStyles = createStyles((theme, _params, getRef) => ({
+const useStepperStyles = createStyles((theme, _params, getRef) => ({
   steps: {
     marginTop: 20,
     marginBottom: 20,
@@ -577,5 +617,50 @@ const useStyles = createStyles((theme, _params, getRef) => ({
       minWidth: 10,
       // display: 'none',
     },
+  },
+}));
+
+const useStyles = createStyles((theme) => ({
+  newsletterCard: {
+    position: 'relative',
+    overflow: 'visible',
+    borderColor: theme.colors.blue[5],
+    marginTop: 60,
+    [theme.fn.largerThan('sm')]: {
+      marginTop: 70,
+    },
+
+    '&::before': {
+      content: '""',
+      position: 'absolute',
+      left: '-3px',
+      top: '-3px',
+      background: theme.fn.linearGradient(
+        10,
+        theme.colors.blue[9],
+        theme.colors.blue[7],
+        theme.colors.blue[5],
+        theme.colors.cyan[9],
+        theme.colors.cyan[7],
+        theme.colors.cyan[5]
+      ),
+      backgroundSize: '200%',
+      borderRadius: theme.radius.sm,
+      width: 'calc(100% + 6px)',
+      height: 'calc(100% + 6px)',
+      filter: 'blur(4px)',
+      zIndex: -1,
+      animation: 'glowing 20s linear infinite',
+      transition: 'opacity .3s ease-in-out',
+    },
+  },
+  newsletterBot: {
+    objectPosition: 'top',
+    objectFit: 'cover',
+    position: 'absolute',
+    top: -100,
+    right: 0,
+    width: 200,
+    zIndex: -1,
   },
 }));

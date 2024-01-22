@@ -1,32 +1,26 @@
-import { useEditPostContext } from './EditPostProvider';
-import { useState, CSSProperties, useEffect, forwardRef } from 'react';
 import {
-  useSensors,
-  useSensor,
-  PointerSensor,
   DndContext,
-  closestCenter,
   DragEndEvent,
+  PointerSensor,
   UniqueIdentifier,
-  DragStartEvent,
-  DragOverlay,
+  closestCenter,
+  useSensor,
+  useSensors,
 } from '@dnd-kit/core';
-import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
-import { isDefined } from '~/utils/type-guards';
-import { Button, Center, createStyles, Paper } from '@mantine/core';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useDidUpdate, usePrevious } from '@mantine/hooks';
-import { trpc } from '~/utils/trpc';
+import { SortableContext, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { IconArrowsMaximize, IconCheck } from '@tabler/icons-react';
-import { PostEditImage } from '~/server/controllers/post.controller';
+import { Button, Center, Paper, createStyles } from '@mantine/core';
+import { usePrevious } from '@mantine/hooks';
+import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { restrictToFirstScrollableAncestor, restrictToParentElement } from '@dnd-kit/modifiers';
-import { IconArrowsSort } from '@tabler/icons-react';
+import { CSSProperties } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { PostEditImage } from '~/server/controllers/post.controller';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+import { useEditPostContext } from './EditPostProvider';
 
 export function ReorderImages() {
-  const [activeId, setActiveId] = useState<UniqueIdentifier>();
-
   const images = useEditPostContext((state) => state.images);
   const setImages = useEditPostContext((state) => state.setImages);
 
@@ -37,37 +31,6 @@ export function ReorderImages() {
       if (x.discriminator === 'image') return x.data;
     })
     .filter(isDefined);
-  const activeItem = items.find((x) => x.id === activeId);
-
-  return (
-    <>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-        onDragStart={handleDragStart}
-        onDragCancel={handleDragCancel}
-        modifiers={[restrictToFirstScrollableAncestor]}
-      >
-        <SortableContext items={items.map((x) => x.id)}>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
-            {items.map((image) => (
-              <SortableImage
-                key={image.id}
-                image={image}
-                sortableId={image.id}
-                activeId={activeId}
-              />
-            ))}
-          </div>
-        </SortableContext>
-        <DragOverlay>
-          {activeItem && <SortableImage sortableId="selected" image={activeItem} />}
-        </DragOverlay>
-      </DndContext>
-      <ReorderImagesButton />
-    </>
-  );
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -83,32 +46,40 @@ export function ReorderImages() {
     }
   }
 
-  function handleDragStart(event: DragStartEvent) {
-    setActiveId(event.active.id);
-  }
-
-  function handleDragCancel() {
-    setActiveId(undefined);
-  }
+  return (
+    <>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={items.map((x) => x.id)}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
+            {items.map((image) => (
+              <SortableImage key={image.id} image={image} sortableId={image.id} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+      <ReorderImagesButton />
+    </>
+  );
 }
 
 type ItemProps = {
   image: PostEditImage;
   sortableId: UniqueIdentifier;
-  activeId?: UniqueIdentifier;
 };
 
-function SortableImage({ image, sortableId, activeId }: ItemProps) {
+function SortableImage({ image, sortableId }: ItemProps) {
   const { attributes, listeners, isDragging, setNodeRef, transform, transition } = useSortable({
     id: sortableId,
   });
 
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     cursor: isDragging ? 'grabbing' : 'pointer',
+    zIndex: isDragging ? 1 : undefined,
+    touchAction: 'none',
   };
 
   return (
@@ -116,8 +87,10 @@ function SortableImage({ image, sortableId, activeId }: ItemProps) {
       ref={setNodeRef}
       radius="sm"
       sx={{ overflow: 'hidden' }}
-      className={cx(classes.root, { [classes.hidden]: activeId === sortableId && isDragging })}
+      className={classes.root}
       style={style}
+      {...listeners}
+      {...attributes}
     >
       <EdgeMedia
         src={image.previewUrl ?? image.url}
@@ -125,7 +98,7 @@ function SortableImage({ image, sortableId, activeId }: ItemProps) {
         width={450}
         className={classes.image}
       />
-      <Center className={classes.draggable} {...listeners} {...attributes}>
+      <Center className={classes.draggable}>
         <Paper className={classes.draggableIcon} p="xl" radius={100}>
           <IconArrowsMaximize
             size={48}
@@ -192,7 +165,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function ReorderImagesButton() {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const id = useEditPostContext((state) => state.id);
   const images = useEditPostContext((state) => state.images);
   const isReordering = useEditPostContext((state) => state.reorder);

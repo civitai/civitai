@@ -1,12 +1,20 @@
 import { updateSubscriptionSchema } from '~/server/schema/newsletter.schema';
-import { getSubscription, updateSubscription } from '~/server/services/newsletter.service';
-import { protectedProcedure, router } from '~/server/trpc';
+import {
+  getSubscription,
+  postponeSubscription,
+  updateSubscription,
+} from '~/server/services/newsletter.service';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const newsletterRouter = router({
-  getSubscription: protectedProcedure.query(({ ctx }) => getSubscription(ctx.user.email)),
-  updateSubscription: protectedProcedure
-    .input(updateSubscriptionSchema)
-    .mutation(({ input, ctx }) =>
-      updateSubscription({ email: ctx.user.email, username: ctx.user.username, ...input })
-    ),
+  getSubscription: publicProcedure.query(({ ctx }) => getSubscription(ctx.user?.email)),
+  updateSubscription: publicProcedure.input(updateSubscriptionSchema).mutation(({ input, ctx }) =>
+    updateSubscription({
+      ...input,
+      email: input.email ?? ctx.user?.email,
+      username: ctx.user?.username,
+      userId: ctx.user?.id,
+    })
+  ),
+  postpone: protectedProcedure.mutation(({ ctx }) => postponeSubscription(ctx.user.id)),
 });

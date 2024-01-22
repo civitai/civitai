@@ -37,7 +37,9 @@ Portraying real people in any mature or suggestive context is strictly prohibite
 **A:** Fictional characters are generally fair game, but remember, if likeness is very obvious (Tom Cruise as Ethan Hunt from Mission Impossible for example), it's important to adhere to the same guidelines we use for real people.
 
 ### Q: I am the real person or a legal representitive of the real person displayed in these images. I did not consent to the use of my likeness, can they be taken down?
-**A:** We care a lot about the rights of individuals and the use of their likeness. If you find an image thats depicting your likeness you can request to have removed by filling out [this form](https://forms.clickup.com/8459928/f/825mr-6491/4EW9JSIS4J9I1AUM6J), or by emailing us at digital-likeness@civitai.com
+**A:** We care a lot about the rights of individuals and the use of their likeness. If you find an image thats depicting your likeness you can request to have removed by filling out **[this form](https://forms.clickup.com/8459928/f/825mr-6491/4EW9JSIS4J9I1AUM6J)**, or by emailing us at digital-likeness@civitai.com
+
+#### [Request removal of your likeness](https://forms.clickup.com/8459928/f/825mr-6491/4EW9JSIS4J9I1AUM6J)
 
 ### Q: Are there any restrictions on using AI to create child-like models?
 **A:** Models intended for the photo-realistic depiction of minors are prohibited. You can read more about our requirements for content depicting minors [here](/content/rules/minors)

@@ -165,7 +165,10 @@ export function ImagesAsPostsCard({
                           {image.meta && 'civitaiResources' in (image.meta as object) && (
                             <OnsiteIndicator />
                           )}
-                          <ImageGuard.Report additionalMenuItems={moderationOptions(image.id)} />
+                          <ImageGuard.Report
+                            additionalMenuItems={moderationOptions(image.id)}
+                            withinPortal
+                          />
                           <ImageGuard.ToggleImage position="top-left" />
                           <RoutedDialogLink
                             name="imageDetail"
@@ -215,6 +218,7 @@ export function ImagesAsPostsCard({
                               meta={image.meta}
                               generationProcess={image.generationProcess ?? undefined}
                               imageId={image.id}
+                              mainResourceId={image.modelVersionId ?? undefined}
                             >
                               <ActionIcon className={classes.info} variant="transparent" size="lg">
                                 <IconInfoCircle
@@ -274,6 +278,7 @@ export function ImagesAsPostsCard({
                                 )}
                                 <ImageGuard.Report
                                   additionalMenuItems={moderationOptions(image.id)}
+                                  withinPortal
                                 />
                                 <ImageGuard.ToggleConnect position="top-left" />
                                 <RoutedDialogLink
@@ -327,6 +332,7 @@ export function ImagesAsPostsCard({
                                     meta={image.meta}
                                     generationProcess={image.generationProcess ?? undefined}
                                     imageId={image.id}
+                                    mainResourceId={image.modelVersionId ?? undefined}
                                   >
                                     <ActionIcon
                                       className={classes.info}

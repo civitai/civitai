@@ -91,7 +91,7 @@ model User {
   id                  Int                   @id @default(autoincrement())
   name                String?
   username            String?               @unique @db.Citext
-  email               String?               @unique
+  email               String?               @unique @db.Citext
   emailVerified       DateTime?
   image               String?
   showNsfw            Boolean?              @default(false)
@@ -103,7 +103,8 @@ model User {
   customerId          String?               @unique
   subscriptionId      String?
   subscription        CustomerSubscription?
-  muted               Boolean?              @default(false)
+  mutedAt             DateTime? /// Updated via trigger
+  muted               Boolean               @default(false)
   bannedAt            DateTime?
   autoplayGifs        Boolean?              @default(true)
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
@@ -113,6 +114,7 @@ model User {
   profile             UserProfile?
   profilePictureId    Int?                  @unique
   profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
+  settings            Json?                 @default("{}")
 
   accounts             Account[]
   sessions             Session[]
@@ -1248,12 +1250,19 @@ model Tag {
   @@unique([name])
 }
 
+enum TagsOnTagsType {
+  Parent
+  Replace
+  Append
+}
+
 model TagsOnTags {
   fromTagId Int
-  fromTag   Tag      @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
+  fromTag   Tag            @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
   toTagId   Int
-  toTag     Tag      @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  toTag     Tag            @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
+  type      TagsOnTagsType @default(Parent)
+  createdAt DateTime       @default(now())
 
   @@id([fromTagId, toTagId])
   @@index([toTagId], type: Hash)
@@ -1850,6 +1859,16 @@ model UserCosmetic {
   data       Json?
 
   @@id([userId, cosmeticId])
+}
+
+model BuzzClaim {
+  key                String    @id
+  title              String
+  description        String
+  transactionIdQuery String
+  amount             Int
+  availableStart     DateTime?
+  availableEnd       DateTime?
 }
 
 model Article {

@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { handleMaintenanceMode } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import requestIp from 'request-ip';
-import { redisLegacy } from '~/server/redis/client';
+import { redis, redisLegacy } from '~/server/redis/client';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import { env } from '~/env/server.mjs';
 
@@ -63,3 +63,52 @@ export const RateLimitedEndpoint =
 
     await handler(req, res);
   };
+
+type GetLimiterOptions = {
+  counterKey: string;
+  limitKey: string;
+  fetchCount: (userKey: string) => Promise<number>;
+  refetchInterval?: number; // in seconds
+  fetchOnUnknown?: boolean;
+};
+export function createLimiter({
+  counterKey,
+  limitKey,
+  fetchCount,
+  refetchInterval = 60 * 60,
+  fetchOnUnknown = false,
+}: GetLimiterOptions) {
+  async function populateCount(userKey: string) {
+    const fetchedCount = await fetchCount(userKey);
+    await redis.set(`${counterKey}:${userKey}`, fetchedCount, {
+      EX: refetchInterval,
+    });
+    return fetchedCount;
+  }
+
+  async function getCount(userKey: string) {
+    const countStr = await redis.get(`${counterKey}:${userKey}`);
+    if (!countStr) return fetchOnUnknown ? await populateCount(userKey) : undefined;
+    return Number(countStr);
+  }
+
+  async function hasExceededLimit(userKey: string, fallbackKey = 'default') {
+    const count = await getCount(userKey);
+    if (count === undefined) return false;
+
+    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
+    const limit = Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
+    return limit !== 0 && count > limit;
+  }
+
+  async function increment(userKey: string, by = 1) {
+    const count = await getCount(userKey);
+    if (count === undefined) await populateCount(userKey);
+    await redis.incrBy(`${counterKey}:${userKey}`, by);
+  }
+
+  return {
+    hasExceededLimit,
+    increment,
+  };
+}

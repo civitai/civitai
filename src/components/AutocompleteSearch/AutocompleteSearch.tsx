@@ -2,10 +2,12 @@ import {
   ActionIcon,
   AutocompleteItem,
   AutocompleteProps,
+  Button,
   Code,
   Group,
   HoverCard,
   Select,
+  Stack,
   Text,
   createStyles,
 } from '@mantine/core';
@@ -27,6 +29,7 @@ import {
   InstantSearchProps,
   SearchBoxProps,
   useHits,
+  useInstantSearch,
   useSearchBox,
 } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
@@ -267,6 +270,9 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useClickOutside(() => onClear?.());
 
+  const { status, refresh } = useInstantSearch({
+    catchError: true,
+  });
   const { query, refine: setQuery } = useSearchBox(searchBoxProps);
   const { hits, results } = useHits<any>();
 
@@ -277,6 +283,7 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { trackSearch } = useTrackEvent();
+  const searchErrorState = status === 'error';
 
   const {
     models: hiddenModels,
@@ -399,7 +406,7 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
   useEffect(() => {
     // Only set the query when the debounced search changes
     // and user didn't select from the list
-    if (debouncedSearch === query || selectedItem) return;
+    if (debouncedSearch === query || selectedItem || searchErrorState) return;
 
     // Check if the query is an AIR
     const air = checkAIR(indexName, debouncedSearch);
@@ -468,7 +475,12 @@ function AutocompleteSearchContentInner<TKey extends TargetIndex>(
           placeholder="Search Civitai"
           type="search"
           nothingFound={
-            query && !hits.length ? (
+            searchErrorState ? (
+              <Stack spacing={0}>
+                <Text>There was an error while performing your request&hellip;</Text>
+                <Text size="xs">Please try again later</Text>
+              </Stack>
+            ) : query && !hits.length ? (
               <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
             ) : undefined
           }

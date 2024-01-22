@@ -3,10 +3,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { CSSProperties, ReactNode, useRef } from 'react';
-import { MediaType } from '@prisma/client';
-import { constants } from '~/server/common/constants';
-import { useIsClient } from '~/providers/IsClientProvider';
+import { useRef } from 'react';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {

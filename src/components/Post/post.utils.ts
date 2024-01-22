@@ -65,7 +65,7 @@ export const useQueryPosts = (
 
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
     const filtered = arr.filter((x) => {
-      if (x.user.id === currentUser?.id) return true;
+      if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
       if (hiddenUsers.get(x.user.id)) return false;
 
       const { image } = x;

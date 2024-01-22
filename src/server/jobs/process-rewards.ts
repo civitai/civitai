@@ -1,6 +1,6 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import * as rewardImports from '~/server/rewards';
 import { BuzzEventLog } from '~/server/rewards/base.reward';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -65,7 +65,7 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
 });
 
 export const rewardsDailyReset = createJob('rewards-daily-reset', '0 0 * * *', async () => {
-  redis.del('buzz-events');
+  redis.del(REDIS_KEYS.BUZZ_EVENTS);
 });
 
 async function mergeUniqueEvents() {

@@ -12,11 +12,9 @@ export function NewsletterToggle({
 }: {
   label?: string;
   description?: string;
-  children?: ({
-    subscribed,
-    setSubscribed,
-  }: {
+  children?: (data: {
     subscribed: boolean;
+    isLoading: boolean;
     setSubscribed: (subscribed: boolean) => Promise<void>;
   }) => JSX.Element | null;
 }) {
@@ -31,6 +29,7 @@ export function NewsletterToggle({
       queryUtils.newsletter.getSubscription.setData(undefined, (old) => ({
         ...(old ?? {}),
         subscribed,
+        showNewsletterDialog: false,
       }));
 
       return { prev };
@@ -49,7 +48,7 @@ export function NewsletterToggle({
     mutate({ subscribed });
   };
 
-  if (children) return children({ subscribed, setSubscribed });
+  if (children) return children({ subscribed, setSubscribed, isLoading });
 
   return (
     <Group spacing="sm" noWrap align="flex-start">

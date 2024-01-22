@@ -1,4 +1,5 @@
 import {
+  BountyType,
   Currency,
   MetricTimeframe,
   ModelStatus,
@@ -109,7 +110,7 @@ export const constants = {
     model: 320,
     image: 320,
     articles: 320,
-    bounty: 332,
+    bounty: 320,
     club: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
@@ -202,6 +203,7 @@ export const constants = {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
+    supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
@@ -532,3 +534,10 @@ export const CacheTTL = {
   week: 60 * 60 * 24 * 7,
   month: 60 * 60 * 24 * 30,
 } as const;
+
+export const RECAPTCHA_ACTIONS = {
+  STRIPE_TRANSACTION: 'STRIPE_TRANSACTION',
+  COMPLETE_ONBOARDING: 'COMPLETE_ONBOARDING',
+} as const;
+
+export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;

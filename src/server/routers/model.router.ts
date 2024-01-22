@@ -18,6 +18,7 @@ import {
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelTemplateFieldsHandler,
+  getModelTemplateFromBountyHandler,
   getModelVersionsHandler,
   getModelWithVersionsHandler,
   getMyDraftModelsHandler,
@@ -253,6 +254,9 @@ export const modelRouter = router({
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: publicProcedure.input(modelByHashesInput).mutation(getModelByHashesHandler),
   getTemplateFields: guardedProcedure.input(getByIdSchema).query(getModelTemplateFieldsHandler),
+  getModelTemplateFieldsFromBounty: guardedProcedure
+    .input(getByIdSchema)
+    .query(getModelTemplateFromBountyHandler),
   getGallerySettings: publicProcedure.input(getByIdSchema).query(getModelGallerySettingsHandler),
   updateGallerySettings: guardedProcedure
     .input(updateGallerySettingsSchema)

@@ -36,7 +36,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useSetFilters } from '~/providers/FiltersProvider';
+import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -48,6 +48,8 @@ import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
+import { NextLink } from '@mantine/next';
+import { BrowsingMode } from '~/server/common/enums';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -73,6 +75,7 @@ type ImagesAsPostsInfiniteProps = {
   modelVersions?: ModelVersionsProps[];
   generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
   showModerationOptions?: boolean;
+  showPOIWarning?: boolean;
 };
 
 const LIMIT = 50;
@@ -83,11 +86,13 @@ export default function ImagesAsPostsInfinite({
   selectedVersionId,
   generationOptions,
   showModerationOptions,
+  showPOIWarning,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isMobile = useContainerSmallerThan('sm');
   // const globalFilters = useImageFilters();
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
   const [opened, setOpened] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -133,7 +138,7 @@ export default function ImagesAsPostsInfinite({
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
     const filtered = arr
       .filter((x) => {
-        if (x.user.id === currentUser?.id) return true;
+        if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
         if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
           return false;
         return true;
@@ -247,6 +252,25 @@ export default function ImagesAsPostsInfinite({
                 </Group>
               )}
             </Group>
+            {showPOIWarning && (
+              <Text size="sm" color="dimmed" lh={1.1}>
+                This resource is intended to depict a real person. All images that use this resource
+                are scanned for mature themes and manually reviewed by a moderator in accordance
+                with our{' '}
+                <Text
+                  component={NextLink}
+                  href="/content/rules/real-people"
+                  variant="link"
+                  td="underline"
+                >
+                  real person policy
+                </Text>
+                .{' '}
+                <Text td="underline" component="span">
+                  If you see an image that violates this policy, please report it immediately.
+                </Text>
+              </Text>
+            )}
             <Group position="apart" spacing={0}>
               <SortFilter type="modelImages" />
               <Group spacing={4}>

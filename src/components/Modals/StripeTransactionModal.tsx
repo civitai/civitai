@@ -7,9 +7,10 @@ import {
   Divider,
   Loader,
   useMantineTheme,
+  Title,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
@@ -23,6 +24,31 @@ import { useTrackEvent } from '../TrackView/track.utils';
 import { closeAllModals } from '@mantine/modals';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
+import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
+import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
+import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { IconAlertCircle } from '@tabler/icons-react';
+
+const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
+  <Stack>
+    <Title order={3}>Whoops!</Title>
+    <AlertWithIcon
+      icon={<IconAlertCircle />}
+      color="red"
+      iconColor="red"
+      title="Sorry, it looks like there was an error"
+    >
+      {error}
+    </AlertWithIcon>
+
+    <RecaptchaNotice />
+
+    <Center>
+      <Button onClick={onClose}>Close this window</Button>
+    </Center>
+  </Stack>
+);
 
 const StripeTransactionModal = ({
   unitAmount,
@@ -133,6 +159,9 @@ const StripeTransactionModal = ({
             {errorMessage}
           </Text>
         )}
+
+        <RecaptchaNotice />
+
         <Group position="right">
           <Button
             variant="filled"
@@ -187,16 +216,33 @@ const { openModal, Modal } = createContextModal<Props>({
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
+    const {
+      token: recaptchaToken,
+      loading: isLoadingRecaptcha,
+      error: recaptchaError,
+    } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
+
     const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
 
-    const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
-      { unitAmount, currency, metadata, paymentMethodTypes },
-      { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
+    const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
+      {
+        unitAmount,
+        currency,
+        metadata,
+        paymentMethodTypes,
+        recaptchaToken: recaptchaToken as string,
+      },
+      {
+        enabled: !!unitAmount && !!currency && !!recaptchaToken,
+        refetchOnMount: 'always',
+        cacheTime: 0,
+        trpc: { context: { skipBatch: true } },
+      }
     );
 
     const clientSecret = data?.clientSecret;
 
-    if (isLoading || isFetching || isLoadingPaymentMethods) {
+    if (isLoading || isFetching || isLoadingPaymentMethods || isLoadingRecaptcha) {
       return (
         <Center>
           <Loader variant="bars" />
@@ -204,17 +250,32 @@ const { openModal, Modal } = createContextModal<Props>({
       );
     }
 
+    const handleClose = () => {
+      context.close();
+    };
+
+    if (!recaptchaToken) {
+      return (
+        <Error error={recaptchaError ?? 'Unable to get recaptcha token.'} onClose={handleClose} />
+      );
+    }
+
     if (!clientSecret) {
-      throw new Error('Failed to create client secret');
+      return (
+        <Error
+          error={
+            error?.message ??
+            'We are unable to connect you with Stripe services to perform a transaction. Please try again later.'
+          }
+          onClose={handleClose}
+        />
+      );
     }
 
     const options: StripeElementsOptions = {
       clientSecret,
       appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
-    };
-
-    const handleClose = () => {
-      context.close();
+      locale: 'en',
     };
 
     return (

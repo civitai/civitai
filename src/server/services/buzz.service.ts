@@ -5,6 +5,7 @@ import {
   BuzzAccountType,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
+  GetBuzzTransactionResponse,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
   getUserBuzzTransactionsResponse,
@@ -507,4 +508,112 @@ export async function getTopContributors({
       contributors.map((d) => ({ userId: d.accountId, amount: d.contributedBalance })),
     ])
   );
+}
+
+export async function pingBuzzService() {
+  const response = await fetch(`${env.BUZZ_ENDPOINT}`);
+  return response.ok;
+}
+
+export async function getTransactionByExternalId(externalId: string) {
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions/${externalId}`);
+  if (!response.ok) {
+    switch (response.status) {
+      case 404:
+        return null;
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+  const transaction: GetBuzzTransactionResponse = await response.json();
+  return transaction;
+}
+
+type BuzzClaimRequest = { id: string; userId: number };
+type BuzzClaimDetails = {
+  title: string;
+  description: string;
+  amount: number;
+};
+export type BuzzClaimResult =
+  | {
+      status: 'unavailable';
+      details: BuzzClaimDetails;
+      reason: string;
+    }
+  | { status: 'available'; details: BuzzClaimDetails; claimId: string }
+  | { status: 'claimed'; details: BuzzClaimDetails; claimedAt: Date };
+export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
+  const claimable = await dbRead.buzzClaim.findUnique({
+    where: { key: id },
+  });
+
+  const details = {
+    title: claimable?.title ?? 'Unknown',
+    description: claimable?.description ?? 'Unknown',
+    amount: claimable?.amount ?? 0,
+  } as BuzzClaimDetails;
+
+  function unavailable(reason: string) {
+    return {
+      status: 'unavailable',
+      reason,
+      details,
+    } as BuzzClaimResult;
+  }
+
+  if (!claimable) return unavailable(`We couldn't find this reward`);
+  if (claimable.availableStart && claimable.availableStart > new Date())
+    return unavailable('This reward is not available yet');
+  if (claimable.availableEnd && claimable.availableEnd < new Date())
+    return unavailable('This reward is no longer available');
+
+  const query = claimable.transactionIdQuery.replace('${userId}', userId.toString());
+  let transactionId: string | undefined;
+  try {
+    const transactionIdRows = await dbRead.$queryRawUnsafe<{ transactionId: string }[]>(query);
+    if (transactionIdRows.length === 0) return unavailable('You are not eligible for this reward');
+    transactionId = transactionIdRows[0].transactionId;
+    if (transactionId === undefined) throw new Error('No transaction id');
+  } catch (err) {
+    return unavailable(`There was a problem checking your eligibility for this reward`);
+  }
+
+  const transaction = await getTransactionByExternalId(transactionId);
+  if (transaction) {
+    return {
+      status: 'claimed',
+      details,
+      claimedAt: transaction.date,
+    } as BuzzClaimResult;
+  }
+
+  return {
+    status: 'available',
+    details,
+    claimId: transactionId,
+  } as BuzzClaimResult;
+}
+
+export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
+  const claimStatus = await getClaimStatus({ id, userId });
+  if (claimStatus.status !== 'available') return claimStatus;
+
+  await createBuzzTransaction({
+    amount: claimStatus.details.amount,
+    externalTransactionId: claimStatus.claimId,
+    fromAccountId: 0,
+    toAccountId: userId,
+    type: TransactionType.Reward,
+    description: `Claimed reward: ${claimStatus.details.title}`,
+  });
+
+  return {
+    status: 'claimed',
+    details: claimStatus.details,
+    claimedAt: new Date(),
+  } as BuzzClaimResult;
 }

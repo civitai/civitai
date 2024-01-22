@@ -19,7 +19,7 @@ import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
 import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   GetEntitiesCoverImage,
@@ -32,7 +32,7 @@ import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
-import { getTagsNeedingReview } from '~/server/services/system-cache';
+import { getModerationTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
@@ -64,6 +64,7 @@ import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
+import { baseS3Client } from '~/utils/s3-client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -88,8 +89,17 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     });
     if (!image) return;
 
-    if (isProd && !(await imageUrlInUse({ url: image.url, id })))
-      await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
+    if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
+      const { items } = await baseS3Client.listObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        prefix: image.url,
+      });
+      await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+      await baseS3Client.deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys: items.map((x) => x.Key).filter(isDefined),
+      });
+    }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
     await dbWrite.image.deleteMany({ where: { id } });
@@ -151,17 +161,29 @@ export const moderateImages = async ({
   } else if (reviewAction === 'removeName') {
     removeNameReference(ids);
   } else {
+    // Approve
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { nsfw, needsReview, ingestion: 'Scanned' },
     });
 
     // Remove tags that triggered review
-    const tagIds = await getTagsNeedingReview();
+    const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
+
+    // And moderated tags for POI review (since no NSFW allowed)
+    if (reviewType === 'poi') {
+      const moderatedTags = await getModerationTags();
+      tagIds.push(...moderatedTags.map((x) => x.id));
+    }
+
     await dbWrite.tagsOnImage.updateMany({
-      where: { imageId: { in: ids }, tagId: { in: tagIds.map((x) => x.id) } },
+      where: { imageId: { in: ids }, tagId: { in: tagIds } },
       data: { disabled: true },
     });
+
+    // Update nsfw level of image
+    if (reviewType === 'poi')
+      await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels('{${ids.join(',')}}'::int[]);`);
   }
 };
 
@@ -966,7 +988,7 @@ async function tagLookup(imageId: number | number[], fromWrite = false) {
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await cachedObject<{ imageId: number; tags: number[] }>({
-    key: 'tagIdsForImages',
+    key: REDIS_KEYS.TAG_IDS_FOR_IMAGES,
     idKey: 'imageId',
     ids: imageIds,
     ttl: CacheTTL.day,
@@ -979,7 +1001,7 @@ export async function clearImageTagIdsCache(imageId: number | number[]) {
   if (!imageIds.length) return;
 
   await redis.hDel(
-    'tagIdsForImages',
+    REDIS_KEYS.TAG_IDS_FOR_IMAGES,
     imageIds.map((x) => x.toString())
   );
 }
@@ -992,7 +1014,7 @@ export async function updateImageTagIdsForImages(imageId: number | number[]) {
   const toCache = Object.fromEntries(
     Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
   );
-  await redis.hSet('tagIdsForImages', toCache);
+  await redis.hSet(REDIS_KEYS.TAG_IDS_FOR_IMAGES, toCache);
 }
 
 type GetImageRaw = GetAllImagesRaw & {
@@ -1189,6 +1211,8 @@ export const getImagesForModelVersion = async ({
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
 
   const imageWhere: Prisma.Sql[] = [
+    // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
+    Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" IS NULL`,
   ];
@@ -1235,7 +1259,7 @@ export const getImagesForModelVersion = async ({
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-        JOIN "Model" m ON m.id = mv."modelId" AND m."userId" = p."userId"
+        JOIN "Model" m ON m.id = mv."modelId"
         WHERE ${Prisma.join(imageWhere, ' AND ')}
       ) ranked
       WHERE ranked.row_num <= ${imagesPerVersion}
@@ -1484,6 +1508,7 @@ type GetImageByCategoryRaw = {
   ingestion: ImageIngestionStatus;
   needsReview: string | null;
   postId: number;
+  modelVersionId: number | null;
   username: string | null;
   userImage: string | null;
   createdAt: Date;
@@ -1633,6 +1658,7 @@ export const getImagesByCategory = async ({
         u.image AS "userImage",
         i."createdAt",
         p."publishedAt",
+        p."modelVersionId",
         u.id AS "userId",
         COALESCE(im."cryCount", 0) "cryCount",
         COALESCE(im."laughCount", 0) "laughCount",

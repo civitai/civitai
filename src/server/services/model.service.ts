@@ -8,6 +8,7 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
+  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -1186,6 +1187,8 @@ export const upsertModel = async ({
   tagsOnModels,
   userId,
   templateId,
+  bountyId,
+  meta,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
@@ -1194,6 +1197,13 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       select: { id: true, nsfw: true },
       data: {
         ...data,
+        meta:
+          bountyId || meta
+            ? {
+                ...((meta ?? {}) as MixedObject),
+                bountyId,
+              }
+            : undefined,
         userId,
         tagsOnModels: tagsOnModels
           ? {
@@ -1215,12 +1225,13 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
     await preventReplicationLag('model', result.id);
     return result;
   } else {
-    if (tagsOnModels) {
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
+    const beforeUpdate = await dbRead.model.findUnique({
+      where: { id },
+      select: { poi: true },
+    });
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfw: true },
+      select: { id: true, nsfw: true, poi: true },
       where: { id },
       data: {
         ...data,
@@ -1251,6 +1262,45 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       },
     });
     await preventReplicationLag('model', id);
+
+    // Handle POI change
+    const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
+    if (poiChanged) {
+      if (result.poi) {
+        // Mark all nsfw images as needing review
+        await dbWrite.$executeRaw`
+          UPDATE "Image" i SET "needsReview" = 'poi'
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" IS NULL
+            AND i.nsfw != ${NsfwLevel.None}::"NsfwLevel"
+        `;
+      } else {
+        // Remove review status from all images in poi queue
+        await dbWrite.$executeRaw`
+          UPDATE "Image" i SET "needsReview" = null
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" = 'poi'
+            -- And there aren't any other poi models used by these images
+            AND NOT EXISTS (
+              SELECT 1
+              FROM "ImageResource" irr
+              JOIN "ModelVersion" mvv ON mvv.id = irr."modelVersionId"
+              JOIN "Model" mm ON mm.id = mvv."modelId"
+              WHERE mm.poi AND mm.id != ${id} AND irr."imageId" = i.id
+            )
+        `;
+      }
+    }
+
+    // Update search index if listing changes
+    if (tagsOnModels || poiChanged) {
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    }
+
     return result;
   }
 };

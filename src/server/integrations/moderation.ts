@@ -1,8 +1,21 @@
 import { env } from '~/env/server.mjs';
 
+const falsePositiveTriggers = Object.entries({
+  '1\\s*girl': 'woman',
+  '1\\s*boy': 'man',
+}).map(([k, v]) => ({ regex: new RegExp(`\\b${k}\\b`, 'gi'), replacement: v }));
+function removeFalsePositiveTriggers(prompt: string) {
+  for (const trigger of falsePositiveTriggers) {
+    prompt = prompt.replace(trigger.regex, trigger.replacement);
+  }
+  return prompt;
+}
+
 async function moderatePrompt(prompt: string) {
   if (!env.EXTERNAL_MODERATION_TOKEN || !env.EXTERNAL_MODERATION_ENDPOINT)
     return { flagged: false, categories: [] };
+
+  const preparedPrompt = removeFalsePositiveTriggers(prompt);
   const res = await fetch(env.EXTERNAL_MODERATION_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -10,7 +23,7 @@ async function moderatePrompt(prompt: string) {
       Authorization: `Bearer ${env.EXTERNAL_MODERATION_TOKEN}`,
     },
     body: JSON.stringify({
-      input: prompt,
+      input: preparedPrompt,
     }),
   });
   if (!res.ok) {

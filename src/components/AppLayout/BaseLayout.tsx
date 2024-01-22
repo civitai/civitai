@@ -1,4 +1,4 @@
-import { Box, createStyles, useMantineTheme } from '@mantine/core';
+import { createStyles, useMantineTheme } from '@mantine/core';
 import React from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 
@@ -17,7 +17,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   root: {
     display: 'flex',
     flexDirection: 'column',

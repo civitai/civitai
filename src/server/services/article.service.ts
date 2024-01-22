@@ -17,6 +17,7 @@ import { ArticleSort, BrowsingMode } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  articleWhereSchema,
   GetArticlesByCategorySchema,
   GetInfiniteArticlesSchema,
   UpsertArticleInput,
@@ -325,7 +326,7 @@ export const getArticles = async ({
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorId: number })[]>`
       ${queryWith}
-      SELECT 
+      SELECT
         a.id,
         a.cover,
         a.title,
@@ -362,7 +363,7 @@ export const getArticles = async ({
             JOIN "Tag" t ON t.id = at."tagId"
             WHERE at."articleId" = a."id"
             AND "tagId" IS NOT NULL
-        ) as "tags", 
+        ) as "tags",
         jsonb_build_object(
           'id', u."id",
           'username', u."username",
@@ -373,7 +374,7 @@ export const getArticles = async ({
         (
           SELECT
             jsonb_agg(
-              jsonb_build_object( 
+              jsonb_build_object(
                 'data', uc.data,
                 'cosmetic', jsonb_build_object(
                   'id', c.id,
@@ -385,13 +386,13 @@ export const getArticles = async ({
                   'leaderboardPosition', c."leaderboardPosition"
                 )
               )
-            ) 
+            )
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
               AND "equippedAt" IS NOT NULL
           WHERE uc."userId" = a."userId"
           GROUP BY uc."userId"
-        ) as "userCosmetics", 
+        ) as "userCosmetics",
         ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -514,6 +515,21 @@ export const getCivitaiNews = async () => {
   });
 
   return { news, updates, pressMentions };
+};
+
+export const getCivitaiEvents = async () => {
+  const collection = await dbRead.collection.findFirst({
+    where: { name: 'Events', userId: -1 },
+    select: { id: true },
+  });
+  if (!collection) throw new Error('Events collection not found');
+
+  const input = articleWhereSchema.parse({
+    collectionId: collection.id,
+    sort: ArticleSort.Newest,
+  });
+  const events = await getArticles({ ...input, limit: 100, sessionUser: undefined });
+  return events;
 };
 
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {

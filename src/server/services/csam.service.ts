@@ -348,7 +348,7 @@ export async function processCsamReport(report: CsamReportProps) {
             ipCaptureEvent: ipAddresses?.map((ipAddress) => ({ ipAddress })),
           }
         : undefined,
-      additionalInfo: `<![CDATA[${additionalInfo}]]>`,
+      additionalInfo,
     },
   };
 

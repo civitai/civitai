@@ -125,6 +125,7 @@ export const serverSchema = z.object({
     end: z.date().optional()
   })).optional(),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
+  RECAPTCHA_PROJECT_ID: z.string(),
 });
 
 /**
@@ -155,7 +156,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: zc.booleanString.default(true),
-  NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false)
+  NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
+  NEXT_PUBLIC_RECAPTCHA_KEY: z.string()
 });
 
 /**
@@ -187,5 +189,6 @@ export const clientEnv = {
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: process.env.NEXT_PUBLIC_UI_CATEGORY_VIEWS !== 'false',
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES !== 'false',
-  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== 'false'
+  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== 'false',
+  NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY
 };

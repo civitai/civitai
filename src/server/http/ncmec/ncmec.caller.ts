@@ -3,6 +3,9 @@ import { HttpCaller } from '~/server/http/httpCaller';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { parseStringPromise, Builder } from 'xml2js';
 
+// DOCUMENTATION
+// https://report.cybertip.org/ispws/documentation
+
 class NcmecCaller extends HttpCaller {
   private static instance: NcmecCaller;
 
@@ -41,7 +44,7 @@ class NcmecCaller extends HttpCaller {
   }
 
   async initializeReport(data: any) {
-    const builder = new Builder();
+    const builder = new Builder({ cdata: true, renderOpts: { pretty: false } });
     const xmlInput = builder.buildObject(data);
     const response = await this.postRaw('/submit', {
       body: xmlInput,
@@ -50,8 +53,7 @@ class NcmecCaller extends HttpCaller {
     const xmlResponse = await response.text();
     const json = await parseStringPromise(xmlResponse);
     if (!response.ok) {
-      console.dir({ json, xmlInput, data }, { depth: null });
-      throw new Error(xmlInput);
+      throw new Error(xmlResponse);
     }
     return Ncmec.reportResponseSchema.parse(json).reportResponse;
   }
@@ -88,7 +90,7 @@ class NcmecCaller extends HttpCaller {
           ...fileDetails,
         },
       };
-      const builder = new Builder();
+      const builder = new Builder({ renderOpts: { pretty: false } });
       const xmlInput = builder.buildObject(filePayload);
       const response = await this.postRaw('/fileinfo', {
         body: xmlInput,
