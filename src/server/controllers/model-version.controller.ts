@@ -216,7 +216,6 @@ export const upsertModelVersionHandler = async ({
           constants.bounties.supportedBountyToModels.some((t) => t === awardedEntry?.bounty.type)
         ) {
           const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
-          console.log(files);
 
           if (files.length) {
             await Promise.all(
