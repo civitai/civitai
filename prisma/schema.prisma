@@ -1661,6 +1661,7 @@ model Thread {
   parentThread   Thread? @relation("childThread", fields: [parentThreadId], references: [id], onDelete: Cascade)
   rootThreadId   Int?
   rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
+  depth          Int     @default(0)
 
   questionId    Int?            @unique
   question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)

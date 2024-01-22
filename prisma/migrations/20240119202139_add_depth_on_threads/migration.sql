@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Thread" ADD COLUMN     "depth" INTEGER NOT NULL DEFAULT 0;

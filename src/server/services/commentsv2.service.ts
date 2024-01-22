@@ -23,8 +23,6 @@ export const upsertComment = async ({
     select: { id: true, locked: true },
   });
 
-  console.log('parentThreadId', parentThreadId);
-
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {
       if (!thread) {
@@ -37,11 +35,10 @@ export const upsertComment = async ({
             [`${entityType}Id`]: entityId,
             parentThreadId: parentThread?.id ?? parentThreadId,
             rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? parentThreadId,
+            depth: parentThread?.depth ? parentThread.depth + 1 : 0,
           },
           select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
         });
-
-        console.log('thread', thread, parentThread);
       }
       return await tx.commentV2.create({
         data: {
