@@ -45,7 +45,6 @@ export function MasonryGrid<TData>({
         const key = itemId?.(item) ?? index;
         return (
           <React.Fragment key={key}>
-            {/* <RenderComponent index={index} data={item} width={columnWidth} height={columnWidth} /> */}
             {createRenderElement(RenderComponent, index, item, columnWidth)}
           </React.Fragment>
         );
