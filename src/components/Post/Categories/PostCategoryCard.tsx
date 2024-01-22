@@ -75,6 +75,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                   meta={image.meta as ImageMetaProps}
                   generationProcess={image.generationProcess ?? undefined}
                   imageId={image.id}
+                  mainResourceId={image.modelVersionId ?? undefined}
                 >
                   <ActionIcon className={classes.info} variant="transparent" size="lg">
                     <IconInfoCircle

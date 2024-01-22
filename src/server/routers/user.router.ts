@@ -23,6 +23,8 @@ import {
   claimCosmeticHandler,
   getUserPaymentMethodsHandler,
   deleteUserPaymentMethodHandler,
+  getUserFeatureFlagsHandler,
+  toggleUserFeatureFlagHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -49,6 +51,7 @@ import {
   reportProhibitedRequestSchema,
   userByReferralCodeSchema,
   completeOnboardStepSchema,
+  toggleFeatureInputSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -146,4 +149,8 @@ export const userRouter = router({
   deletePaymentMethod: protectedProcedure
     .input(paymentMethodDeleteInput)
     .mutation(deleteUserPaymentMethodHandler),
+  getFeatureFlags: protectedProcedure.query(getUserFeatureFlagsHandler),
+  toggleFeature: protectedProcedure
+    .input(toggleFeatureInputSchema)
+    .mutation(toggleUserFeatureFlagHandler),
 });

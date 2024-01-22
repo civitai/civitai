@@ -174,7 +174,6 @@
     "zustand": "^4.1.2"
   },
   "devDependencies": {
-    "@babel/core": "^7.19.3",
     "@next/eslint-plugin-next": "^12.1.4",
     "@types/archiver": "^6.0.2",
     "@types/cloudflare": "^2.7.9",
@@ -197,7 +196,6 @@
     "@types/xml2js": "^0.4.14",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
-    "babel-plugin-superjson-next": "^0.4.5",
     "eslint": "8.22.0",
     "eslint-config-airbnb": "^19.0.4",
     "eslint-config-airbnb-typescript": "^17.0.0",

@@ -7,6 +7,7 @@ import {
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
   PrepareModelInput,
+  SendFeedbackInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
@@ -52,6 +53,8 @@ import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
+import { createLimiter } from '~/server/utils/rate-limiting';
+import { clickhouse } from '~/server/clickhouse/client';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -403,6 +406,25 @@ async function checkResourcesAccess(
   return true;
 }
 
+const generationLimiter = createLimiter({
+  counterKey: REDIS_KEYS.GENERATION.COUNT,
+  limitKey: REDIS_KEYS.GENERATION.LIMITS,
+  fetchCount: async (userKey) => {
+    const res = await clickhouse?.query({
+      query: `
+        SELECT COUNT(*) as count
+        FROM orchestration.textToImageJobs
+        WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    const count = data[0]?.count ?? 0;
+    return count;
+  },
+});
+
 export const createGenerationRequest = async ({
   userId,
   isModerator,
@@ -413,6 +435,12 @@ export const createGenerationRequest = async ({
   const status = await getGenerationStatus();
   if (!status.available && !isModerator)
     throw throwBadRequestError('Generation is currently disabled');
+
+  // Handle rate limiting
+  if (await generationLimiter.hasExceededLimit(userId.toString()))
+    throw throwRateLimitError(
+      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back in 1 hour.`
+    );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
@@ -581,6 +609,9 @@ export const createGenerationRequest = async ({
     const message = await response.json();
     throw throwBadRequestError(message);
   }
+
+  generationLimiter.increment(userId.toString(), params.quantity);
+
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
@@ -873,3 +904,15 @@ export async function toggleUnavailableResource({
 
   return unavailableResources;
 }
+
+export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFeedbackInput) => {
+  const response = await orchestratorCaller.taintJobById({
+    id: jobId,
+    payload: { reason, context: { imageHash: jobId, message } },
+  });
+
+  if (response.status === 404) throw throwNotFoundError();
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+
+  return response;
+};

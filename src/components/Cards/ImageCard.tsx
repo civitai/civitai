@@ -158,6 +158,7 @@ export function UnroutedImageCard({ data }: Props) {
                   meta={data.meta}
                   generationProcess={data.generationProcess ?? undefined}
                   imageId={data.id}
+                  mainResourceId={data.modelVersionId ?? undefined}
                 >
                   <ActionIcon className={sharedClasses.infoChip} variant="light">
                     <IconInfoCircle color="white" strokeWidth={2.5} size={18} />

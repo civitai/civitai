@@ -117,6 +117,7 @@ export function PostImages({
                     meta={image.meta}
                     generationProcess={image.generationProcess ?? 'txt2img'}
                     imageId={image.id}
+                    mainResourceId={image.modelVersionId ?? undefined}
                   >
                     <ActionIcon variant="transparent" size="lg" className={classes.meta}>
                       <IconInfoCircle

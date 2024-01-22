@@ -83,7 +83,6 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 
@@ -103,13 +102,6 @@ export function ModelVersionDetails({
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
-
-  const { entities, isLoadingAccess } = useEntityAccessRequirement({
-    entityType: 'ModelVersion',
-    entityIds: [version.id],
-  });
-
-  const [access] = entities;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -325,6 +317,19 @@ export function ModelVersionDetails({
       ),
       visible: features.air,
     },
+    {
+      label: (
+        <Group spacing="xs">
+          <Text weight={500}>Bounty</Text>
+        </Group>
+      ),
+      value: (
+        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId}`}>
+          Go to bounty
+        </Text>
+      ),
+      visible: !!model.meta && !!model.meta.bountyId,
+    },
   ];
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
@@ -356,13 +361,13 @@ export function ModelVersionDetails({
         download
       >
         {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
         } (${formatKBytes(file.sizeKB)})`}
       </Menu.Item>
     ) : (
       <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
         {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
         } (${formatKBytes(file.sizeKB)})`}
       </Menu.Item>
     )

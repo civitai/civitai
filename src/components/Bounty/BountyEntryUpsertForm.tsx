@@ -613,7 +613,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
           <Button
             loading={bountyEntryUpsertMutation.isLoading && !creating}
-            disabled={bountyEntryUpsertMutation.isLoading || !ownershipAcknowledgement}
+            disabled={
+              bountyEntryUpsertMutation.isLoading || (!bountyEntry && !ownershipAcknowledgement)
+            }
             onClick={() => setCreating(false)}
             type="submit"
           >

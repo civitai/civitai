@@ -1,6 +1,7 @@
 import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
+  UserSettingsSchema,
 } from './../schema/user.schema';
 import {
   throwBadRequestError,
@@ -60,6 +61,7 @@ import { constants } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
+import { removeEmpty } from '~/utils/object-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -223,6 +225,33 @@ export const updateUserById = async ({
 
   return user;
 };
+
+export async function setUserSetting(userId: number, settings: UserSettingsSchema) {
+  const toSet = removeEmpty(settings);
+  if (Object.keys(toSet).length) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "User" SET settings = COALESCE(settings,'{}') || '${JSON.stringify(toSet)}'::jsonb
+      WHERE id = ${userId}
+    `);
+  }
+
+  const toRemove = Object.entries(settings)
+    .filter(([, value]) => value === undefined)
+    .map(([key]) => `'${key}'`);
+  if (toRemove.length) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "User" SET settings = settings - ${toRemove.join(' - ')}}'
+      WHERE id = ${userId}
+    `);
+  }
+}
+
+export async function getUserSettings(userId: number) {
+  const settings = await dbWrite.$queryRaw<{ settings: UserSettingsSchema }[]>`
+    SELECT settings FROM "User" WHERE id = ${userId}
+  `;
+  return settings[0]?.settings ?? {};
+}
 
 export const acceptTOS = ({ id }: { id: number }) => {
   return dbWrite.user.update({
@@ -550,7 +579,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   });
   if (!user) return undefined;
 
-  const { subscription, profilePicture, profilePictureId, ...rest } = user;
+  const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
   const tier: string | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]

@@ -22,7 +22,6 @@ import {
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import {
@@ -252,9 +251,9 @@ export function AppHeader({
   const features = useFeatureFlags();
   const isMobile = useIsMobile();
 
-  const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
+  const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
-  const ref = useClickOutside(() => closeBurger());
+  // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
   const { url: homeUrl } = useHomeSelection();
 
@@ -499,6 +498,7 @@ export function AppHeader({
       features.alternateHome,
       features.bounties,
       features.buzz,
+      features.clubs,
       router.asPath,
       theme,
     ]
@@ -515,7 +515,7 @@ export function AppHeader({
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
-                onClick={() => closeBurger()}
+                onClick={() => setBurgerOpened(false)}
                 rel={link.rel}
               >
                 {link.label}
@@ -533,7 +533,7 @@ export function AppHeader({
             item
           );
         }),
-    [classes, closeBurger, cx, links, mainActions, router.asPath]
+    [classes, setBurgerOpened, cx, links, mainActions, router.asPath]
   );
   const userMenuItems = useMemo(
     () =>
@@ -560,9 +560,9 @@ export function AppHeader({
   const onSearchDone = () => setShowSearch(false);
 
   const handleCloseMenu = useCallback(() => {
-    closeBurger();
+    setBurgerOpened(false);
     setUserMenuOpened(false);
-  }, [closeBurger]);
+  }, [setBurgerOpened]);
 
   useEffect(() => {
     if (showSearch && searchRef.current) {
@@ -670,7 +670,7 @@ export function AppHeader({
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
             <Link href={homeUrl ?? '/'} passHref>
-              <Anchor variant="text" onClick={() => closeBurger()}>
+              <Anchor variant="text" onClick={() => setBurgerOpened(false)}>
                 <Logo />
               </Anchor>
             </Link>
@@ -738,7 +738,7 @@ export function AppHeader({
           {features.enhancedSearch ? (
             <>{renderSearchComponent({ onSearchDone, isMobile: false })}</>
           ) : (
-            <ListSearch onSearch={() => closeBurger()} />
+            <ListSearch onSearch={() => setBurgerOpened(false)} />
           )}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
@@ -847,7 +847,7 @@ export function AppHeader({
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}
-              onMouseDown={!burgerOpened ? openBurger : undefined}
+              onClick={() => setBurgerOpened(!burgerOpened)}
               size="sm"
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
@@ -859,7 +859,7 @@ export function AppHeader({
                     shadow="md"
                     style={{ ...styles, borderLeft: 0, borderRight: 0 }}
                     radius={0}
-                    ref={ref}
+                    // ref={ref}
                   >
                     {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
                     <ScrollArea.Autosize maxHeight={'calc(100dvh - 269px)'}>
@@ -902,7 +902,11 @@ export function AppHeader({
                             </BlurToggle>
                           )}
                           <Link href="/user/account">
-                            <ActionIcon variant="default" size="lg" onClick={closeBurger}>
+                            <ActionIcon
+                              variant="default"
+                              size="lg"
+                              onClick={() => setBurgerOpened(false)}
+                            >
                               <IconSettings stroke={1.5} />
                             </ActionIcon>
                           </Link>

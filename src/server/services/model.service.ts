@@ -213,30 +213,30 @@ export const getModelsRaw = async ({
   if (query) {
     const lowerQuery = query?.toLowerCase();
 
-    AND.push(Prisma.sql`(
-        ${Prisma.join(
-          [
-            Prisma.sql`
-            m."name" ILIKE ${`%${query}%`}
-          `,
-            Prisma.sql`
-            EXISTS (
-              SELECT 1 FROM "ModelVersion" mvq
-              JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
-              JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-              WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
-            )
-          `,
-            Prisma.sql`
-            EXISTS (
-              SELECT 1 FROM "ModelVersion" mvq
-              WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
-            )
-          `,
-          ],
-          ' OR '
-        )}
-      )`);
+    AND.push(
+      Prisma.join(
+        [
+          Prisma.sql`
+          m."name" ILIKE ${`%${query}%`}
+        `,
+          Prisma.sql`
+          EXISTS (
+            SELECT 1 FROM "ModelVersion" mvq
+            JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
+            JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
+            WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
+          )
+        `,
+          Prisma.sql`
+          EXISTS (
+            SELECT 1 FROM "ModelVersion" mvq
+            WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
+          )
+        `,
+        ],
+        ' OR '
+      )
+    );
   }
 
   if (needsReview && sessionUser?.isModerator) {
@@ -1187,6 +1187,8 @@ export const upsertModel = async ({
   tagsOnModels,
   userId,
   templateId,
+  bountyId,
+  meta,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
@@ -1195,6 +1197,13 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       select: { id: true, nsfw: true },
       data: {
         ...data,
+        meta:
+          bountyId || meta
+            ? {
+                ...((meta ?? {}) as MixedObject),
+                bountyId,
+              }
+            : undefined,
         userId,
         tagsOnModels: tagsOnModels
           ? {

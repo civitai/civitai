@@ -24,6 +24,7 @@ import {
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
   ToggleBlockedTagSchema,
+  ToggleFeatureInput,
   ToggleFollowUserSchema,
   ToggleModelEngagementInput,
   ToggleUserArticleEngagementsInput,
@@ -63,6 +64,8 @@ import {
   userByReferralCode,
   equipCosmetic,
   deleteUserProfilePictureCache,
+  getUserSettings,
+  setUserSetting,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -89,6 +92,8 @@ import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import { isProd } from '~/env/other';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { createRecaptchaAssesment } from '../recaptcha/client';
+import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
+import { isDefined } from '~/utils/type-guards';
 
 export const getAllUsersHandler = async ({
   input,
@@ -1096,6 +1101,50 @@ export const deleteUserPaymentMethodHandler = async ({
       isModerator: !!ctx.user.isModerator,
       ...input,
     });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+const defaultToggleableFeatures = toggleableFeatures.reduce(
+  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+  {} as FeatureAccess
+);
+export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    const { features = {} } = await getUserSettings(id);
+
+    return {
+      ...defaultToggleableFeatures,
+      ...features,
+    } as FeatureAccess;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleUserFeatureFlagHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleFeatureInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const { features = {}, ...restSettings } = await getUserSettings(id);
+
+    const updatedFeatures: Partial<FeatureAccess> = {
+      ...features,
+      [input.feature]: isDefined(features[input.feature])
+        ? input.value ?? !features[input.feature]
+        : input.value ?? !defaultToggleableFeatures[input.feature],
+    };
+
+    await setUserSetting(id, { ...restSettings, features: updatedFeatures });
+
+    return updatedFeatures;
   } catch (error) {
     throw throwDbError(error);
   }
