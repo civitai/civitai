@@ -174,7 +174,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
 
-    if (isDirty || !version?.id || templateId) {
+    if (isDirty || !version?.id || templateId || bountyId) {
       const recommendedResources =
         rawRecommendedResources?.map(({ id, strength }) => ({
           resourceId: id,
