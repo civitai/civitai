@@ -979,9 +979,9 @@ export default function ModelDetailsV2({
                 adunit="Leaderboard_B"
                 style={{ margin: '0 auto' }}
                 sizes={{
-                  [0]: [300, 100],
-                  [theme.breakpoints.md]: [728, 90],
-                  [theme.breakpoints.lg]: [970, 90],
+                  [0]: '300x100',
+                  [theme.breakpoints.md]: '728x90',
+                  [theme.breakpoints.lg]: '970x90',
                 }}
               />
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>

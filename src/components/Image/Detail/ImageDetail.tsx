@@ -313,7 +313,7 @@ export function ImageDetail() {
                   adunit="Sidebar_A"
                   m="0 auto"
                   nsfw={image.nsfw !== 'None'}
-                  sizes={{ [0]: [300, 250] }}
+                  sizes={{ [0]: '300x250' }}
                 />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />

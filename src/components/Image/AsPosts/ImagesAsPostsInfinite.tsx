@@ -216,8 +216,8 @@ export default function ImagesAsPostsInfinite({
         <AscendeumAd
           adunit="StickySidebar_A"
           sizes={{
-            [theme.breakpoints.md]: [120, 600],
-            [2030]: [300, 600],
+            [theme.breakpoints.md]: '120x600',
+            [2030]: '300x600',
           }}
           style={{ ...adStyle }}
         />
@@ -233,9 +233,9 @@ export default function ImagesAsPostsInfinite({
                 adunit="Leaderboard_B"
                 style={{ margin: '0 auto' }}
                 sizes={{
-                  [0]: [300, 100],
-                  [theme.breakpoints.md]: [728, 90],
-                  [theme.breakpoints.lg]: [970, 90],
+                  [0]: '300x100',
+                  [theme.breakpoints.md]: '728x90',
+                  [theme.breakpoints.lg]: '970x90',
                 }}
               />
               <Group spacing="xs">
@@ -405,8 +405,8 @@ export default function ImagesAsPostsInfinite({
         <AscendeumAd
           adunit="StickySidebar_B"
           sizes={{
-            [theme.breakpoints.md]: [120, 600],
-            [2030]: [300, 600],
+            [theme.breakpoints.md]: '120x600',
+            [2030]: '300x600',
           }}
           style={{ ...adStyle }}
         />

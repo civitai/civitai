@@ -69,7 +69,7 @@ export function MasonryColumns<TData>({
                 {data.type === 'ad' && (
                   <AscendeumAd
                     adunit="Dynamic_InContent"
-                    sizes={{ [0]: [300, 250] }}
+                    sizes={{ [0]: '300x250' }}
                     style={{ margin: '0 auto' }}
                   />
                 )}

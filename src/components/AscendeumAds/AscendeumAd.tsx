@@ -4,11 +4,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
 import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/AscendeumAds/ads.utils';
 import { ascAdManager } from '~/components/AscendeumAds/client';
-import {
-  useContainerContext,
-  useContainerProviderStore,
-  useContainerWidth,
-} from '~/components/ContainerProvider/ContainerProvider';
+import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
@@ -55,11 +51,11 @@ export function AscendeumAd<T extends AdUnitType>({
       if (containerWidth >= key) {
         const bidSizes = sizes[key];
         const normalized = (!Array.isArray(bidSizes[0]) ? [bidSizes] : bidSizes) as AdUnitSize<T>[];
-        const [width, height] = normalized[0];
+        const [width, height] = normalized[0].split('x').map(Number);
         return {
           width,
           height,
-          stringSizes: `[${normalized.map((sizes) => `[${sizes.join(',')}]`)}]`,
+          stringSizes: `[${normalized.map((sizes) => `[${sizes.replace('x', ',')}]`)}]`,
         };
       }
     }

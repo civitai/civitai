@@ -28,8 +28,8 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       <AscendeumAd
         adunit="StickySidebar_A"
         sizes={{
-          [theme.breakpoints.md]: [120, 600],
-          [xl]: [300, 600],
+          [theme.breakpoints.md]: '120x600',
+          [xl]: '300x600',
         }}
         style={{ ...adStyle }}
       />
@@ -44,9 +44,9 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           adunit="Leaderboard_A"
           style={{ margin: `0 auto ${theme.spacing.xs}px` }}
           sizes={{
-            [0]: [300, 100],
-            [theme.breakpoints.md]: [728, 90],
-            [theme.breakpoints.lg]: [970, 90],
+            [0]: '300x100',
+            [theme.breakpoints.md]: '728x90',
+            [theme.breakpoints.lg]: '970x90',
           }}
         />
         <MasonryContainer>{children}</MasonryContainer>
@@ -54,8 +54,8 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       <AscendeumAd
         adunit="StickySidebar_B"
         sizes={{
-          [theme.breakpoints.md]: [120, 600],
-          [xl]: [300, 600],
+          [theme.breakpoints.md]: '120x600',
+          [xl]: '300x600',
         }}
         style={{ ...adStyle }}
       />

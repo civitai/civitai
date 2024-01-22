@@ -45,26 +45,32 @@ export function createAdFeed<T>({
 
 export type AdSizeType = keyof typeof sizes;
 export type AdSizes<T extends AdSizeType> = (typeof sizes)[T];
+// const sizes = {
+//   hero: [
+//     [728, 90],
+//     [970, 90],
+//     [970, 250],
+//     [300, 250],
+//     [300, 100],
+//     [320, 50],
+//     [320, 100],
+//     [468, 60],
+//   ],
+//   inContent: [
+//     [300, 250],
+//     [336, 280],
+//   ],
+//   stickySidebar: [
+//     [300, 600],
+//     [160, 600],
+//     [120, 600],
+//   ],
+// } as const;
+
 const sizes = {
-  hero: [
-    [728, 90],
-    [970, 90],
-    [970, 250],
-    [300, 250],
-    [300, 100],
-    [320, 50],
-    [320, 100],
-    [468, 60],
-  ],
-  inContent: [
-    [300, 250],
-    [336, 280],
-  ],
-  stickySidebar: [
-    [300, 600],
-    [160, 600],
-    [120, 600],
-  ],
+  hero: ['728x90', '970x90', '970x250', '300x250', '300x100', '320x50', '320x100', '468x60'],
+  inContent: ['300x250', '336x280'],
+  stickySidebar: ['300x600', '160x600', '120x600'],
 } as const;
 
 type AdUnits = typeof adunits;
