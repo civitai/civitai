@@ -196,7 +196,6 @@ export function ModelVersionDetails({
 
   const archived = model.mode === ModelModifier.Archived;
 
-  console.log(model);
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
