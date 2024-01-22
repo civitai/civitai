@@ -4,13 +4,16 @@ import { createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { createAdFeed } from '~/components/AscendeumAds/ads.utils';
+import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
+import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
 
 type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   itemId?: (data: TData) => string | number;
   empty?: React.ReactNode;
-  maxRows?: number;
+  adInterval?: number[];
 };
 
 export function MasonryGrid<TData>({
@@ -18,7 +21,7 @@ export function MasonryGrid<TData>({
   render: RenderComponent,
   itemId,
   empty = null,
-  maxRows,
+  adInterval,
 }: Props<TData>) {
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } =
     useMasonryContainerContext();
@@ -31,21 +34,27 @@ export function MasonryGrid<TData>({
     maxSingleColumnWidth,
   });
 
-  const items = useMemo(() => {
-    if (!maxRows) return data;
-    const wholeRows = Math.floor(data.length / columnCount);
-    const rows = maxRows > wholeRows ? wholeRows : maxRows;
-    if (rows < 1) return data;
-    return data.slice(0, rows * columnCount);
-  }, [columnCount, data, maxRows]);
+  const { adsBlocked } = useAscendeumAdsContext();
+  const items = useMemo(
+    () => createAdFeed({ data, interval: adInterval, adsBlocked }),
+    [columnCount, data]
+  );
 
   return items.length ? (
     <div className={classes.grid}>
       {items.map((item, index) => {
-        const key = itemId?.(item) ?? index;
+        const key = item.type === 'data' ? itemId?.(item.data) ?? index : index;
         return (
           <React.Fragment key={key}>
-            {createRenderElement(RenderComponent, index, item, columnWidth)}
+            {item.type === 'data' &&
+              createRenderElement(RenderComponent, index, item.data, columnWidth)}
+            {item.type === 'ad' && (
+              <AscendeumAd
+                adunit="Dynamic_InContent"
+                sizes={{ [0]: [300, 250] }}
+                style={{ margin: 'auto auto' }}
+              />
+            )}
           </React.Fragment>
         );
       })}
