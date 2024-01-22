@@ -83,7 +83,6 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
@@ -104,13 +103,6 @@ export function ModelVersionDetails({
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
-
-  const { entities, isLoadingAccess } = useEntityAccessRequirement({
-    entityType: 'ModelVersion',
-    entityIds: [version.id],
-  });
-
-  const [access] = entities;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,

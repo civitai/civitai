@@ -172,6 +172,7 @@ export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
   features: z.record(z.boolean()).optional(),
+  newsletterSubscriber: z.boolean().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
