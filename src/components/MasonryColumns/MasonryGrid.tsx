@@ -37,13 +37,6 @@ export function MasonryGrid<TData>({
     [columnCount, data]
   );
 
-  console.log({
-    gridTemplateColumns:
-      columnCount === 1
-        ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
-        : `repeat(${columnCount}, ${columnWidth}px)`,
-  });
-
   return items.length ? (
     <div
       className={classes.grid}
@@ -92,6 +85,7 @@ const useStyles = createStyles(
     empty: { height: columnWidth },
     grid: {
       display: 'grid',
+
       columnGap,
       rowGap,
       justifyContent: 'center',
