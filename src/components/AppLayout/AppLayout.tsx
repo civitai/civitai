@@ -15,9 +15,7 @@ import { FloatingActionButton2 } from '~/components/FloatingActionButton/Floatin
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 
 type AppLayoutProps = {
-  innerLayout?:
-    | (({ children }: { children: React.ReactNode }) => React.ReactNode)
-    | ((page: React.ReactNode) => React.ReactNode);
+  innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
   withScrollArea?: boolean;
 };
 

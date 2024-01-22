@@ -1088,9 +1088,9 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 };
 
 setPageOptions(BountyDetailsPage, {
-  innerLayout: (page) => (
+  innerLayout: ({ children }: { children: React.ReactNode }) => (
     <ImageViewer>
-      <ScrollAreaMain>{page}</ScrollAreaMain>
+      <ScrollAreaMain>{children}</ScrollAreaMain>
     </ImageViewer>
   ),
 });

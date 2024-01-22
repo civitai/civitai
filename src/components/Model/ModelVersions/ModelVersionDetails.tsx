@@ -197,7 +197,6 @@ export function ModelVersionDetails({
 
   const archived = model.mode === ModelModifier.Archived;
 
-
   const modelDetails: DescriptionTableProps['items'] = [
     {
       label: 'Type',
@@ -334,11 +333,11 @@ export function ModelVersionDetails({
         </Group>
       ),
       value: (
-        <Text variant="link" component="a" href={`/bounties/${model.meta.bountyId as number}`}>
+        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId as number}`}>
           Go to bounty
         </Text>
       ),
-      visible: model.meta && model.meta.bountyId,
+      visible: !!model.meta?.bountyId,
     },
   ];
 
