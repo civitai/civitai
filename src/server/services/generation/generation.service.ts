@@ -43,7 +43,7 @@ import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
 import { cachedArray } from '~/server/utils/cache-helpers';
@@ -228,7 +228,7 @@ export const getGenerationResources = async (
 
 const getResourceData = async (modelVersionIds: number[]) => {
   return await cachedArray<GenerationResourceSelect>({
-    key: 'generation:resource-data',
+    key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
     ids: modelVersionIds,
     idKey: 'id',
     lookupFn: async (ids) => {
@@ -266,7 +266,8 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
     : undefined;
 
   const alternativesAvailable =
-    ((await redis.hGet('system:features', 'generation:alternatives')) ?? 'false') === 'true';
+    ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
+    'true';
 
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
@@ -642,7 +643,7 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 
 export async function getGenerationStatus() {
   const status = JSON.parse(
-    (await redis.hGet('system:features', 'generation:status')) ?? '{}'
+    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:status')) ?? '{}'
   ) as Generation.Status;
   status.available ??= true;
 
@@ -823,7 +824,7 @@ export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModel
 
 export async function getUnstableResources() {
   const cachedData = await redis
-    .hGet('system:features', 'generation:unstable-resources')
+    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -832,7 +833,7 @@ export async function getUnstableResources() {
 
 export async function getUnavailableResources() {
   const cachedData = await redis
-    .hGet('system:features', 'generation:unavailable-resources')
+    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 

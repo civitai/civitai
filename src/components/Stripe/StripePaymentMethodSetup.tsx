@@ -44,6 +44,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
   const options: StripeElementsOptions = {
     clientSecret,
     appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+    locale: 'en',
   };
 
   return (

@@ -1,20 +1,46 @@
+import { createContext, useState } from 'react';
 import Script from 'next/script';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '../../env/client.mjs';
 import { Anchor, Text, TextProps } from '@mantine/core';
+import { RecaptchaAction } from '../../server/common/constants';
 
-export function RecaptchaWidget() {
-  const user = useCurrentUser();
-  if (!user) return null;
+type RecaptchaTokenInfo = {
+  token: string | null;
+  error: string | null;
+  loading: boolean;
+};
+
+export const RecaptchaContext = createContext<{
+  ready: boolean | null;
+  tokens: Partial<Record<RecaptchaAction, RecaptchaTokenInfo>>;
+  updateToken: (action: RecaptchaAction, token: RecaptchaTokenInfo) => void;
+}>({ ready: false, tokens: {}, updateToken: () => {} });
+
+export function RecaptchaWidgetProvider({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  const [tokens, setTokens] = useState<Partial<Record<RecaptchaAction, RecaptchaTokenInfo>>>({});
+  const updateToken = (action: RecaptchaAction, token: RecaptchaTokenInfo) => {
+    setTokens((prev) => ({ ...prev, [action]: token }));
+  };
+
   return (
-    <Script
-      src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
-      onLoad={() => {
-        window?.grecaptcha.enterprise.ready(() => {
-          console.log('yei!');
-        });
+    <RecaptchaContext.Provider
+      value={{
+        ready,
+        tokens,
+        updateToken,
       }}
-    />
+    >
+      <Script
+        src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
+        onLoad={() => {
+          window?.grecaptcha.enterprise.ready(() => {
+            setReady(true);
+          });
+        }}
+      />
+      {children}
+    </RecaptchaContext.Provider>
   );
 }
 

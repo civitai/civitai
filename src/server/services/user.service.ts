@@ -57,6 +57,7 @@ import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { constants } from '~/server/common/constants';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -694,7 +695,7 @@ type UserCosmeticLookup = {
 };
 export async function getCosmeticsForUsers(userIds: number[]) {
   const userCosmetics = await cachedObject<UserCosmeticLookup>({
-    key: 'cosmetics',
+    key: REDIS_KEYS.COSMETICS,
     idKey: 'userId',
     ids: userIds,
     lookupFn: async (ids) => {
@@ -719,12 +720,12 @@ export async function getCosmeticsForUsers(userIds: number[]) {
   return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
 }
 export async function deleteUserCosmeticCache(userId: number) {
-  await bustCachedArray('cosmetics', 'userId', userId);
+  await bustCachedArray(REDIS_KEYS.COSMETICS, 'userId', userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
   return await cachedObject<ProfileImage>({
-    key: 'profile-pictures',
+    key: REDIS_KEYS.PROFILE_PICTURES,
     idKey: 'userId',
     ids: userIds,
     lookupFn: async (ids) => {
@@ -751,7 +752,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
   });
 }
 export async function deleteUserProfilePictureCache(userId: number) {
-  await bustCachedArray('profile-pictures', 'userId', userId);
+  await bustCachedArray(REDIS_KEYS.PROFILE_PICTURES, 'userId', userId);
 }
 
 // #region [article engagement]

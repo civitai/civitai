@@ -68,4 +68,4 @@ EXPOSE 3000
 ENV PORT 3000
 ENV NEXT_TELEMETRY_DISABLED 1
 
-CMD ["pm2-runtime", "node", "--", "server.js"]
+CMD ["pm2-runtime", "node", "--", "server.js", "--", "--expose-gc"]
