@@ -1,4 +1,5 @@
 import {
+  BountyType,
   Currency,
   MetricTimeframe,
   ModelStatus,
@@ -202,6 +203,7 @@ export const constants = {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
+    supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {

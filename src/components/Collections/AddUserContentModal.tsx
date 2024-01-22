@@ -334,7 +334,7 @@ function SelectableImageCard({ data }: { data: ImageGetInfinite[number] }) {
           readOnly
         />
         {!data.hideMeta && data.meta && (
-          <ImageMetaPopover meta={data.meta}>
+          <ImageMetaPopover meta={data.meta} mainResourceId={data.modelVersionId ?? undefined}>
             <ActionIcon
               variant="light"
               color="dark"
