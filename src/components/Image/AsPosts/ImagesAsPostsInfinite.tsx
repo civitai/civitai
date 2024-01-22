@@ -205,6 +205,7 @@ export default function ImagesAsPostsInfinite({
       value={{ filters, modelVersions, showModerationOptions, model }}
     >
       <Box
+        py="xl"
         sx={(theme) => ({
           display: 'flex',
           justifyContent: 'space-around',
@@ -226,7 +227,7 @@ export default function ImagesAsPostsInfinite({
           maxSingleColumnWidth={450}
           style={{ flex: 1 }}
         >
-          <MasonryContainer fluid pt="xl" pb={61} mb={-61}>
+          <MasonryContainer fluid>
             <Stack spacing="md">
               <AscendeumAd
                 adunit="Leaderboard_B"
