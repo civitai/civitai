@@ -18,7 +18,6 @@ html {
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
-
   input:focus,
   select:focus,
   textarea:focus {
@@ -86,7 +85,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2+p {
+.markdown-content h2 + p {
   margin-top: 0;
 }
 
@@ -135,7 +134,7 @@ iframe {
 }
 
 .demo-100 {
-  opacity: .95;
+  opacity: 0.95;
   stroke-width: 10px;
 }
 
@@ -211,7 +210,7 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs>* {
+.frame-decor .footer-abs > * {
   bottom: 36px !important;
 }
 

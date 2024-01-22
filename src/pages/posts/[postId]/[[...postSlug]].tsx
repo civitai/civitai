@@ -28,7 +28,7 @@ export const getServerSideProps = createServerSideProps({
     //TODO.Briant - include browsingMode
     await ssg?.image.getInfinite.prefetchInfinite({
       postId,
-      browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+      // browsingMode: parseBrowsingMode(ctx.req.cookies, session),
     });
 
     return { props: { postId } };

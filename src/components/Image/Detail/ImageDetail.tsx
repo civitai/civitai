@@ -309,11 +309,12 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
-                {image.nsfw === 'None' && (
-                  <Center>
-                    <AscendeumAd adunit="/19191187/ascendeum_test1" height={250} width={300} />
-                  </Center>
-                )}
+                <AscendeumAd
+                  adunit="Sidebar_A"
+                  m="0 auto"
+                  nsfw={image.nsfw !== 'None'}
+                  sizes={{ [0]: [300, 250] }}
+                />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

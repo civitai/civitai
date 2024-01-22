@@ -11,6 +11,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconArrowsCross,
@@ -49,6 +50,7 @@ import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
+import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -87,6 +89,7 @@ export default function ImagesAsPostsInfinite({
   showModerationOptions,
   showPOIWarning,
 }: ImagesAsPostsInfiniteProps) {
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isMobile = useContainerSmallerThan('sm');
@@ -204,6 +207,15 @@ export default function ImagesAsPostsInfinite({
           })}
         >
           <Stack spacing="md">
+            <AscendeumAd
+              adunit="Leaderboard_B"
+              style={{ margin: '0 auto' }}
+              sizes={{
+                [0]: [300, 100],
+                [theme.breakpoints.md]: [728, 90],
+                [theme.breakpoints.lg]: [970, 90],
+              }}
+            />
             <Group spacing="xs">
               <Title order={2}>Gallery</Title>
               {!isMuted && (

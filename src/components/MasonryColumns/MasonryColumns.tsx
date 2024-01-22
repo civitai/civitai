@@ -9,7 +9,7 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { AscendeumAd } from '~/components/AscendeumAds/AscendeumAd';
 
 type Props<TData> = {
   data: TData[];
@@ -19,6 +19,7 @@ type Props<TData> = {
   maxItemHeight?: number;
   itemId?: (data: TData) => string | number;
   staticItem?: (props: { columnWidth: number; height: number }) => React.ReactNode;
+  adInterval?: number;
 };
 
 export function MasonryColumns<TData>({
@@ -29,9 +30,9 @@ export function MasonryColumns<TData>({
   maxItemHeight,
   itemId,
   staticItem,
+  adInterval,
 }: Props<TData>) {
-  const { columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
-  const { columnCount } = useMasonryContainerContext();
+  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
     columnCount,
@@ -47,7 +48,8 @@ export function MasonryColumns<TData>({
     columnCount,
     imageDimensions,
     adjustHeight,
-    maxItemHeight
+    maxItemHeight,
+    adInterval
   );
 
   return (
@@ -55,22 +57,22 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div key={colIndex} className={classes.column}>
           {items.map(({ height, data }, index) => {
-            const key = itemId?.(data) ?? index;
-            if (colIndex === 0 && index === 0 && staticItem) {
-              return (
-                <React.Fragment key={key}>
-                  {staticItem({ columnWidth, height: 450 })}
-                  <div id={key.toString()}>
-                    {createRenderElement(RenderComponent, index, data, columnWidth, height)}
-                  </div>
-                </React.Fragment>
-              );
-            }
+            const key = data.type === 'data' ? itemId?.(data.data) ?? index : index;
+            const showStaticItem = colIndex === 0 && index === 0 && staticItem;
 
             return (
-              <div key={key} id={key.toString()}>
-                {createRenderElement(RenderComponent, index, data, columnWidth, height)}
-              </div>
+              <React.Fragment key={key}>
+                {showStaticItem && staticItem({ columnWidth, height: 450 })}
+                {data.type === 'data' &&
+                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
+                {data.type === 'ad' && (
+                  <AscendeumAd
+                    adunit="Dynamic_InContent"
+                    sizes={{ [0]: [300, 250] }}
+                    style={{ margin: '0 auto' }}
+                  />
+                )}
+              </React.Fragment>
             );
           })}
         </div>

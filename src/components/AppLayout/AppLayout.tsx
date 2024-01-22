@@ -14,7 +14,9 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
 
 type AppLayoutProps = {
-  innerLayout?: (page: React.ReactNode) => React.ReactNode;
+  innerLayout?:
+    | (({ children }: { children: React.ReactNode }) => React.ReactNode)
+    | ((page: React.ReactNode) => React.ReactNode);
   withScrollArea?: boolean;
 };
 
@@ -27,6 +29,7 @@ export function AppLayout({
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
 } & AppLayoutProps) {
+  const InnerLayout: any = innerLayout;
   const { classes } = useStyles();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
@@ -50,8 +53,8 @@ export function AppLayout({
       </Center>
     );
 
-  const content = innerLayout ? (
-    innerLayout(children)
+  const content = InnerLayout ? (
+    <InnerLayout>{children}</InnerLayout>
   ) : withScrollArea ? (
     <ScrollArea>{children}</ScrollArea>
   ) : (

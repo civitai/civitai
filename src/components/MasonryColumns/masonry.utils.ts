@@ -3,6 +3,8 @@ import {
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
 import { useMemo } from 'react';
+import { AdFeedItem, createAdFeed } from '~/components/AscendeumAds/ads.utils';
+import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
@@ -11,7 +13,7 @@ export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumn
     [width, columnWidth, gutter, maxColumnCount]
   );
 
-const getColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) => {
+export const getColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) => {
   if (width === 0) return [0, 0];
   const count =
     Math.min(Math.floor((width + gutter) / (columnWidth + gutter)), maxColumnCount || Infinity) ||
@@ -20,15 +22,18 @@ const getColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?:
   return [count, combinedWidth];
 };
 
-export const useMasonryColumns = <TData>(
+export function useMasonryColumns<TData>(
   data: TData[],
   columnWidth: number,
   columnCount: number,
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustDimensions?: MasonryAdjustHeightFn<TData>,
-  maxItemHeight?: number
-) =>
-  useMemo(
+  maxItemHeight?: number,
+  adInterval?: number
+) {
+  const { adsBlocked } = useAscendeumAdsContext();
+
+  return useMemo(
     () =>
       getMasonryColumns(
         data,
@@ -36,10 +41,13 @@ export const useMasonryColumns = <TData>(
         columnCount,
         imageDimensions,
         adjustDimensions,
-        maxItemHeight
+        maxItemHeight,
+        adInterval,
+        adsBlocked
       ),
-    [data, columnWidth, columnCount, maxItemHeight] // eslint-disable-line
+      [data, columnWidth, columnCount, maxItemHeight, adInterval, adsBlocked] // eslint-disable-line
   );
+}
 
 type ColumnItem<TData> = {
   height: number;
@@ -52,29 +60,38 @@ const getMasonryColumns = <TData>(
   columnCount: number,
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustHeight?: MasonryAdjustHeightFn<TData>,
-  maxItemHeight?: number
-): ColumnItem<TData>[][] => {
+  maxItemHeight?: number,
+  adInterval?: number,
+  adsBlocked?: boolean
+): ColumnItem<AdFeedItem<TData>>[][] => {
   // Track the height of each column.
   // Layout algorithm below always inserts into the shortest column.
   if (columnCount === 0) return [];
 
+  const feed = createAdFeed({ data, interval: adInterval, adsBlocked });
+
   const columnHeights: number[] = Array(columnCount).fill(0);
-  const columnItems: ColumnItem<TData>[][] = Array(columnCount).fill([]);
+  const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array(columnCount).fill([]);
 
-  for (const item of data) {
-    const { width: originalWidth, height: originalHeight } = imageDimensions(item);
+  for (const item of feed) {
+    let height = 0;
+    if (item.type === 'ad') {
+      height = item.data.height;
+    } else {
+      const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
 
-    const ratioHeight = (originalHeight / originalWidth) * columnWidth;
-    const adjustedHeight =
-      adjustHeight?.(
-        {
-          imageRatio: columnWidth / ratioHeight,
-          width: columnWidth,
-          height: ratioHeight,
-        },
-        item
-      ) ?? ratioHeight;
-    const height = maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight;
+      const ratioHeight = (originalHeight / originalWidth) * columnWidth;
+      const adjustedHeight =
+        adjustHeight?.(
+          {
+            imageRatio: columnWidth / ratioHeight,
+            width: columnWidth,
+            height: ratioHeight,
+          },
+          item.data
+        ) ?? ratioHeight;
+      height = maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight;
+    }
 
     // look for the shortest column on each iteration
     let shortest = 0;

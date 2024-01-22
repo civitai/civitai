@@ -1,12 +1,12 @@
 interface IAscendeum {
   cmd: Array<() => void>;
-  processAdsOnPage: () => void;
+  processAdsOnPage: (adUnits?: string[]) => void;
   refresh: (elems?: HTMLElement[]) => void;
   refreshIds: (elemIds: string[]) => void;
   refreshAdunits: (adUnits: string[]) => void;
   destroy: (elems?: HTMLElement[]) => void;
   destroyIds: (elemIds: string[]) => void;
-  destroyAdunits: (adUnits: string[]) => void;
+  destroyAdunits: (adunits: string[]) => void;
 }
 
 declare global {
@@ -25,9 +25,9 @@ class AscendeumAdManager implements IAscendeum {
     });
   }
 
-  processAdsOnPage() {
+  processAdsOnPage(adunits?: string[]) {
     (window.asc = window.asc || { cmd: [] }).cmd.push(function () {
-      window.asc.processAdsOnPage();
+      window.asc.processAdsOnPage(adunits);
     });
   }
   refresh(elems?: HTMLElement[] | undefined) {

@@ -93,16 +93,15 @@ export const useQueryModels = (
   filters?: Partial<Omit<GetAllModelsInput, 'page'>>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  filters ??= {};
+  const _filters = filters ?? {};
   const queryUtils = trpc.useContext();
-  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
+  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(_filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     trpc: { context: { skipBatch: true } },
     keepPreviousData: true,
     onError: (error) => {
-      filters ??= {}; // Just to prevent ts error
-      queryUtils.model.getAll.setInfiniteData(filters, (oldData) => oldData ?? data);
+      queryUtils.model.getAll.setInfiniteData(_filters, (oldData) => oldData ?? data);
       showErrorNotification({
         title: 'Failed to fetch data',
         error: new Error(`Something went wrong: ${error.message}`),
@@ -126,7 +125,7 @@ export const useQueryModels = (
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
         if (hiddenUsers.get(x.user.id)) return false;
-        if (hiddenModels.get(x.id) && !filters?.hidden) return false;
+        if (hiddenModels.get(x.id) && !_filters.hidden) return false;
         for (const tag of x.tags) if (hiddenTags.get(tag)) return false;
         return true;
       })
@@ -157,7 +156,7 @@ export const useQueryModels = (
     hiddenUsers,
     currentUser,
     isLoadingHidden,
-    filters?.hidden,
+    _filters.hidden,
   ]);
 
   return { data, models, isLoading: isLoading || isLoadingHidden, ...rest };

@@ -923,9 +923,8 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          <Center>
-            <AscendeumAd adunit="/19191187/ascendeum_test2" height={250} width={300} />
-          </Center>
+
+          <AscendeumAd adunit="Sidebar_A" m="0 auto" sizes={{ [0]: [300, 250] }} />
         </Stack>
       </ContainerGrid.Col>
 

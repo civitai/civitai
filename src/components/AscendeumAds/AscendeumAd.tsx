@@ -1,55 +1,115 @@
-import { Center, Paper, Text } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { Center, Paper, PaperProps, Text } from '@mantine/core';
+import { useDidUpdate } from '@mantine/hooks';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAscendeumAdsContext } from '~/components/AscendeumAds/AscendeumAdsProvider';
+import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/AscendeumAds/ads.utils';
 import { ascAdManager } from '~/components/AscendeumAds/client';
+import {
+  useContainerContext,
+  useContainerProviderStore,
+  useContainerWidth,
+} from '~/components/ContainerProvider/ContainerProvider';
+import { useInView } from '~/hooks/useInView';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 
-type AdContentProps = { adunit: string; refreshInterval?: number };
-type AdProps = AdContentProps & {
-  width: number;
-  height: number;
+type AdContentProps<T extends AdUnitType> = {
+  adunit: T;
+  bidSizes: string;
+  nsfw?: boolean;
 };
+type AdProps<T extends AdUnitType> = Omit<AdContentProps<T>, 'bidSizes'> &
+  PaperProps & {
+    /** mobile first screen sizes (must specify 0 for mobile) */
+    sizes: Record<number, AdUnitBidSizes<T>>;
+  };
 
-export function AscendeumAd({ height, width, ...adContentProps }: AdProps) {
+export function AscendeumAd<T extends AdUnitType>({
+  adunit,
+  nsfw,
+  sizes,
+  ...paperProps
+}: AdProps<T>) {
+  const [ref, inView] = useInView({ rootMargin: '200%' });
   const { ready, adsBlocked, canView } = useAscendeumAdsContext();
+  const _nsfw = useFiltersContext(
+    useCallback(
+      (state) => {
+        if (nsfw !== undefined) return nsfw;
+        else return state.browsingMode !== BrowsingMode.SFW;
+      },
+      [nsfw]
+    )
+  );
+  const keys = useMemo(
+    () =>
+      Object.keys(sizes)
+        .map(Number)
+        .sort((a, b) => b - a),
+    []
+  );
+  const containerWidth = useContainerWidth();
+
+  const bidSizes = useMemo(() => {
+    for (const key of keys) {
+      if (containerWidth >= key) {
+        const bidSizes = sizes[key];
+        const normalized = (!Array.isArray(bidSizes[0]) ? [bidSizes] : bidSizes) as AdUnitSize<T>[];
+        const [width, height] = normalized[0];
+        return {
+          width,
+          height,
+          stringSizes: `[${normalized.map((sizes) => `[${sizes.join(',')}]`)}]`,
+        };
+      }
+    }
+  }, [containerWidth]);
+
+  if (!bidSizes) return null;
+  const { width, height, stringSizes } = bidSizes;
+  const renderAd = ready && canView && !_nsfw && inView;
+
   return (
-    <Paper component={Center} h={height} w={width} withBorder>
+    <Paper ref={ref} component={Center} withBorder {...paperProps} h={height} w={width}>
       {adsBlocked ? (
         <Text align="center" p="md">
           Please consider turning off ad block to support us
         </Text>
       ) : (
-        ready && canView && <AscendeumAdContent {...adContentProps} />
+        renderAd && <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} />
       )}
     </Paper>
   );
 }
 
-function AscendeumAdContent({ adunit, refreshInterval }: AdContentProps) {
+function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes }: AdContentProps<T>) {
   const ref = useRef<HTMLDivElement>(null);
+  const _adunit = `/21718562853/CivitAI/${adunit}`;
 
   // do we want each ad to have their own refreshInterval
   // should every add have a refresh interval?
   useEffect(() => {
-    let interval: NodeJS.Timer | undefined;
-    ascAdManager.processAdsOnPage();
-    if (refreshInterval) {
-      interval = setInterval(() => {
-        ascAdManager.refreshAdunits([adunit]);
-      }, refreshInterval * 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [adunit, refreshInterval]);
+    ascAdManager.processAdsOnPage([_adunit]);
+  }, [_adunit]);
+
+  useDidUpdate(() => {
+    ascAdManager.refreshAdunits([_adunit]);
+  }, [bidSizes]);
 
   useEffect(() => {
     return () => {
       // extra malarkey to handle strict mode side effects
-      if (!ref.current) ascAdManager.destroyAdunits([adunit]);
+      if (!ref.current) ascAdManager.destroyAdunits([_adunit]);
     };
   }, []);
 
-  return <div ref={ref} data-aaad="true" data-aa-adunit={adunit} />;
+  return (
+    <div
+      ref={ref}
+      data-aaad="true"
+      data-aa-adunit={_adunit}
+      data-aa-sizes={bidSizes}
+      style={{ height: '100%', width: '100%', overflow: 'hidden' }}
+    />
+  );
 }

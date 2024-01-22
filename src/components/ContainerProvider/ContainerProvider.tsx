@@ -1,6 +1,6 @@
 import { Box, BoxProps, createPolymorphicComponent, createStyles } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
-import { RefObject, createContext, forwardRef, useContext } from 'react';
+import { RefObject, createContext, forwardRef, useCallback, useContext } from 'react';
 import { create } from 'zustand';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 
@@ -67,3 +67,11 @@ const useStyles = createStyles<string, { supportsContainerQuery: boolean }>(
 );
 
 export const useContainerProviderStore = create<Record<string, ResizeObserverSize>>(() => ({}));
+
+export function useContainerWidth(containerNameOverride?: string) {
+  const { containerName } = useContainerContext();
+  const _containerName = containerNameOverride ?? containerName;
+  return useContainerProviderStore(
+    useCallback((state) => state[_containerName]?.inlineSize, [_containerName])
+  );
+}

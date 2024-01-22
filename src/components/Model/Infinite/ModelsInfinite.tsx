@@ -77,6 +77,7 @@ export function ModelsInfinite({
               maxItemHeight={600}
               render={AmbientModelCard}
               itemId={(data) => data.id}
+              adInterval={6}
             />
           )}
 

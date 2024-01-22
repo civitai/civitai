@@ -29,7 +29,7 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
       if (!isProd) {
         const script = document.createElement('script');
         script.type = 'text/javascript';
-        script.src = 'https://ascendeum.hbwrapper.com/asc.example.js';
+        script.src = 'https://ads.civitai.com/asc.civitai.js?testbids=true';
         script.onload = () => {
           setReady(true);
         };

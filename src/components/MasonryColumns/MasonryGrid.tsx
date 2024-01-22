@@ -44,10 +44,10 @@ export function MasonryGrid<TData>({
       {items.map((item, index) => {
         const key = itemId?.(item) ?? index;
         return (
-          <div key={key} id={key.toString()}>
+          <React.Fragment key={key}>
             {/* <RenderComponent index={index} data={item} width={columnWidth} height={columnWidth} /> */}
             {createRenderElement(RenderComponent, index, item, columnWidth)}
-          </div>
+          </React.Fragment>
         );
       })}
     </div>
@@ -75,16 +75,14 @@ const useStyles = createStyles(
   ) => ({
     empty: { height: columnWidth },
     grid: {
-      display: 'flex',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
+      display: 'grid',
+      gridTemplateColumns:
+        columnCount === 1
+          ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
+          : `repeat(${columnCount}, ${columnWidth}px)`,
       columnGap,
       rowGap,
-
-      '& > div': {
-        width: columnCount === 1 ? '100%' : columnWidth,
-        maxWidth: maxSingleColumnWidth,
-      },
+      justifyContent: 'center',
     },
   })
 );
