@@ -1187,6 +1187,8 @@ export const upsertModel = async ({
   tagsOnModels,
   userId,
   templateId,
+  bountyId,
+  meta,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
@@ -1195,6 +1197,13 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       select: { id: true, nsfw: true },
       data: {
         ...data,
+        meta:
+          bountyId || meta
+            ? {
+                ...((meta ?? {}) as MixedObject),
+                bountyId,
+              }
+            : undefined,
         userId,
         tagsOnModels: tagsOnModels
           ? {

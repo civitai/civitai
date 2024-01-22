@@ -68,7 +68,7 @@ import {
   useBountyEngagement,
   useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
-import { CurrencyConfig } from '~/server/common/constants';
+import { CurrencyConfig, constants } from '~/server/common/constants';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,
@@ -440,6 +440,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const minUnitAmount = bounty.minBenefactorUnitAmount;
   const [addToBountyModalOpen, setAddToBountyModalOpen] = useState<boolean>(false);
   const [addToBountyAmount, setAddToBountyAmount] = useState<number>(minUnitAmount);
+  const isOwner = bounty?.user && bounty?.user?.id === currentUser?.id;
 
   const { trackAction } = useTrackEvent();
 
@@ -621,6 +622,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const files = bounty.files ?? [];
   const filesCount = files.length;
+  const hasEntries = (entries?.length ?? 0) > 0;
 
   return (
     <Stack spacing="md">
@@ -791,6 +793,15 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           )}
         </Alert>
       )}
+      {bounty.complete &&
+        !loadingEntries &&
+        hasEntries &&
+        isOwner &&
+        constants.bounties.supportedBountyToModels.some((t) => bounty.type === t) && (
+          <Button component={NextLink} href={`/models/create?bountyId=${bounty.id}`}>
+            Create model from awarded entry
+          </Button>
+        )}
 
       <Accordion
         variant="separated"

@@ -49,6 +49,8 @@ export const modelFileMetadataSchema = z.object({
   numCaptions: z.number().nullish(),
   selectedEpochUrl: z.string().url().nullish(),
   trainingResults: trainingResultsSchema.nullish(),
+  bountyId: z.number().nullish(),
+  bountyEntryId: z.number().nullish(),
 });
 
 export type ModelFileInput = z.infer<typeof modelFileSchema>;
