@@ -267,7 +267,10 @@ export async function createBuzzTransaction({
 }
 
 export async function createBuzzTransactionMany(
-  transactions: (CreateBuzzTransactionInput & { fromAccountId: number })[]
+  transactions: (CreateBuzzTransactionInput & {
+    fromAccountId: number;
+    externalTransactionId: string;
+  })[]
 ) {
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
