@@ -67,6 +67,7 @@ export const getManagableTagsHandler = async () => {
         createdAt: true,
         fromTags: {
           select: {
+            type: true,
             fromTag: {
               select: {
                 id: true,
@@ -92,7 +93,7 @@ export const getManagableTagsHandler = async () => {
       imageCount: stats?.imageCountAllTime ?? 0,
       postCount: stats?.postCountAllTime ?? 0,
     },
-    tags: fromTags.map(({ fromTag }) => fromTag),
+    tags: fromTags.map((x) => ({ ...x.fromTag, relationship: x.type })),
   }));
 
   return results;

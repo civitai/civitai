@@ -1,8 +1,8 @@
-import { NsfwLevel, TagType } from '@prisma/client';
+import { NsfwLevel, TagsOnTagsType, TagType } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
@@ -11,7 +11,7 @@ const log = createLogger('system-cache', 'green');
 
 const SYSTEM_CACHE_EXPIRY = 60 * 60 * 4;
 export async function getModerationTags() {
-  const cachedTags = await redis.get(`system:moderation-tags-2`);
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.MODERATION_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
 
   log('getting moderation tags');
@@ -19,7 +19,7 @@ export async function getModerationTags() {
     where: { type: TagType.Moderation },
     select: { id: true, name: true, nsfw: true },
   });
-  await redis.set(`system:moderation-tags`, JSON.stringify(tags), {
+  await redis.set(REDIS_KEYS.SYSTEM.MODERATION_TAGS, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
@@ -27,12 +27,45 @@ export async function getModerationTags() {
   return tags;
 }
 
+export type TagRule = {
+  fromId: number;
+  toId: number;
+  fromTag: string;
+  toTag: string;
+  type: TagsOnTagsType;
+  createdAt: Date;
+};
+export async function getTagRules() {
+  const cached = await redis.get(REDIS_KEYS.SYSTEM.TAG_RULES);
+  if (cached) return JSON.parse(cached) as TagRule[];
+
+  log('getting tag rules');
+  const rules = await dbWrite.$queryRaw<TagRule[]>`
+    SELECT
+      "fromTagId" as "fromId",
+      "toTagId" as "toId",
+      f."name" as "fromTag",
+      t."name" as "toTag",
+      tot."createdAt"
+    FROM "TagsOnTags" tot
+    JOIN "Tag" f ON "fromTag"."id" = "TagsOnTags"."fromTagId"
+    JOIN "Tag" t ON "toTag"."id" = "TagsOnTags"."toTagId"
+    WHERE tot.type IN ('Replace', 'Append')
+  `;
+  await redis.set(REDIS_KEYS.SYSTEM.TAG_RULES, JSON.stringify(rules), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got tag rules');
+  return rules;
+}
+
 export async function getBlockedTags() {
-  const cachedTags = await redis.get(`system:blocked-tags`);
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
   const moderatedTags = await getModerationTags();
   const blockedTags = moderatedTags.filter((x) => x.nsfw === NsfwLevel.Blocked);
-  await redis.set(`system:blocked-tags`, JSON.stringify(blockedTags), {
+  await redis.set(REDIS_KEYS.SYSTEM.BLOCKED_TAGS, JSON.stringify(blockedTags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
   return blockedTags;
@@ -42,7 +75,7 @@ export async function getBlockedTags() {
 export async function getSystemHiddenTags(): Promise<
   { id: number; name: string; nsfw?: NsfwLevel }[]
 > {
-  const cachedTags = await redis.get(`system:hidden-tags-2`);
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HIDDEN_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw?: NsfwLevel }[];
 
   const moderation = await getModerationTags();
@@ -55,7 +88,7 @@ export async function getSystemHiddenTags(): Promise<
 
   const tags = uniqBy([...moderation, ...hiddenTagsOfHiddenTags.map((x) => x.toTag)], 'id');
 
-  await redis.set(`system:hidden-tags-2`, JSON.stringify(tags), {
+  await redis.set(REDIS_KEYS.SYSTEM.HIDDEN_TAGS, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
@@ -64,7 +97,7 @@ export async function getSystemHiddenTags(): Promise<
 }
 
 export async function getSystemTags() {
-  const cachedTags = await redis.get(`system:system-tags`);
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.SYSTEM_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
   log('getting system tags');
@@ -72,7 +105,7 @@ export async function getSystemTags() {
     where: { type: TagType.System },
     select: { id: true, name: true },
   });
-  await redis.set(`system:system-tags`, JSON.stringify(tags), {
+  await redis.set(REDIS_KEYS.SYSTEM.SYSTEM_TAGS, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
@@ -81,7 +114,7 @@ export async function getSystemTags() {
 }
 
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
-  const cachedPermissions = await redis.get(`system:permissions`);
+  const cachedPermissions = await redis.get(REDIS_KEYS.SYSTEM.PERMISSIONS);
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};
@@ -92,7 +125,7 @@ export async function addSystemPermission(permission: FeatureFlagKey, userIds: n
   const permissions = await getSystemPermissions();
   if (!permissions[permission]) permissions[permission] = [];
   permissions[permission] = [...new Set([...permissions[permission], ...userIds])];
-  await redis.set(`system:permissions`, JSON.stringify(permissions));
+  await redis.set(REDIS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
 }
 
 export async function removeSystemPermission(
@@ -106,7 +139,7 @@ export async function removeSystemPermission(
   permissions[permission] = permissions[permission].filter(
     (x) => !(userIds as number[]).includes(x)
   );
-  await redis.set(`system:permissions`, JSON.stringify(permissions));
+  await redis.set(REDIS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
 }
 
 const colorPriority = [
@@ -149,7 +182,7 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
 }
 
 export async function getTagsNeedingReview() {
-  const cachedTags = await redis.get(`system:tags-needing-review`);
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_NEEDING_REVIEW);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
   log('getting tags needing review');
@@ -158,7 +191,7 @@ export async function getTagsNeedingReview() {
     select: { id: true, name: true },
   });
 
-  await redis.set(`system:tags-needing-review`, JSON.stringify(tags), {
+  await redis.set(REDIS_KEYS.SYSTEM.TAGS_NEEDING_REVIEW, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
@@ -167,7 +200,7 @@ export async function getTagsNeedingReview() {
 }
 
 export async function getHomeExcludedTags() {
-  const cachedTags = await redis.get(`system:home-excluded-tags`);
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
   log('getting home excluded tags');
@@ -175,7 +208,7 @@ export async function getHomeExcludedTags() {
     where: { name: { in: ['1girl', 'anime', 'female', 'woman', 'clothing'] } },
     select: { id: true, name: true },
   });
-  await redis.set(`system:home-excluded-tags`, JSON.stringify(tags), {
+  await redis.set(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
@@ -184,9 +217,9 @@ export async function getHomeExcludedTags() {
 }
 
 export async function setLiveNow(isLive: boolean) {
-  await redis.set(`live-now`, isLive ? 'true' : 'false');
+  await redis.set(REDIS_KEYS.LIVE_NOW, isLive ? 'true' : 'false');
 }
 export async function getLiveNow() {
-  const cachedLiveNow = await redis.get(`live-now`);
+  const cachedLiveNow = await redis.get(REDIS_KEYS.LIVE_NOW);
   return cachedLiveNow === 'true';
 }
