@@ -220,6 +220,11 @@ export const updateUserById = async ({
   id: number;
   data: Prisma.UserUpdateInput;
 }) => {
+  if (data.email) {
+    const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
+    if (existingData?.email) delete data.email;
+  }
+
   const user = await dbWrite.user.update({ where: { id }, data });
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
