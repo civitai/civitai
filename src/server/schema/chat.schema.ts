@@ -52,3 +52,8 @@ export const isTypingInput = z.object({
   isTyping: z.boolean(),
 });
 export type isTypingOutput = IsTypingInput & { username: string };
+
+export type GetUnreadInput = z.infer<typeof getUnreadInput>;
+export const getUnreadInput = z.object({
+  grouped: z.boolean().optional().default(false),
+});

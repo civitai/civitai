@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
-import { IconSend, IconX } from '@tabler/icons-react';
+import { IconSend } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
@@ -33,6 +33,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGemoji from 'remark-gemoji';
 import remarkGfm from 'remark-gfm';
+import { ChatActions } from '~/components/Chat/ChatActions';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -54,7 +55,7 @@ const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 const useStyles = createStyles((theme) => ({
   chatMessage: {
     borderRadius: theme.spacing.xs,
-    padding: theme.spacing.xs,
+    padding: `${theme.spacing.xs / 2}px ${theme.spacing.xs}px`,
     width: 'max-content',
     maxWidth: '70%',
     whiteSpace: 'pre-line',
@@ -352,16 +353,19 @@ export function ExistingChat({
         ) : (
           <Group>
             {/* TODO limit this to one line, then expand */}
-            {/* TODO option to add users, maybe in an option icon next to X */}
-            {/*  TODO improve useravatar to show loading */}
+            {/* TODO improve useravatar to show loading */}
+            {/* TODO mark when a user is the owner, online status (later), blocked users, etc */}
             {otherMembers?.map((cm) => (
               <UserAvatar key={cm.userId} userId={cm.userId} size="sm" withUsername linkToProfile />
             ))}
           </Group>
         )}
-        <ActionIcon onClick={() => setOpened(false)}>
-          <IconX />
-        </ActionIcon>
+        <ChatActions
+          setOpened={setOpened}
+          setNewChat={setNewChat}
+          setExistingChat={setExistingChat}
+          chatObj={thisChat}
+        />
       </Group>
       <Divider />
       {!myMember ? (

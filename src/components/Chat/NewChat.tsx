@@ -1,6 +1,6 @@
-import { ActionIcon, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
+import { Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
 import React, { Dispatch, SetStateAction, useState } from 'react';
+import { ChatActions } from '~/components/Chat/ChatActions';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -65,38 +65,42 @@ export function NewChat({
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart">
         <Text>New Chat</Text>
-        <ActionIcon onClick={() => setOpened(false)}>
-          <IconX />
-        </ActionIcon>
+        <ChatActions
+          setOpened={setOpened}
+          setNewChat={setNewChat}
+          setExistingChat={setExistingChat}
+        />
       </Group>
-      <QuickSearchDropdown
-        supportedIndexes={['users']}
-        onItemSelected={(_entity, item) => {
-          const newUsers = [...selectedUsers, item as UserSearchIndexRecord];
-          // TODO make this a constant
-          if (newUsers.length > 9) {
-            showErrorNotification({
-              title: 'Maximum users reached',
-              error: { message: 'You can select up to 9 users' },
-              autoClose: false,
-            });
-            return;
+      <Box px="sm">
+        <QuickSearchDropdown
+          supportedIndexes={['users']}
+          onItemSelected={(_entity, item) => {
+            const newUsers = [...selectedUsers, item as UserSearchIndexRecord];
+            // TODO make this a constant
+            if (newUsers.length > 9) {
+              showErrorNotification({
+                title: 'Maximum users reached',
+                error: { message: 'You can select up to 9 users' },
+                autoClose: false,
+              });
+              return;
+            }
+            setSelectedUsers(newUsers);
+          }}
+          dropdownItemLimit={25}
+          showIndexSelect={false}
+          startingIndex="users"
+          placeholder="Select users"
+          filters={
+            selectedUsers.length > 0
+              ? selectedUsers
+                  .map((x) => `AND NOT id=${x.id}`)
+                  .join(' ')
+                  .slice(4)
+              : undefined
           }
-          setSelectedUsers(newUsers);
-        }}
-        dropdownItemLimit={25}
-        showIndexSelect={false}
-        startingIndex="users"
-        placeholder="Select users"
-        filters={
-          selectedUsers.length > 0
-            ? selectedUsers
-                .map((x) => `AND NOT id=${x.id}`)
-                .join(' ')
-                .slice(4)
-            : undefined
-        }
-      />
+        />
+      </Box>
       <Box p="sm" sx={{ flexGrow: 1 }}>
         {selectedUsers.length === 0 ? (
           <Center mt="md">

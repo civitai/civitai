@@ -1,5 +1,6 @@
 import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import dayjs from 'dayjs';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
@@ -11,6 +12,7 @@ import {
   CreateChatInput,
   CreateMessageInput,
   GetInfiniteMessagesInput,
+  GetUnreadInput,
   IsTypingInput,
   isTypingOutput,
   ModifyUserInput,
@@ -22,9 +24,9 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
-import { isDefined } from '~/utils/type-guards';
 
 const maxChats = 100;
+const maxChatsPerDay = 10;
 const maxUsersPerChat = 10;
 
 const singleChatSelect = {
@@ -119,10 +121,27 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
             // },
           },
         },
-        // TODO figure out how to get number of unread messages here
-        //  easily done with an aliased name
       },
     });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Get number of unread messages for user
+ */
+export const getUnreadMessagesForUserHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetUnreadInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { grouped } = input;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -181,6 +200,15 @@ export const createChatHandler = async ({
     // TODO need a way to archive/delete chats that will still let the users see messages
     if (totalForUser >= maxChats) {
       throw throwBadRequestError(`Cannot have more than ${maxChats} chats`);
+    }
+
+    // limit chats per day, resetting at beginning of each day (not rolling)
+    const totalTodayForUser = await dbWrite.chat.count({
+      where: { ownerId: userId, createdAt: { gte: dayjs().startOf('date').toDate() } },
+    });
+
+    if (totalTodayForUser >= maxChatsPerDay) {
+      throw throwBadRequestError(`Cannot create more than ${maxChatsPerDay} chats per day`);
     }
 
     const usersExist = await dbRead.user.count({
@@ -368,6 +396,15 @@ export const modifyUserHandler = async ({
 
     const { chatMemberId, status, ...rest } = input;
 
+    const definedValues = { status, ...rest };
+    const definedValuesLength = Object.values(definedValues).filter(
+      (val) => val !== undefined
+    ).length;
+    // we should only be setting exactly one variable at a time here
+    if (definedValuesLength !== 1) {
+      throw throwBadRequestError(`Too many fields being set.`);
+    }
+
     const existing = await dbWrite.chatMember.findFirst({
       where: { id: chatMemberId },
       select: {
@@ -390,16 +427,12 @@ export const modifyUserHandler = async ({
       throw throwBadRequestError(`Could not find chat member`);
     }
 
-    if (
-      status === ChatMemberStatus.Kicked ||
-      isDefined(rest.isMuted) ||
-      isDefined(rest.lastViewedMessageId)
-    ) {
+    if (status === ChatMemberStatus.Kicked) {
       // i guess owners can kick themselves out :/
       if (existing.chat.ownerId !== userId) {
         throw throwBadRequestError(`Cannot modify users for a chat you are not the owner of`);
       }
-    } else if (!!status) {
+    } else {
       if (userId !== existing.userId) {
         throw throwBadRequestError(`Cannot modify chat status for another user`);
       }
