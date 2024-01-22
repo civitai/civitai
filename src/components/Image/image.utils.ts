@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -72,7 +72,7 @@ export const useQueryImages = (
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
-  // const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     { ...filters },
     {
@@ -102,7 +102,7 @@ export const useQueryImages = (
     const arr = data?.pages.flatMap((x) => x.items) ?? [];
     const filtered = applyHiddenPreferences
       ? arr.filter((x) => {
-          if (x.user.id === currentUser?.id) return true;
+          if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
           if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
           if (hiddenImages.get(x.id) && !filters?.hidden) return false;
           if (hiddenUsers.get(x.user.id)) return false;

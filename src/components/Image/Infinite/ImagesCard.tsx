@@ -201,6 +201,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                       meta={image.meta}
                                       generationProcess={image.generationProcess ?? undefined}
                                       imageId={image.id}
+                                      mainResourceId={image.modelVersionId ?? undefined}
                                     >
                                       <ActionIcon variant="transparent" size="lg">
                                         <IconInfoCircle

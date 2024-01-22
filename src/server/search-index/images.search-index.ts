@@ -133,6 +133,7 @@ type ImageForSearchIndex = {
   index: number | null;
   scannedAt: Date | null;
   mimeType: string | null;
+  modelVersionId: number | null;
   baseModel?: string | null;
   user: {
     id: number;
@@ -227,6 +228,7 @@ const onFetchItemsToIndex = async ({
     i."type",
     i."metadata",
     i."userId",
+    p."modelVersionId",
     (
       SELECT mv."baseModel" FROM "ModelVersion" mv
       RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id

@@ -103,7 +103,8 @@ model User {
   customerId          String?               @unique
   subscriptionId      String?
   subscription        CustomerSubscription?
-  muted               Boolean?              @default(false)
+  mutedAt             DateTime? /// Updated via trigger
+  muted               Boolean               @default(false)
   bannedAt            DateTime?
   autoplayGifs        Boolean?              @default(true)
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
@@ -1249,12 +1250,19 @@ model Tag {
   @@unique([name])
 }
 
+enum TagsOnTagsType {
+  Parent
+  Replace
+  Append
+}
+
 model TagsOnTags {
   fromTagId Int
-  fromTag   Tag      @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
+  fromTag   Tag            @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
   toTagId   Int
-  toTag     Tag      @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  toTag     Tag            @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
+  type      TagsOnTagsType @default(Parent)
+  createdAt DateTime       @default(now())
 
   @@id([fromTagId, toTagId])
   @@index([toTagId], type: Hash)
@@ -1844,6 +1852,16 @@ model UserCosmetic {
   data       Json?
 
   @@id([userId, cosmeticId])
+}
+
+model BuzzClaim {
+  key                String    @id
+  title              String
+  description        String
+  transactionIdQuery String
+  amount             Int
+  availableStart     DateTime?
+  availableEnd       DateTime?
 }
 
 model Article {

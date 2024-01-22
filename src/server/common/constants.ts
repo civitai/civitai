@@ -1,4 +1,5 @@
 import {
+  BountyType,
   Currency,
   MetricTimeframe,
   ModelStatus,
@@ -202,6 +203,7 @@ export const constants = {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
+    supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
@@ -535,4 +537,7 @@ export const CacheTTL = {
 
 export const RECAPTCHA_ACTIONS = {
   STRIPE_TRANSACTION: 'STRIPE_TRANSACTION',
-};
+  COMPLETE_ONBOARDING: 'COMPLETE_ONBOARDING',
+} as const;
+
+export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;

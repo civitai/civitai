@@ -96,6 +96,7 @@ export const ShowcaseItemsInput = ({
     {
       enabled: sortedShowcaseItems.length > 0,
       keepPreviousData: true,
+      trpc: { context: { skipBatch: true } },
     }
   );
 

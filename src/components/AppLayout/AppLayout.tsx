@@ -12,6 +12,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
+import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 
 type AppLayoutProps = {
   innerLayout?:
@@ -83,6 +84,8 @@ export function AppLayout({
           <AppFooter fixed={false} />
         </ContainerProvider>
       </div>
+
+      <NewsletterDialog />
     </>
   );
 }

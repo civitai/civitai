@@ -60,28 +60,27 @@ export const buzzTransactionDetails = z
 
 export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 
+export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
+export const getBuzzTransactionResponse = z.object({
+  date: z.coerce.date(),
+  type: z
+    .any()
+    .transform((value) =>
+      parseInt(value) ? TransactionType.Tip : TransactionType[value as keyof typeof TransactionType]
+    ),
+  fromAccountId: z.coerce.number(),
+  toAccountId: z.coerce.number(),
+  fromAccountType: z.enum(buzzAccountTypes),
+  toAccountType: z.enum(buzzAccountTypes),
+  amount: z.coerce.number(),
+  description: z.coerce.string().nullish(),
+  details: buzzTransactionDetails.nullish(),
+});
+
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
 export const getUserBuzzTransactionsResponse = z.object({
   cursor: z.coerce.date().nullish(),
-  transactions: z
-    .object({
-      date: z.coerce.date(),
-      type: z
-        .any()
-        .transform((value) =>
-          parseInt(value)
-            ? TransactionType.Tip
-            : TransactionType[value as keyof typeof TransactionType]
-        ),
-      fromAccountId: z.coerce.number(),
-      toAccountId: z.coerce.number(),
-      fromAccountType: z.enum(buzzAccountTypes),
-      toAccountType: z.enum(buzzAccountTypes),
-      amount: z.coerce.number(),
-      description: z.coerce.string().nullish(),
-      details: buzzTransactionDetails.nullish(),
-    })
-    .array(),
+  transactions: getBuzzTransactionResponse.array(),
 });
 
 export const buzzTransactionSchema = z.object({

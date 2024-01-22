@@ -197,6 +197,7 @@ export function ModelVersionDetails({
 
   const archived = model.mode === ModelModifier.Archived;
 
+
   const modelDetails: DescriptionTableProps['items'] = [
     {
       label: 'Type',
@@ -326,6 +327,19 @@ export function ModelVersionDetails({
       ),
       visible: features.air,
     },
+    {
+      label: (
+        <Group spacing="xs">
+          <Text weight={500}>Bounty</Text>
+        </Group>
+      ),
+      value: (
+        <Text variant="link" component="a" href={`/bounties/${model.meta.bountyId as number}`}>
+          Go to bounty
+        </Text>
+      ),
+      visible: model.meta && model.meta.bountyId,
+    },
   ];
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
@@ -357,13 +371,13 @@ export function ModelVersionDetails({
         download
       >
         {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
         } (${formatKBytes(file.sizeKB)})`}
       </Menu.Item>
     ) : (
       <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
         {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
         } (${formatKBytes(file.sizeKB)})`}
       </Menu.Item>
     )

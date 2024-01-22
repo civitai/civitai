@@ -46,3 +46,22 @@ if (isProd) {
   redis = global.globalRedis;
   redisLegacy = global.globalRedisLegacy;
 }
+
+export const REDIS_KEYS = {
+  DOWNLOAD: {
+    COUNT: 'download:count',
+    LIMITS: 'download:limits',
+  },
+  TAG_IDS_FOR_IMAGES: 'tagIdsForImages',
+  COSMETICS: 'cosmetics',
+  PROFILE_PICTURES: 'profile-pictures',
+  BUZZ_EVENTS: 'buzz-events',
+  GENERATION: {
+    RESOURCE_DATA: 'generation:resource-data',
+    COUNT: 'generation:count',
+    LIMITS: 'generation:limits',
+  },
+  SYSTEM: {
+    FEATURES: 'system:features',
+  },
+} as const;

@@ -33,6 +33,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     {
       enabled: showcaseItems.length > 0 && inView,
       keepPreviousData: true,
+      trpc: { context: { skipBatch: true } },
     }
   );
   const {

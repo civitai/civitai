@@ -8,7 +8,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const schema = z.object({
-  key: z.string().refine((x) => featureFlagKeys.includes(x)),
+  key: z.string().refine((x) => featureFlagKeys.includes(x as FeatureFlagKey)),
   usernames: commaDelimitedStringArray(),
   revoke: z.coerce.boolean().optional(),
 });

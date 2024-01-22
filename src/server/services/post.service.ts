@@ -763,6 +763,7 @@ type PostImageRaw = {
   scannedAt: Date;
   needsReview: string | null;
   postId: number;
+  modelVersionId: number | null;
 };
 export const getPostsByCategory = async ({
   userId,
@@ -904,6 +905,7 @@ export const getPostsByCategory = async ({
           i."scannedAt",
           i."needsReview",
           i."postId",
+          p."modelVersionId",
           row_number() OVER (PARTITION BY i."postId" ORDER BY i."index") row_number
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"

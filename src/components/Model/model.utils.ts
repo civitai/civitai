@@ -4,7 +4,7 @@ import { useDeferredValue, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput, GetModelsByCategoryInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
@@ -109,6 +109,7 @@ export const useQueryModels = (
     },
     ...options,
   });
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
 
   const currentUser = useCurrentUser();
   const {
@@ -123,7 +124,8 @@ export const useQueryModels = (
     const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
     const filtered = arr
       .filter((x) => {
-        if (x.user.id === currentUser?.id) return true;
+        // TODO safe mode
+        if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
         if (hiddenUsers.get(x.user.id)) return false;
         if (hiddenModels.get(x.id) && !_filters.hidden) return false;
         for (const tag of x.tags) if (hiddenTags.get(tag)) return false;

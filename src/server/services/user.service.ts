@@ -57,8 +57,10 @@ import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { constants } from '~/server/common/constants';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
+import { removeEmpty } from '~/utils/object-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -222,6 +224,33 @@ export const updateUserById = async ({
 
   return user;
 };
+
+export async function setUserSetting(userId: number, settings: Record<string, unknown>) {
+  const toSet = removeEmpty(settings);
+  if (Object.keys(toSet).length) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "User" SET settings = COALESCE(settings,'{}') || '${JSON.stringify(toSet)}'::jsonb
+      WHERE id = ${userId}
+    `);
+  }
+
+  const toRemove = Object.entries(settings)
+    .filter(([, value]) => value === undefined)
+    .map(([key]) => `'${key}'`);
+  if (toRemove.length) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "User" SET settings = settings - ${toRemove.join(' - ')}}'
+      WHERE id = ${userId}
+    `);
+  }
+}
+
+export async function getUserSettings(userId: number) {
+  const settings = await dbWrite.$queryRaw<{ settings: Record<string, unknown> }[]>`
+    SELECT settings FROM "User" WHERE id = ${userId}
+  `;
+  return settings[0]?.settings ?? {};
+}
 
 export const acceptTOS = ({ id }: { id: number }) => {
   return dbWrite.user.update({
@@ -549,7 +578,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   });
   if (!user) return undefined;
 
-  const { subscription, profilePicture, profilePictureId, ...rest } = user;
+  const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
   const tier: string | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
@@ -694,7 +723,7 @@ type UserCosmeticLookup = {
 };
 export async function getCosmeticsForUsers(userIds: number[]) {
   const userCosmetics = await cachedObject<UserCosmeticLookup>({
-    key: 'cosmetics',
+    key: REDIS_KEYS.COSMETICS,
     idKey: 'userId',
     ids: userIds,
     lookupFn: async (ids) => {
@@ -719,12 +748,12 @@ export async function getCosmeticsForUsers(userIds: number[]) {
   return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
 }
 export async function deleteUserCosmeticCache(userId: number) {
-  await bustCachedArray('cosmetics', 'userId', userId);
+  await bustCachedArray(REDIS_KEYS.COSMETICS, 'userId', userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
   return await cachedObject<ProfileImage>({
-    key: 'profile-pictures',
+    key: REDIS_KEYS.PROFILE_PICTURES,
     idKey: 'userId',
     ids: userIds,
     lookupFn: async (ids) => {
@@ -751,7 +780,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
   });
 }
 export async function deleteUserProfilePictureCache(userId: number) {
-  await bustCachedArray('profile-pictures', 'userId', userId);
+  await bustCachedArray(REDIS_KEYS.PROFILE_PICTURES, 'userId', userId);
 }
 
 // #region [article engagement]

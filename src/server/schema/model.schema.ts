@@ -170,6 +170,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
   templateId: z.number().optional(),
+  bountyId: z.number().optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
@@ -216,6 +217,7 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
+  bountyId: number;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

@@ -1,7 +1,6 @@
 import { createStyles, useMantineTheme } from '@mantine/core';
 import React from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 
 export function BaseLayout({ children }: { children: React.ReactNode }) {
   const theme = useMantineTheme();
@@ -14,7 +13,6 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
       supportsContainerQuery={false}
     >
       {children}
-      <NewsletterDialog />
     </ContainerProvider>
   );
 }

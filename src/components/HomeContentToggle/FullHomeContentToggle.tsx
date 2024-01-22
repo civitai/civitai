@@ -10,6 +10,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
+  IconCalendar,
   IconCategory,
   IconClubs,
   IconFileText,
@@ -53,9 +54,9 @@ const homeOptions = {
     url: '/bounties',
     icon: <IconMoneybag />,
   },
-  clubs: {
-    url: '/clubs',
-    icon: <IconClubs />,
+  events: {
+    url: '/events',
+    icon: <IconCalendar />,
   },
 } as const;
 type HomeOptions = keyof typeof homeOptions;

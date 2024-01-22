@@ -47,7 +47,7 @@ import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterP
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { RecaptchaWidget } from '../components/Recaptcha/RecaptchaWidget';
+import { RecaptchaWidgetProvider } from '../components/Recaptcha/RecaptchaWidget';
 import { AscendeumAdsProvider } from '~/components/AscendeumAds/AscendeumAdsProvider';
 
 dayjs.extend(duration);
@@ -131,17 +131,18 @@ function MyApp(props: CustomAppProps) {
                           <CivitaiLinkProvider>
                             <NotificationsProvider zIndex={9999}>
                               <BrowserRouterProvider>
-                                <BaseLayout>
-                                  <CustomModalsProvider>
-                                    <RecaptchaWidget />
-                                    <TosProvider>
-                                      {getLayout(<Component {...pageProps} />)}
-                                    </TosProvider>
-                                    <StripeSetupSuccessProvider />
-                                    <DialogProvider />
-                                    <RoutedDialogProvider />
-                                  </CustomModalsProvider>
-                                </BaseLayout>
+                                <RecaptchaWidgetProvider>
+                                  <BaseLayout>
+                                    <CustomModalsProvider>
+                                      <TosProvider>
+                                        {getLayout(<Component {...pageProps} />)}
+                                      </TosProvider>
+                                      <StripeSetupSuccessProvider />
+                                      <DialogProvider />
+                                      <RoutedDialogProvider />
+                                    </CustomModalsProvider>
+                                  </BaseLayout>
+                                </RecaptchaWidgetProvider>
                               </BrowserRouterProvider>
                             </NotificationsProvider>
                           </CivitaiLinkProvider>
