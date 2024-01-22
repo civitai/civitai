@@ -1,4 +1,5 @@
 import { Box, useMantineTheme } from '@mantine/core';
+import { useRouter } from 'next/router';
 import React from 'react';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -7,6 +8,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { constants } from '~/server/common/constants';
 
 export function FeedLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const adStyle: React.CSSProperties = {
     position: 'sticky',
     top: '25%',
@@ -15,6 +17,8 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
   const theme = useMantineTheme();
   const maxColumnCount = 7;
   const xl = 2030;
+
+  const nsfw = router.pathname.includes('articles') ? true : undefined;
 
   return (
     <ScrollArea
@@ -32,6 +36,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           [xl]: '300x600',
         }}
         style={{ ...adStyle }}
+        nsfw={nsfw}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
@@ -48,6 +53,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
             [theme.breakpoints.md]: '728x90',
             [theme.breakpoints.lg]: '970x90',
           }}
+          nsfw={nsfw}
         />
         <MasonryContainer>{children}</MasonryContainer>
       </MasonryProvider>
@@ -58,6 +64,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           [xl]: '300x600',
         }}
         style={{ ...adStyle }}
+        nsfw={nsfw}
       />
     </ScrollArea>
   );

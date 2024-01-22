@@ -1,13 +1,11 @@
 import { Center, Paper, PaperProps, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
 import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/Ads/ads.utils';
 import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { BrowsingMode } from '~/server/common/enums';
 
 type AdContentProps<T extends AdUnitType> = {
   adunit: T;
@@ -28,16 +26,8 @@ export function AscendeumAd<T extends AdUnitType>({
   ...paperProps
 }: AdProps<T>) {
   const [ref, inView] = useInView({ rootMargin: '200%' });
-  const { ready, adsBlocked, canView } = useAscendeumAdsContext();
-  const _nsfw = useFiltersContext(
-    useCallback(
-      (state) => {
-        if (nsfw !== undefined) return nsfw;
-        else return state.browsingMode !== BrowsingMode.SFW;
-      },
-      [nsfw]
-    )
-  );
+  const { ready, adsBlocked, nsfw: globalNsfw } = useAscendeumAdsContext();
+  const _nsfw = nsfw ?? globalNsfw;
   const keys = useMemo(
     () =>
       Object.keys(sizes)
@@ -62,16 +52,18 @@ export function AscendeumAd<T extends AdUnitType>({
     }
   }, [containerWidth]);
 
-  if (!bidSizes || _nsfw || adsBlocked || !ready) return null;
+  if (!bidSizes || !ready) return null;
   const { width, height, stringSizes } = bidSizes;
-  const renderAd = ready && canView && inView;
-  const showAscendeumAd = renderAd && !_nsfw;
+  const showAscendeumAd = !adsBlocked && inView && !_nsfw;
+  const showAlternateAd = !adsBlocked && inView && nsfw;
 
   return (
-    <Paper ref={ref} component={Center} {...paperProps}>
-      {renderAd && (
+    <Paper ref={ref} component={Center} withBorder h={height} w={width} {...paperProps}>
+      {adsBlocked && <Text align="center">Please consider turning off adblock</Text>}
+      {showAscendeumAd && (
         <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
       )}
+      {showAlternateAd && <></>}
     </Paper>
   );
 }

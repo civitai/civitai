@@ -8,6 +8,7 @@ import {
   Popover,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -37,6 +38,7 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -46,6 +48,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function Home() {
+  const theme = useMantineTheme();
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
@@ -77,6 +80,15 @@ export default function Home() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer fluid sx={{ overflow: 'hidden' }}>
+          <AscendeumAd
+            adunit="Leaderboard_A"
+            style={{ margin: `0 auto ${theme.spacing.xs}px` }}
+            sizes={{
+              [0]: '300x100',
+              [theme.breakpoints.md]: '728x90',
+              [theme.breakpoints.lg]: '970x90',
+            }}
+          />
           <Group position="apart" noWrap>
             <FullHomeContentToggle />
             {user && (

@@ -58,7 +58,7 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div key={colIndex} className={classes.column}>
           {items.map(({ height, data }, index) => {
-            const key = data.type === 'data' ? itemId?.(data.data) ?? index : index;
+            const key = data.type === 'data' ? itemId?.(data.data) ?? index : `ad_${index}`;
             const showStaticItem = colIndex === 0 && index === 0 && staticItem;
 
             return (

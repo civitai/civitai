@@ -15,6 +15,8 @@ import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -124,3 +126,5 @@ export default function BountiesPage() {
     </>
   );
 }
+
+setPageOptions(BountiesPage, { innerLayout: FeedLayout });

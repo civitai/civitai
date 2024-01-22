@@ -121,12 +121,12 @@ function MyApp(props: CustomAppProps) {
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
         <FeatureFlagsProvider flags={flags}>
           <SignalProvider>
-            <AscendeumAdsProvider>
-              <CivitaiSessionProvider>
-                <CivitaiPosthogProvider>
-                  <CookiesProvider value={cookies}>
-                    <ReferralsProvider>
-                      <FiltersProvider value={filters}>
+            <CivitaiSessionProvider>
+              <CivitaiPosthogProvider>
+                <CookiesProvider value={cookies}>
+                  <ReferralsProvider>
+                    <FiltersProvider value={filters}>
+                      <AscendeumAdsProvider>
                         <HiddenPreferencesProvider>
                           <CivitaiLinkProvider>
                             <NotificationsProvider zIndex={9999}>
@@ -147,12 +147,12 @@ function MyApp(props: CustomAppProps) {
                             </NotificationsProvider>
                           </CivitaiLinkProvider>
                         </HiddenPreferencesProvider>
-                      </FiltersProvider>
-                    </ReferralsProvider>
-                  </CookiesProvider>
-                </CivitaiPosthogProvider>
-              </CivitaiSessionProvider>
-            </AscendeumAdsProvider>
+                      </AscendeumAdsProvider>
+                    </FiltersProvider>
+                  </ReferralsProvider>
+                </CookiesProvider>
+              </CivitaiPosthogProvider>
+            </CivitaiSessionProvider>
           </SignalProvider>
         </FeatureFlagsProvider>
       </SessionProvider>

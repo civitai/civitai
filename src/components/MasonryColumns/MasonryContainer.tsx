@@ -1,23 +1,12 @@
 import { createStyles, ContainerProps, Box } from '@mantine/core';
-import React, { CSSProperties, createContext, useContext } from 'react';
+import React, { CSSProperties } from 'react';
 import {
   MasonryContextState,
   useMasonryContext,
 } from '~/components/MasonryColumns/MasonryProvider';
 
 type MasonryContainerProps = Omit<ContainerProps, 'children'> & {
-  children: React.ReactNode | ((state: MasonryContainerState) => React.ReactNode);
-};
-type MasonryContainerState = MasonryContextState & {
-  columnCount: number;
-  // containerWidth: number;
-};
-
-const MasonryContainerContext = createContext<MasonryContainerState | null>(null);
-export const useMasonryContainerContext = () => {
-  const context = useContext(MasonryContainerContext);
-  if (!context) throw new Error('MasonryContainerProvider not in tree');
-  return context;
+  children: React.ReactNode | ((state: MasonryContextState) => React.ReactNode);
 };
 
 export function MasonryContainer({ children, ...containerProps }: MasonryContainerProps) {
@@ -42,9 +31,7 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}
         >
-          <MasonryContainerContext.Provider value={state}>
-            {typeof children === 'function' ? children(state) : children}
-          </MasonryContainerContext.Provider>
+          {typeof children === 'function' ? children(state) : children}
         </div>
       </div>
     </Box>

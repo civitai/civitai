@@ -9,10 +9,8 @@ type AdMatrix = {
   indices: number[];
   lastIndex: number;
 };
-const adMatrix: AdMatrix = {
-  indices: [],
-  lastIndex: 0,
-};
+
+const adMatrices: Record<string, AdMatrix> = {};
 
 export function createAdFeed<T>({
   data,
@@ -24,6 +22,9 @@ export function createAdFeed<T>({
   adsBlocked?: boolean;
 }): AdFeed<T> {
   if (adsBlocked || !interval) return data.map((data) => ({ type: 'data', data }));
+  const key = interval.join('_');
+  adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
+  const adMatrix = adMatrices[key];
 
   const [lower, upper] = interval;
   while (adMatrix.lastIndex < data.length) {

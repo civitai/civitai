@@ -2,11 +2,11 @@ import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { createAdFeed } from '~/components/Ads/ads.utils';
 import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
 type Props<TData> = {
   data: TData[];
@@ -23,15 +23,12 @@ export function MasonryGrid<TData>({
   empty = null,
   adInterval,
 }: Props<TData>) {
-  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } =
-    useMasonryContainerContext();
+  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
-    columnCount,
     columnWidth,
     columnGap,
     rowGap,
-    maxSingleColumnWidth,
   });
 
   const { adsBlocked } = useAscendeumAdsContext();
@@ -40,10 +37,25 @@ export function MasonryGrid<TData>({
     [columnCount, data]
   );
 
+  console.log({
+    gridTemplateColumns:
+      columnCount === 1
+        ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
+        : `repeat(${columnCount}, ${columnWidth}px)`,
+  });
+
   return items.length ? (
-    <div className={classes.grid}>
+    <div
+      className={classes.grid}
+      style={{
+        gridTemplateColumns:
+          columnCount === 1
+            ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
+            : `repeat(${columnCount}, ${columnWidth}px)`,
+      }}
+    >
       {items.map((item, index) => {
-        const key = item.type === 'data' ? itemId?.(item.data) ?? index : index;
+        const key = item.type === 'data' ? itemId?.(item.data) ?? index : `ad_${index}`;
         return (
           <React.Fragment key={key}>
             {item.type === 'data' &&
@@ -68,26 +80,18 @@ const useStyles = createStyles(
   (
     theme,
     {
-      columnCount,
       columnWidth,
       columnGap,
       rowGap,
-      maxSingleColumnWidth,
     }: {
-      columnCount: number;
       columnWidth: number;
       columnGap: number;
       rowGap: number;
-      maxSingleColumnWidth?: number;
     }
   ) => ({
     empty: { height: columnWidth },
     grid: {
       display: 'grid',
-      gridTemplateColumns:
-        columnCount === 1
-          ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
-          : `repeat(${columnCount}, ${columnWidth}px)`,
       columnGap,
       rowGap,
       justifyContent: 'center',
