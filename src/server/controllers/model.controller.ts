@@ -1328,6 +1328,11 @@ export async function getModelTemplateFieldsHandler({
   }
 }
 
+const bountyTypeModelTypeMap: Record<string, ModelType> = {
+  [BountyType.ModelCreation]: ModelType.Checkpoint,
+  [BountyType.LoraCreation]: ModelType.LORA,
+};
+
 export async function getModelTemplateFromBountyHandler({
   input,
   ctx,
@@ -1354,11 +1359,6 @@ export async function getModelTemplateFromBountyHandler({
 
     const meta = bounty.details as BountyDetailsSchema;
     const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
-
-    const bountyTypeModelTypeMap: Record<string, ModelType> = {
-      [BountyType.ModelCreation]: ModelType.Checkpoint,
-      [BountyType.LoraCreation]: ModelType.LORA,
-    };
 
     return {
       nsfw: bounty.nsfw,

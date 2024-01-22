@@ -27,6 +27,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { QS } from '../../../utils/qs';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -106,11 +107,7 @@ const CreateSteps = ({
             model={model ?? templateFields ?? bountyFields}
             onSubmit={({ id }) => {
               if (editing) return goNext();
-              router.replace(
-                `/models/${id}/wizard?step=2${templateId ? `&templateId=${templateId}` : ''}${
-                  bountyId ? `&bountyId=${bountyId}` : ''
-                }`
-              );
+              router.replace(getWizardUrl({ id, step: 2, templateId, bountyId }));
             }}
           >
             {({ loading }) => (
@@ -288,9 +285,8 @@ function getWizardUrl({
   bountyId?: number;
 }) {
   if (!id) return '';
-  return `/models/${id}/wizard?step=${step}${templateId ? `&templateId=${templateId}` : ''}${
-    bountyId ? `&bountyId=${bountyId}` : ''
-  }`;
+  const query = QS.stringify({ templateId, bountyId, step });
+  return `/models/${id}/wizard?${query}`;
 }
 
 export function ModelWizard() {
