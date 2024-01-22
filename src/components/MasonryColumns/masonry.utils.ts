@@ -29,7 +29,7 @@ export function useMasonryColumns<TData>(
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustDimensions?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
-  adInterval?: number
+  adInterval?: number[]
 ) {
   const { adsBlocked } = useAscendeumAdsContext();
 
@@ -61,7 +61,7 @@ const getMasonryColumns = <TData>(
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustHeight?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
-  adInterval?: number,
+  adInterval?: number[],
   adsBlocked?: boolean
 ): ColumnItem<AdFeedItem<TData>>[][] => {
   // Track the height of each column.

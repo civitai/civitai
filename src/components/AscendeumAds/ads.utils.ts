@@ -1,7 +1,18 @@
+import { getRandomInt } from '~/utils/number-helpers';
+
 export type AdFeedItem<T> =
   | { type: 'data'; data: T }
   | { type: 'ad'; data: { adunit: AdUnitType; height: number; width: number } };
 export type AdFeed<T> = AdFeedItem<T>[];
+
+type AdMatrix = {
+  indices: number[];
+  lastIndex: number;
+};
+const adMatrix: AdMatrix = {
+  indices: [],
+  lastIndex: 0,
+};
 
 export function createAdFeed<T>({
   data,
@@ -9,15 +20,25 @@ export function createAdFeed<T>({
   adsBlocked,
 }: {
   data: T[];
-  interval?: number;
+  interval?: number[];
   adsBlocked?: boolean;
 }): AdFeed<T> {
   if (adsBlocked || !interval) return data.map((data) => ({ type: 'data', data }));
 
+  const [lower, upper] = interval;
+  while (adMatrix.lastIndex < data.length) {
+    const min = adMatrix.lastIndex + lower + 1;
+    const max = adMatrix.lastIndex + upper;
+    const index = getRandomInt(min, max);
+    adMatrix.indices.push(index);
+    adMatrix.lastIndex = index;
+  }
+
   return data.reduce<AdFeed<T>>((acc, item, i) => {
-    acc.push({ type: 'data', data: item });
-    if ((i + 1) % interval === 0)
+    if (adMatrix.indices.includes(i)) {
       acc.push({ type: 'ad', data: { adunit: 'Dynamic_InContent', height: 250, width: 300 } });
+    }
+    acc.push({ type: 'data', data: item });
     return acc;
   }, []);
 }
