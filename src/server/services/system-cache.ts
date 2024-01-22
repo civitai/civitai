@@ -48,8 +48,8 @@ export async function getTagRules() {
       t."name" as "toTag",
       tot."createdAt"
     FROM "TagsOnTags" tot
-    JOIN "Tag" f ON "fromTag"."id" = "TagsOnTags"."fromTagId"
-    JOIN "Tag" t ON "toTag"."id" = "TagsOnTags"."toTagId"
+    JOIN "Tag" f ON f."id" = tot."fromTagId"
+    JOIN "Tag" t ON t."id" = tot."toTagId"
     WHERE tot.type IN ('Replace', 'Append')
   `;
   await redis.set(REDIS_KEYS.SYSTEM.TAG_RULES, JSON.stringify(rules), {
