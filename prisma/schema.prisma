@@ -1874,6 +1874,7 @@ model Article {
   title        String
   content      String
   cover        String
+  coverId      Int?
   publishedAt  DateTime?
   userId       Int
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)

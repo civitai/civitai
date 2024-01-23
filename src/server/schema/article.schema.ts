@@ -9,6 +9,7 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { clubResourceSchema } from '~/server/schema/club.schema';
+import { imageSchema } from '~/server/schema/image.schema';
 
 export const userPreferencesForArticlesSchema = z.object({
   excludedIds: z.array(z.number()).optional(),
@@ -70,6 +71,7 @@ export const upsertArticleInput = z.object({
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
   cover: z.string().min(1),
+  coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),

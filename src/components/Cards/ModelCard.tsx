@@ -6,8 +6,6 @@ import {
   Menu,
   Stack,
   Text,
-  ThemeIcon,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -20,7 +18,6 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
-  IconClubs,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';

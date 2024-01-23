@@ -47,6 +47,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { getPrivateEntityAccessForUser } from './user-cache.service';
+import { deleteImageById } from '~/server/services/image.service';
 
 type ArticleRaw = {
   id: number;
@@ -616,14 +617,26 @@ export const upsertArticle = async ({
   userId,
   tags,
   attachments,
+  coverImage,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
+    // create image entity to be attached to article
+    let coverId: number;
+    if (coverImage) {
+      const image = await dbWrite.image.create({
+        data: { ...coverImage, meta: coverImage.meta as any, userId, resources: undefined },
+        select: { id: true },
+      });
+      coverId = image.id;
+    }
+
     if (!id) {
       const result = await dbWrite.$transaction(async (tx) => {
         const article = await tx.article.create({
           data: {
             ...data,
+            coverId,
             userId,
             tags: tags
               ? {
@@ -659,11 +672,18 @@ export const upsertArticle = async ({
       return result;
     }
 
+    const article = await dbWrite.article.findUnique({
+      where: { id },
+      select: { id: true, cover: true, coverId: true },
+    });
+    if (!article) throw throwNotFoundError();
+
     const result = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.update({
+      const updated = await tx.article.update({
         where: { id },
         data: {
           ...data,
+          coverId,
           tags: tags
             ? {
                 deleteMany: {
@@ -690,7 +710,7 @@ export const upsertArticle = async ({
             : undefined,
         },
       });
-      if (!article) return null;
+      if (!updated) return null;
 
       if (attachments) {
         // Delete any attachments that were removed.
@@ -708,14 +728,19 @@ export const upsertArticle = async ({
             .filter((x) => !x.id)
             .map((attachment) => ({
               ...attachment,
-              entityId: article.id,
+              entityId: updated.id,
               entityType: 'Article',
             })),
         });
       }
 
-      return article;
+      return updated;
     });
+
+    // remove old cover image
+    if (article.cover !== data.cover && article.coverId) {
+      await deleteImageById({ id: article.coverId });
+    }
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -749,10 +774,11 @@ export const upsertArticle = async ({
 export const deleteArticleById = async ({ id }: GetByIdInput) => {
   try {
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id } });
+      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
       if (!article) return null;
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
+      if (article.coverId) await deleteImageById({ id: article.coverId });
 
       return article;
     });

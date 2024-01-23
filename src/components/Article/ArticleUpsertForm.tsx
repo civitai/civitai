@@ -19,7 +19,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -85,15 +85,7 @@ export function ArticleUpsertForm({ article }: Props) {
   const { hasClubs } = useQueryUserContributingClubs();
 
   const defaultCategory = result.success ? result.data.category : -1;
-  const defaultValues: z.infer<typeof schema> = {
-    ...article,
-    title: article?.title ?? '',
-    content: article?.content ?? '',
-    categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-    tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-    cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
-  };
-  const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const form = useForm({ schema, shouldUnregister: false });
   const clearStorage = useFormStorage({
     schema,
     form,
@@ -108,6 +100,20 @@ export function ArticleUpsertForm({ article }: Props) {
       title,
     }),
   });
+
+  useEffect(() => {
+    const result = schema.safeParse({
+      ...article,
+      title: article?.title ?? '',
+      content: article?.content ?? '',
+      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+      cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
+    });
+    if (result.success) form.reset({ ...result.data });
+    else console.error(result.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article]);
 
   const [publishing, setPublishing] = useState(false);
 
@@ -132,7 +138,13 @@ export function ArticleUpsertForm({ article }: Props) {
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
     upsertArticleMutation.mutate(
-      { ...rest, tags, publishedAt: publishing ? new Date() : null, cover: cover.url },
+      {
+        ...rest,
+        tags,
+        publishedAt: publishing ? new Date() : null,
+        cover: cover.url,
+        coverImage: cover.url !== article?.cover ? cover : undefined,
+      },
       {
         async onSuccess(result) {
           await router.push(`/articles/${result.id}`);
