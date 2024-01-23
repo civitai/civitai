@@ -59,7 +59,7 @@ export function AscendeumAd<T extends AdUnitType>({
   const showAlternateAd = !adsBlocked && inView && _nsfw;
 
   return (
-    <Paper ref={ref} component={Center} withBorder h={height} w={width} {...paperProps}>
+    <Paper ref={ref} component={Center} h={height} w={width} {...paperProps}>
       {adsBlocked && (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
