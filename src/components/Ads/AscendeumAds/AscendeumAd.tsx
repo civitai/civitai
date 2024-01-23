@@ -6,6 +6,7 @@ import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/Ads/ads.uti
 import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
+import Image from 'next/image';
 
 type AdContentProps<T extends AdUnitType> = {
   adunit: T;
@@ -55,15 +56,32 @@ export function AscendeumAd<T extends AdUnitType>({
   if (!bidSizes || !ready) return null;
   const { width, height, stringSizes } = bidSizes;
   const showAscendeumAd = !adsBlocked && inView && !_nsfw;
-  const showAlternateAd = !adsBlocked && inView && nsfw;
+  const showAlternateAd = !adsBlocked && inView && _nsfw;
 
   return (
     <Paper ref={ref} component={Center} withBorder h={height} w={width} {...paperProps}>
-      {adsBlocked && <Text align="center">Please consider turning off adblock</Text>}
+      {adsBlocked && (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <Image
+            src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
+            alt="Please support civitai and creators by disabling adblock"
+            width={width}
+            height={height}
+          />
+        </>
+      )}
       {showAscendeumAd && (
         <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
       )}
-      {showAlternateAd && <></>}
+      {showAlternateAd && (
+        <Image
+          src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+          alt="Please become a member to support creators today"
+          width={width}
+          height={height}
+        />
+      )}
     </Paper>
   );
 }

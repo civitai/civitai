@@ -316,7 +316,6 @@ export function ImageDetail() {
                   nsfw={image.nsfw !== 'None'}
                   sizes={{ [0]: '300x250' }}
                 />
-                <AdsterraAd style={{ margin: '0 auto' }} />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

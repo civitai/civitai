@@ -206,6 +206,7 @@ export default function ImagesAsPostsInfinite({
     >
       <Box
         py="xl"
+        px="md"
         sx={(theme) => ({
           display: 'flex',
           justifyContent: 'space-around',
