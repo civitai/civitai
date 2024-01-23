@@ -33,6 +33,7 @@ import { uniqBy } from 'lodash-es';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { TimeoutLoader } from './TimeoutLoader';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -174,7 +175,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
-            nothingFound="Nothing found"
+            nothingFound={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>
       </Accordion.Item>
