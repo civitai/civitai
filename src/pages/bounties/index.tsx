@@ -1,19 +1,14 @@
-import { Group, SegmentedControl, Stack, Title, createStyles } from '@mantine/core';
+import { SegmentedControl, Stack, Title, createStyles } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
-import { SortFilter } from '~/components/Filters';
-import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { constants } from '~/server/common/constants';
-import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -44,6 +39,7 @@ const useStyles = createStyles((theme) => ({
   root: {
     backgroundColor: 'transparent',
     gap: 8,
+    padding: 0,
 
     [containerQuery.smallerThan('sm')]: {
       overflow: 'auto hidden',
@@ -51,19 +47,10 @@ const useStyles = createStyles((theme) => ({
     },
   },
   control: { border: 'none !important' },
-
-  filtersWrapper: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-
-      '> *': { flexGrow: 1 },
-    },
-  },
 }));
 
 export default function BountiesPage() {
   const { classes } = useStyles();
-  const features = useFeatureFlags();
   const router = useRouter();
   const query = router.query;
   const engagement = constants.bounties.engagementTypes.find(
@@ -89,20 +76,13 @@ export default function BountiesPage() {
         <MasonryContainer fluid>
           <Stack spacing="xs">
             <Announcements
-              sx={(theme) => ({
+              sx={() => ({
                 marginBottom: -35,
                 [containerQuery.smallerThan('md')]: {
                   marginBottom: -5,
                 },
               })}
             />
-            <Group position="apart" spacing={8}>
-              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
-                <SortFilter type="bounties" variant="button" />
-                <BountyFiltersDropdown />
-              </Group>
-            </Group>
             {query.engagement && (
               <Stack spacing="xl" align="flex-start">
                 <Title>My Bounties</Title>

@@ -6,7 +6,6 @@ import { QS } from '~/utils/qs';
 import { SetStateAction, useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const filterSchema = z.object({
   types: z
@@ -35,7 +34,6 @@ type FilterState = z.infer<typeof filterSchema>;
 // DEPRECATED
 export function useModelFilters() {
   const router = useRouter();
-  const features = useFeatureFlags();
 
   const filters = useMemo(() => {
     const queryProps = Object.entries(router.query) as [string, any][]; //eslint-disable-line
@@ -53,20 +51,19 @@ export function useModelFilters() {
 
   const setFilters = useCallback(
     (value: SetStateAction<FilterState>) => {
-      const homePath = features.alternateHome ? '/models' : '/';
       const newParams = typeof value === 'function' ? value(router.query) : value;
       const result = filterSchema.safeParse(newParams);
       if (!result.success) throw new Error('Invalid filter value');
       const stringified = QS.stringify(result.data);
       if (!!stringified.length) {
         localStorage.setItem('defaultModelFilter', stringified);
-        router.push(`${homePath}?${stringified}`);
+        router.push(`/models?${stringified}`);
       } else {
         localStorage.removeItem('defaultModelFilter');
-        router.replace(homePath, undefined, { shallow: true });
+        router.replace('/models', undefined, { shallow: true });
       }
     },
-    [features.alternateHome, router]
+    [router]
   );
 
   return { filters, setFilters };

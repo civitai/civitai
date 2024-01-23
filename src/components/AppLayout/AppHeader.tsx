@@ -69,7 +69,7 @@ import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/Br
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
+import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
@@ -371,7 +371,7 @@ export function AppHeader({
         ),
       },
       {
-        href: `${features.alternateHome ? '/models' : '/'}?favorites=true`,
+        href: '/models?favorites=true',
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -436,7 +436,7 @@ export function AppHeader({
         ),
       },
       {
-        href: `${features.alternateHome ? '/models' : '/'}?hidden=true`,
+        href: '/models?hidden=true',
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -493,7 +493,6 @@ export function AppHeader({
     [
       currentUser,
       features.imageTrainingResults,
-      features.alternateHome,
       features.bounties,
       features.buzz,
       features.clubs,

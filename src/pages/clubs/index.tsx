@@ -1,26 +1,15 @@
-import {
-  Group,
-  SegmentedControl,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-  createStyles,
-} from '@mantine/core';
+import { Group, Stack, ThemeIcon, Title, createStyles } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
-import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
 import { SortFilter } from '~/components/Filters';
-import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
 import { FeatureIntroduction } from '../../components/FeatureIntroduction/FeatureIntroduction';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -79,7 +68,6 @@ const useStyles = createStyles((theme) => ({
 
 export default function ClubsPage() {
   const { classes } = useStyles();
-  const features = useFeatureFlags();
   const router = useRouter();
   const query = router.query;
 
@@ -87,9 +75,9 @@ export default function ClubsPage() {
     (type) => type === ((query.engagement as string) ?? '').toLowerCase()
   );
 
-  const handleEngagementChange = (value: string) => {
-    router.push({ query: { engagement: value } }, '/clubs', { shallow: true });
-  };
+  // const handleEngagementChange = (value: string) => {
+  //   router.push({ query: { engagement: value } }, '/clubs', { shallow: true });
+  // };
 
   return (
     <>
@@ -114,7 +102,7 @@ export default function ClubsPage() {
               })}
             />
             <Group position="apart" spacing={8}>
-              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+              <HomeContentToggle />
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 {!query.engagement && (
                   <FeatureIntroduction

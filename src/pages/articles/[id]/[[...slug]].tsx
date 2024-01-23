@@ -41,8 +41,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
-import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -53,10 +52,6 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import {
-  ClubRequirementIndicator,
-  ClubRequirementNotice,
-} from '~/components/Club/ClubRequirementNotice';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),

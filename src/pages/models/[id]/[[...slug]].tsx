@@ -84,7 +84,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -171,7 +170,7 @@ export default function ModelDetailsV2({
 
   const router = useRouter();
   const { classes, theme } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
 
@@ -240,8 +239,7 @@ export default function ModelDetailsV2({
     async onSuccess(_, { permanently }) {
       await queryUtils.model.getAll.invalidate();
       if (!permanently) await queryUtils.model.getById.invalidate({ id });
-      if (!isModerator || permanently)
-        await router.replace(features.alternateHome ? '/models' : '/');
+      if (!isModerator || permanently) await router.replace('/models');
 
       showSuccessNotification({
         title: 'Successfully deleted the model',
@@ -430,7 +428,7 @@ export default function ModelDetailsV2({
         shallow: true,
       });
     }
-  }, [publishedVersions, selectedVersion, modelVersionId]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId]);
 
   if (loadingModel) return <PageLoader />;
 

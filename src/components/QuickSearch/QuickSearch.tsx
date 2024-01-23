@@ -7,13 +7,12 @@ import {
   Code,
   UnstyledButtonProps,
 } from '@mantine/core';
-import { useDebouncedValue, useElementSize } from '@mantine/hooks';
+import { useDebouncedValue } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
 import { debounce } from 'lodash-es';
 import Router from 'next/router';
-import { useMemo } from 'react';
 import {
   Configure,
   Index,
@@ -34,7 +33,6 @@ import {
 import { env } from '~/env/client.mjs';
 import { ActionsWrapper } from './ActionsWrapper';
 import { CustomSpotlightAction } from './CustomSpotlightAction';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const searchClient = instantMeiliSearch(
@@ -103,7 +101,6 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
 function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.ReactNode }) {
   const { scopedResults } = useInstantSearch();
   const { refine, query } = useSearchBox(props);
-  const features = useFeatureFlags();
 
   const rawQuery = useSearchStore((state) => state.query);
   const setRawQuery = useSearchStore((state) => state.setQuery);
@@ -142,10 +139,7 @@ function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.
       group: 'search',
       title: 'Keyword search',
       description: 'Search for models using the keywords you entered',
-      onTrigger: () =>
-        Router.push(
-          `${features.alternateHome ? '/models' : '/'}?query=${encodeURIComponent(query)}&view=feed`
-        ),
+      onTrigger: () => Router.push(`/models?query=${encodeURIComponent(query)}&view=feed`),
     });
   }
 
@@ -215,7 +209,7 @@ function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.
         filter={(_, actions) => actions}
         shortcut={['mod + k', '/']}
         limit={20}
-        styles={(theme) => ({
+        styles={() => ({
           inner: { paddingTop: 'var(--mantine-header-height,50px)' },
           spotlight: { overflow: 'hidden' },
           actions: {

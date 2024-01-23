@@ -1,18 +1,19 @@
-import { Button, createStyles, Stack, Text, Title, Center, ThemeIcon } from '@mantine/core';
+import { Button, Center, Stack, Text, ThemeIcon, Title, createStyles } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
-
 import React from 'react';
+
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
-import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
+import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
+import { SubNav } from './SubNav';
 
 type AppLayoutProps = {
   innerLayout?: (page: React.ReactNode) => React.ReactNode;
@@ -54,7 +55,10 @@ export function AppLayout({
   const content = innerLayout ? (
     innerLayout(children)
   ) : withScrollArea ? (
-    <ScrollArea>{children}</ScrollArea>
+    <ScrollArea style={{ paddingTop: 0 }}>
+      <SubNav />
+      {children}
+    </ScrollArea>
   ) : (
     children
   );
