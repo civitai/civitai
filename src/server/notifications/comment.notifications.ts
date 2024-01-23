@@ -3,7 +3,6 @@ import { removeEmpty } from '../../utils/object-helpers';
 import { QS } from '../../utils/qs';
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
-  console.log(details);
   const queryString = QS.stringify(
     removeEmpty({
       highlight: details.commentId,
