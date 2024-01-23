@@ -1,6 +1,7 @@
 import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
+  UserSettingsSchema,
 } from './../schema/user.schema';
 import {
   throwBadRequestError,
@@ -219,13 +220,18 @@ export const updateUserById = async ({
   id: number;
   data: Prisma.UserUpdateInput;
 }) => {
+  if (data.email) {
+    const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
+    if (existingData?.email) delete data.email;
+  }
+
   const user = await dbWrite.user.update({ where: { id }, data });
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   return user;
 };
 
-export async function setUserSetting(userId: number, settings: Record<string, unknown>) {
+export async function setUserSetting(userId: number, settings: UserSettingsSchema) {
   const toSet = removeEmpty(settings);
   if (Object.keys(toSet).length) {
     await dbWrite.$executeRawUnsafe(`
@@ -246,7 +252,7 @@ export async function setUserSetting(userId: number, settings: Record<string, un
 }
 
 export async function getUserSettings(userId: number) {
-  const settings = await dbWrite.$queryRaw<{ settings: Record<string, unknown> }[]>`
+  const settings = await dbWrite.$queryRaw<{ settings: UserSettingsSchema }[]>`
     SELECT settings FROM "User" WHERE id = ${userId}
   `;
   return settings[0]?.settings ?? {};

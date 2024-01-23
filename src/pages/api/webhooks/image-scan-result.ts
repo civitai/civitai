@@ -27,6 +27,7 @@ import { updateImageTagIdsForImages } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages } from '~/server/common/enums';
 import { scanJobsSchema } from '~/server/schema/image.schema';
+import { getTagRules } from '~/server/services/system-cache';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -173,6 +174,20 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     source
   );
   tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
+
+  // Apply Tag Rules
+  const tagRules = await getTagRules();
+  for (const rule of tagRules) {
+    const match = tags.find((x) => x.tag === rule.toTag);
+    if (!match) continue;
+
+    if (rule.type === 'Replace') {
+      match.id = rule.fromId;
+      match.tag = rule.fromTag;
+    } else if (rule.type === 'Append') {
+      tags.push({ id: rule.fromId, tag: rule.fromTag, confidence: 70, source: TagSource.Computed });
+    }
+  }
 
   // Get Ids for tags
   const tagsToFind: string[] = [];

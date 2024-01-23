@@ -1,3 +1,4 @@
+import { TagsOnTagsType, TagType } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
@@ -56,43 +57,47 @@ export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; 
   }
 };
 
+type ManageableTagRow = {
+  id: number;
+  name: string;
+  type: TagType;
+  target: string[];
+  createdAt: Date;
+  modelCount: number;
+  imageCount: number;
+  postCount: number;
+};
+type TagRelationshipRow = { fromId: number; toId: number; type: TagsOnTagsType; fromName: string };
 export const getManagableTagsHandler = async () => {
-  const results = (
-    (await dbRead.tag.findMany({
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        target: true,
-        createdAt: true,
-        fromTags: {
-          select: {
-            fromTag: {
-              select: {
-                id: true,
-                name: true,
-                type: true,
-              },
-            },
-          },
-        },
-        stats: {
-          select: {
-            modelCountAllTime: true,
-            imageCountAllTime: true,
-            postCountAllTime: true,
-          },
-        },
-      },
-    })) ?? []
-  ).map(({ fromTags, stats, ...tag }) => ({
-    ...tag,
-    stats: {
-      modelCount: stats?.modelCountAllTime ?? 0,
-      imageCount: stats?.imageCountAllTime ?? 0,
-      postCount: stats?.postCountAllTime ?? 0,
-    },
-    tags: fromTags.map(({ fromTag }) => fromTag),
+  const resultsRaw = await dbRead.$queryRaw<ManageableTagRow[]>`
+    SELECT
+      t.id,
+      t.name,
+      t.type,
+      t.target,
+      t."createdAt",
+      COALESCE(m."modelCount", 0) AS "modelCount",
+      COALESCE(m."imageCount", 0) AS "imageCount",
+      COALESCE(m."postCount", 0) AS "postCount"
+    FROM "Tag" t
+    LEFT JOIN "TagMetric" m ON m."tagId" = t.id AND m.timeframe = 'AllTime'::"MetricTimeframe"
+  `;
+
+  const relationships = await dbRead.$queryRaw<TagRelationshipRow[]>`
+    SELECT
+      "fromTagId" as "fromId",
+      "toTagId" as "toId",
+      r.type,
+      t.name AS "fromName"
+    FROM "TagsOnTags" r
+    JOIN "Tag" t ON t.id = r."fromTagId"
+  `;
+
+  const results = resultsRaw.map((x) => ({
+    ...x,
+    tags: relationships
+      .filter((r) => r.toId === x.id)
+      .map((r) => ({ id: r.toId, name: r.fromName, relationship: r.type })),
   }));
 
   return results;

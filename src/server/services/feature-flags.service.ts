@@ -81,6 +81,7 @@ const featureFlags = createFeatureFlags({
   csamReports: ['granted'],
   clubs: ['public'],
   createClubs: ['mod', 'granted'],
+  moderateTags: ['granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
