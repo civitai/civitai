@@ -13,7 +13,7 @@ import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
-import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { useDialogStore, useStackingContext } from '~/components/Dialog/dialogStore';
 import { v4 as uuidv4 } from 'uuid';
 import { AdsterraAd } from '~/components/Ads/Adsterra/AdsterraAd';
 import { NextLink } from '@mantine/next';
@@ -38,7 +38,7 @@ export function AscendeumAd<T extends AdUnitType>({
   showAdvertisementText,
   ...boxProps
 }: AdProps<T>) {
-  const stackingContextRef = useRef(useDialogStore.getState().dialogs.length);
+  const stackingContextRef = useRef(useStackingContext.getState().stackingContext.length);
 
   const [ref, inView] = useInView({ rootMargin: '200%' });
   const { ready, adsBlocked, nsfw: globalNsfw, subscriber } = useAscendeumAdsContext();
@@ -67,8 +67,8 @@ export function AscendeumAd<T extends AdUnitType>({
     }
   }, [containerWidth]);
 
-  const showCurrentStack = useDialogStore(
-    (state) => state.dialogs.length === stackingContextRef.current
+  const showCurrentStack = useStackingContext(
+    (state) => state.stackingContext.length === stackingContextRef.current
   );
 
   if (!bidSizes || subscriber) return null;

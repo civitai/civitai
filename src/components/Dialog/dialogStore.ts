@@ -56,6 +56,12 @@ export const useDialogStore = create<DialogStore>()(
   }))
 );
 
+export const useStackingContext = create<{
+  stackingContext: number[];
+}>(() => ({
+  stackingContext: [],
+}));
+
 const { dialogs, ...dialogStore } = useDialogStore.getState();
 
 export { dialogStore };
