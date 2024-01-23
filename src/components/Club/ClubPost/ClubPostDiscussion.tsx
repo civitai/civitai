@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider, Alert } from '@mantine/core';
-import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '../club.utils';
 
@@ -11,7 +11,7 @@ type Props = {
 
 export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
   return (
-    <CommentsProvider
+    <RootThreadProvider
       entityType="clubPost"
       entityId={clubPostId}
       limit={3}
@@ -51,6 +51,6 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
           </Stack>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }

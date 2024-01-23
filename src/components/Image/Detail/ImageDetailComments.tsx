@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 
 type ImageDetailCommentsProps = {
   imageId: number;
@@ -8,7 +8,7 @@ type ImageDetailCommentsProps = {
 
 export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProps) {
   return (
-    <CommentsProvider
+    <RootThreadProvider
       entityType="image"
       entityId={imageId}
       badges={[{ userId, label: 'op', color: 'violet' }]}
@@ -44,6 +44,6 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
           </Stack>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }

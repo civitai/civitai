@@ -3,12 +3,12 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   return {
     model: `/models/${threadParentId}?dialog=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
-    image: `/images/${threadParentId}?highlight=${details.commentId}`,
-    post: `/posts/${threadParentId}?highlight=${details.commentId}#comments`,
-    article: `/articles/${threadParentId}?highlight=${details.commentId}#comments`,
-    review: `/reviews/${threadParentId}?highlight=${details.commentId}`,
-    bounty: `/bounties/${threadParentId}?highlight=${details.commentId}#comments`,
-    bountyEntry: `/bounties/entries/${threadParentId}?highlight=${details.commentId}#comments`,
+    image: `/images/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}`,
+    post: `/posts/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
+    article: `/articles/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
+    review: `/reviews/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}`,
+    bounty: `/bounties/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
+    bountyEntry: `/bounties/entries/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;

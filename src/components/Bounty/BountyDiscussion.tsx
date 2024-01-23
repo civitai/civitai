@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
-import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 
 type Props = {
   bountyId: number;
@@ -8,7 +8,7 @@ type Props = {
 
 export function BountyDiscussion({ bountyId, userId }: Props) {
   return (
-    <CommentsProvider
+    <RootThreadProvider
       entityType="bounty"
       entityId={bountyId}
       limit={20}
@@ -48,6 +48,6 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
           </Stack>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }

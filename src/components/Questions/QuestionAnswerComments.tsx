@@ -1,5 +1,5 @@
 import { Box, createStyles, Group, Text, Center, Loader } from '@mantine/core';
-import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 
 type Props = CommentConnectorInput & {
@@ -17,7 +17,7 @@ export function QuestionAnswerComments({
   const { classes } = useStyles();
 
   return (
-    <CommentsProvider
+    <RootThreadProvider
       limit={limit}
       initialCount={initialCount}
       badges={[{ label: 'op', color: 'violet', userId }]}
@@ -53,7 +53,7 @@ export function QuestionAnswerComments({
           </Box>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }
 

@@ -1,9 +1,9 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 
 export function ResourceReviewComments({ reviewId, userId }: { reviewId: number; userId: number }) {
   return (
-    <CommentsProvider
+    <RootThreadProvider
       entityType="review"
       entityId={reviewId}
       limit={3}
@@ -39,6 +39,6 @@ export function ResourceReviewComments({ reviewId, userId }: { reviewId: number;
           </Stack>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }

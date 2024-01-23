@@ -9,6 +9,7 @@ import {
   CommentConnectorInput,
 } from './../schema/commentv2.schema';
 import { CommentV2Sort } from '~/server/common/enums';
+import { constants } from '../common/constants';
 
 export const upsertComment = async ({
   userId,
@@ -112,7 +113,6 @@ export const getCommentsThreadDetails = async ({
   entityId,
   entityType,
   hidden = false,
-  depth = 3,
 }: CommentConnectorInput) => {
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -129,8 +129,6 @@ export const getCommentsThreadDetails = async ({
   });
 
   if (!mainThread) throw throwNotFoundError();
-
-  if (depth === 0) return mainThread;
 
   type ChildThread = {
     id: number;
@@ -162,7 +160,7 @@ export const getCommentsThreadDetails = async ({
     FROM generation g
     JOIN "Thread" "parentThread"
     ON g."parentThreadId" = "parentThread".id
-    WHERE "generationNumber" <= ${depth}
+    WHERE "generationNumber" < ${constants.comments.maxDepth}
     ORDER BY "generationNumber";
   `;
 
@@ -186,7 +184,11 @@ export const getCommentsThreadDetails = async ({
 
   return {
     ...mainThread,
-    children,
+    children: children.map((c) => ({
+      ...c,
+      // So that we can keep typescript happy when setting the data on TRPC.
+      children: [],
+    })),
   };
 };
 

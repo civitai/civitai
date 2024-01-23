@@ -251,6 +251,9 @@ export const constants = {
     coverImageHeight: 400,
     coverImageWidth: 1600,
   },
+  comments: {
+    maxDepth: 4,
+  },
   altTruncateLength: 125,
   system: {
     user: { id: -1, username: 'civitai' },

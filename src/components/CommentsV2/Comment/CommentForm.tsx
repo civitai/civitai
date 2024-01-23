@@ -8,7 +8,11 @@ import produce from 'immer';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { IconLock } from '@tabler/icons-react';
-import { useCommentsContext, useNewCommentStore } from '~/components/CommentsV2/CommentsProvider';
+import {
+  useCommentsContext,
+  useNewCommentStore,
+  useRootThreadContext,
+} from '~/components/CommentsV2/CommentsProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 
 /*
@@ -34,13 +38,12 @@ export const CommentForm = ({
   replyToCommentId?: number;
 }) => {
   const { classes } = useStyles();
+  const { expanded, toggleExpanded } = useRootThreadContext();
   const {
     entityId: contextEntityId,
     entityType: contextEntityType,
     isMuted,
     data,
-    expanded,
-    toggleExpanded,
     parentThreadId,
   } = useCommentsContext();
 
@@ -76,6 +79,8 @@ export const CommentForm = ({
     async onSuccess(response, request) {
       // if it has an id, just set the data with state
       if (request.id) {
+        // Response is minimally different but key components remain the same so any is used.
+        queryUtils.commentv2.getSingle.setData({ id: request.id }, response as any);
         queryUtils.commentv2.getThreadDetails.setData(
           { entityType, entityId },
           produce((old) => {

@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { useCommentsContext } from '../CommentsProvider';
+import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
@@ -37,8 +37,8 @@ import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import { useMutateComment } from '../commentv2.utils';
-import { ModelDiscussionComments } from '../../Model/Discussion/ModelDiscussionComments';
 import { CommentReplies } from '../CommentReplies';
+import { constants } from '../../../server/common/constants';
 
 type Store = {
   id?: number;
@@ -51,6 +51,8 @@ const useStore = create<Store>((set) => ({
 
 type CommentProps = Omit<GroupProps, 'children'> & {
   comment: InfiniteCommentResults['comments'][0];
+  viewOnly?: boolean;
+  highlight?: boolean;
   resourceOwnerId?: number;
 };
 
@@ -62,11 +64,17 @@ export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProp
   );
 }
 
-export function CommentContent({ comment, ...groupProps }: CommentProps) {
-  const { entityId, entityType, highlighted, expanded, toggleExpanded } = useCommentsContext();
+export function CommentContent({
+  comment,
+  viewOnly,
+  highlight: highlightProp,
+  ...groupProps
+}: CommentProps) {
+  const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
+  const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
 
-  const { classes, cx } = useStyles();
+  const { classes, cx } = useCommentStyles();
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
@@ -95,7 +103,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
       {...groupProps}
       spacing="sm"
       className={cx(groupProps.className, {
-        [classes.highlightedComment]: isHighlighted,
+        [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
       <UserAvatar user={comment.user} size="md" linkToProfile />
@@ -114,7 +122,6 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
             <Text color="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
-            ({comment.threadId})
           </Group>
 
           {/* CONTROLS */}
@@ -191,7 +198,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
               {/* COMMENT INTERACTION */}
               <Group spacing={4}>
                 <CommentReactions comment={comment} />
-                {canReply && (
+                {canReply && !viewOnly && (
                   <Button
                     variant="subtle"
                     size="xs"
@@ -205,12 +212,18 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
                     </Group>
                   </Button>
                 )}
-                {replyCount > 0 && (
+                {replyCount > 0 && !viewOnly && (
                   <Button
                     variant="subtle"
                     size="xs"
                     radius="xl"
-                    onClick={() => toggleExpanded(comment.id)}
+                    onClick={() => {
+                      if ((level ?? 0) >= constants.comments.maxDepth) {
+                        setRootThread('comment', comment.id);
+                      } else {
+                        toggleExpanded(comment.id);
+                      }
+                    }}
                     compact
                   >
                     {isExpanded ? 'Hide' : 'Show'}{' '}
@@ -233,21 +246,19 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
             />
           </Box>
         )}
-        {isExpanded && (
-          <Stack mt="md" style={{ borderLeft: '5px solid rgba(0,0,0,0.15)', paddingLeft: 8 }}>
-            <CommentReplies commentId={comment.id} userId={comment.user.id} />
-          </Stack>
-        )}
+        {isExpanded && <CommentReplies commentId={comment.id} userId={comment.user.id} />}
       </Stack>
     </Group>
   );
 }
 
-const useStyles = createStyles((theme) => ({
+export const useCommentStyles = createStyles((theme) => ({
   highlightedComment: {
     background: theme.fn.rgba(theme.colors.blue[5], 0.2),
     margin: `-${theme.spacing.xs}px`,
     padding: `${theme.spacing.xs}px`,
     borderRadius: theme.radius.sm,
   },
+  replyInset: { borderLeft: '5px solid rgba(0,0,0,0.15)', paddingLeft: 8 },
+  rootCommentReplyInset: { borderLeft: '5px solid rgba(0,0,0,0.15)', paddingLeft: 46 },
 }));

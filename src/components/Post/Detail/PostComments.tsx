@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 type PostCommentsProps = {
@@ -17,7 +17,7 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
   const hasAccess = access?.hasAccess;
 
   return (
-    <CommentsProvider
+    <RootThreadProvider
       entityType="post"
       entityId={postId}
       limit={3}
@@ -54,6 +54,6 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
           </Stack>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }
