@@ -1,13 +1,15 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
-import { isProd } from '~/env/other';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { useGenerationStore } from '~/store/generation.store';
+import { isProd } from '~/env/other';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const AscendeumAdsContext = createContext<{
   ready: boolean;
   adsBlocked: boolean;
   nsfw: boolean;
+  subscriber: boolean;
 } | null>(null);
 
 export function useAscendeumAdsContext() {
@@ -18,18 +20,20 @@ export function useAscendeumAdsContext() {
 export function AscendeumAdsProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [adsBlocked, setAdsBlocked] = useState(false);
+  const currentUser = useCurrentUser();
+  const subscriber = !!currentUser?.subscriptionId;
 
   const readyRef = useRef(false);
   useEffect(() => {
-    if (!readyRef.current) {
+    if (!readyRef.current && !subscriber) {
       readyRef.current = true;
 
+      // if (isProd) {
       checkAdsBlocked((blocked) => {
         setAdsBlocked(blocked);
         if (blocked) setReady(true);
       });
 
-      // if (isProd) {
       const script = document.createElement('script');
       script.type = 'text/javascript';
       script.src = 'https://ads.civitai.com/asc.civitai.js';
@@ -37,27 +41,23 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
         setReady(true);
       };
       document.body.appendChild(script);
-      // }
+      // } else setAdsBlocked(true);
     }
-  }, []);
+  }, [subscriber]);
 
-  const canView = useGenerationStore(({ view, opened }) => {
-    if (!opened) return true;
-    else return view === 'generate';
+  // keep track of generation panel views that are considered nsfw
+  const nsfwOverride = useGenerationStore(({ view, opened }) => {
+    if (!opened) return;
+    else if (view === 'queue' || view === 'feed') return true;
   });
 
+  // derived value from browsingMode and nsfwOverride
   const nsfw = useFiltersContext(
-    useCallback(
-      (state) => {
-        if (!canView) return true;
-        else return state.browsingMode !== BrowsingMode.SFW;
-      },
-      [canView]
-    )
+    useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
   );
 
   return (
-    <AscendeumAdsContext.Provider value={{ ready, adsBlocked, nsfw }}>
+    <AscendeumAdsContext.Provider value={{ ready, adsBlocked, nsfw, subscriber }}>
       {children}
     </AscendeumAdsContext.Provider>
   );

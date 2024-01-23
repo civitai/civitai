@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
 import { getRandomInt } from '~/utils/number-helpers';
 
 export type AdFeedItem<T> =
@@ -12,16 +14,44 @@ type AdMatrix = {
 
 const adMatrices: Record<string, AdMatrix> = {};
 
+export function useCreateAdFeed<T>({ data, interval }: { data: T[]; interval?: number[] }) {
+  const { subscriber } = useAscendeumAdsContext();
+
+  return useMemo(() => {
+    if (subscriber || !interval) return data.map((data) => ({ type: 'data', data }));
+    const key = interval.join('_');
+    adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
+    const adMatrix = adMatrices[key];
+
+    const [lower, upper] = interval;
+    while (adMatrix.lastIndex < data.length) {
+      const min = adMatrix.lastIndex + lower + 1;
+      const max = adMatrix.lastIndex + upper;
+      const index = getRandomInt(min, max);
+      adMatrix.indices.push(index);
+      adMatrix.lastIndex = index;
+    }
+
+    return data.reduce<AdFeed<T>>((acc, item, i) => {
+      if (adMatrix.indices.includes(i)) {
+        acc.push({ type: 'ad', data: { adunit: 'Dynamic_InContent', height: 250, width: 300 } });
+      }
+      acc.push({ type: 'data', data: item });
+      return acc;
+    }, []);
+  }, [subscriber, data]);
+}
+
 export function createAdFeed<T>({
   data,
   interval,
-  adsBlocked,
+  subscriber,
 }: {
   data: T[];
   interval?: number[];
-  adsBlocked?: boolean;
+  subscriber?: boolean;
 }): AdFeed<T> {
-  if (adsBlocked || !interval) return data.map((data) => ({ type: 'data', data }));
+  if (subscriber || !interval) return data.map((data) => ({ type: 'data', data }));
   const key = interval.join('_');
   adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
   const adMatrix = adMatrices[key];
@@ -72,6 +102,14 @@ const adunits = {
 export const adsterraSizes = ['300x250', '728x90', '160x600'] as const;
 export const adsterraSizeMap = {
   '300x250': ['300x100', '300x250'],
-  '728x90': ['728x90', '970x90'],
+  '728x90': ['728x90', '970x90', '970x250'],
   '160x600': ['160x600', '300x600'],
-} as const;
+};
+export const adsterraAdSizeIdMap = {
+  '300x250': 'cc4a2e648e7b1e739697da2e01bd806c',
+  '728x90': '7ee748b62d78221dca7581833380d99f',
+  '160x600': '73f599948b7a8ec86f222c10c6bf6291',
+};
+export const getAdsterraSize = (size: string): (typeof adsterraSizes)[0] | undefined => {
+  return Object.entries(adsterraSizeMap).find(([key, sizes]) => sizes.includes(size))?.[0] as any;
+};

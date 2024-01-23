@@ -2,13 +2,21 @@ import { BoxProps, Center, Paper, Stack, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
-import { AdUnitType, AdUnitBidSizes, AdUnitSize } from '~/components/Ads/ads.utils';
+import {
+  AdUnitType,
+  AdUnitBidSizes,
+  AdUnitSize,
+  adsterraSizeMap,
+  getAdsterraSize,
+} from '~/components/Ads/ads.utils';
 import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { v4 as uuidv4 } from 'uuid';
+import { AdsterraAd } from '~/components/Ads/Adsterra/AdsterraAd';
+import { NextLink } from '@mantine/next';
 
 type AdContentProps<T extends AdUnitType> = {
   adunit: T;
@@ -33,7 +41,7 @@ export function AscendeumAd<T extends AdUnitType>({
   const stackingContextRef = useRef(useDialogStore.getState().dialogs.length);
 
   const [ref, inView] = useInView({ rootMargin: '200%' });
-  const { ready, adsBlocked, nsfw: globalNsfw } = useAscendeumAdsContext();
+  const { ready, adsBlocked, nsfw: globalNsfw, subscriber } = useAscendeumAdsContext();
   const _nsfw = nsfw ?? globalNsfw;
   const keys = useMemo(
     () =>
@@ -63,10 +71,12 @@ export function AscendeumAd<T extends AdUnitType>({
     (state) => state.dialogs.length === stackingContextRef.current
   );
 
-  if (!bidSizes || !ready) return null;
+  if (!bidSizes || subscriber) return null;
   const { width, height, stringSizes } = bidSizes;
-  const showAscendeumAd = !adsBlocked && inView && !_nsfw;
-  const showAlternateAd = !adsBlocked && inView && _nsfw;
+  const _ready = ready && !adsBlocked && inView;
+  const showAscendeumAd = _ready && !_nsfw;
+  const showAlternateAd = _ready && _nsfw;
+  // const adsterraSize = showAlternateAd ? getAdsterraSize(`${width}x${height}`) : undefined;
 
   const content = (
     <Paper
@@ -90,12 +100,24 @@ export function AscendeumAd<T extends AdUnitType>({
             <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
           )}
           {showAlternateAd && (
-            <Image
-              src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
-              alt="Please become a member to support creators today"
-              width={width}
-              height={height}
-            />
+            // (adsterraSize ? (
+            //   <AdsterraAd size={adsterraSize} />
+            // ) : (
+            //   <Image
+            //     src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+            //     alt="Please become a member to support creators today"
+            //     width={width}
+            //     height={height}
+            //   />
+            // ))}
+            <NextLink href="/pricing">
+              <Image
+                src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+                alt="Please become a member to support creators today"
+                width={width}
+                height={height}
+              />
+            </NextLink>
           )}
         </>
       )}

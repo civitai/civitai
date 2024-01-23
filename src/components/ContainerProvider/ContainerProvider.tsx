@@ -1,6 +1,6 @@
 import { Box, BoxProps, createPolymorphicComponent, createStyles } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
-import { RefObject, createContext, forwardRef, useCallback, useContext } from 'react';
+import { RefObject, createContext, forwardRef, useCallback, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 
@@ -23,9 +23,13 @@ type ContainerProviderProps = BoxProps & {
 
 const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
   ({ children, containerName, supportsContainerQuery = true, ...props }, ref) => {
-    const innerRef = useResizeObserver((entry) => {
+    const innerRef = useResizeObserver<HTMLDivElement>((entry) => {
       useContainerProviderStore.setState(() => ({ [containerName]: entry.contentBoxSize[0] }));
     });
+    // useEffect(() => {
+    //   const clientWidth = innerRef.current?.clientWidth;
+    //   if (clientWidth) useContainerProviderStore.setState(() => ({ [containerName]: clientWidth }));
+    // }, []);
     const mergedRef = useMergedRef(innerRef, ref);
     const { classes, cx } = useStyles({ supportsContainerQuery });
 

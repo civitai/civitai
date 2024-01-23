@@ -31,7 +31,7 @@ export function useMasonryColumns<TData>(
   maxItemHeight?: number,
   adInterval?: number[]
 ) {
-  const { adsBlocked } = useAscendeumAdsContext();
+  const { subscriber } = useAscendeumAdsContext();
 
   return useMemo(
     () =>
@@ -43,9 +43,9 @@ export function useMasonryColumns<TData>(
         adjustDimensions,
         maxItemHeight,
         adInterval,
-        adsBlocked
+        subscriber
       ),
-      [data, columnWidth, columnCount, maxItemHeight, adInterval, adsBlocked] // eslint-disable-line
+      [data, columnWidth, columnCount, maxItemHeight, adInterval, subscriber] // eslint-disable-line
   );
 }
 
@@ -62,13 +62,13 @@ const getMasonryColumns = <TData>(
   adjustHeight?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
   adInterval?: number[],
-  adsBlocked?: boolean
+  subscriber?: boolean
 ): ColumnItem<AdFeedItem<TData>>[][] => {
   // Track the height of each column.
   // Layout algorithm below always inserts into the shortest column.
   if (columnCount === 0) return [];
 
-  const feed = createAdFeed({ data, interval: adInterval, adsBlocked });
+  const feed = createAdFeed({ data, interval: adInterval, subscriber });
 
   const columnHeights: number[] = Array(columnCount).fill(0);
   const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array(columnCount).fill([]);
