@@ -97,7 +97,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                   spacing="xl"
                   className={activeComment ? classes.rootCommentReplyInset : undefined}
                 >
-                  <CreateComment />
+                  <CreateComment replyTo={activeComment?.user ?? undefined} />
                   {data?.map((comment) => (
                     <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                   ))}

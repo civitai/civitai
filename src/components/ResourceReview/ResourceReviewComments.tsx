@@ -1,7 +1,14 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import {
+  RootThreadProvider,
+  CreateComment,
+  Comment,
+  useCommentStyles,
+} from '~/components/CommentsV2';
+import { ReturnToRootThread } from '../CommentsV2/ReturnToRootThread';
 
 export function ResourceReviewComments({ reviewId, userId }: { reviewId: number; userId: number }) {
+  const { classes } = useCommentStyles();
   return (
     <RootThreadProvider
       entityType="review"
@@ -9,33 +16,45 @@ export function ResourceReviewComments({ reviewId, userId }: { reviewId: number;
       limit={3}
       badges={[{ userId, label: 'op', color: 'violet' }]}
     >
-      {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
+      {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
             <Loader variant="bars" />
           </Center>
         ) : (
           <Stack>
-            <CreateComment />
-            {data?.map((comment) => (
-              <Comment key={comment.id} comment={comment} />
-            ))}
-            {!!remaining && !showMore && (
-              <Divider
-                label={
-                  <Group spacing="xs" align="center">
-                    <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
-                      Show {remaining} More
-                    </Text>
-                  </Group>
-                }
-                labelPosition="center"
-                variant="dashed"
-              />
+            <ReturnToRootThread />
+            {activeComment && (
+              <Stack spacing="xl">
+                <Divider />
+                <Text size="sm" color="dimmed">
+                  Viewing thread for
+                </Text>
+                <Comment comment={activeComment} viewOnly />
+              </Stack>
             )}
-            {created.map((comment) => (
-              <Comment key={comment.id} comment={comment} />
-            ))}
+            <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
+              <CreateComment key={activeComment?.id} replyTo={activeComment?.user ?? undefined} />
+              {data?.map((comment) => (
+                <Comment key={comment.id} comment={comment} />
+              ))}
+              {!!remaining && !showMore && (
+                <Divider
+                  label={
+                    <Group spacing="xs" align="center">
+                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                        Show {remaining} More
+                      </Text>
+                    </Group>
+                  }
+                  labelPosition="center"
+                  variant="dashed"
+                />
+              )}
+              {created.map((comment) => (
+                <Comment key={comment.id} comment={comment} />
+              ))}
+            </Stack>
           </Stack>
         )
       }

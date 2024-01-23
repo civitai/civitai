@@ -68,12 +68,36 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               ELSE 'comment'
             END,
+             'commentParentId', COALESCE(
+                t."imageId",
+                t."modelId",
+                t."postId",
+                t."questionId",
+                t."answerId",
+                t."reviewId",
+                t."articleId",
+                t."bountyId",
+                t."bountyEntryId",
+                t."commentId"
+             ),
+             'commentParentType', CASE
+                WHEN t."imageId" IS NOT NULL THEN 'image'
+                WHEN t."modelId" IS NOT NULL THEN 'model'
+                WHEN t."postId" IS NOT NULL THEN 'post'
+                WHEN t."questionId" IS NOT NULL THEN 'question'
+                WHEN t."answerId" IS NOT NULL THEN 'answer'
+                WHEN t."reviewId" IS NOT NULL THEN 'review'
+                WHEN t."articleId" IS NOT NULL THEN 'article'
+                WHEN t."bountyId" IS NOT NULL THEN 'bounty'
+                WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                ELSE 'comment'
+              END,
             'username', u.username
           ) "details"
         FROM "CommentV2" c
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId"
-        LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
+        LEFT JOIN "Thread" root ON root.id = t."rootThreadId" 
         WHERE (c."createdAt" > '${lastSent}')
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...

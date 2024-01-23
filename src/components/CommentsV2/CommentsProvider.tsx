@@ -1,6 +1,6 @@
 import { MantineColor } from '@mantine/core';
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
@@ -71,6 +71,7 @@ export function RootThreadProvider({
   hidden,
   ...props
 }: Props) {
+  const router = useRouter();
   const [entityType, setEntityType] = useState(initialEntityType);
   const [entityId, setEntityId] = useState(initialEntityId);
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
@@ -79,6 +80,8 @@ export function RootThreadProvider({
   const setExpanded = useNewCommentStore((state) => state.setExpanded);
   const utils = trpc.useContext();
   const isInitialThread = entityId === initialEntityId && entityType === initialEntityType;
+  const queryType = router.query.commentParentType as CommentConnectorInput['entityType'];
+  const queryId = parseNumericString(router.query.commentParentId);
 
   const { data: activeComment, isLoading } = trpc.commentv2.getSingle.useQuery(
     {
@@ -125,6 +128,13 @@ export function RootThreadProvider({
       },
     }
   );
+
+  useEffect(() => {
+    if (queryType && queryId) {
+      setEntityType(queryType);
+      setEntityId(queryId);
+    }
+  }, [queryType, queryId]);
 
   return (
     <RootThreadCtx.Provider

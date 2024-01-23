@@ -36,7 +36,6 @@ export const upsertComment = async ({
             [`${entityType}Id`]: entityId,
             parentThreadId: parentThread?.id ?? parentThreadId,
             rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? parentThreadId,
-            depth: parentThread?.depth ? parentThread.depth + 1 : 0,
           },
           select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
         });

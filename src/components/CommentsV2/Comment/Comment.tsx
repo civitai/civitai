@@ -93,7 +93,7 @@ export function CommentContent({
   }, [isHighlighted, comment.id]);
 
   const replyCount = comment?.childThread?._count?.comments ?? 0;
-  const isExpanded = expanded.includes(comment.id);
+  const isExpanded = !viewOnly && expanded.includes(comment.id);
 
   return (
     <Group

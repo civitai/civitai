@@ -1,14 +1,26 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { removeEmpty } from '../../utils/object-helpers';
+import { QS } from '../../utils/qs';
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
+  console.log(details);
+  const queryString = QS.stringify(
+    removeEmpty({
+      highlight: details.commentId,
+      commentParentType: details.commentParentType,
+      commentParentId: details.commentParentId,
+      threadId: details.threadId,
+    })
+  );
+
   return {
-    model: `/models/${threadParentId}?dialog=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
-    image: `/images/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}`,
-    post: `/posts/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
-    article: `/articles/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
-    review: `/reviews/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}`,
-    bounty: `/bounties/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
-    bountyEntry: `/bounties/entries/${threadParentId}?highlight=${details.commentId}&threadId=${details.threadId}#comments`,
+    model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,
+    image: `/images/${threadParentId}?${queryString}`,
+    post: `/posts/${threadParentId}?${queryString}#comments`,
+    article: `/articles/${threadParentId}?${queryString}#comments`,
+    review: `/reviews/${threadParentId}?${queryString}`,
+    bounty: `/bounties/${threadParentId}?${queryString}#comments`,
+    bountyEntry: `/bounties/entries/${threadParentId}?${queryString}#comments`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
