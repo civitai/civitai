@@ -63,7 +63,7 @@ export function ImageMeta({
     const medium: MetaDisplay[] = [];
     for (const key of Object.keys(labelDictionary)) {
       const value = meta[key]?.toString();
-      if (!value) continue;
+      if (value === undefined || value === null) continue;
       const label = labelDictionary[key];
       if (value.length > 30 || key === 'prompt') long.push({ label, value });
       else if (
