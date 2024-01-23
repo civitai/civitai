@@ -1,4 +1,4 @@
-import { Center, Paper, PaperProps, Text } from '@mantine/core';
+import { BoxProps, Center, Paper, Stack, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
@@ -13,9 +13,10 @@ type AdContentProps<T extends AdUnitType> = {
   bidSizes: string;
   nsfw?: boolean;
   style?: React.CSSProperties;
+  showAdvertisementText?: boolean;
 };
 type AdProps<T extends AdUnitType> = Omit<AdContentProps<T>, 'bidSizes'> &
-  PaperProps & {
+  BoxProps & {
     /** mobile first screen sizes (must specify 0 for mobile) */
     sizes: Record<number, AdUnitBidSizes<T>>;
   };
@@ -24,7 +25,8 @@ export function AscendeumAd<T extends AdUnitType>({
   adunit,
   nsfw,
   sizes,
-  ...paperProps
+  showAdvertisementText,
+  ...boxProps
 }: AdProps<T>) {
   const [ref, inView] = useInView({ rootMargin: '200%' });
   const { ready, adsBlocked, nsfw: globalNsfw } = useAscendeumAdsContext();
@@ -58,18 +60,21 @@ export function AscendeumAd<T extends AdUnitType>({
   const showAscendeumAd = !adsBlocked && inView && !_nsfw;
   const showAlternateAd = !adsBlocked && inView && _nsfw;
 
-  return (
-    <Paper ref={ref} component={Center} h={height} w={width} {...paperProps}>
+  const content = (
+    <Paper
+      ref={ref}
+      component={Center}
+      h={height}
+      w={width}
+      {...(!showAdvertisementText ? boxProps : {})}
+    >
       {adsBlocked && (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <Image
-            src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
-            alt="Please support civitai and creators by disabling adblock"
-            width={width}
-            height={height}
-          />
-        </>
+        <Image
+          src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
+          alt="Please support civitai and creators by disabling adblock"
+          width={width}
+          height={height}
+        />
       )}
       {showAscendeumAd && (
         <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
@@ -83,6 +88,17 @@ export function AscendeumAd<T extends AdUnitType>({
         />
       )}
     </Paper>
+  );
+
+  return showAdvertisementText ? (
+    <Stack spacing={0} {...boxProps} w={width}>
+      <Text color="dimmed" align="center" size="xs">
+        Advertisement
+      </Text>
+      {content}
+    </Stack>
+  ) : (
+    content
   );
 }
 
