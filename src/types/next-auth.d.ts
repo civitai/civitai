@@ -9,6 +9,7 @@ interface ExtendedUser {
   // feedbackToken?: string;
   image?: string;
   email?: string;
+  emailVerified?: Date;
   createdAt?: Date;
   tos?: boolean;
   isModerator?: boolean;

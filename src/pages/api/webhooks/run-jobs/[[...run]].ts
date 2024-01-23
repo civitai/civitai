@@ -40,7 +40,7 @@ import { createLogger } from '~/utils/logging';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
-import { applyTagRules } from '~/server/jobs/apply-tag-replacements';
+import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 
 export const jobs: Job[] = [
   scanFilesJob,

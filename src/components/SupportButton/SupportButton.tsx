@@ -1,35 +1,41 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
+import { Button, ButtonProps, Text, createStyles, HoverCard } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { IconArrowRight, IconCaretRightFilled, IconChevronRight } from '@tabler/icons-react';
+import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { planDetails } from '~/components/Stripe/PlanDetails';
 import { wiggle } from '~/libs/animations';
 export const SupportButton = ({ className, ...props }: Props) => {
   const { classes, cx } = useStyles();
 
   return (
-    <Box component={NextLink} href="/pricing" className={cx(classes.root, className)} {...props}>
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 24 24"
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={classes.svg}
-      >
-        <path
-          className={classes.pulser}
-          d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
-        />
-        <path
-          className={classes.heart}
-          d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
-        />
-      </svg>
-    </Box>
+    <HoverCard withArrow>
+      <HoverCard.Target>
+        <Button
+          component={NextLink}
+          variant="outline"
+          color="green"
+          href="/pricing"
+          compact
+          className={cx(classes.root, className)}
+          pr={3}
+          {...props}
+        >
+          <Text weight={500}>Do It</Text>
+          <IconCaretRightFilled size={16} strokeWidth={2.5} />
+        </Button>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text>You should really press this button.</Text>
+        <Text>{`There's stuff here you wanna see...`}</Text>
+        <Text>Do it! Click it! Really!</Text>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 };
 
 type Props = {
   size?: 'sm' | 'md' | 'lg' | 'xl';
-} & BoxProps;
+} & ButtonProps;
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -39,18 +45,22 @@ const useStyles = createStyles((theme) => ({
     zIndex: 3,
   },
   svg: {
-    height: 30,
+    height: 32,
     transform: 'translateZ(0)',
     // animation: `${pulseSize} 1s ease-in-out infinite`,
 
     [`&:hover`]: {
       animation: `${wiggle()} 750ms ease-in-out infinite`,
     },
+    [theme.fn.largerThan('sm')]: {
+      height: 24,
+      marginRight: 4,
+    },
   },
 
   heart: {
     stroke: '#ff6666',
-    strokeWidth: 2,
+    strokeWidth: 2.5,
     transformOrigin: 'center',
     transform: 'scale(1)',
   },

@@ -75,7 +75,7 @@ function createUserCache<T, TArgs extends { userId: number }>({
 
 const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
   return await dbWrite.tagsOnTags.findMany({
-    where: { fromTagId: { in: [...tagIds] } },
+    where: { fromTagId: { in: [...tagIds] }, type: 'Parent' },
     select: { fromTagId: true, toTag: { select: { id: true, name: true } } },
   });
 };
