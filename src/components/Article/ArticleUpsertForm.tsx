@@ -85,7 +85,19 @@ export function ArticleUpsertForm({ article }: Props) {
   const { hasClubs } = useQueryUserContributingClubs();
 
   const defaultCategory = result.success ? result.data.category : -1;
-  const form = useForm({ schema, shouldUnregister: false });
+  const form = useForm({
+    schema,
+    shouldUnregister: false,
+    defaultValues: {
+      ...article,
+      title: article?.title ?? '',
+      content: article?.content ?? '',
+      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+      cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
+      coverImage: undefined,
+    },
+  });
   const clearStorage = useFormStorage({
     schema,
     form,
@@ -101,19 +113,19 @@ export function ArticleUpsertForm({ article }: Props) {
     }),
   });
 
-  useEffect(() => {
-    const result = schema.safeParse({
-      ...article,
-      title: article?.title ?? '',
-      content: article?.content ?? '',
-      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-      cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
-    });
-    if (result.success) form.reset({ ...result.data });
-    else console.error(result.error);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [article]);
+  // useEffect(() => {
+  //   const result = schema.safeParse({
+  //     ...article,
+  //     title: article?.title ?? '',
+  //     content: article?.content ?? '',
+  //     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+  //     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+  //     cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
+  //   });
+  //   if (result.success) form.reset({ ...result.data });
+  //   else console.error(result.error);
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [article]);
 
   const [publishing, setPublishing] = useState(false);
 

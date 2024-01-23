@@ -71,7 +71,7 @@ export const upsertArticleInput = z.object({
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
   cover: z.string().min(1),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageSchema.optional(),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),

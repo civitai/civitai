@@ -117,7 +117,7 @@ export const imageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   nsfw: z.nativeEnum(NsfwLevel).optional(),
-  analysis: imageAnalysisSchema.optional(),
+  // analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
   needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
