@@ -106,6 +106,7 @@ export const getTags = async ({
       SELECT 1 FROM "TagsOnTags" tot
       WHERE tot."toTagId" = t."id"
       AND tot."fromTagId" IN (${Prisma.join(not)})
+      AND tot.type = 'Parent'
     )`);
   }
 

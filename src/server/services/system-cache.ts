@@ -46,6 +46,7 @@ export async function getTagRules() {
       "toTagId" as "toId",
       f."name" as "fromTag",
       t."name" as "toTag",
+      tot.type,
       tot."createdAt"
     FROM "TagsOnTags" tot
     JOIN "Tag" f ON f."id" = tot."fromTagId"
