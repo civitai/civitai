@@ -2,6 +2,7 @@ import { Box, BoxProps } from '@mantine/core';
 import React, { createContext, useContext, useState } from 'react';
 import { getColumnCount } from '~/components/MasonryColumns/masonry.utils';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { useDebouncer } from '~/utils/debouncer';
 
 export type MasonryContextState = {
   columnWidth: number;
@@ -44,26 +45,29 @@ export function MasonryProvider({
 }: Props) {
   const [columnCount, setColumnCount] = useState(0);
   const [combinedWidth, setCombinedWidth] = useState(0);
+  const debouncer = useDebouncer(100);
 
   const containerRef = useResizeObserver((entry) => {
-    const width = entry.contentRect.width;
-    const [columnCount, combinedWidth] = getColumnCount(
-      width,
-      columnWidth,
-      columnGap,
-      maxColumnCount
-    );
-    setColumnCount(columnCount);
-    setCombinedWidth(combinedWidth);
-    onResize?.({
-      containerWidth: width,
-      columnWidth,
-      columnGap,
-      rowGap,
-      maxColumnCount,
-      maxSingleColumnWidth,
-      columnCount,
-      combinedWidth,
+    debouncer(() => {
+      const width = entry.contentRect.width;
+      const [columnCount, combinedWidth] = getColumnCount(
+        width,
+        columnWidth,
+        columnGap,
+        maxColumnCount
+      );
+      setColumnCount(columnCount);
+      setCombinedWidth(combinedWidth);
+      onResize?.({
+        containerWidth: width,
+        columnWidth,
+        columnGap,
+        rowGap,
+        maxColumnCount,
+        maxSingleColumnWidth,
+        columnCount,
+        combinedWidth,
+      });
     });
   });
 

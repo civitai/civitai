@@ -8,6 +8,7 @@ import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvi
 import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { v4 as uuidv4 } from 'uuid';
 
 type AdContentProps<T extends AdUnitType> = {
   adunit: T;
@@ -116,6 +117,7 @@ export function AscendeumAd<T extends AdUnitType>({
 function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes, style }: AdContentProps<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const _adunit = `/21718562853/CivitAI/${adunit}`;
+  const idRef = useRef(uuidv4());
 
   // do we want each ad to have their own refreshInterval
   // should every add have a refresh interval?
@@ -124,21 +126,24 @@ function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes, style }: A
   }, [_adunit]);
 
   useDidUpdate(() => {
-    ascAdManager.refreshAdunits([_adunit]);
+    setTimeout(() => {
+      ascAdManager.refreshIds([idRef.current]);
+    }, 100);
   }, [bidSizes]);
 
   useEffect(() => {
     return () => {
       // extra malarkey to handle strict mode side effects
       if (!ref.current) {
-        console.log(`destroy ${_adunit}`);
-        ascAdManager.destroyAdunits([_adunit]);
+        // console.log(`destroy ${_adunit}`);
+        ascAdManager.destroyIds([idRef.current]);
       }
     };
   }, []);
 
   return (
     <div
+      id={idRef.current}
       ref={ref}
       data-aaad="true"
       data-aa-adunit={_adunit}
