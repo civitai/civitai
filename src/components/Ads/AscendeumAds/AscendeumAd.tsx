@@ -7,6 +7,7 @@ import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 
 type AdContentProps<T extends AdUnitType> = {
   adunit: T;
@@ -28,6 +29,8 @@ export function AscendeumAd<T extends AdUnitType>({
   showAdvertisementText,
   ...boxProps
 }: AdProps<T>) {
+  const stackingContextRef = useRef(useDialogStore.getState().dialogs.length);
+
   const [ref, inView] = useInView({ rootMargin: '200%' });
   const { ready, adsBlocked, nsfw: globalNsfw } = useAscendeumAdsContext();
   const _nsfw = nsfw ?? globalNsfw;
@@ -55,6 +58,10 @@ export function AscendeumAd<T extends AdUnitType>({
     }
   }, [containerWidth]);
 
+  const showCurrentStack = useDialogStore(
+    (state) => state.dialogs.length === stackingContextRef.current
+  );
+
   if (!bidSizes || !ready) return null;
   const { width, height, stringSizes } = bidSizes;
   const showAscendeumAd = !adsBlocked && inView && !_nsfw;
@@ -68,24 +75,28 @@ export function AscendeumAd<T extends AdUnitType>({
       w={width}
       {...(!showAdvertisementText ? boxProps : {})}
     >
-      {adsBlocked && (
-        <Image
-          src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
-          alt="Please support civitai and creators by disabling adblock"
-          width={width}
-          height={height}
-        />
-      )}
-      {showAscendeumAd && (
-        <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
-      )}
-      {showAlternateAd && (
-        <Image
-          src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
-          alt="Please become a member to support creators today"
-          width={width}
-          height={height}
-        />
+      {showCurrentStack && (
+        <>
+          {adsBlocked && (
+            <Image
+              src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
+              alt="Please support civitai and creators by disabling adblock"
+              width={width}
+              height={height}
+            />
+          )}
+          {showAscendeumAd && (
+            <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
+          )}
+          {showAlternateAd && (
+            <Image
+              src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+              alt="Please become a member to support creators today"
+              width={width}
+              height={height}
+            />
+          )}
+        </>
       )}
     </Paper>
   );
@@ -119,7 +130,10 @@ function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes, style }: A
   useEffect(() => {
     return () => {
       // extra malarkey to handle strict mode side effects
-      if (!ref.current) ascAdManager.destroyAdunits([_adunit]);
+      if (!ref.current) {
+        console.log(`destroy ${_adunit}`);
+        ascAdManager.destroyAdunits([_adunit]);
+      }
     };
   }, []);
 
