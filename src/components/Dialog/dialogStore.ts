@@ -56,6 +56,7 @@ export const useDialogStore = create<DialogStore>()(
   }))
 );
 
+// used to track the modal stacking context (page modals).
 export const useStackingContext = create<{
   stackingContext: number[];
 }>(() => ({
