@@ -27,7 +27,7 @@ async function appendTag({ fromId, toId }: TagRule, since?: Date) {
     SELECT "modelId", ${fromId}
     FROM "TagsOnModels"
     WHERE "tagId" = ${toId} ${sinceClause}
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT ("modelId", "tagId") DO NOTHING;
   `;
 
   await dbWrite.$executeRaw`
@@ -35,7 +35,7 @@ async function appendTag({ fromId, toId }: TagRule, since?: Date) {
     SELECT "articleId", ${fromId}
     FROM "TagsOnArticle"
     WHERE "tagId" = ${toId} ${sinceClause}
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT ("articleId", "tagId") DO NOTHING;
   `;
 
   await dbWrite.$executeRaw`
@@ -43,7 +43,7 @@ async function appendTag({ fromId, toId }: TagRule, since?: Date) {
     SELECT "postId", ${fromId}
     FROM "TagsOnPost"
     WHERE "tagId" = ${toId} ${sinceClause}
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT ("postId", "tagId") DO NOTHING;
   `;
 
   await dbWrite.$executeRaw`
@@ -51,7 +51,7 @@ async function appendTag({ fromId, toId }: TagRule, since?: Date) {
     SELECT "collectionId", ${fromId}
     FROM "TagsOnCollection"
     WHERE "tagId" = ${toId} ${sinceClause}
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT ("collectionId", "tagId") DO NOTHING;
   `;
 
   await dbWrite.$executeRaw`
@@ -59,7 +59,7 @@ async function appendTag({ fromId, toId }: TagRule, since?: Date) {
     SELECT "imageId", ${fromId}, automated, confidence, "needsReview", source
     FROM "TagsOnImage"
     WHERE "tagId" = ${toId} AND NOT disabled ${sinceClause}
-    ON CONFLICT DO UPDATE SET confidence = excluded.confidence, source = excluded.source;
+    ON CONFLICT ("imageId", "tagId") DO UPDATE SET confidence = excluded.confidence, source = excluded.source;
   `;
 }
 
