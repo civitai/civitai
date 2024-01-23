@@ -24,6 +24,7 @@ type AdContentProps<T extends AdUnitType> = {
   nsfw?: boolean;
   style?: React.CSSProperties;
   showAdvertisementText?: boolean;
+  showRemoveAds?: boolean;
 };
 type AdProps<T extends AdUnitType> = Omit<AdContentProps<T>, 'bidSizes'> &
   BoxProps & {
@@ -36,6 +37,7 @@ export function AscendeumAd<T extends AdUnitType>({
   nsfw,
   sizes,
   showAdvertisementText,
+  showRemoveAds,
   ...boxProps
 }: AdProps<T>) {
   const stackingContextRef = useRef(useStackingContext.getState().stackingContext.length);
@@ -124,12 +126,19 @@ export function AscendeumAd<T extends AdUnitType>({
     </Paper>
   );
 
-  return showAdvertisementText ? (
+  return showAdvertisementText || showRemoveAds ? (
     <Stack spacing={0} {...boxProps} w={width}>
-      <Text color="dimmed" align="center" size="xs">
-        Advertisement
-      </Text>
+      {showAdvertisementText && (
+        <Text color="dimmed" align="center" size="xs">
+          Advertisement
+        </Text>
+      )}
       {content}
+      {showRemoveAds && (
+        <Text variant="link" size="xs" align="center">
+          Remove ads
+        </Text>
+      )}
     </Stack>
   ) : (
     content
