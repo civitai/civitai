@@ -84,7 +84,9 @@ export const CommentForm = ({
         queryUtils.commentv2.getThreadDetails.setData(
           { entityType, entityId },
           produce((old) => {
-            if (!old) return;
+            if (!old) {
+              return;
+            }
             const item = old.comments.find((x) => x.id === request.id);
             if (!item) {
               store.editComment(entityType, entityId, response);
@@ -94,6 +96,20 @@ export const CommentForm = ({
           })
         );
       } else {
+        const hasThreadData = queryUtils.commentv2.getThreadDetails.getData({
+          entityType,
+          entityId,
+        });
+
+        // If we don't have thread data, child comments will not get a proper parent
+        // and convos will be lost.
+        if (!hasThreadData) {
+          queryUtils.commentv2.getThreadDetails.invalidate({
+            entityType,
+            entityId,
+          });
+        }
+
         queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
         store.addComment(entityType, entityId, response);
       }
