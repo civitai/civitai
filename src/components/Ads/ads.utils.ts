@@ -1,5 +1,3 @@
-import { useMemo } from 'react';
-import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
 import { getRandomInt } from '~/utils/number-helpers';
 
 export type AdFeedItem<T> =
@@ -39,7 +37,15 @@ export function createAdFeed<T>({
 
   return data.reduce<AdFeed<T>>((acc, item, i) => {
     if (adMatrix.indices.includes(i)) {
-      acc.push({ type: 'ad', data: { adunit: 'Dynamic_InContent', height: 250 + 20, width: 300 } });
+      acc.push({
+        type: 'ad',
+        data: {
+          adunit: 'Dynamic_InContent',
+          // + 20 to account for css padding
+          height: 250 + 20,
+          width: 300,
+        },
+      });
     }
     acc.push({ type: 'data', data: item });
     return acc;
@@ -71,17 +77,27 @@ const adunits = {
   StickySidebar_B: 'stickySidebar',
 } as const;
 
-export const adsterraSizes = ['300x250', '728x90', '160x600'] as const;
-export const adsterraSizeMap = {
-  '300x250': ['300x100', '300x250'],
-  '728x90': ['728x90', '970x90', '970x250'],
-  '160x600': ['160x600', '300x600'],
+export const exoclickSizes: Record<string, string> = {
+  '900x250': '5187102',
+  '728x90': '5186882',
+  '300x250': '5187018',
+  '300x100': '5187104',
+  '300x500': '5187110',
+  '160x600': '5187116',
 };
-export const adsterraAdSizeIdMap = {
-  '300x250': 'cc4a2e648e7b1e739697da2e01bd806c',
-  '728x90': '7ee748b62d78221dca7581833380d99f',
-  '160x600': '73f599948b7a8ec86f222c10c6bf6291',
-};
-export const getAdsterraSize = (size: string): (typeof adsterraSizes)[0] | undefined => {
-  return Object.entries(adsterraSizeMap).find(([key, sizes]) => sizes.includes(size))?.[0] as any;
+
+export const ascendeumExoclickSizeMap: Record<string, string | null | undefined> = {
+  '728x90': '728x90',
+  '970x90': '728x90',
+  '970x250': '900x250',
+  '300x250': '300x250',
+  '300x100': '300x100',
+  '320x50': '300x100',
+  '320x100': '300x100',
+  '468x60': '300x100',
+  '336x280': '300x250',
+  '300x600': '300x500',
+  // '300x600': '160x600',
+  '160x600': '160x600',
+  '120x600': null,
 };

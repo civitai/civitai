@@ -2,50 +2,28 @@ import React, { createContext, useContext, useState, useRef, useEffect, useCallb
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { useGenerationStore } from '~/store/generation.store';
-import { isProd } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
+import { useScript } from '~/hooks/useScript';
 
 const AscendeumAdsContext = createContext<{
-  ready: boolean;
   adsBlocked: boolean;
   nsfw: boolean;
   showAds: boolean;
   username?: string;
+  ascendeumReady: boolean;
+  exoclickReady: boolean;
 } | null>(null);
 
-export function useAscendeumAdsContext() {
+export function useAdsContext() {
   const context = useContext(AscendeumAdsContext);
   if (!context) throw new Error('missing AscendumAdsProvider');
   return context;
 }
-export function AscendeumAdsProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
+export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
   const showAds = env.NEXT_PUBLIC_ADS && !currentUser?.subscriptionId;
-
-  const readyRef = useRef(false);
-  useEffect(() => {
-    if (!readyRef.current && showAds) {
-      readyRef.current = true;
-
-      // if (isProd) {
-      checkAdsBlocked((blocked) => {
-        setAdsBlocked(blocked);
-        if (blocked) setReady(true);
-      });
-
-      const script = document.createElement('script');
-      script.type = 'text/javascript';
-      script.src = 'https://ads.civitai.com/asc.civitai.js';
-      script.onload = () => {
-        setReady(true);
-      };
-      document.body.appendChild(script);
-      // } else setAdsBlocked(true);
-    }
-  }, [showAds]);
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {
@@ -58,9 +36,33 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
     useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
   );
 
+  const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
+    canLoad: showAds && !nsfw,
+  });
+  const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
+    canLoad: showAds && nsfw,
+  });
+
+  const readyRef = useRef(false);
+  useEffect(() => {
+    if (!readyRef.current && showAds) {
+      readyRef.current = true;
+      checkAdsBlocked((blocked) => {
+        setAdsBlocked(blocked);
+      });
+    }
+  }, [showAds]);
+
   return (
     <AscendeumAdsContext.Provider
-      value={{ ready, adsBlocked, nsfw, showAds, username: currentUser?.username }}
+      value={{
+        adsBlocked,
+        nsfw,
+        showAds,
+        username: currentUser?.username,
+        ascendeumReady,
+        exoclickReady,
+      }}
     >
       {children}
     </AscendeumAdsContext.Provider>

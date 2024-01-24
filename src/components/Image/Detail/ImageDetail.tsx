@@ -51,7 +51,6 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { generationPanel } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
-import { AdsterraAd } from '~/components/Ads/Adsterra/AdsterraAd';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {

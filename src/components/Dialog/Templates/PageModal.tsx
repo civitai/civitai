@@ -1,20 +1,15 @@
 import { ModalProps, Modal } from '@mantine/core';
-import { useEffect, useRef } from 'react';
-import { useDialogStore, useStackingContext } from '~/components/Dialog/dialogStore';
+import { useEffect } from 'react';
+import { useStackingContext } from '~/components/Dialog/dialogStore';
 
 export function PageModal(props: ModalProps) {
   const { opened } = props;
-  const stackingContextRef = useRef(useDialogStore.getState().dialogs.length);
+  const { increase, decrease } = useStackingContext();
   useEffect(() => {
-    const stackingContext = stackingContextRef.current;
-    useStackingContext.setState((state) => ({
-      stackingContext: [...state.stackingContext, stackingContext],
-    }));
+    increase();
 
     return () => {
-      useStackingContext.setState((state) => ({
-        stackingContext: [...state.stackingContext.filter((x) => x !== stackingContext)],
-      }));
+      decrease();
     };
   }, [opened]);
 

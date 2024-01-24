@@ -1,54 +1,56 @@
 import { BoxProps, Center, Group, Paper, Stack, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import React, { useEffect, useMemo, useRef } from 'react';
-import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
+import { useAdsContext } from '~/components/Ads/AdsProvider';
 import {
   AdUnitType,
   AdUnitBidSizes,
   AdUnitSize,
-  adsterraSizeMap,
-  getAdsterraSize,
+  ascendeumExoclickSizeMap,
+  exoclickSizes,
 } from '~/components/Ads/ads.utils';
 import { ascAdManager } from '~/components/Ads/AscendeumAds/client';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
-import { useDialogStore, useStackingContext } from '~/components/Dialog/dialogStore';
+import { useStackingContext } from '~/components/Dialog/dialogStore';
 import { v4 as uuidv4 } from 'uuid';
-import { AdsterraAd } from '~/components/Ads/Adsterra/AdsterraAd';
 import { NextLink } from '@mantine/next';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
 
-type AdContentProps<T extends AdUnitType> = {
+type AdProps<T extends AdUnitType> = {
   adunit: T;
-  bidSizes: string;
   nsfw?: boolean;
-  style?: React.CSSProperties;
-  showAdvertisementText?: boolean;
   showRemoveAds?: boolean;
   showFeedback?: boolean;
-};
-type AdProps<T extends AdUnitType> = Omit<AdContentProps<T>, 'bidSizes'> &
-  BoxProps & {
-    /** mobile first screen sizes (must specify 0 for mobile) */
-    sizes: Record<number, AdUnitBidSizes<T>>;
-  };
+  /** mobile first screen sizes (must specify 0 for mobile) */
+  sizes: Record<number, AdUnitBidSizes<T>>;
+} & BoxProps;
 
 export function AscendeumAd<T extends AdUnitType>({
   adunit,
-  nsfw,
+  nsfw: nsfwOverride,
   sizes,
-  showAdvertisementText,
   showRemoveAds,
   showFeedback,
   ...boxProps
 }: AdProps<T>) {
-  const stackingContextRef = useRef(useStackingContext.getState().stackingContext.length);
-  const currentUser = useCurrentUser();
-
   const [ref, inView] = useInView({ rootMargin: '200%' });
-  const { ready, adsBlocked, nsfw: globalNsfw, showAds, username } = useAscendeumAdsContext();
-  const _nsfw = nsfw ?? globalNsfw;
+  const { isCurrentStack } = useStackingContext();
+  const {
+    adsBlocked,
+    nsfw: globalNsfw,
+    showAds,
+    username,
+    ascendeumReady,
+    exoclickReady,
+  } = useAdsContext();
+  const containerWidth = useContainerWidth();
+
+  const nsfw = nsfwOverride ?? globalNsfw;
+  const showAscendeumAd = ascendeumReady && !nsfw;
+  const showAlternateAd = exoclickReady && nsfw;
+
   const keys = useMemo(
     () =>
       Object.keys(sizes)
@@ -56,40 +58,39 @@ export function AscendeumAd<T extends AdUnitType>({
         .sort((a, b) => b - a),
     []
   );
-  const containerWidth = useContainerWidth();
 
-  const bidSizes = useMemo(() => {
+  const sizeData = useMemo(() => {
     for (const key of keys) {
       if (containerWidth >= key) {
         const bidSizes = sizes[key];
-        const normalized = (!Array.isArray(bidSizes[0]) ? [bidSizes] : bidSizes) as AdUnitSize<T>[];
-        const [width, height] = normalized[0].split('x').map(Number);
+        const normalized = (!Array.isArray(bidSizes) ? [bidSizes] : bidSizes) as AdUnitSize<T>[];
+        let size: string;
+        if (showAlternateAd) {
+          size = ascendeumExoclickSizeMap[normalized[0]] ?? normalized[0];
+        } else {
+          size = normalized[0];
+        }
+        const [width, height] = size.split('x').map(Number);
         return {
           width,
           height,
-          stringSizes: `[${normalized.map((sizes) => `[${sizes.replace('x', ',')}]`)}]`,
+          size,
+          bidSizes: `[${normalized.map((sizes) => `[${sizes.replace('x', ',')}]`)}]`,
         };
       }
     }
-  }, [containerWidth]);
+  }, [containerWidth, showAlternateAd]);
 
-  const showCurrentStack = useStackingContext(
-    (state) => state.stackingContext.length === stackingContextRef.current
-  );
-
-  if (!bidSizes || !showAds) return null;
-  const { width, height, stringSizes } = bidSizes;
-  const _ready = ready && !adsBlocked && inView;
-  const showAscendeumAd = _ready && !_nsfw;
-  const showAlternateAd = _ready && _nsfw;
-  const includeWrapper = showAdvertisementText || showRemoveAds;
-  // const adsterraSize = showAlternateAd ? getAdsterraSize(`${width}x${height}`) : undefined;
+  if (!sizeData || !showAds) return null;
+  const { width, height, size, bidSizes } = sizeData;
+  const includeWrapper = showRemoveAds || showFeedback;
+  const zoneId = exoclickSizes[size];
 
   const content = (
     <Paper ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
-      {showCurrentStack && (
+      {isCurrentStack && inView && (
         <>
-          {adsBlocked && (
+          {adsBlocked ? (
             <NextLink href="/pricing">
               <Image
                 src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
@@ -98,29 +99,23 @@ export function AscendeumAd<T extends AdUnitType>({
                 height={height}
               />
             </NextLink>
-          )}
-          {showAscendeumAd && (
-            <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
-          )}
-          {showAlternateAd && (
-            // (adsterraSize ? (
-            //   <AdsterraAd size={adsterraSize} />
-            // ) : (
-            //   <Image
-            //     src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
-            //     alt="Please become a member to support creators today"
-            //     width={width}
-            //     height={height}
-            //   />
-            // ))}
-            <NextLink href="/pricing">
-              <Image
-                src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
-                alt="Please become a member to support creators today"
-                width={width}
-                height={height}
-              />
-            </NextLink>
+          ) : (
+            <>
+              {showAscendeumAd && <AscendeumAdContent adunit={adunit} bidSizes={bidSizes} />}
+              {showAlternateAd &&
+                (zoneId ? (
+                  <ExoclickAd zoneId={zoneId} size={size} />
+                ) : (
+                  <NextLink href="/pricing">
+                    <Image
+                      src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+                      alt="Please become a member to support creators today"
+                      width={width}
+                      height={height}
+                    />
+                  </NextLink>
+                ))}
+            </>
           )}
         </>
       )}
@@ -129,47 +124,46 @@ export function AscendeumAd<T extends AdUnitType>({
 
   return includeWrapper ? (
     <Stack spacing={0} {...boxProps} w={width}>
-      {showAdvertisementText && (
-        <Text color="dimmed" align="center" size="xs">
-          Advertisement
-        </Text>
-      )}
       {content}
-      {(showRemoveAds || showFeedback) && (
-        <Group position="apart">
-          {showRemoveAds && (
-            <Text
-              component={NextLink}
-              td="underline"
-              href="/pricing"
-              color="dimmed"
-              size="xs"
-              align="center"
-            >
-              Remove ads
-            </Text>
-          )}
-          {showFeedback && username && (
-            <Text
-              component={NextLink}
-              td="underline"
-              href={`/ad-feedback?Username=${username}&Ad unit=${adunit}`}
-              color="dimmed"
-              size="xs"
-              align="center"
-            >
-              Feedback
-            </Text>
-          )}
-        </Group>
-      )}
+      <Group position="apart">
+        {showRemoveAds && (
+          <Text
+            component={NextLink}
+            td="underline"
+            href="/pricing"
+            color="dimmed"
+            size="xs"
+            align="center"
+          >
+            Remove ads
+          </Text>
+        )}
+        {showFeedback && username && (
+          <Text
+            component={NextLink}
+            td="underline"
+            href={`/ad-feedback?Username=${username}&Ad unit=${adunit}`}
+            color="dimmed"
+            size="xs"
+            align="center"
+          >
+            Feedback
+          </Text>
+        )}
+      </Group>
     </Stack>
   ) : (
     content
   );
 }
 
-function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes, style }: AdContentProps<T>) {
+function AscendeumAdContent<T extends AdUnitType>({
+  adunit,
+  bidSizes,
+}: {
+  adunit: T;
+  bidSizes: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const _adunit = `/21718562853/CivitAI/${adunit}`;
   const idRef = useRef(uuidv4());
@@ -203,7 +197,7 @@ function AscendeumAdContent<T extends AdUnitType>({ adunit, bidSizes, style }: A
       data-aaad="true"
       data-aa-adunit={_adunit}
       data-aa-sizes={bidSizes}
-      style={{ overflow: 'hidden', ...style }}
+      style={{ overflow: 'hidden' }}
     />
   );
 }

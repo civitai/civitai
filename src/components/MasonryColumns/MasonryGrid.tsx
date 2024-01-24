@@ -4,7 +4,7 @@ import { Button, Stack, createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { createAdFeed } from '~/components/Ads/ads.utils';
-import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
+import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Paper, Text } from '@mantine/core';
@@ -35,7 +35,7 @@ export function MasonryGrid<TData>({
     rowGap,
   });
 
-  const { showAds } = useAscendeumAdsContext();
+  const { showAds } = useAdsContext();
   const items = useMemo(
     () => createAdFeed({ data, interval: adInterval, showAds }),
     [columnCount, data, showAds]

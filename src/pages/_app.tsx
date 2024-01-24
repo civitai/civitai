@@ -48,7 +48,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { RecaptchaWidgetProvider } from '../components/Recaptcha/RecaptchaWidget';
-import { AscendeumAdsProvider } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
+import { AdsProvider } from '~/components/Ads/AdsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -126,7 +126,7 @@ function MyApp(props: CustomAppProps) {
                 <CookiesProvider value={cookies}>
                   <ReferralsProvider>
                     <FiltersProvider value={filters}>
-                      <AscendeumAdsProvider>
+                      <AdsProvider>
                         <HiddenPreferencesProvider>
                           <CivitaiLinkProvider>
                             <NotificationsProvider zIndex={9999}>
@@ -147,7 +147,7 @@ function MyApp(props: CustomAppProps) {
                             </NotificationsProvider>
                           </CivitaiLinkProvider>
                         </HiddenPreferencesProvider>
-                      </AscendeumAdsProvider>
+                      </AdsProvider>
                     </FiltersProvider>
                   </ReferralsProvider>
                 </CookiesProvider>

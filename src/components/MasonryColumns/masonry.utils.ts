@@ -4,7 +4,7 @@ import {
 } from '~/components/MasonryColumns/masonry.types';
 import { useMemo } from 'react';
 import { AdFeedItem, createAdFeed } from '~/components/Ads/ads.utils';
-import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
+import { useAdsContext } from '~/components/Ads/AdsProvider';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
@@ -31,7 +31,7 @@ export function useMasonryColumns<TData>(
   maxItemHeight?: number,
   adInterval?: number[]
 ) {
-  const { showAds } = useAscendeumAdsContext();
+  const { showAds } = useAdsContext();
 
   return useMemo(
     () =>

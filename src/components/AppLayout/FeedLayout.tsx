@@ -1,6 +1,6 @@
-import { Box, useMantineTheme } from '@mantine/core';
+import { Box, Divider, useMantineTheme } from '@mantine/core';
 import { useRouter } from 'next/router';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -32,7 +32,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       <AscendeumAd
         adunit="StickySidebar_A"
         sizes={{
-          [theme.breakpoints.md]: '120x600',
+          [theme.breakpoints.md]: '160x600',
           [xl]: '300x600',
         }}
         style={{ ...adStyle }}
@@ -51,7 +51,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           sizes={{
             [0]: '300x100',
             [theme.breakpoints.md]: '728x90',
-            [theme.breakpoints.lg]: '970x90',
+            [theme.breakpoints.lg]: ['970x90', '728x90'],
           }}
           nsfw={nsfw}
         />
@@ -60,7 +60,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       <AscendeumAd
         adunit="StickySidebar_A"
         sizes={{
-          [theme.breakpoints.md]: '120x600',
+          [theme.breakpoints.md]: '160x600',
           [xl]: '300x600',
         }}
         style={{ ...adStyle }}
