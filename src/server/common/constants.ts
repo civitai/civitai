@@ -525,7 +525,7 @@ export const CurrencyConfig: Record<
   },
   [Currency.USD]: {
     icon: IconCurrencyDollar,
-    color: (theme) => theme.colors.accent[5],
+    color: (theme) => theme.colors.yellow[7],
     fill: undefined,
   },
 };
