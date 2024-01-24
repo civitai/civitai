@@ -56,6 +56,8 @@ const sizing = {
   },
 } as const;
 
+const applyFormUrl = 'https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L' as const;
+
 export default function CreatorsClubIntro() {
   const { cx, classes, theme } = useStyles();
   return (
@@ -77,7 +79,15 @@ export default function CreatorsClubIntro() {
             paid for their contributions
           </Text>
           <Group>
-            <Button size="lg" color="gray" mb={48} rightIcon={<IconCaretRightFilled />}>
+            <Button
+              size="lg"
+              color="gray"
+              mb={48}
+              rightIcon={<IconCaretRightFilled />}
+              component="a"
+              href={applyFormUrl}
+              target="_blank"
+            >
               Apply now
             </Button>
           </Group>
@@ -366,7 +376,14 @@ const JoinSection = () => {
                 <Text>Be 18 or older</Text>
               </Group>
 
-              <Button size="lg" mt="xl" rightIcon={<IconCaretRightFilled />}>
+              <Button
+                size="lg"
+                mt="xl"
+                rightIcon={<IconCaretRightFilled />}
+                component="a"
+                href={applyFormUrl}
+                target="_blank"
+              >
                 Apply now
               </Button>
             </Stack>
