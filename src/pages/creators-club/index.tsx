@@ -145,7 +145,7 @@ export default function CreatorsClubIntro() {
   );
 }
 
-const perks: { text: string; icon: React.ReactNode }[] = [
+const exclusivePerks: { text: string; icon: React.ReactNode }[] = [
   {
     text: 'Early access to test new creator tools',
     icon: <IconWand size={32} />,
@@ -172,7 +172,7 @@ const ExclusivePerksSection = () => {
         <Text>Members of the Creator Program enjoy a number of exclusive perks</Text>
       </Stack>
       <Grid>
-        {perks.map(({ text, icon }, index) => (
+        {exclusivePerks.map(({ text, icon }, index) => (
           <Grid.Col span={4} key={index}>
             <Paper withBorder className={cx(classes.card)} h="100%">
               {icon}
@@ -229,7 +229,7 @@ const ExclusivePerksSection = () => {
   );
 };
 
-const customBuzzGeneration: { text: string; value: number }[] = [
+const waysToEarnBuzz: { text: string; value: number }[] = [
   {
     value: 10,
     text: 'For every 1000 ad impressions on your images or resources',
@@ -263,7 +263,7 @@ const EarnBuzzSection = () => {
         <Text>As a valued member of the Creators Program, you get 3 new ways to earn buzz </Text>
       </Stack>
       <Grid>
-        {customBuzzGeneration.map(({ text, value }, index) => (
+        {waysToEarnBuzz.map(({ text, value }, index) => (
           <Grid.Col xs={6} sm={4} key={index}>
             <Paper withBorder className={cx(classes.card)} h="100%">
               <Group spacing={0} position="center">
