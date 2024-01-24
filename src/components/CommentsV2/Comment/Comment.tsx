@@ -9,6 +9,8 @@ import {
   Box,
   createStyles,
   Title,
+  UnstyledButton,
+  Divider,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
@@ -94,6 +96,13 @@ export function CommentContent({
 
   const replyCount = comment?.childThread?._count?.comments ?? 0;
   const isExpanded = !viewOnly && expanded.includes(comment.id);
+  const onToggleReplies = () => {
+    if ((level ?? 0) > constants.comments.maxDepth && !isExpanded) {
+      setRootThread('comment', comment.id);
+    } else {
+      toggleExpanded(comment.id);
+    }
+  };
 
   return (
     <Group
@@ -102,11 +111,12 @@ export function CommentContent({
       noWrap
       {...groupProps}
       spacing="sm"
-      className={cx(groupProps.className, {
+      className={cx(groupProps.className, classes.groupWrap, {
         [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
-      <UserAvatar user={comment.user} size="md" linkToProfile />
+      <UserAvatar user={comment.user} size="sm" linkToProfile />
+
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
           {/* AVATAR */}
@@ -213,19 +223,7 @@ export function CommentContent({
                   </Button>
                 )}
                 {replyCount > 0 && !viewOnly && (
-                  <Button
-                    variant="subtle"
-                    size="xs"
-                    radius="xl"
-                    onClick={() => {
-                      if ((level ?? 0) >= constants.comments.maxDepth) {
-                        setRootThread('comment', comment.id);
-                      } else {
-                        toggleExpanded(comment.id);
-                      }
-                    }}
-                    compact
-                  >
+                  <Button variant="subtle" size="xs" radius="xl" onClick={onToggleReplies} compact>
                     {isExpanded ? 'Hide' : 'Show'}{' '}
                     {`${replyCount.toLocaleString()} ${replyCount === 1 ? 'Reply' : 'Replies'}`}
                   </Button>
@@ -248,6 +246,9 @@ export function CommentContent({
         )}
         {isExpanded && <CommentReplies commentId={comment.id} userId={comment.user.id} />}
       </Stack>
+      {replyCount > 0 && (
+        <UnstyledButton onClick={onToggleReplies} className={classes.repliesIndicator} />
+      )}
     </Group>
   );
 }
@@ -259,6 +260,21 @@ export const useCommentStyles = createStyles((theme) => ({
     padding: `${theme.spacing.xs}px`,
     borderRadius: theme.radius.sm,
   },
-  replyInset: { borderLeft: '5px solid rgba(0,0,0,0.15)', paddingLeft: 8 },
-  rootCommentReplyInset: { borderLeft: '5px solid rgba(0,0,0,0.15)', paddingLeft: 46 },
+  groupWrap: {
+    position: 'relative',
+  },
+  repliesIndicator: {
+    position: 'absolute',
+    top: 26 + 8,
+    width: 4,
+    height: 'calc(100% - 26px - 8px)',
+    background: 'rgba(0,0,0,0.15)',
+    // Size of the image / 2, minus the size of the border / 2
+    left: 26 / 2 - 4 / 2,
+  },
+  replyInset: {
+    // Size of the image / 2, minus the size of the border / 2
+    marginLeft: -12,
+  },
+  rootCommentReplyInset: { borderLeft: '4px solid rgba(0,0,0,0.15)', paddingLeft: 46 },
 }));
