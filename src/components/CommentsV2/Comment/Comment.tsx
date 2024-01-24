@@ -238,16 +238,17 @@ export function CommentContent({
             <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />
           )}
         </Stack>
+        {isExpanded && <CommentReplies commentId={comment.id} userId={comment.user.id} />}
         {canReply && replying && (
           <Box pt="sm">
             <CreateComment
               autoFocus
               onCancel={() => setReplying(false)}
               replyToCommentId={comment.id}
+              className={classes.replyInset}
             />
           </Box>
         )}
-        {isExpanded && <CommentReplies commentId={comment.id} userId={comment.user.id} />}
       </Stack>
       {replyCount > 0 && (
         <UnstyledButton onClick={onToggleReplies} className={classes.repliesIndicator} />

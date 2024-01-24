@@ -12,9 +12,15 @@ type CreateCommentProps = {
   onCancel?: () => void;
   autoFocus?: boolean;
   replyToCommentId?: number;
+  className?: string;
 };
 
-export function CreateComment({ onCancel, autoFocus, replyToCommentId }: CreateCommentProps) {
+export function CreateComment({
+  onCancel,
+  autoFocus,
+  replyToCommentId,
+  className,
+}: CreateCommentProps) {
   const currentUser = useCurrentUser();
   const { isLocked, isMuted, forceLocked } = useCommentsContext();
 
@@ -62,8 +68,8 @@ export function CreateComment({ onCancel, autoFocus, replyToCommentId }: CreateC
     );
 
   return (
-    <Group align="flex-start" noWrap spacing="sm">
-      <UserAvatar user={currentUser} size="md" />
+    <Group align="flex-start" noWrap spacing="sm" className={className}>
+      <UserAvatar user={currentUser} size={replyToCommentId ? 'sm' : 'md'} />
       <CommentForm onCancel={onCancel} autoFocus={autoFocus} replyToCommentId={replyToCommentId} />
     </Group>
   );
