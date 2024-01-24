@@ -9,11 +9,8 @@ import {
 } from '~/components/CommentsV2';
 
 export function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
-  const badges: CommentV2BadgeProps[] = [];
-  const { level } = useCommentsContext();
+  const { level, badges } = useCommentsContext();
   const { classes } = useCommentStyles();
-
-  if (userId) badges.push({ userId, label: 'op', color: 'violet' });
 
   return (
     <Stack mt="md" className={classes.replyInset}>
