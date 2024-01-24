@@ -4,13 +4,12 @@ import {
   Text,
   createStyles,
   useMantineTheme,
-  MenuProps,
   Button,
   Drawer,
   Stack,
   UnstyledButton,
 } from '@mantine/core';
-import { IconCheck, IconChevronDown, IconFilter, IconSortDescending } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -113,7 +112,7 @@ export function SelectMenuV2<T extends string | number>({
       disabled={disabled}
       rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
       onClick={() => setOpened((o) => !o)}
-      size="xs"
+      size={mobile ? 'sm' : 'xs'}
       compact
     >
       <Group spacing={4} noWrap>

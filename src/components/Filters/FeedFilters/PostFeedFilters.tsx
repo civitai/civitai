@@ -3,20 +3,22 @@ import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropd
 import { SortFilter } from '../SortFilter';
 import { ViewToggle } from '../ViewToggle';
 import { useFeedFiltersStyles } from './FeedFilters.styles';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function PostFeedFilters({ ...groupProps }: GroupProps) {
   const { classes, theme } = useFeedFiltersStyles();
+  const mobile = useContainerSmallerThan('sm');
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
       <SortFilter type="posts" variant="button" />
-      <PostFiltersDropdown size="xs" compact />
+      <PostFiltersDropdown size={mobile ? 'sm' : 'xs'} compact />
       <ViewToggle
         type="posts"
         color="gray"
         radius="xl"
         size="sm"
-        iconSize={14}
+        iconSize={mobile ? 16 : 14}
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       />
     </Group>

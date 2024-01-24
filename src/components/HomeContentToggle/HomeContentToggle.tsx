@@ -27,6 +27,7 @@ import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { useContainerSmallerThan } from '../ContainerProvider/useContainerSmallerThan';
 
 const homeOptions = {
   home: {
@@ -178,6 +179,18 @@ const useTabsStyles = createStyles(() => ({
     paddingBottom: 4,
     paddingLeft: 6,
     paddingRight: 10,
+
+    [containerQuery.smallerThan('md')]: {
+      paddingTop: 8,
+      paddingBottom: 8,
+      paddingLeft: 10,
+      paddingRight: 16,
+    },
+  },
+  tabLabel: {
+    [containerQuery.smallerThan('md')]: {
+      fontSize: 14,
+    },
   },
   tabsList: {
     backgroundColor: 'transparent',
@@ -197,6 +210,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/')[1] || 'home';
   const { classes, theme } = useTabsStyles();
+  const mobile = useContainerSmallerThan('md');
 
   const tabs = Object.entries(homeOptions)
     .filter(([key]) => ![key === 'bounties' && !features.bounties].some((b) => b))
@@ -206,7 +220,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
           <Tabs.Tab
             value={key}
             icon={value.icon({
-              size: 14,
+              size: mobile ? 16 : 14,
               color:
                 theme.colorScheme === 'dark' || activePath === key
                   ? theme.white
@@ -216,7 +230,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
               set(key as HomeOptions);
             }}
           >
-            <Text size="sm" transform="capitalize" inline>
+            <Text className={classes.tabLabel} transform="capitalize" inline>
               {getDisplayName(key)}
             </Text>
           </Tabs.Tab>

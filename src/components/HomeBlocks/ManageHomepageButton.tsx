@@ -12,7 +12,7 @@ export function ManageHomepageButton({
 
   return (
     <ActionIcon
-      size="sm"
+      size="md"
       variant="subtle"
       color="dark"
       {...actionIconProps}
