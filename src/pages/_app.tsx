@@ -251,6 +251,7 @@ function MyApp(props: CustomAppProps) {
                 '#325D51',
               ],
             },
+            white: '#fefefe',
             black: '#222',
             other: {
               fadeIn: `opacity 200ms ease-in`,

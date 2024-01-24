@@ -14,13 +14,16 @@ import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilt
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
 import { useRouter } from 'next/router';
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   subNav: {
     position: 'sticky',
     top: 0,
     left: 0,
     zIndex: 10,
+    padding: `0 ${theme.spacing.md}px`,
+    borderRadius: 0,
     transition: 'transform 0.3s',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
   },
 }));
 
@@ -64,8 +67,6 @@ export function SubNav() {
       ref={subNavRef}
       className={classes.subNav}
       shadow="xs"
-      px={8}
-      py={4}
       mb={home !== 'home' ? 'md' : undefined}
     >
       <Group spacing={8} position="apart">

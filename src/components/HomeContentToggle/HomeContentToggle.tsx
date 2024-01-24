@@ -63,8 +63,8 @@ type HomeOptions = keyof typeof homeOptions;
 
 const useStyles = createStyles<string, { hideActive?: boolean }>((_, params) => ({
   label: {
-    paddingTop: 6,
-    paddingBottom: 6,
+    paddingTop: 4,
+    paddingBottom: 4,
     paddingLeft: 6,
     paddingRight: 10,
   },
@@ -72,11 +72,18 @@ const useStyles = createStyles<string, { hideActive?: boolean }>((_, params) => 
     // Manually adjust the active state to match the design
     marginTop: 4,
     marginLeft: 3,
+    borderRadius: 0,
     display: params.hideActive ? 'none' : 'block',
+  },
+  themeIcon: {
+    root: {
+      backgroundColor: 'transparent',
+    },
   },
   root: {
     backgroundColor: 'transparent',
     gap: 8,
+    borderRadius: 0,
 
     [containerQuery.smallerThan('sm')]: {
       overflow: 'auto hidden',
@@ -120,7 +127,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
             }}
             noWrap
           >
-            <ThemeIcon size={30} color={activePath === key ? 'dark.7' : 'transparent'} p={6}>
+            <ThemeIcon size={30} color={'transparent'} p={4}>
               {value.icon({
                 color:
                   theme.colorScheme === 'dark' || activePath === key
