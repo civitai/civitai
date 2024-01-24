@@ -469,21 +469,6 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     q: 'How will changes to the program be communicated?',
     a: 'Changes will be communicated via email, onsite notification and/or direct message.',
   },
-  {
-    q: 'What, if any, requirements are there to remain in the Creator Program?',
-    a: (
-      <Stack>
-        <Text>Creators in the program are required to:</Text>
-        <ul>
-          <li>Be courteous and fair to the community.</li>
-          <li>
-            New resources or versions must be in early access. This supports you while ensuring your
-            resources become available to the community
-          </li>
-        </ul>
-      </Stack>
-    ),
-  },
 ];
 
 const FAQ = () => {
