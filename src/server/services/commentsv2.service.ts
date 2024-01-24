@@ -159,7 +159,11 @@ export const getCommentsThreadDetails = async ({
     FROM generation g
     JOIN "Thread" "parentThread"
     ON g."parentThreadId" = "parentThread".id
-    WHERE "generationNumber" < ${constants.comments.maxDepth}
+    WHERE "generationNumber" < ${
+      `${entityType}MaxDepth` in constants.comments
+        ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
+        : constants.comments.maxDepth
+    }
     ORDER BY "generationNumber";
   `;
 

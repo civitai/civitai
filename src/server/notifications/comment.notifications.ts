@@ -330,7 +330,6 @@ export const commentNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          AND t."bountyEntryId" IS NULL
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT

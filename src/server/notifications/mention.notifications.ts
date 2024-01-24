@@ -103,7 +103,6 @@ export const mentionNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          AND t."bountyEntryId" IS NULL
 
         UNION
 

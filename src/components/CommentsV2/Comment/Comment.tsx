@@ -97,7 +97,11 @@ export function CommentContent({
   const replyCount = comment?.childThread?._count?.comments ?? 0;
   const isExpanded = !viewOnly && expanded.includes(comment.id);
   const onToggleReplies = () => {
-    if ((level ?? 0) > constants.comments.maxDepth && !isExpanded) {
+    const maxDepth =
+      `${entityType}MaxDepth` in constants.comments
+        ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
+        : constants.comments.maxDepth;
+    if ((level ?? 0) > maxDepth && !isExpanded) {
       setRootThread('comment', comment.id);
     } else {
       toggleExpanded(comment.id);

@@ -252,6 +252,8 @@ export const constants = {
     coverImageWidth: 1600,
   },
   comments: {
+    imageMaxDepth: 3,
+    bountyEntryMaxDepth: 3,
     maxDepth: 4,
   },
   altTruncateLength: 125,
