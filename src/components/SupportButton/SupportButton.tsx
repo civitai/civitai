@@ -1,7 +1,7 @@
 import { Button, ButtonProps, createStyles, HoverCard, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { wiggle } from '~/libs/animations';
 import { getRandom } from '~/utils/array-helpers';
@@ -9,91 +9,96 @@ import { getRandom } from '~/utils/array-helpers';
 export const SupportButton = ({ className, ...props }: Props) => {
   const { classes, cx, theme } = useStyles();
 
-  const button = useMemo(() => {
-    return getRandom([
-      <Button
-        key={0}
-        component={NextLink}
-        variant="light"
-        color="gray"
-        href="/pricing"
-        compact
-        className={cx(classes.root, className)}
-        px={4}
-        py={2}
-        h={36}
-        {...props}
-      >
-        <EdgeMedia src="501aec85-e3b4-42ec-afda-2fadc2361506" width={24} />
-        <IconChevronRight size={18} strokeWidth={2.5} />
-      </Button>,
-      <Button
-        key={1}
-        component={NextLink}
-        variant="outline"
-        color="green"
-        href="/pricing"
-        compact
-        className={cx(classes.root, className)}
-        pr={2}
-        py={2}
-        h={36}
-        {...props}
-      >
-        <Text weight={500}>Do It</Text>
-        <IconChevronRight size={18} strokeWidth={2.5} />
-      </Button>,
-      <Button
-        key={2}
-        component={NextLink}
-        variant="light"
-        color="green"
-        href="/pricing"
-        compact
-        className={cx(classes.root, className)}
-        px={4}
-        py={2}
-        h={36}
-        {...props}
-      >
-        <Text size={24}>💸</Text>
-        <IconChevronRight size={18} strokeWidth={2.5} />
-      </Button>,
-      <Button
-        key={3}
-        component={NextLink}
-        variant="light"
-        color="green"
-        href="/pricing"
-        compact
-        className={cx(classes.root, className)}
-        px={4}
-        py={2}
-        h={36}
-        {...props}
-      >
-        <Text size={24}>😘</Text>
-        <IconChevronRight size={18} strokeWidth={2.5} />
-      </Button>,
-      <Button
-        key={4}
-        component={NextLink}
-        variant="light"
-        color="red"
-        href="/pricing"
-        compact
-        className={cx(classes.root, className)}
-        px={4}
-        py={2}
-        h={36}
-        {...props}
-      >
-        <IconHeart color={theme.colors.red[4]} strokeWidth={2.5} />
-        <IconChevronRight size={18} strokeWidth={2.5} />
-      </Button>,
-    ]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const [button, setButton] = useState<JSX.Element>();
+
+  useEffect(() => {
+    setButton(
+      getRandom([
+        <Button
+          key={0}
+          component={NextLink}
+          variant="light"
+          color="gray"
+          href="/pricing"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <EdgeMedia src="501aec85-e3b4-42ec-afda-2fadc2361506" width={24} />
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={1}
+          component={NextLink}
+          variant="outline"
+          color="green"
+          href="/pricing"
+          compact
+          className={cx(classes.root, className)}
+          pr={2}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text weight={500}>Do It</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={2}
+          component={NextLink}
+          variant="light"
+          color="green"
+          href="/pricing"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text size={24}>💸</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={3}
+          component={NextLink}
+          variant="light"
+          color="green"
+          href="/pricing"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text size={24}>😘</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={4}
+          component={NextLink}
+          variant="light"
+          color="red"
+          href="/pricing"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <IconHeart color={theme.colors.red[4]} strokeWidth={2.5} />
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+      ])
+    );
   }, []);
+
+  if (!button) return null;
 
   return (
     <HoverCard withArrow>
