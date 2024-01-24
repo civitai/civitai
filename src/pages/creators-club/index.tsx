@@ -11,6 +11,7 @@ import {
   Alert,
   List,
   Accordion,
+  Anchor,
 } from '@mantine/core';
 import {
   IconAsterisk,
@@ -45,6 +46,7 @@ import { constants } from '../../server/common/constants';
 import { CurrencyBadge } from '../../components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { CurrencyIcon } from '../../components/Currency/CurrencyIcon';
+import { ReactNode } from 'react';
 
 export default function CreatorsClubIntro() {
   const { cx, classes, theme } = useStyles();
@@ -143,6 +145,21 @@ export default function CreatorsClubIntro() {
   );
 }
 
+const perks: { text: string; icon: React.ReactNode }[] = [
+  {
+    text: 'Early access to test new creator tools',
+    icon: <IconWand size={32} />,
+  },
+  {
+    text: 'A direct comunication channel to the Civitai Team',
+    icon: <IconHeartHandshake size={32} />,
+  },
+  {
+    text: 'Civitai will pay you for your Buzz',
+    icon: <IconCash size={32} />,
+  },
+];
+
 const ExclusivePerksSection = () => {
   const { cx, classes, theme } = useStyles();
 
@@ -155,24 +172,15 @@ const ExclusivePerksSection = () => {
         <Text>Members of the Creator Program enjoy a number of exclusive perks</Text>
       </Stack>
       <Grid>
-        <Grid.Col span={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <IconWand size={32} />
-            <Text color="white">Early access to test new creator tools</Text>
-          </Paper>
-        </Grid.Col>
-        <Grid.Col span={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <IconHeartHandshake size={32} />
-            <Text color="white">A direct comunication channel to the Civitai Team</Text>
-          </Paper>
-        </Grid.Col>
-        <Grid.Col span={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <IconCash size={32} />
-            <Text color="white">Civitai will pay you for your Buzz</Text>
-          </Paper>
-        </Grid.Col>
+        {perks.map(({ text, icon }, index) => (
+          <Grid.Col span={4} key={index}>
+            <Paper withBorder className={cx(classes.card)} h="100%">
+              {icon}
+              <Text color="white">{text}</Text>
+            </Paper>
+          </Grid.Col>
+        ))}
+
         <Grid.Col span={12}>
           <Paper withBorder className={cx(classes.card)} h="100%">
             <Group position="apart">
@@ -221,6 +229,21 @@ const ExclusivePerksSection = () => {
   );
 };
 
+const customBuzzGeneration: { text: string; value: number }[] = [
+  {
+    value: 10,
+    text: 'For every 1000 ad impressions on your images or resources',
+  },
+  {
+    value: 10,
+    text: 'For every uniqe user that downloads your early access resource',
+  },
+  {
+    value: 10,
+    text: 'for every 1000 images geenrated on-site using one of your resources',
+  },
+];
+
 const EarnBuzzSection = () => {
   const { cx, classes, theme } = useStyles();
 
@@ -240,44 +263,19 @@ const EarnBuzzSection = () => {
         <Text>As a valued member of the Creators Program, you get 3 new ways to earn buzz </Text>
       </Stack>
       <Grid>
-        <Grid.Col xs={12} sm={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <Group spacing={0} position="center">
-              <CurrencyIcon currency={Currency.BUZZ} stroke={0} size={26} />{' '}
-              <Text color="white" size={24}>
-                10
-              </Text>
-            </Group>
-            <Text color="white">For every 1000 ad impressions on your images or resources</Text>
-          </Paper>
-        </Grid.Col>
-        <Grid.Col xs={6} sm={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <Group spacing={0} position="center">
-              <CurrencyIcon currency={Currency.BUZZ} stroke={0} size={26} />{' '}
-              <Text color="white" size={24}>
-                10
-              </Text>
-            </Group>
-            <Text color="white">
-              For every uniqe user that downloads your early access resource
-              <IconAsterisk color="white" size={12} />
-            </Text>
-          </Paper>
-        </Grid.Col>
-        <Grid.Col xs={6} sm={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <Group spacing={0} position="center">
-              <CurrencyIcon currency={Currency.BUZZ} stroke={0} size={26} />{' '}
-              <Text color="white" size={24}>
-                10
-              </Text>
-            </Group>
-            <Text color="white">
-              for every 1000 images geenrated on&ndash;site using one of your resources
-            </Text>
-          </Paper>
-        </Grid.Col>
+        {customBuzzGeneration.map(({ text, value }, index) => (
+          <Grid.Col xs={6} sm={4} key={index}>
+            <Paper withBorder className={cx(classes.card)} h="100%">
+              <Group spacing={0} position="center">
+                <CurrencyIcon currency={Currency.BUZZ} stroke={0} size={26} />{' '}
+                <Text color="white" size={24}>
+                  {value}
+                </Text>
+              </Group>
+              <Text color="white">{text}</Text>
+            </Paper>
+          </Grid.Col>
+        ))}
       </Grid>
       <Alert color="yellow.6">
         <strong>NOTE:</strong> The Creator program is just getting started, so Buzz rewards will be
@@ -311,11 +309,30 @@ const JoinSection = () => {
                 Creators interested in joining the program must meet the following requirements:
               </Text>
               <Group position="apart" noWrap w="100%">
-                <Text>Reside within a supported country</Text>
+                <Text>
+                  Reside within a{' '}
+                  <Anchor
+                    href="https://stripe.com/docs/connect/cross-border-payouts#supported-countries"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    supported country
+                  </Anchor>
+                </Text>
                 <IconWorldCheck size={24} />
               </Group>
               <Group position="apart" noWrap w="100%">
-                <Text>Create a stripe account (We do payouts through Stripe)</Text>
+                <Text>
+                  Create a{' '}
+                  <Anchor
+                    href="https://dashboard.stripe.com/register"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Stripe account
+                  </Anchor>{' '}
+                  (We do payouts through Stripe)
+                </Text>
                 <IconBrandStripe size={24} />
               </Group>
               <Group position="apart" noWrap w="100%">
@@ -330,7 +347,7 @@ const JoinSection = () => {
             {' '}
             <Stack>
               <Text color="white" size="lg">
-                CreatApplications will be prioritized by the following engagement metrics:
+                Applications will be prioritized by the following engagement metrics:
               </Text>
               <Group position="apart" noWrap w="100%">
                 <Text>Followers</Text>
