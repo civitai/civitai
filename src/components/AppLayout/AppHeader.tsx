@@ -654,10 +654,10 @@ export function AppHeader({
   );
 
   const createMenu = !isMuted && (
-    <Menu position="bottom" offset={5} withArrow trigger="hover" className="hide-mobile">
+    <Menu position="bottom" offset={5} withArrow trigger="hover">
       <Menu.Target>
         {features.imageGeneration ? (
-          <Group spacing={0} noWrap>
+          <Group spacing={0} noWrap className="hide-mobile">
             <GenerateButton
               variant="light"
               py={8}
@@ -682,7 +682,13 @@ export function AppHeader({
             </Button>
           </Group>
         ) : (
-          <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
+          <Button
+            className={cx(classes.links, 'hide-mobile')}
+            variant="filled"
+            color="green"
+            size="xs"
+            pl={5}
+          >
             <IconPlus size={16} /> New
           </Button>
         )}
