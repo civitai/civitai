@@ -7,14 +7,11 @@ export function PageModal(props: ModalProps) {
   const stackingContextRef = useRef(useDialogStore.getState().dialogs.length);
   useEffect(() => {
     const stackingContext = stackingContextRef.current;
-    const timeout = setTimeout(() => {
-      useStackingContext.setState((state) => ({
-        stackingContext: [...state.stackingContext, stackingContext],
-      }));
-    }, 1000);
+    useStackingContext.setState((state) => ({
+      stackingContext: [...state.stackingContext, stackingContext],
+    }));
 
     return () => {
-      if (timeout) clearTimeout(timeout);
       useStackingContext.setState((state) => ({
         stackingContext: [...state.stackingContext.filter((x) => x !== stackingContext)],
       }));

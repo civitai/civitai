@@ -315,7 +315,8 @@ export function ImageDetail() {
                   m="0 auto"
                   nsfw={image.nsfw !== 'None'}
                   sizes={{ [0]: '300x250' }}
-                  showAdvertisementText
+                  showFeedback
+                  showRemoveAds
                 />
                 {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">

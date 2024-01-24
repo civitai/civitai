@@ -10,6 +10,7 @@ const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
   subscriber: boolean;
+  username?: string;
 } | null>(null);
 
 export function useAscendeumAdsContext() {
@@ -57,7 +58,9 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
   );
 
   return (
-    <AscendeumAdsContext.Provider value={{ ready, adsBlocked, nsfw, subscriber }}>
+    <AscendeumAdsContext.Provider
+      value={{ ready, adsBlocked, nsfw, subscriber, username: currentUser?.username }}
+    >
       {children}
     </AscendeumAdsContext.Provider>
   );

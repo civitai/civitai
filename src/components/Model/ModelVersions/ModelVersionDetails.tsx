@@ -929,7 +929,13 @@ export function ModelVersionDetails({
           )}
           {model.poi && <PoiAlert />}
 
-          <AscendeumAd adunit="Sidebar_A" m="0 auto" sizes={{ [0]: '300x250' }} />
+          <AscendeumAd
+            adunit="Sidebar_A"
+            m="0 auto"
+            sizes={{ [0]: '300x250' }}
+            showFeedback
+            showRemoveAds
+          />
         </Stack>
       </ContainerGrid.Col>
 

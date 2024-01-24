@@ -14,34 +14,6 @@ type AdMatrix = {
 
 const adMatrices: Record<string, AdMatrix> = {};
 
-export function useCreateAdFeed<T>({ data, interval }: { data: T[]; interval?: number[] }) {
-  const { subscriber } = useAscendeumAdsContext();
-
-  return useMemo(() => {
-    if (subscriber || !interval) return data.map((data) => ({ type: 'data', data }));
-    const key = interval.join('_');
-    adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
-    const adMatrix = adMatrices[key];
-
-    const [lower, upper] = interval;
-    while (adMatrix.lastIndex < data.length) {
-      const min = adMatrix.lastIndex + lower + 1;
-      const max = adMatrix.lastIndex + upper;
-      const index = getRandomInt(min, max);
-      adMatrix.indices.push(index);
-      adMatrix.lastIndex = index;
-    }
-
-    return data.reduce<AdFeed<T>>((acc, item, i) => {
-      if (adMatrix.indices.includes(i)) {
-        acc.push({ type: 'ad', data: { adunit: 'Dynamic_InContent', height: 250, width: 300 } });
-      }
-      acc.push({ type: 'data', data: item });
-      return acc;
-    }, []);
-  }, [subscriber, data]);
-}
-
 export function createAdFeed<T>({
   data,
   interval,
@@ -67,7 +39,7 @@ export function createAdFeed<T>({
 
   return data.reduce<AdFeed<T>>((acc, item, i) => {
     if (adMatrix.indices.includes(i)) {
-      acc.push({ type: 'ad', data: { adunit: 'Dynamic_InContent', height: 250, width: 300 } });
+      acc.push({ type: 'ad', data: { adunit: 'Dynamic_InContent', height: 250 + 20, width: 300 } });
     }
     acc.push({ type: 'data', data: item });
     return acc;

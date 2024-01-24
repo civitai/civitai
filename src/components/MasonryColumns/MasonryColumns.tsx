@@ -1,6 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { createStyles } from '@mantine/core';
+import { Box, Paper, createStyles } from '@mantine/core';
 import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -67,11 +67,24 @@ export function MasonryColumns<TData>({
                 {data.type === 'data' &&
                   createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
                 {data.type === 'ad' && (
-                  <AscendeumAd
-                    adunit="Dynamic_InContent"
-                    sizes={{ [0]: '300x250' }}
-                    style={{ margin: '0 auto' }}
-                  />
+                  <Paper
+                    radius="sm"
+                    sx={(theme) => ({
+                      overflow: 'hidden',
+                      width: 320,
+                      background:
+                        theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
+                    })}
+                    py={10}
+                    withBorder
+                    shadow="sm"
+                  >
+                    <AscendeumAd
+                      adunit="Dynamic_InContent"
+                      sizes={{ [0]: '300x250' }}
+                      style={{ margin: '0 auto' }}
+                    />
+                  </Paper>
                 )}
               </React.Fragment>
             );

@@ -1,4 +1,4 @@
-import { BoxProps, Center, Paper, Stack, Text } from '@mantine/core';
+import { BoxProps, Center, Group, Paper, Stack, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useAscendeumAdsContext } from '~/components/Ads/AscendeumAds/AscendeumAdsProvider';
@@ -17,6 +17,7 @@ import { useDialogStore, useStackingContext } from '~/components/Dialog/dialogSt
 import { v4 as uuidv4 } from 'uuid';
 import { AdsterraAd } from '~/components/Ads/Adsterra/AdsterraAd';
 import { NextLink } from '@mantine/next';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type AdContentProps<T extends AdUnitType> = {
   adunit: T;
@@ -25,6 +26,7 @@ type AdContentProps<T extends AdUnitType> = {
   style?: React.CSSProperties;
   showAdvertisementText?: boolean;
   showRemoveAds?: boolean;
+  showFeedback?: boolean;
 };
 type AdProps<T extends AdUnitType> = Omit<AdContentProps<T>, 'bidSizes'> &
   BoxProps & {
@@ -38,12 +40,14 @@ export function AscendeumAd<T extends AdUnitType>({
   sizes,
   showAdvertisementText,
   showRemoveAds,
+  showFeedback,
   ...boxProps
 }: AdProps<T>) {
   const stackingContextRef = useRef(useStackingContext.getState().stackingContext.length);
+  const currentUser = useCurrentUser();
 
   const [ref, inView] = useInView({ rootMargin: '200%' });
-  const { ready, adsBlocked, nsfw: globalNsfw, subscriber } = useAscendeumAdsContext();
+  const { ready, adsBlocked, nsfw: globalNsfw, subscriber, username } = useAscendeumAdsContext();
   const _nsfw = nsfw ?? globalNsfw;
   const keys = useMemo(
     () =>
@@ -78,25 +82,24 @@ export function AscendeumAd<T extends AdUnitType>({
   const _ready = ready && !adsBlocked && inView;
   const showAscendeumAd = _ready && !_nsfw;
   const showAlternateAd = _ready && _nsfw;
+  const includeWrapper = showAdvertisementText || showRemoveAds;
   // const adsterraSize = showAlternateAd ? getAdsterraSize(`${width}x${height}`) : undefined;
 
+  console.log({ showCurrentStack });
+
   const content = (
-    <Paper
-      ref={ref}
-      component={Center}
-      h={height}
-      w={width}
-      {...(!showAdvertisementText ? boxProps : {})}
-    >
+    <Paper ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
       {showCurrentStack && (
         <>
           {adsBlocked && (
-            <Image
-              src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
-              alt="Please support civitai and creators by disabling adblock"
-              width={width}
-              height={height}
-            />
+            <NextLink href="/pricing">
+              <Image
+                src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
+                alt="Please support civitai and creators by disabling adblock"
+                width={width}
+                height={height}
+              />
+            </NextLink>
           )}
           {showAscendeumAd && (
             <AscendeumAdContent adunit={adunit} bidSizes={stringSizes} style={{ height, width }} />
@@ -126,7 +129,7 @@ export function AscendeumAd<T extends AdUnitType>({
     </Paper>
   );
 
-  return showAdvertisementText || showRemoveAds ? (
+  return includeWrapper ? (
     <Stack spacing={0} {...boxProps} w={width}>
       {showAdvertisementText && (
         <Text color="dimmed" align="center" size="xs">
@@ -134,10 +137,33 @@ export function AscendeumAd<T extends AdUnitType>({
         </Text>
       )}
       {content}
-      {showRemoveAds && (
-        <Text variant="link" size="xs" align="center">
-          Remove ads
-        </Text>
+      {(showRemoveAds || showFeedback) && (
+        <Group position="apart">
+          {showRemoveAds && (
+            <Text
+              component={NextLink}
+              td="underline"
+              href="/pricing"
+              color="dimmed"
+              size="xs"
+              align="center"
+            >
+              Remove ads
+            </Text>
+          )}
+          {showFeedback && username && (
+            <Text
+              component={NextLink}
+              td="underline"
+              href={`/ad-feedback?Username=${username}&Ad unit=${adunit}`}
+              color="dimmed"
+              size="xs"
+              align="center"
+            >
+              Feedback
+            </Text>
+          )}
+        </Group>
       )}
     </Stack>
   ) : (

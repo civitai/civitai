@@ -47,7 +47,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       >
         <AscendeumAd
           adunit="Leaderboard_A"
-          style={{ margin: `0 auto ${theme.spacing.xs}px` }}
+          style={{ margin: `0 auto ${theme.spacing.xs}px`, zIndex: 10 }}
           sizes={{
             [0]: '300x100',
             [theme.breakpoints.md]: '728x90',
