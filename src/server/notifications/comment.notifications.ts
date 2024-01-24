@@ -162,11 +162,11 @@ export const commentNotifications = createNotificationProcessor({
     `,
   },
   'new-comment-reply': {
-    displayName: 'New comment reply',
+    displayName: 'New comment replies',
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} responded to a ${details.threadType} comment you made`,
+        message: `${details.username} replied to a ${details.threadType} comment you made`,
         url,
       };
     },
