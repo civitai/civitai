@@ -7,6 +7,7 @@ import {
   Divider,
   Group,
   GroupProps,
+  Indicator,
   Input,
   Loader,
   Stack,
@@ -52,10 +53,13 @@ export function ChatList({
   setNewChat: Dispatch<SetStateAction<boolean>>;
   setExistingChat: Dispatch<SetStateAction<number | undefined>>;
 }) {
-  const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
+
+  const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
+  const chatCounts = queryUtils.chat.getUnreadCount.getData();
 
   // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats
   //      or at least a new endpoint for searching
@@ -116,6 +120,7 @@ export function ChatList({
           <Stack p="xs" spacing={4}>
             <AnimatePresence initial={false} mode="sync">
               {filteredData.map((d) => {
+                const unreadCount = chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
                 return (
                   <PGroup
                     key={d.id}
@@ -132,7 +137,16 @@ export function ChatList({
                       setNewChat(false);
                     }}
                   >
-                    <Box>{d.chatMembers.length > 2 ? <IconUsers /> : <IconUser />}</Box>
+                    <Indicator
+                      color="red"
+                      position="top-start"
+                      disabled={!unreadCount || unreadCount === 0}
+                      label={unreadCount}
+                      inline
+                      size={16}
+                    >
+                      <Box>{d.chatMembers.length > 2 ? <IconUsers /> : <IconUser />}</Box>
+                    </Indicator>
                     <Stack sx={{ overflow: 'hidden' }} spacing={0}>
                       <Text
                         size="sm"

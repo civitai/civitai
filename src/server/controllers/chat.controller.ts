@@ -12,12 +12,13 @@ import {
   CreateChatInput,
   CreateMessageInput,
   GetInfiniteMessagesInput,
-  GetUnreadInput,
   IsTypingInput,
   isTypingOutput,
   ModifyUserInput,
   UpdateMessageInput,
+  UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import {
   throwBadRequestError,
   throwDbError,
@@ -58,6 +59,45 @@ const singleChatSelect = {
     },
   },
   // messages: {}
+};
+
+/**
+ * Get user chat settings
+ */
+export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { chat = {} } = await getUserSettings(userId);
+    return chat;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Set user chat settings
+ */
+export const setUserSettingsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UserSettingsChat;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { chat = {} } = await getUserSettings(userId);
+    const newChat = { ...chat, ...input };
+
+    // TODO make sure this is not resetting undefined values
+    await setUserSetting(userId, { chat: newChat });
+
+    return newChat;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
 };
 
 // TODO are we using this?
@@ -102,7 +142,11 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const { id: userId } = ctx.user;
 
     return await dbWrite.chat.findMany({
-      where: { chatMembers: { some: { userId, status: { not: ChatMemberStatus.Ignored } } } },
+      where: {
+        chatMembers: {
+          some: { userId, status: { in: [ChatMemberStatus.Joined, ChatMemberStatus.Invited] } },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       select: {
         ...singleChatSelect,
@@ -133,15 +177,33 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
  * Get number of unread messages for user
  */
 export const getUnreadMessagesForUserHandler = async ({
-  input,
+  // input,
   ctx,
 }: {
-  input: GetUnreadInput;
+  // input: GetUnreadInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { grouped } = input;
+
+    const unread = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+      select memb."chatId" as "chatId", count(msg.id)::integer as "cnt"
+      from "ChatMember" memb
+             left join "ChatMessage" msg
+                       on msg."chatId" = memb."chatId" and
+                          (msg.id > memb."lastViewedMessageId" or
+                           memb."lastViewedMessageId" is null
+                            )
+      where memb."userId" = ${userId}
+      and memb.status in ('Invited', 'Joined')
+      and memb."isMuted" is false
+      and msg."userId" != ${userId}
+      group by memb."chatId"
+    `;
+
+    console.log(unread);
+
+    return unread;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -525,6 +587,10 @@ export const getInfiniteMessagesHandler = async ({
     if (items.length > input.limit) {
       const nextItem = items.pop();
       nextCursor = nextItem?.id;
+    }
+
+    if (input.direction === 'desc') {
+      items.reverse();
     }
 
     return {

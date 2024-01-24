@@ -10,44 +10,44 @@ import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import type { NextPage } from 'next';
+import type { Session } from 'next-auth';
+import { getSession, SessionProvider } from 'next-auth/react';
+import PlausibleProvider from 'next-plausible';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
-import type { Session } from 'next-auth';
-import { SessionProvider, getSession } from 'next-auth/react';
 import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { trpc } from '~/utils/trpc';
-import '~/styles/globals.css';
-import { CustomModalsProvider } from './../providers/CustomModalsProvider';
-import { TosProvider } from '~/providers/TosProvider';
-import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
+import { BaseLayout } from '~/components/AppLayout/BaseLayout';
+import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
+import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
+import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
+import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { isDev, isMaintenanceMode } from '~/env/other';
+import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
+import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { ClientHistoryStore } from '~/store/ClientHistoryStore';
-import { isDev, isMaintenanceMode } from '~/env/other';
-import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
-import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { MetaPWA } from '~/components/Meta/MetaPWA';
-import PlausibleProvider from 'next-plausible';
-import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
-import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
-import { SignalProvider } from '~/components/Signals/SignalsProvider';
-import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
-import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
-import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
-import { DialogProvider } from '~/components/Dialog/DialogProvider';
-import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
-import { BaseLayout } from '~/components/AppLayout/BaseLayout';
+import { TosProvider } from '~/providers/TosProvider';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
+import { ClientHistoryStore } from '~/store/ClientHistoryStore';
+import { trpc } from '~/utils/trpc';
+import '~/styles/globals.css';
 import { RecaptchaWidgetProvider } from '../components/Recaptcha/RecaptchaWidget';
+import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
+import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -119,8 +119,8 @@ function MyApp(props: CustomAppProps) {
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
         <FeatureFlagsProvider flags={flags}>
-          <SignalProvider>
-            <CivitaiSessionProvider>
+          <CivitaiSessionProvider>
+            <SignalProvider>
               <CivitaiPosthogProvider>
                 <CookiesProvider value={cookies}>
                   <ReferralsProvider>
@@ -149,8 +149,8 @@ function MyApp(props: CustomAppProps) {
                   </ReferralsProvider>
                 </CookiesProvider>
               </CivitaiPosthogProvider>
-            </CivitaiSessionProvider>
-          </SignalProvider>
+            </SignalProvider>
+          </CivitaiSessionProvider>
         </FeatureFlagsProvider>
       </SessionProvider>
     </IsClientProvider>

@@ -2,6 +2,8 @@ import { ActionIcon, Card, createStyles, Indicator, Portal } from '@mantine/core
 import { IconMessage2 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ChatWindow } from '~/components/Chat/ChatWindow';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
   absolute: {
@@ -20,10 +22,27 @@ const useStyles = createStyles((theme) => ({
 export function ChatButton() {
   const [opened, setOpened] = useState(false);
   const { classes } = useStyles();
+  const currentUser = useCurrentUser();
+
+  const { data: unreadData, isLoading: unreadLoading } = trpc.chat.getUnreadCount.useQuery(
+    undefined,
+    { enabled: !!currentUser }
+  );
+  trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
+
+  if (!currentUser) return <></>;
+
+  const totalUnread = unreadData?.reduce((accum, { cnt }) => accum + cnt, 0);
 
   return (
     <>
-      <Indicator color="red" disabled={true}>
+      <Indicator
+        color="red"
+        disabled={unreadLoading || !totalUnread}
+        label={totalUnread}
+        inline
+        size={14}
+      >
         <ActionIcon
           variant={opened ? 'filled' : undefined}
           onClick={() => setOpened((val) => !val)}

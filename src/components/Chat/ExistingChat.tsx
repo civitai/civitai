@@ -113,6 +113,7 @@ export function ExistingChat({
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
   const [typingText, setTypingText] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
+  // const oldPagesLength = useRef(1);
 
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
@@ -121,7 +122,10 @@ export function ExistingChat({
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        // keepPreviousData: true,
+        select: (data) => ({
+          pages: [...data.pages].reverse(),
+          pageParams: [...data.pageParams].reverse(),
+        }),
       }
     );
 
@@ -130,6 +134,35 @@ export function ExistingChat({
   const thisChat = allChatData?.find((c) => c.id === existingChat);
   const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
+  const lastViewed = myMember?.lastViewedMessageId;
+
+  const { mutateAsync: changeLastViewed } = trpc.chat.modifyUser.useMutation({
+    onMutate(data) {
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const tChat = old.find((c) => c.id === existingChat);
+          const tMember = tChat?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
+          if (!tMember) return old;
+
+          tMember.lastViewedMessageId = data.lastViewedMessageId ?? null;
+        })
+      );
+      queryUtils.chat.getUnreadCount.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const tChat = old.find((c) => c.chatId === existingChat);
+          if (!tChat) return old;
+
+          tChat.cnt = 0;
+        })
+      );
+    },
+  });
 
   const { mutate: modifyMembership } = trpc.chat.modifyUser.useMutation({
     onSuccess(data) {
@@ -229,13 +262,27 @@ export function ExistingChat({
   const allChats = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   useEffect(() => {
+    // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
+
     if (!allChats.length) return;
+
+    // if (data.pages.length !== oldPagesLength.current) return;
+    //
+    // oldPagesLength.current = data.pages.length;
 
     lastReadRef.current?.scrollTo(
       0,
       lastReadRef.current?.scrollHeight - lastReadRef.current?.clientHeight
     );
-  }, [allChats]);
+
+    if (!myMember) return;
+    const newestMessageId = allChats[allChats.length - 1].id;
+    if ((myMember.lastViewedMessageId ?? 0) > newestMessageId) return;
+    changeLastViewed({
+      chatMemberId: myMember.id,
+      lastViewedMessageId: newestMessageId,
+    }).catch();
+  }, [allChats, myMember]);
 
   useEffect(() => {
     setTypingStatus({});
@@ -291,12 +338,13 @@ export function ExistingChat({
     };
   }, [connected, worker, handleIsTyping]);
 
+  // TODO this doesnt trigger sometimes, like if typing and sending very quickly
   useEffect(() => {
     if (!currentUser) return;
 
     doIsTyping({
       chatId: existingChat,
-      userId: currentUser?.id,
+      userId: currentUser.id,
       isTyping: false,
     }).catch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -324,9 +372,9 @@ export function ExistingChat({
     if (!currentUser) return;
 
     // only send signal if they're not erasing the chat
-    if (value.length) {
-      throttledTyping();
-    }
+    // if (value.length) {
+    throttledTyping();
+    // }
   };
 
   // TODO handle replies (reference)
@@ -349,7 +397,9 @@ export function ExistingChat({
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart" noWrap>
         {allChatLoading ? (
-          <Loader />
+          <Center h="100%">
+            <Loader />
+          </Center>
         ) : (
           <Group>
             {/* TODO limit this to one line, then expand */}
@@ -369,7 +419,9 @@ export function ExistingChat({
       </Group>
       <Divider />
       {!myMember ? (
-        <Loader />
+        <Center h="100%">
+          <Loader />
+        </Center>
       ) : myMember.status === ChatMemberStatus.Joined ? (
         <>
           <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
@@ -379,7 +431,6 @@ export function ExistingChat({
               </Center>
             ) : allChats.length > 0 ? (
               <Stack sx={{ overflowWrap: 'break-word' }}>
-                <DisplayMessages chats={allChats} />
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -387,6 +438,7 @@ export function ExistingChat({
                     </Center>
                   </InViewLoader>
                 )}
+                <DisplayMessages chats={allChats} />
               </Stack>
             ) : (
               <Center h="100%">
@@ -424,7 +476,7 @@ export function ExistingChat({
               h="100%"
               w={60}
               onClick={sendMessage}
-              disabled={isSending || !chatMsg.length}
+              disabled={isSending || !chatMsg.length || currentUser?.muted}
               sx={{ borderRadius: 0 }}
             >
               {isSending ? <Loader /> : <IconSend />}
@@ -468,7 +520,7 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
           // ref={c.id === lastReadId ? lastReadRef : undefined}
           key={c.id}
           spacing="xs"
-          style={idx === chats.length - 1 ? { marginBottom: 12 } : {}}
+          style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ type: 'spring', duration: 0.4 }}

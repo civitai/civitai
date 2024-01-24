@@ -1,19 +1,21 @@
 import { ActionIcon, Group, Menu } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { ChatMemberStatus } from '@prisma/client';
 import {
   IconBell,
   IconBellOff,
   IconDoorExit,
   IconEar,
+  IconEarOff,
   IconFlag,
   IconSettings,
-  IconUserPlus,
-  IconUserX,
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { Dispatch, SetStateAction } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -33,8 +35,29 @@ export const ChatActions = ({
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
+  const userSettings = queryUtils.chat.getUserSettings.getData();
+  // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
+  // TODO if this works, more of this for getAllByUser
+  const muteSounds = userSettings?.muteSounds ?? false;
+
   const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const isOwner = myMember?.isOwner === true;
+
+  const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
+    onSuccess(data) {
+      queryUtils.chat.getUserSettings.setData(undefined, (old) => {
+        if (!old) return old;
+        return data;
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update settings.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   const { mutate: modifyMembership } = trpc.chat.modifyUser.useMutation({
     onSuccess(data, req) {
@@ -65,6 +88,12 @@ export const ChatActions = ({
       });
     },
   });
+
+  const handleMute = () => {
+    modifySettings({
+      muteSounds: !muteSounds,
+    });
+  };
 
   const toggleNotifications = () => {
     if (!myMember || !currentUser) {
@@ -98,6 +127,24 @@ export const ChatActions = ({
     });
   };
 
+  // TODO check leaving and then reopening a new chat with same people
+  // TODO probably don't close modal until left
+  const leaveModal = () =>
+    openConfirmModal({
+      title: 'Really leave this chat?',
+      centered: true,
+      labels: { confirm: 'Confirm', cancel: 'Cancel' },
+      onConfirm: leaveChat,
+    });
+
+  const reportModal = () => {
+    if (!chatObj) return;
+    openContext('report', {
+      entityType: ReportEntity.Chat,
+      entityId: chatObj.id,
+    });
+  };
+
   return (
     <Group>
       <Menu withArrow position="bottom-end">
@@ -110,22 +157,28 @@ export const ChatActions = ({
           {!!chatObj && (
             <>
               <Menu.Label>Chat Actions</Menu.Label>
-              {isOwner && <Menu.Item icon={<IconUserPlus size={18} />}>Add users</Menu.Item>}
-              {isOwner && <Menu.Item icon={<IconUserX size={18} />}>Ban users</Menu.Item>}
+              {/*TODO enable these*/}
+              {/*{isOwner && <Menu.Item icon={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
+              {/*{isOwner && <Menu.Item icon={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
               <Menu.Item
                 icon={myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />}
                 onClick={toggleNotifications}
               >{`${myMember?.isMuted ? 'Enable' : 'Disable'} notifications`}</Menu.Item>
-              <Menu.Item icon={<IconFlag size={18} />} color="orange">
+              <Menu.Item icon={<IconFlag size={18} />} color="orange" onClick={reportModal}>
                 Report
               </Menu.Item>
-              <Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveChat}>
+              <Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveModal}>
                 Leave
               </Menu.Item>
             </>
           )}
           <Menu.Label>Global</Menu.Label>
-          <Menu.Item icon={<IconEar size={18} />}>Mute/play sounds</Menu.Item>
+          <Menu.Item
+            icon={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
+            onClick={handleMute}
+          >
+            {`${muteSounds ? 'Play' : 'Mute'} sounds`}
+          </Menu.Item>
           {/* TODO blocklist here? */}
           {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
         </Menu.Dropdown>

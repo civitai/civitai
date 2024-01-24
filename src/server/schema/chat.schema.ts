@@ -41,7 +41,9 @@ export type GetInfiniteMessagesInput = z.infer<typeof getInfiniteMessagesInput>;
 export const getInfiniteMessagesInput = infiniteQuerySchema.merge(
   z.object({
     chatId: z.number(),
-    direction: z.enum(['asc', 'desc']).optional().default('asc'),
+    direction: z.enum(['asc', 'desc']).optional().default('desc'),
+    // this is high for now because of issues with scrolling
+    limit: z.coerce.number().min(1).default(1000),
   })
 );
 
@@ -53,7 +55,7 @@ export const isTypingInput = z.object({
 });
 export type isTypingOutput = IsTypingInput & { username: string };
 
-export type GetUnreadInput = z.infer<typeof getUnreadInput>;
-export const getUnreadInput = z.object({
-  grouped: z.boolean().optional().default(false),
+export type UserSettingsChat = z.infer<typeof userSettingsChat>;
+export const userSettingsChat = z.object({
+  muteSounds: z.boolean().optional(),
 });

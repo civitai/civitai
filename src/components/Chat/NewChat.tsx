@@ -1,4 +1,5 @@
-import { Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
+import { IconX } from '@tabler/icons-react';
 import React, { Dispatch, SetStateAction, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
@@ -108,9 +109,16 @@ export function NewChat({
           </Center>
         ) : (
           <Group>
-            {/* TODO need removal option*/}
             {selectedUsers.map((u) => (
-              <UserAvatar key={u.id} user={u} size="md" withUsername />
+              <Group key={u.id}>
+                <UserAvatar user={u} size="md" withUsername />
+                <ActionIcon
+                  title="Remove user"
+                  onClick={() => setSelectedUsers(selectedUsers.filter((su) => su.id !== u.id))}
+                >
+                  <IconX />
+                </ActionIcon>
+              </Group>
             ))}
           </Group>
         )}
@@ -128,7 +136,10 @@ export function NewChat({
         >
           Cancel
         </Button>
-        <Button disabled={isCreating} onClick={handleNewChat}>
+        <Button
+          disabled={isCreating || selectedUsers.length === 0 || currentUser?.muted}
+          onClick={handleNewChat}
+        >
           Start Chat
         </Button>
       </Group>
