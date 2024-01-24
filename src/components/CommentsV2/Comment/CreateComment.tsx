@@ -11,16 +11,10 @@ import { IconClubs, IconLock } from '@tabler/icons-react';
 type CreateCommentProps = {
   onCancel?: () => void;
   autoFocus?: boolean;
-  replyTo?: SimpleUser;
   replyToCommentId?: number;
 };
 
-export function CreateComment({
-  onCancel,
-  autoFocus,
-  replyTo,
-  replyToCommentId,
-}: CreateCommentProps) {
+export function CreateComment({ onCancel, autoFocus, replyToCommentId }: CreateCommentProps) {
   const currentUser = useCurrentUser();
   const { isLocked, isMuted, forceLocked } = useCommentsContext();
 
@@ -70,12 +64,7 @@ export function CreateComment({
   return (
     <Group align="flex-start" noWrap spacing="sm">
       <UserAvatar user={currentUser} size="md" />
-      <CommentForm
-        onCancel={onCancel}
-        replyTo={replyTo}
-        autoFocus={autoFocus}
-        replyToCommentId={replyToCommentId}
-      />
+      <CommentForm onCancel={onCancel} autoFocus={autoFocus} replyToCommentId={replyToCommentId} />
     </Group>
   );
 }

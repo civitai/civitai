@@ -20,7 +20,7 @@ const notificationProcessors = {
   ...mentionNotifications,
   // ...modelNotifications,
   // ...reviewNotifications,
-  // ...commentNotifications,
+  ...commentNotifications,
   // ...reactionNotifications,
   // ...systemNotifications,
   // ...userJourneyNotifications,

@@ -40,7 +40,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
               </Stack>
             )}
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-              <CreateComment key={activeComment?.id} replyTo={activeComment?.user ?? undefined} />
+              <CreateComment key={activeComment?.id} />
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} />
               ))}

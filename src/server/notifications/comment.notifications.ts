@@ -161,6 +161,68 @@ export const commentNotifications = createNotificationProcessor({
         );
     `,
   },
+  'new-comment-reply': {
+    displayName: 'New comment reply',
+    prepareMessage: ({ details }) => {
+      const url = threadUrlMap(details);
+      return {
+        message: `${details.username} responded to a ${details.threadType} comment you made`,
+        url,
+      };
+    },
+    prepareQuery: ({ lastSent }) => `
+      WITH new_comment_reply AS (
+        SELECT DISTINCT
+          pc."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'commentId', c.id,
+            'threadId', c."threadId", 
+            'threadParentId', COALESCE(
+                root."imageId",
+                root."modelId",
+                root."postId",
+                root."questionId",
+                root."answerId",
+                root."reviewId",
+                root."articleId",
+                root."bountyId",
+                root."bountyEntryId"
+             ),
+            'threadType', CASE
+                WHEN root."imageId" IS NOT NULL THEN 'image'
+                WHEN root."modelId" IS NOT NULL THEN 'model'
+                WHEN root."postId" IS NOT NULL THEN 'post'
+                WHEN root."questionId" IS NOT NULL THEN 'question'
+                WHEN root."answerId" IS NOT NULL THEN 'answer'
+                WHEN root."reviewId" IS NOT NULL THEN 'review'
+                WHEN root."articleId" IS NOT NULL THEN 'article'
+                WHEN root."bountyId" IS NOT NULL THEN 'bounty'
+                WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                ELSE 'comment'
+                END,
+             'commentParentId', t."commentId",
+             'commentParentType', 'comment',
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "Thread" t ON t.id = c."threadId"
+        JOIN "CommentV2" pc ON pc.id = t."commentId"
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" root ON root.id = t."rootThreadId"
+        WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'new-comment-reply' "type",
+        details
+      FROM new_comment_reply r
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-reply')
+    `,
+  },
   'new-thread-response': {
     displayName: 'New replies to comment threads you are in',
     prepareMessage: ({ details }) => {
@@ -201,25 +263,69 @@ export const commentNotifications = createNotificationProcessor({
           JSONB_BUILD_OBJECT(
             'version', 2,
             'commentId', c.id,
-            'threadId', c."threadId",
-            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId", t."articleId", t."bountyId", t."bountyEntryId"),
+            'threadId', c."threadId", 
+            'threadParentId', COALESCE(
+                root."imageId",
+                root."modelId",
+                root."postId",
+                root."questionId",
+                root."answerId",
+                root."reviewId",
+                root."articleId",
+                root."bountyId",
+                root."bountyEntryId",
+                t."imageId",
+                t."modelId",
+                t."postId",
+                t."questionId",
+                t."answerId",
+                t."reviewId",
+                t."articleId",
+                t."bountyId",
+                t."bountyEntryId"
+             ),
             'threadType', CASE
-              WHEN t."imageId" IS NOT NULL THEN 'image'
-              WHEN t."modelId" IS NOT NULL THEN 'model'
-              WHEN t."postId" IS NOT NULL THEN 'post'
-              WHEN t."questionId" IS NOT NULL THEN 'question'
-              WHEN t."answerId" IS NOT NULL THEN 'answer'
-              WHEN t."reviewId" IS NOT NULL THEN 'review'
-              WHEN t."articleId" IS NOT NULL THEN 'article'
-              WHEN t."bountyId" IS NOT NULL THEN 'bounty'
-              WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+              WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
+              WHEN COALESCE(root."modelId", t."modelId") IS NOT NULL THEN 'model'
+              WHEN COALESCE(root."postId", t."postId") IS NOT NULL THEN 'post'
+              WHEN COALESCE(root."questionId", t."questionId") IS NOT NULL THEN 'question'
+              WHEN COALESCE(root."answerId", t."answerId") IS NOT NULL THEN 'answer'
+              WHEN COALESCE(root."reviewId", t."reviewId") IS NOT NULL THEN 'review'
+              WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
+              WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
+              WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               ELSE 'comment'
             END,
+             'commentParentId', COALESCE(
+                t."imageId",
+                t."modelId",
+                t."postId",
+                t."questionId",
+                t."answerId",
+                t."reviewId",
+                t."articleId",
+                t."bountyId",
+                t."bountyEntryId",
+                t."commentId"
+             ),
+             'commentParentType', CASE
+                WHEN t."imageId" IS NOT NULL THEN 'image'
+                WHEN t."modelId" IS NOT NULL THEN 'model'
+                WHEN t."postId" IS NOT NULL THEN 'post'
+                WHEN t."questionId" IS NOT NULL THEN 'question'
+                WHEN t."answerId" IS NOT NULL THEN 'answer'
+                WHEN t."reviewId" IS NOT NULL THEN 'review'
+                WHEN t."articleId" IS NOT NULL THEN 'article'
+                WHEN t."bountyId" IS NOT NULL THEN 'bounty'
+                WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                ELSE 'comment'
+              END,
             'username', u.username
           ) "details"
         FROM "CommentV2" c
         JOIN "Thread" t ON t.id = c."threadId"
         JOIN "User" u ON c."userId" = u.id
+        LEFT JOIN "Thread" root ON root.id = t."rootThreadId" 
         WHERE c."createdAt" > '${lastSent}'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
@@ -240,7 +346,7 @@ export const commentNotifications = createNotificationProcessor({
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
               AND n."createdAt" > now() - interval '1 hour'
-              AND n.type IN ('new-comment-nested', 'new-comment-response', 'new-mention', 'new-article-comment', 'new-image-comment')
+              AND n.type IN ('new-comment-nested', 'new-comment-response', 'new-mention', 'new-article-comment', 'new-image-comment', 'new-comment-reply')
               AND n.details->>'commentId' = r.details->>'commentId'
         );
     `,

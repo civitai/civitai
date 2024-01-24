@@ -34,7 +34,7 @@ export function ResourceReviewComments({ reviewId, userId }: { reviewId: number;
               </Stack>
             )}
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-              <CreateComment key={activeComment?.id} replyTo={activeComment?.user ?? undefined} />
+              <CreateComment />
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} />
               ))}

@@ -41,7 +41,7 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
               </Stack>
             )}
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-              <CreateComment key={activeComment?.id} replyTo={activeComment?.user ?? undefined} />
+              <CreateComment />
               {data?.length || created.length ? (
                 <>
                   {data?.map((comment) => (

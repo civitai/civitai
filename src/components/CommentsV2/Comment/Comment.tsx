@@ -238,7 +238,6 @@ export function CommentContent({
           <Box pt="sm">
             <CreateComment
               autoFocus
-              replyTo={comment.user}
               onCancel={() => setReplying(false)}
               replyToCommentId={comment.id}
             />

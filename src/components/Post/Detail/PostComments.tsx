@@ -49,7 +49,7 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
               </Stack>
             )}
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-              <CreateComment key={activeComment?.id} replyTo={activeComment?.user ?? undefined} />
+              <CreateComment />
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} />
               ))}
