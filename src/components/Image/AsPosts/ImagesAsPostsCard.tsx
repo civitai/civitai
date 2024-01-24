@@ -208,6 +208,7 @@ export function ImagesAsPostsCard({
                               heartCount: image.stats?.heartCountAllTime,
                               laughCount: image.stats?.laughCountAllTime,
                               cryCount: image.stats?.cryCountAllTime,
+                              tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                             }}
                             readonly={!safe}
                             className={classes.reactions}

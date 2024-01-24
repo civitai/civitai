@@ -351,6 +351,22 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (aComments > bComments) return -1;
         return 0;
       });
+    else if (input.sort === ImageSort.MostTipped)
+      results.sort((a, b) => {
+        const aTips = a.images[0].stats?.tippedAmountCountAllTime ?? 0;
+        const bTips = b.images[0].stats?.tippedAmountCountAllTime ?? 0;
+        if (aTips < bTips) return 1;
+        if (aTips > bTips) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostCollected)
+      results.sort((a, b) => {
+        const aCollections = a.images[0].stats?.collectedCountAllTime ?? 0;
+        const bCollections = b.images[0].stats?.collectedCountAllTime ?? 0;
+        if (aCollections < bCollections) return 1;
+        if (aCollections > bCollections) return -1;
+        return 0;
+      });
 
     return {
       nextCursor: cursor,
