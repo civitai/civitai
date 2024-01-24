@@ -3,7 +3,6 @@ import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { SortFilter } from '~/components/Filters';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
@@ -102,7 +101,6 @@ export default function ClubsPage() {
               })}
             />
             <Group position="apart" spacing={8}>
-              <HomeContentToggle />
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 {!query.engagement && (
                   <FeatureIntroduction

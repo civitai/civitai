@@ -13,7 +13,7 @@ export function ManageHomepageButton({
   return (
     <ActionIcon
       size="sm"
-      variant="light"
+      variant="subtle"
       color="dark"
       {...actionIconProps}
       onClick={() => openContext('manageHomeBlocks', {})}

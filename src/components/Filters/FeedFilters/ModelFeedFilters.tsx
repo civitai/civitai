@@ -35,13 +35,14 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         </Popover>
       )}
       <SortFilter type="models" variant="button" />
-      <ModelFiltersDropdown />
+      <ModelFiltersDropdown size="xs" compact />
       {canToggleView && (
         <ViewToggle
           type="models"
           color="gray"
           radius="xl"
-          size={36}
+          size="sm"
+          iconSize={14}
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         />
       )}

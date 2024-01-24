@@ -9,7 +9,7 @@ export function BountyFeedFilters({ ...groupProps }: GroupProps) {
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
       <SortFilter type="bounties" variant="button" />
-      <BountyFiltersDropdown />
+      <BountyFiltersDropdown size="xs" compact />
     </Group>
   );
 }

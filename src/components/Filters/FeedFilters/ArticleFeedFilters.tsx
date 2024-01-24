@@ -10,12 +10,13 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
       <SortFilter type="articles" variant="button" />
-      <ArticleFiltersDropdown />
+      <ArticleFiltersDropdown size="xs" compact />
       <ViewToggle
         type="articles"
         color="gray"
         radius="xl"
-        size={36}
+        size="sm"
+        iconSize={14}
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       />
     </Group>

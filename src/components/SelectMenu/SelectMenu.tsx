@@ -113,6 +113,8 @@ export function SelectMenuV2<T extends string | number>({
       disabled={disabled}
       rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
       onClick={() => setOpened((o) => !o)}
+      size="xs"
+      compact
     >
       <Group spacing={4} noWrap>
         <IconSortDescending size={16} />

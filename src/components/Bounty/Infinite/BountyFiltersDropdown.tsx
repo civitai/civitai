@@ -9,6 +9,7 @@ import {
   Button,
   createStyles,
   Drawer,
+  ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BountyType, MetricTimeframe } from '@prisma/client';
@@ -33,7 +34,7 @@ const checkSupportsBaseModel = (types: BountyType[]) => {
   );
 };
 
-export function BountyFiltersDropdown() {
+export function BountyFiltersDropdown({ ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
 
@@ -80,6 +81,7 @@ export function BountyFiltersDropdown() {
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -87,6 +89,7 @@ export function BountyFiltersDropdown() {
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
       >
@@ -227,6 +230,8 @@ export function BountyFiltersDropdown() {
   );
 }
 
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
+
 const useStyles = createStyles((theme) => ({
   label: {
     fontSize: 12,
@@ -253,4 +258,7 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));

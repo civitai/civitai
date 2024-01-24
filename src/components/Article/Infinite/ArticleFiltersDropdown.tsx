@@ -1,5 +1,6 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   Divider,
@@ -48,9 +49,12 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function ArticleFiltersDropdown({ query, onChange }: Props) {
+export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
@@ -96,6 +100,7 @@ export function ArticleFiltersDropdown({ query, onChange }: Props) {
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -103,6 +108,7 @@ export function ArticleFiltersDropdown({ query, onChange }: Props) {
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
       >
@@ -199,7 +205,7 @@ export function ArticleFiltersDropdown({ query, onChange }: Props) {
   );
 }
 
-type Props = {
+type Props = Omit<ButtonProps, 'onClick'> & {
   query?: Partial<ArticleQueryInput>;
   onChange?: (params: Partial<ArticleQueryInput>) => void;
 };

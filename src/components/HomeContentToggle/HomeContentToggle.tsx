@@ -4,6 +4,8 @@ import {
   SegmentedControl,
   SegmentedControlItem,
   SegmentedControlProps,
+  Tabs,
+  TabsProps,
   Text,
   ThemeIcon,
   createStyles,
@@ -24,6 +26,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const homeOptions = {
   home: {
@@ -123,7 +126,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
             align="center"
             spacing={8}
             onClick={() => {
-              if (key !== 'clubs') set(key as HomeOptions);
+              set(key as HomeOptions);
             }}
             noWrap
           >
@@ -164,5 +167,79 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
 
 type Props = {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
-  fixed?: boolean;
 } & Omit<SegmentedControlProps, 'data' | 'value' | 'onChange'>;
+
+const useTabsStyles = createStyles(() => ({
+  root: {
+    overflow: 'auto hidden',
+  },
+  tab: {
+    paddingTop: 4,
+    paddingBottom: 4,
+    paddingLeft: 6,
+    paddingRight: 10,
+  },
+  tabsList: {
+    backgroundColor: 'transparent',
+    gap: 8,
+    borderRadius: 0,
+    flexWrap: 'nowrap',
+
+    [containerQuery.smallerThan('sm')]: {
+      maxWidth: '100%',
+    },
+  },
+}));
+
+export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
+  const router = useRouter();
+  const { set } = useHomeSelection();
+  const features = useFeatureFlags();
+  const activePath = router.pathname.split('/')[1] || 'home';
+  const { classes, theme } = useTabsStyles();
+
+  const tabs = Object.entries(homeOptions)
+    .filter(([key]) => ![key === 'bounties' && !features.bounties].some((b) => b))
+    .map(([key, value]) => (
+      <Link key={key} href={value.url} passHref>
+        <Anchor variant="text">
+          <Tabs.Tab
+            value={key}
+            icon={value.icon({
+              size: 14,
+              color:
+                theme.colorScheme === 'dark' || activePath === key
+                  ? theme.white
+                  : theme.colors.dark[7],
+            })}
+            onClick={() => {
+              set(key as HomeOptions);
+            }}
+          >
+            <Text size="sm" transform="capitalize" inline>
+              {getDisplayName(key)}
+            </Text>
+          </Tabs.Tab>
+        </Anchor>
+      </Link>
+    ));
+
+  return (
+    <Tabs
+      variant="pills"
+      radius="xl"
+      defaultValue="home"
+      color="gray"
+      {...tabProps}
+      sx={(theme) => ({
+        ...(typeof sx === 'function' ? sx(theme) : sx),
+      })}
+      value={activePath}
+      classNames={classes}
+    >
+      <Tabs.List>{tabs}</Tabs.List>
+    </Tabs>
+  );
+}
+
+type HomeTabProps = Omit<TabsProps, 'value' | 'defaultValue' | 'children'>;

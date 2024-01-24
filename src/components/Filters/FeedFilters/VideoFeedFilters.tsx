@@ -9,7 +9,7 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
       <SortFilter type="videos" variant="button" />
-      <VideoFiltersDropdown />
+      <VideoFiltersDropdown size="xs" compact />
     </Group>
   );
 }

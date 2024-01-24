@@ -3,6 +3,7 @@ import { useRef } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 import {
   HomeContentToggle,
+  HomeTabs,
   useHomeSelection,
 } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ArticleFeedFilters } from '~/components/Filters/FeedFilters/ArticleFeedFilters';
@@ -67,12 +68,14 @@ export function SubNav() {
       ref={subNavRef}
       className={classes.subNav}
       shadow="xs"
-      mb={home !== 'home' ? 'md' : undefined}
+      py={4}
+      px={8}
+      mb={currentPath !== 'home' ? 'md' : undefined}
     >
-      <Group spacing={8} position="apart">
-        <HomeContentToggle p={0} />
+      <Group spacing={8} position="apart" noWrap={currentPath === 'home'}>
+        <HomeTabs />
 
-        {home && isFeedPage && (filtersBySection[home] ?? null)}
+        {home && isFeedPage && (filtersBySection[currentPath] ?? null)}
       </Group>
     </Paper>
   );

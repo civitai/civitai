@@ -18,13 +18,14 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
       <SortFilter type="images" variant="button" includeNewest={canViewNewest} />
-      <ImageFiltersDropdown />
+      <ImageFiltersDropdown size="xs" compact />
       {canToggleView && (
         <ViewToggle
           type="images"
           color="gray"
           radius="xl"
-          size={36}
+          size="sm"
+          iconSize={14}
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         />
       )}
