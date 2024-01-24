@@ -71,7 +71,7 @@ export const commentNotifications = createNotificationProcessor({
     `,
   },
   'new-comment-response': {
-    displayName: 'New comment responses',
+    displayName: 'New comment responses (Models)',
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${
