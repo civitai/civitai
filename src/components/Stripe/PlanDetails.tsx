@@ -1,5 +1,5 @@
 import { Stack, Title, Text, Center, createStyles } from '@mantine/core';
-import { IconCirclePlus, IconClock } from '@tabler/icons-react';
+import { IconAdCircleOff, IconBolt, IconCirclePlus, IconClock } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
@@ -22,7 +22,7 @@ export function PlanDetails({
   description,
 }: SubscriptionCardProps) {
   const { classes } = useStyles();
-  const { benefits, image } = meta.find((x) => x.name === name) ?? {};
+  const { benefits, image } = planDetails.find((x) => x.name === name) ?? {};
 
   return (
     <Stack>
@@ -45,21 +45,32 @@ export function PlanDetails({
   );
 }
 
-const meta: PlanMeta[] = [
+export const planDetails: PlanMeta[] = [
   {
     name: 'Supporter Tier',
     image: 'c056e4d3-5161-433f-0201-31847be0dc00',
     benefits: [
-      {
-        content: 'Limited time supporter option',
-        icon: <IconClock size={benefitIconSize} />,
-        iconColor: 'yellow',
-      },
+      { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
       { content: 'Early access to new features' },
-      { content: 'Unique Supporter Tier badge' },
+      {
+        content: (
+          <Text
+            variant="link"
+            td="underline"
+            component="a"
+            href="https://www.youtube.com/watch?v=MaSRXvM05x4"
+            target="_blank"
+          >
+            One-click model loading
+          </Text>
+        ),
+      },
+      { content: 'Monthly Supporter Badge' },
       { content: 'Unique nameplate color' },
       { content: 'Unique Discord role' },
       {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: 'yellow',
         content: (
           <Text>
             <Text span>

@@ -2,10 +2,12 @@ import { Table, Group, Text, LoadingOverlay, Card, Title, Stack } from '@mantine
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { SocialLabel } from '~/components/Social/SocialLabel';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof getProviders> }) {
   const utils = trpc.useContext();
+  const currentUser = useCurrentUser();
   const { data: accounts = [] } = trpc.account.getAll.useQuery();
 
   const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({
@@ -15,6 +17,7 @@ export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof 
   });
 
   if (!providers) return null;
+  const canRemoveAccounts = accounts.length > 1 || currentUser?.emailVerified;
 
   return (
     <Card withBorder>
@@ -49,7 +52,7 @@ export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof 
                             >
                               Connect
                             </Text>
-                          ) : accounts.length > 1 ? (
+                          ) : canRemoveAccounts ? (
                             <Text
                               variant="link"
                               color="red"

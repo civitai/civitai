@@ -8,6 +8,7 @@ import {
   SelectItem,
   MantineColor,
   Tooltip,
+  Text,
 } from '@mantine/core';
 import { TagsOnTagsType, TagTarget, TagType } from '@prisma/client';
 import {
@@ -33,6 +34,8 @@ import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect
 import { NextLink } from '@mantine/next';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInput';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { openConfirmModal } from '@mantine/modals';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -158,7 +161,7 @@ export default function Tags() {
       {
         id: 'stats',
         header: 'Stats',
-        accessorFn: (x) => x.stats.imageCount + x.stats.modelCount + x.stats.postCount,
+        accessorFn: (x) => x.imageCount + x.modelCount + x.postCount,
         maxSize: 300,
         enableColumnActions: false,
         Cell: ({ row }) => {
@@ -168,7 +171,7 @@ export default function Tags() {
               {tag.target.includes(TagTarget.Image) && (
                 <NextLink href={`/images?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconPhoto size={14} />}>
-                    {abbreviateNumber(tag.stats.imageCount)}
+                    {abbreviateNumber(tag.imageCount)}
                   </IconBadge>
                 </NextLink>
               )}
@@ -178,14 +181,14 @@ export default function Tags() {
                   target="_blank"
                 >
                   <IconBadge icon={<IconBox size={14} />}>
-                    {abbreviateNumber(tag.stats.modelCount)}
+                    {abbreviateNumber(tag.modelCount)}
                   </IconBadge>
                 </NextLink>
               )}
               {tag.target.includes(TagTarget.Post) && (
                 <NextLink href={`/posts?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconAlbum size={14} />}>
-                    {abbreviateNumber(tag.stats.postCount)}
+                    {abbreviateNumber(tag.postCount)}
                   </IconBadge>
                 </NextLink>
               )}
@@ -232,17 +235,15 @@ export default function Tags() {
         filterFn: (row, id, filterValue) => {
           if (!filterValue.length) return true;
           if (!row.original.tags?.length) return false;
-          return filterValue.every((x: number) => row.original.tags.some((y) => y.id === x));
-        },
-        filterVariant: 'multi-select',
-        mantineFilterMultiSelectProps: {
-          searchable: true,
-          data: addableTagsOptions as any,
+          console.log(filterValue);
+          return row.original.tags.some((y) => y.name.startsWith(filterValue));
         },
       },
     ],
     [addableTagsOptions]
   );
+
+  if (!features.moderateTags) return <NotFound />;
 
   return (
     <Container size="xl">
@@ -272,6 +273,8 @@ export default function Tags() {
           renderTopToolbarCustomActions={({ table }) => {
             const getSelected = () =>
               table.getSelectedRowModel().flatRows.map((x) => x.original.id);
+            const getSelectedName = () =>
+              table.getSelectedRowModel().flatRows.map((x) => x.original.name);
 
             const handleDisableTagOnSelected = (tag: number) =>
               disableTagMutation.mutate({
@@ -280,13 +283,28 @@ export default function Tags() {
                 entityType: 'tag',
               });
 
-            const handleAddTagToSelected = (tag: number | string, relationship: TagsOnTagsType) =>
-              addTagMutation.mutate({
-                tags: [tag] as number[] | string[],
-                relationship,
-                entityIds: getSelected(),
-                entityType: 'tag',
+            const handleAddTagToSelected = (tag: number | string, relationship: TagsOnTagsType) => {
+              const selectedNames = getSelectedName();
+              openConfirmModal({
+                title: `Add Tag ${relationship}`,
+                children: (
+                  <Text size="sm">
+                    Are you sure you want to add <strong>{tag}</strong> as a{' '}
+                    <strong>{relationship}</strong> to {selectedNames.join(', ')}?
+                  </Text>
+                ),
+                centered: true,
+                labels: { confirm: 'Yes', cancel: 'No' },
+                onConfirm: () => {
+                  addTagMutation.mutate({
+                    tags: [tag] as number[] | string[],
+                    relationship,
+                    entityIds: getSelected(),
+                    entityType: 'tag',
+                  });
+                },
               });
+            };
 
             const handleDeleteSelected = () =>
               deleteTagsMutation.mutate({
