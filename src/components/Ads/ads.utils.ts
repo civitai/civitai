@@ -17,13 +17,13 @@ const adMatrices: Record<string, AdMatrix> = {};
 export function createAdFeed<T>({
   data,
   interval,
-  subscriber,
+  showAds,
 }: {
   data: T[];
   interval?: number[];
-  subscriber?: boolean;
+  showAds?: boolean;
 }): AdFeed<T> {
-  if (subscriber || !interval) return data.map((data) => ({ type: 'data', data }));
+  if (!showAds || !interval) return data.map((data) => ({ type: 'data', data }));
   const key = interval.join('_');
   adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
   const adMatrix = adMatrices[key];

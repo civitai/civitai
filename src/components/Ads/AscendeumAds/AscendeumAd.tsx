@@ -47,7 +47,7 @@ export function AscendeumAd<T extends AdUnitType>({
   const currentUser = useCurrentUser();
 
   const [ref, inView] = useInView({ rootMargin: '200%' });
-  const { ready, adsBlocked, nsfw: globalNsfw, subscriber, username } = useAscendeumAdsContext();
+  const { ready, adsBlocked, nsfw: globalNsfw, showAds, username } = useAscendeumAdsContext();
   const _nsfw = nsfw ?? globalNsfw;
   const keys = useMemo(
     () =>
@@ -77,15 +77,13 @@ export function AscendeumAd<T extends AdUnitType>({
     (state) => state.stackingContext.length === stackingContextRef.current
   );
 
-  if (!bidSizes || subscriber) return null;
+  if (!bidSizes || !showAds) return null;
   const { width, height, stringSizes } = bidSizes;
   const _ready = ready && !adsBlocked && inView;
   const showAscendeumAd = _ready && !_nsfw;
   const showAlternateAd = _ready && _nsfw;
   const includeWrapper = showAdvertisementText || showRemoveAds;
   // const adsterraSize = showAlternateAd ? getAdsterraSize(`${width}x${height}`) : undefined;
-
-  console.log({ showCurrentStack });
 
   const content = (
     <Paper ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>

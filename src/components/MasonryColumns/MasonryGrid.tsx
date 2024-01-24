@@ -35,10 +35,10 @@ export function MasonryGrid<TData>({
     rowGap,
   });
 
-  const { subscriber } = useAscendeumAdsContext();
+  const { showAds } = useAscendeumAdsContext();
   const items = useMemo(
-    () => createAdFeed({ data, interval: adInterval, subscriber }),
-    [columnCount, data, subscriber]
+    () => createAdFeed({ data, interval: adInterval, showAds }),
+    [columnCount, data, showAds]
   );
 
   return items.length ? (

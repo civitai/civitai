@@ -4,12 +4,13 @@ import { BrowsingMode } from '~/server/common/enums';
 import { useGenerationStore } from '~/store/generation.store';
 import { isProd } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { env } from '~/env/client.mjs';
 
 const AscendeumAdsContext = createContext<{
   ready: boolean;
   adsBlocked: boolean;
   nsfw: boolean;
-  subscriber: boolean;
+  showAds: boolean;
   username?: string;
 } | null>(null);
 
@@ -22,11 +23,11 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
   const [ready, setReady] = useState(false);
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
-  const subscriber = !!currentUser?.subscriptionId;
+  const showAds = env.NEXT_PUBLIC_ADS && !currentUser?.subscriptionId;
 
   const readyRef = useRef(false);
   useEffect(() => {
-    if (!readyRef.current && !subscriber) {
+    if (!readyRef.current && showAds) {
       readyRef.current = true;
 
       // if (isProd) {
@@ -44,7 +45,7 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
       document.body.appendChild(script);
       // } else setAdsBlocked(true);
     }
-  }, [subscriber]);
+  }, [showAds]);
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {
@@ -59,7 +60,7 @@ export function AscendeumAdsProvider({ children }: { children: React.ReactNode }
 
   return (
     <AscendeumAdsContext.Provider
-      value={{ ready, adsBlocked, nsfw, subscriber, username: currentUser?.username }}
+      value={{ ready, adsBlocked, nsfw, showAds, username: currentUser?.username }}
     >
       {children}
     </AscendeumAdsContext.Provider>
