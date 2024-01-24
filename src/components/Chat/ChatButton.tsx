@@ -1,6 +1,6 @@
 import { ActionIcon, Card, createStyles, Indicator, Portal } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useChatContext } from '~/components/Chat/ChatProvider';
 import { ChatWindow } from '~/components/Chat/ChatWindow';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
@@ -11,7 +11,7 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     bottom: theme.spacing.xs,
     left: theme.spacing.md,
-    zIndex: 50,
+    zIndex: 500,
     height: 'min(600px, 70%)',
     width: 'min(700px, 80%)',
   },
@@ -20,7 +20,7 @@ const useStyles = createStyles((theme) => ({
 // TODO add "message" button across app for user area, which will start a new message with that user selected
 
 export function ChatButton() {
-  const [opened, setOpened] = useState(false);
+  const { state, setState } = useChatContext();
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
@@ -44,14 +44,14 @@ export function ChatButton() {
         size={14}
       >
         <ActionIcon
-          variant={opened ? 'filled' : undefined}
-          onClick={() => setOpened((val) => !val)}
+          variant={state.open ? 'filled' : undefined}
+          onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
         >
           <IconMessage2 />
         </ActionIcon>
       </Indicator>
       <Portal target={'main'}>
-        <div className={classes.absolute} style={{ display: opened ? 'block' : 'none' }}>
+        <div className={classes.absolute} style={{ display: state.open ? 'block' : 'none' }}>
           <Card
             p={0}
             radius={4}
@@ -63,7 +63,7 @@ export function ChatButton() {
               overflow: 'hidden',
             }}
           >
-            <ChatWindow setOpened={setOpened} />
+            <ChatWindow />
           </Card>
         </div>
       </Portal>

@@ -12,7 +12,8 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import React, { Dispatch, SetStateAction } from 'react';
+import React from 'react';
+import { useChatContext } from '~/components/Chat/ChatProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -21,17 +22,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-export const ChatActions = ({
-  setOpened,
-  setNewChat,
-  setExistingChat,
-  chatObj,
-}: {
-  setOpened: Dispatch<SetStateAction<boolean>>;
-  setNewChat: Dispatch<SetStateAction<boolean>>;
-  setExistingChat: Dispatch<SetStateAction<number | undefined>>;
-  chatObj?: ChatListMessage;
-}) => {
+export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
+  const { setState } = useChatContext();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
@@ -67,8 +59,7 @@ export const ChatActions = ({
           if (!old) return old;
 
           if (isDefined(req.status) && req.status !== ChatMemberStatus.Joined) {
-            setExistingChat(undefined);
-            setNewChat(true);
+            setState((prev) => ({ ...prev, existingChatId: undefined }));
             return old.filter((c) => c.id !== chatObj?.id);
           }
 
@@ -183,7 +174,7 @@ export const ChatActions = ({
           {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
         </Menu.Dropdown>
       </Menu>
-      <ActionIcon onClick={() => setOpened(false)}>
+      <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
         <IconX />
       </ActionIcon>
     </Group>

@@ -1,7 +1,8 @@
 import { ActionIcon, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
-import React, { Dispatch, SetStateAction, useState } from 'react';
+import React, { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
+import { useChatContext } from '~/components/Chat/ChatProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -9,16 +10,8 @@ import { UserSearchIndexRecord } from '~/server/search-index/users.search-index'
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function NewChat({
-  setOpened,
-  setNewChat,
-  setExistingChat,
-}: {
-  setOpened: Dispatch<SetStateAction<boolean>>;
-  setNewChat: Dispatch<SetStateAction<boolean>>;
-  setExistingChat: Dispatch<SetStateAction<number | undefined>>;
-}) {
-  const [selectedUsers, setSelectedUsers] = useState<UserSearchIndexRecord[]>([]);
+export function NewChat() {
+  const { state, setState } = useChatContext();
   const [isCreating, setIsCreating] = useState(false);
   const currentUser = useCurrentUser();
 
@@ -32,9 +25,8 @@ export function NewChat({
         });
       }
 
-      setNewChat(false);
       setIsCreating(false);
-      if (data) setExistingChat(data.id);
+      if (data) setState((prev) => ({ ...prev, existingChatId: data.id }));
     },
     onError(error) {
       setIsCreating(false);
@@ -57,7 +49,7 @@ export function NewChat({
       return;
     }
     mutate({
-      userIds: [...selectedUsers.map((u) => u.id), currentUser.id],
+      userIds: [...state.selectedUsers.map((u) => u.id!), currentUser.id],
     });
     // update query cache
   };
@@ -66,17 +58,13 @@ export function NewChat({
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart">
         <Text>New Chat</Text>
-        <ChatActions
-          setOpened={setOpened}
-          setNewChat={setNewChat}
-          setExistingChat={setExistingChat}
-        />
+        <ChatActions />
       </Group>
       <Box px="sm">
         <QuickSearchDropdown
           supportedIndexes={['users']}
           onItemSelected={(_entity, item) => {
-            const newUsers = [...selectedUsers, item as UserSearchIndexRecord];
+            const newUsers = [...state.selectedUsers, item as UserSearchIndexRecord];
             // TODO make this a constant
             if (newUsers.length > 9) {
               showErrorNotification({
@@ -86,15 +74,15 @@ export function NewChat({
               });
               return;
             }
-            setSelectedUsers(newUsers);
+            setState((prev) => ({ ...prev, selectedUsers: newUsers }));
           }}
           dropdownItemLimit={25}
           showIndexSelect={false}
           startingIndex="users"
           placeholder="Select users"
           filters={
-            selectedUsers.length > 0
-              ? selectedUsers
+            state.selectedUsers.length > 0
+              ? state.selectedUsers
                   .map((x) => `AND NOT id=${x.id}`)
                   .join(' ')
                   .slice(4)
@@ -103,18 +91,23 @@ export function NewChat({
         />
       </Box>
       <Box p="sm" sx={{ flexGrow: 1 }}>
-        {selectedUsers.length === 0 ? (
+        {state.selectedUsers.length === 0 ? (
           <Center mt="md">
             <Text>Select at least 1 user above</Text>
           </Center>
         ) : (
           <Group>
-            {selectedUsers.map((u) => (
+            {state.selectedUsers.map((u) => (
               <Group key={u.id}>
                 <UserAvatar user={u} size="md" withUsername />
                 <ActionIcon
                   title="Remove user"
-                  onClick={() => setSelectedUsers(selectedUsers.filter((su) => su.id !== u.id))}
+                  onClick={() =>
+                    setState((prev) => ({
+                      ...prev,
+                      selectedUsers: state.selectedUsers.filter((su) => su.id !== u.id),
+                    }))
+                  }
                 >
                   <IconX />
                 </ActionIcon>
@@ -130,14 +123,13 @@ export function NewChat({
           variant="light"
           color="gray"
           onClick={() => {
-            setNewChat(false);
-            setSelectedUsers([]);
+            setState((prev) => ({ ...prev, selectedUsers: [] }));
           }}
         >
           Cancel
         </Button>
         <Button
-          disabled={isCreating || selectedUsers.length === 0 || currentUser?.muted}
+          disabled={isCreating || state.selectedUsers.length === 0 || currentUser?.muted}
           onClick={handleNewChat}
         >
           Start Chat

@@ -21,6 +21,7 @@ import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useSta
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
@@ -130,16 +131,18 @@ function MyApp(props: CustomAppProps) {
                           <NotificationsProvider zIndex={9999}>
                             <BrowserRouterProvider>
                               <RecaptchaWidgetProvider>
-                                <BaseLayout>
-                                  <CustomModalsProvider>
-                                    <TosProvider>
-                                      {getLayout(<Component {...pageProps} />)}
-                                    </TosProvider>
-                                    <StripeSetupSuccessProvider />
-                                    <DialogProvider />
-                                    <RoutedDialogProvider />
-                                  </CustomModalsProvider>
-                                </BaseLayout>
+                                <ChatContextProvider>
+                                  <BaseLayout>
+                                    <CustomModalsProvider>
+                                      <TosProvider>
+                                        {getLayout(<Component {...pageProps} />)}
+                                      </TosProvider>
+                                      <StripeSetupSuccessProvider />
+                                      <DialogProvider />
+                                      <RoutedDialogProvider />
+                                    </CustomModalsProvider>
+                                  </BaseLayout>
+                                </ChatContextProvider>
                               </RecaptchaWidgetProvider>
                             </BrowserRouterProvider>
                           </NotificationsProvider>

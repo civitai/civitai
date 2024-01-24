@@ -280,7 +280,7 @@ export const createChatHandler = async ({
     if (usersExist !== dedupedUserIds.length) {
       // could probably tell them which users here
       throw throwBadRequestError(
-        `Some requested users do not exist (${usersExist} / ${dedupedUserIds.length})`
+        `Some requested users do not exist (${usersExist}/${dedupedUserIds.length})`
       );
     }
 
@@ -393,7 +393,7 @@ export const addUsersHandler = async ({
     if (usersExist !== usersToAdd.length) {
       // could probably tell them which users here
       throw throwBadRequestError(
-        `Some requested users do not exist (${usersExist} / ${usersToAdd.length})`
+        `Some requested users do not exist (${usersExist}/${usersToAdd.length})`
       );
     }
 

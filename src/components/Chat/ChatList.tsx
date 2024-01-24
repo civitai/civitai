@@ -22,7 +22,8 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import React, { Dispatch, SetStateAction, useState } from 'react';
+import React, { useState } from 'react';
+import { useChatContext } from '~/components/Chat/ChatProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -44,15 +45,8 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ChatList({
-  existingChat,
-  setNewChat,
-  setExistingChat,
-}: {
-  existingChat: number | undefined;
-  setNewChat: Dispatch<SetStateAction<boolean>>;
-  setExistingChat: Dispatch<SetStateAction<number | undefined>>;
-}) {
+export function ChatList() {
+  const { state, setState } = useChatContext();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
@@ -82,8 +76,7 @@ export function ChatList({
         <ActionIcon>
           <IconCirclePlus
             onClick={() => {
-              setExistingChat(undefined);
-              setNewChat(true);
+              setState((prev) => ({ ...prev, existingChatId: undefined }));
             }}
           />
         </ActionIcon>
@@ -127,14 +120,13 @@ export function ChatList({
                     component={motion.div}
                     noWrap
                     className={cx(classes.selectChat, {
-                      [classes.selectedChat]: d.id === existingChat,
+                      [classes.selectedChat]: d.id === state.existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ type: 'spring', duration: 0.4 }}
                     onClick={() => {
-                      setExistingChat(d.id);
-                      setNewChat(false);
+                      setState((prev) => ({ ...prev, existingChatId: d.id }));
                     }}
                   >
                     <Indicator

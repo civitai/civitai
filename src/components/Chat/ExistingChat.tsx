@@ -20,20 +20,13 @@ import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
 import Link from 'next/link';
-import React, {
-  Dispatch,
-  SetStateAction,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGemoji from 'remark-gemoji';
 import remarkGfm from 'remark-gfm';
 import { ChatActions } from '~/components/Chat/ChatActions';
+import { useChatContext } from '~/components/Chat/ChatProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -89,24 +82,14 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ExistingChat({
-  setOpened,
-  existingChat,
-  setNewChat,
-  setExistingChat,
-}: {
-  setOpened: Dispatch<SetStateAction<boolean>>;
-  existingChat: number;
-  setNewChat: Dispatch<SetStateAction<boolean>>;
-  setExistingChat: Dispatch<SetStateAction<number | undefined>>;
-}) {
+export function ExistingChat() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const { connected, worker } = useSignalContext();
+  const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
 
   const lastReadRef = useRef<HTMLDivElement>(null);
-  // TODO reset chat message when clicking different group
   const [chatMsg, setChatMsg] = useState<string>('');
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
   const [isSending, setIsSending] = useState(false);
@@ -118,7 +101,7 @@ export function ExistingChat({
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
       {
-        chatId: existingChat,
+        chatId: state.existingChatId!,
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -131,7 +114,7 @@ export function ExistingChat({
 
   const { data: allChatData, isLoading: allChatLoading } = trpc.chat.getAllByUser.useQuery();
 
-  const thisChat = allChatData?.find((c) => c.id === existingChat);
+  const thisChat = allChatData?.find((c) => c.id === state.existingChatId);
   const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
   const lastViewed = myMember?.lastViewedMessageId;
@@ -143,7 +126,7 @@ export function ExistingChat({
         produce((old) => {
           if (!old) return old;
 
-          const tChat = old.find((c) => c.id === existingChat);
+          const tChat = old.find((c) => c.id === state.existingChatId);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
           if (!tMember) return old;
 
@@ -155,7 +138,7 @@ export function ExistingChat({
         produce((old) => {
           if (!old) return old;
 
-          const tChat = old.find((c) => c.chatId === existingChat);
+          const tChat = old.find((c) => c.chatId === state.existingChatId);
           if (!tChat) return old;
 
           tChat.cnt = 0;
@@ -172,10 +155,10 @@ export function ExistingChat({
           if (!old) return old;
 
           if (data.status !== ChatMemberStatus.Joined) {
-            return old.filter((c) => c.id !== existingChat);
+            return old.filter((c) => c.id !== state.existingChatId);
           }
 
-          const tChat = old.find((c) => c.id === existingChat);
+          const tChat = old.find((c) => c.id === state.existingChatId);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === data.userId);
           if (!tMember) return old;
 
@@ -185,8 +168,7 @@ export function ExistingChat({
       );
       setIsJoining(false);
       if (data.status !== ChatMemberStatus.Joined) {
-        setExistingChat(undefined);
-        setNewChat(true);
+        setState((prev) => ({ ...prev, existingChatId: undefined }));
       }
     },
     onError(error) {
@@ -277,7 +259,7 @@ export function ExistingChat({
 
     if (!myMember) return;
     const newestMessageId = allChats[allChats.length - 1].id;
-    if ((myMember.lastViewedMessageId ?? 0) > newestMessageId) return;
+    if ((myMember.lastViewedMessageId ?? 0) >= newestMessageId) return;
     changeLastViewed({
       chatMemberId: myMember.id,
       lastViewedMessageId: newestMessageId,
@@ -287,7 +269,8 @@ export function ExistingChat({
   useEffect(() => {
     setTypingStatus({});
     setTypingText(null);
-  }, [existingChat]);
+    setChatMsg('');
+  }, [state.existingChatId]);
 
   function getTypingStatus(newEntry: { [p: string]: boolean }) {
     const newTotalStatus = { ...typingStatus, ...newEntry };
@@ -313,7 +296,7 @@ export function ExistingChat({
       const data = d as isTypingOutput;
 
       if (data.userId === currentUser?.id) return;
-      if (data.chatId !== existingChat) return;
+      if (data.chatId !== state.existingChatId) return;
 
       const newEntry = {
         [data.username]: data.isTyping,
@@ -325,7 +308,7 @@ export function ExistingChat({
       setTypingText(isTypingText);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [existingChat]
+    [state.existingChatId]
   );
 
   useEffect(() => {
@@ -343,7 +326,7 @@ export function ExistingChat({
     if (!currentUser) return;
 
     doIsTyping({
-      chatId: existingChat,
+      chatId: state.existingChatId!,
       userId: currentUser.id,
       isTyping: false,
     }).catch();
@@ -356,7 +339,7 @@ export function ExistingChat({
         () => {
           if (!currentUser) return;
           doIsTyping({
-            chatId: existingChat,
+            chatId: state.existingChatId!,
             userId: currentUser.id,
             isTyping: true,
           }).catch();
@@ -364,7 +347,7 @@ export function ExistingChat({
         2000,
         { leading: true, trailing: true }
       ),
-    [currentUser, doIsTyping, existingChat]
+    [currentUser, doIsTyping, state.existingChatId]
   );
 
   const handleChatTyping = (value: string) => {
@@ -388,7 +371,7 @@ export function ExistingChat({
 
     setIsSending(true);
     mutate({
-      chatId: existingChat,
+      chatId: state.existingChatId!,
       content: strippedMessage,
     });
   };
@@ -410,12 +393,7 @@ export function ExistingChat({
             ))}
           </Group>
         )}
-        <ChatActions
-          setOpened={setOpened}
-          setNewChat={setNewChat}
-          setExistingChat={setExistingChat}
-          chatObj={thisChat}
-        />
+        <ChatActions chatObj={thisChat} />
       </Group>
       <Divider />
       {!myMember ? (
