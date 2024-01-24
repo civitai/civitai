@@ -17,7 +17,7 @@ export function CurrencyIcon({ currency = Currency.BUZZ, ...iconProps }: Props) 
   return (
     <Icon
       color={CurrencyConfig[currency].color(theme)}
-      fill={CurrencyConfig[currency].color(theme)}
+      fill={CurrencyConfig[currency].fill?.(theme)}
       {...iconProps}
     />
   );
