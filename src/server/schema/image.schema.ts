@@ -13,7 +13,7 @@ import { BrowsingMode, ImageSort } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
 
-const stringToNumber = z.coerce.number();
+const stringToNumber = z.coerce.number().optional();
 
 const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 

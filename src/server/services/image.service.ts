@@ -461,6 +461,7 @@ type GetAllImagesRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  collectedCount: number;
   tippedAmountCount: number;
   viewCount: number;
   cursorId?: bigint;
@@ -815,6 +816,7 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."collectedCount", 0) "collectedCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       COALESCE(im."viewCount", 0) "viewCount",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
@@ -933,6 +935,7 @@ export const getAllImages = async ({
         dislikeCount,
         heartCount,
         commentCount,
+        collectedCount,
         tippedAmountCount,
         viewCount,
         cursorId,
@@ -954,6 +957,7 @@ export const getAllImages = async ({
           dislikeCountAllTime: dislikeCount,
           heartCountAllTime: heartCount,
           commentCountAllTime: commentCount,
+          collectedCountAllTime: collectedCount,
           tippedAmountCountAllTime: tippedAmountCount,
           viewCountAllTime: viewCount,
         },

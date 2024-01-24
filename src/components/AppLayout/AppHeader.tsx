@@ -258,6 +258,7 @@ export function AppHeader({
   const { url: homeUrl } = useHomeSelection();
 
   const isMuted = currentUser?.muted ?? false;
+  const isMember = !!currentUser?.tier;
 
   const mainActions = useMemo<MenuLink[]>(
     () => [
@@ -414,17 +415,17 @@ export function AppHeader({
           </Group>
         ),
       },
-      {
-        href: '/clubs?engagement=engaged',
-        as: '/clubs',
-        visible: !!currentUser && features.clubs,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
-            My clubs
-          </Group>
-        ),
-      },
+      // {
+      //   href: '/clubs?engagement=engaged',
+      //   as: '/clubs',
+      //   visible: !!currentUser && features.clubs,
+      //   label: (
+      //     <Group align="center" spacing="xs">
+      //       <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+      //       My clubs
+      //     </Group>
+      //   ),
+      // },
       {
         href: '/user/buzz-dashboard',
         visible: !!currentUser && features.buzz,
@@ -639,8 +640,21 @@ export function AppHeader({
     [currentUser, features.buzz, handleCloseMenu, isMobile]
   );
 
-  const createButton = !isMuted && (
-    <Menu position="bottom" offset={5} withArrow trigger="hover">
+  const mobileCreateButton = !isMuted && (
+    <GenerateButton
+      variant="light"
+      py={8}
+      px={12}
+      h="auto"
+      radius="sm"
+      mode="toggle"
+      compact
+      className="show-mobile"
+    />
+  );
+
+  const createMenu = !isMuted && (
+    <Menu position="bottom" offset={5} withArrow trigger="hover" className="hide-mobile">
       <Menu.Target>
         {features.imageGeneration ? (
           <Group spacing={0} noWrap>
@@ -650,7 +664,7 @@ export function AppHeader({
               pl={12}
               pr={4}
               h="auto"
-              radius="xl"
+              radius="sm"
               mode="toggle"
               // Quick hack to avoid svg from going over the button. cc: Justin 👀
               sx={() => ({ borderTopRightRadius: 0, borderBottomRightRadius: 0 })}
@@ -661,7 +675,7 @@ export function AppHeader({
               py={8}
               px={4}
               h="auto"
-              radius="xl"
+              radius="sm"
               sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
             >
               <IconChevronDown stroke={2} size={20} />
@@ -732,10 +746,15 @@ export function AppHeader({
               href="/"
               variant="text"
               onClick={() => setBurgerOpened(false)}
+              sx={(theme) => ({
+                [theme.fn.largerThan('sm')]: {
+                  marginRight: 'auto',
+                },
+              })}
             >
               <Logo />
             </Anchor>
-            <SupportButton />
+            {!isMember && <SupportButton />}
             {/* Disabled until next event */}
             {/* <EventButton /> */}
           </Group>
@@ -754,7 +773,8 @@ export function AppHeader({
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="md" align="center" noWrap>
             <Group spacing="sm" noWrap>
-              {createButton}
+              {mobileCreateButton}
+              {createMenu}
               {currentUser && (
                 <>
                   <UploadTracker />
@@ -846,7 +866,7 @@ export function AppHeader({
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
-            {createButton}
+            {mobileCreateButton}
             {features.enhancedSearch && (
               <ActionIcon onClick={() => setShowSearch(true)}>
                 <IconSearch />
