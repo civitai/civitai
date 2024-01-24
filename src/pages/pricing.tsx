@@ -68,7 +68,7 @@ export default function Pricing() {
             Support Us ❤️
           </Title>
           <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            {`As the leading model sharing service, we're proud to be ad-free and adding new features every week. Help us keep the community thriving by becoming a member or making a donation. Support Civitai and get exclusive perks.`}
+            {`As the leading model sharing service, we're adding new features every week. Help us keep the community thriving by becoming a member or making a donation. Support Civitai and get exclusive perks.`}
           </Text>
         </Stack>
       </Container>
