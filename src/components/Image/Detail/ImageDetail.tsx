@@ -62,6 +62,8 @@ export function ImageDetail() {
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
+  const nsfw = image.nsfw !== 'None';
+
   return (
     <>
       <Meta
@@ -76,7 +78,7 @@ export function ImageDetail() {
           image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
         }
       />
-      <TrackView entityId={image.id} entityType="Image" type="ImageView" />
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
         <Paper className={classes.root}>
           <CloseButton
@@ -312,7 +314,7 @@ export function ImageDetail() {
                 <AscendeumAd
                   adunit="Sidebar_A"
                   m="0 auto"
-                  nsfw={image.nsfw !== 'None'}
+                  nsfw={nsfw}
                   sizes={{ [0]: '300x250' }}
                   showFeedback
                   showRemoveAds

@@ -6,11 +6,19 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { useScript } from '~/hooks/useScript';
 
+enum Test {
+  Member,
+  AdsBlocked,
+  Ads,
+}
+
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
   showAds: boolean;
   username?: string;
+  isMember: boolean;
+  enabled: boolean;
   ascendeumReady: boolean;
   exoclickReady: boolean;
 } | null>(null);
@@ -23,7 +31,9 @@ export function useAdsContext() {
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
-  const showAds = env.NEXT_PUBLIC_ADS && !currentUser?.subscriptionId;
+  const isMember = !!currentUser?.subscriptionId;
+  const enabled = env.NEXT_PUBLIC_ADS;
+  const showAds = enabled && !isMember;
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {
@@ -62,6 +72,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         username: currentUser?.username,
         ascendeumReady,
         exoclickReady,
+        isMember,
+        enabled,
       }}
     >
       {children}
