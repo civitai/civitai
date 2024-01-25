@@ -123,7 +123,7 @@ export function AscendeumAd<T extends AdUnitType>({
   );
 
   return includeWrapper ? (
-    <Stack spacing={0} {...boxProps} w={width}>
+    <Stack spacing={0} {...boxProps} w={width} justify="center">
       {content}
       <Group position="apart">
         {showRemoveAds && (
