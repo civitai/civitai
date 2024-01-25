@@ -1,52 +1,18 @@
-import { createStyles, Container, ContainerProps } from '@mantine/core';
-import React, { CSSProperties, useRef, createContext, useContext, useState } from 'react';
-import { useColumnCount } from '~/components/MasonryColumns/masonry.utils';
+import { createStyles, ContainerProps, Box } from '@mantine/core';
+import React, { CSSProperties } from 'react';
 import {
   MasonryContextState,
   useMasonryContext,
 } from '~/components/MasonryColumns/MasonryProvider';
-import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { useDebouncer } from '~/utils/debouncer';
 
 type MasonryContainerProps = Omit<ContainerProps, 'children'> & {
-  children: React.ReactNode | ((state: MasonryContainerState) => React.ReactNode);
-};
-type MasonryContainerState = MasonryContextState & {
-  columnCount: number;
-  combinedWidth: number;
-  containerWidth: number;
-};
-
-const MasonryContainerContext = createContext<MasonryContainerState | null>(null);
-export const useMasonryContainerContext = () => {
-  const context = useContext(MasonryContainerContext);
-  if (!context) throw new Error('MasonryContainerProvider not in tree');
-  return context;
+  children: React.ReactNode | ((state: MasonryContextState) => React.ReactNode);
 };
 
 export function MasonryContainer({ children, ...containerProps }: MasonryContainerProps) {
   const masonryProviderState = useMasonryContext();
-  const { columnWidth, columnGap, maxColumnCount } = masonryProviderState;
-
-  const [containerWidth, setContainerWidth] = useState(0);
-
-  const debouncer = useDebouncer(100);
-  const containerRef = useResizeObserver((entry) =>
-    // (entries) => {
-    //   const entry = entries[0];
-    //   if (entry) setContainerWidth(entries[0].contentRect.width);
-    // }
-    debouncer(() => {
-      setContainerWidth(entry.contentRect.width);
-    })
-  );
-
-  const [columnCount, combinedWidth] = useColumnCount(
-    containerWidth,
-    columnWidth,
-    columnGap,
-    maxColumnCount
-  );
+  const { columnWidth, columnGap, maxColumnCount, columnCount, combinedWidth } =
+    masonryProviderState;
 
   const { classes } = useStyles({
     columnWidth,
@@ -55,25 +21,20 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
   });
 
   const state = {
-    containerWidth,
-    columnCount,
-    combinedWidth,
     ...masonryProviderState,
   };
 
   return (
-    <Container {...containerProps}>
-      <div ref={containerRef} className={classes.container}>
+    <Box {...containerProps}>
+      <div className={classes.container}>
         <div
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}
         >
-          <MasonryContainerContext.Provider value={state}>
-            {typeof children === 'function' ? children(state) : children}
-          </MasonryContainerContext.Provider>
+          {typeof children === 'function' ? children(state) : children}
         </div>
       </div>
-    </Container>
+    </Box>
   );
 }
 

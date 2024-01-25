@@ -1,5 +1,6 @@
 import { useLocalStorage } from '@mantine/hooks';
 import produce from 'immer';
+import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo, useState } from 'react';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { toggleableFeatures } from '~/server/services/feature-flags.service';
@@ -18,10 +19,11 @@ export const useFeatureFlags = () => {
     ),
   });
 
+  const session = useSession(); // Using useSession here cause of Provider order
   const queryUtils = trpc.useUtils();
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
     undefined,
-    { cacheTime: Infinity, staleTime: Infinity }
+    { cacheTime: Infinity, staleTime: Infinity, retry: 0, enabled: !!session.data }
   );
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
     async onMutate(payload) {

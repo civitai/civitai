@@ -14,6 +14,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/client.mjs';
 import { VideoFiltersDropdown } from '~/components/Image/Filters/VideoFiltersDropdown';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 const useStyles = createStyles((theme) => ({
   filtersWrapper: {
@@ -37,36 +39,30 @@ export default function VideosPage() {
         description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/videos`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer fluid>
-          {hidden && <Title>Your Hidden Videos</Title>}
-          <Stack spacing="xs">
-            <Announcements
-              sx={(theme) => ({
-                marginBottom: -35,
-                [theme.fn.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
-            <Group position="apart" spacing={8}>
-              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
-                <SortFilter type="videos" variant="button" />
-                <VideoFiltersDropdown />
-              </Group>
-            </Group>
-            <IsClient>
-              <ImageCategories />
-              <ImagesInfinite filters={{ ...filters, types: ['video'] }} showEof />
-            </IsClient>
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+      {hidden && <Title>Your Hidden Videos</Title>}
+      <Stack spacing="xs">
+        <Announcements
+          sx={(theme) => ({
+            marginBottom: -35,
+            [theme.fn.smallerThan('md')]: {
+              marginBottom: -5,
+            },
+          })}
+        />
+        <Group position="apart" spacing={8}>
+          {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+          <Group className={classes.filtersWrapper} spacing={8} noWrap>
+            <SortFilter type="videos" variant="button" />
+            <VideoFiltersDropdown />
+          </Group>
+        </Group>
+        <IsClient>
+          <ImageCategories />
+          <ImagesInfinite filters={{ ...filters, types: ['video'] }} showEof />
+        </IsClient>
+      </Stack>
     </>
   );
 }
+
+setPageOptions(VideosPage, { innerLayout: FeedLayout });

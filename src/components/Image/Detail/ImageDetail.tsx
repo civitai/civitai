@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Card,
+  Center,
   CloseButton,
   createStyles,
   Divider,
@@ -13,44 +14,43 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { CollectionType, NsfwLevel } from '@prisma/client';
 import {
-  IconAlertTriangle,
-  IconBrush,
-  IconDotsVertical,
-  IconEye,
   IconInfoCircle,
+  IconDotsVertical,
+  IconAlertTriangle,
+  IconEye,
   IconPlaylistAdd,
-  IconShare3,
 } from '@tabler/icons-react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { IconShare3, IconBrush } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
-import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
-import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { env } from '~/env/client.mjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
+import { ImageResources } from '~/components/Image/Detail/ImageResources';
+import { Meta } from '~/components/Meta/Meta';
+import { TrackView } from '~/components/TrackView/TrackView';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { CollectionType, NsfwLevel } from '@prisma/client';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { generationPanel } from '~/store/generation.store';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { env } from '~/env/client.mjs';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { generationPanel } from '~/store/generation.store';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -61,6 +61,8 @@ export function ImageDetail() {
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
+
+  const nsfw = image.nsfw !== 'None';
 
   return (
     <>
@@ -76,7 +78,7 @@ export function ImageDetail() {
           image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
         }
       />
-      <TrackView entityId={image.id} entityType="Image" type="ImageView" />
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
         <Paper className={classes.root}>
           <CloseButton
@@ -127,7 +129,6 @@ export function ImageDetail() {
                     size="md"
                     compact
                   />
-                  <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"
@@ -310,6 +311,15 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
+                <AscendeumAd
+                  adunit="Sidebar_A"
+                  m="0 auto"
+                  nsfw={nsfw}
+                  sizes={{ [0]: '300x250' }}
+                  showFeedback
+                  showRemoveAds
+                />
+                {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

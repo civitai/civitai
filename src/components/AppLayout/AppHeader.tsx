@@ -682,7 +682,13 @@ export function AppHeader({
             </Button>
           </Group>
         ) : (
-          <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
+          <Button
+            className={cx(classes.links, 'hide-mobile')}
+            variant="filled"
+            color="green"
+            size="xs"
+            pl={5}
+          >
             <IconPlus size={16} /> New
           </Button>
         )}

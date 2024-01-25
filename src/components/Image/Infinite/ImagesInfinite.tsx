@@ -87,6 +87,7 @@ export default function ImagesInfinite({
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCard}
               itemId={(data) => data.id}
+              adInterval={[6, 10]}
             />
           </ImagesProvider>
           {hasNextPage && (

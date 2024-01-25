@@ -9,10 +9,10 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 // It turns out, you can't use hooks in a layout component
 // https://github.com/vercel/next.js/discussions/36341#discussioncomment-2628008
-export function PostEditLayout(page: any) {
+export function PostEditLayout({ children }: { children: React.ReactNode }) {
   return (
     <ScrollArea>
-      <PostEditWrapper>{page}</PostEditWrapper>
+      <PostEditWrapper>{children}</PostEditWrapper>
     </ScrollArea>
   );
 }

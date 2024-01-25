@@ -540,4 +540,6 @@ function LayoutSelector({ children }: { children: React.ReactNode }) {
   );
 }
 
-export const UserProfileLayout = (page: React.ReactNode) => <LayoutSelector>{page}</LayoutSelector>;
+export const UserProfileLayout = ({ children }: { children: React.ReactNode }) => (
+  <LayoutSelector>{children}</LayoutSelector>
+);
