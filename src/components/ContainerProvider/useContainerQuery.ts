@@ -1,5 +1,5 @@
 import { MantineNumberSize } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   useContainerProviderStore,
   useContainerContext,
@@ -17,24 +17,19 @@ export const useContainerQuery = ({
 }) => {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
   const { nodeRef, ...context } = useContainerContext();
-  const [value, setValue] = useState(false);
 
-  useEffect(() => {
-    if (nodeRef.current) {
-      if (type === 'max-width') setValue(size > nodeRef.current?.offsetWidth);
-      else if (type === 'min-width') setValue(size <= nodeRef.current?.offsetWidth);
-    }
-  }, []); // eslint-disable-line
+  const value = useContainerProviderStore(
+    useCallback(
+      (state) => {
+        const { inlineSize = nodeRef.current?.offsetWidth ?? 0 } =
+          state[containerName ?? context.containerName] ?? {};
 
-  useEffect(() => {
-    useContainerProviderStore.subscribe((state) => {
-      const entry = state[containerName ?? context.containerName];
-      if (entry) {
-        if (type === 'max-width') setValue(size > entry.inlineSize);
-        else if (type === 'min-width') setValue(size <= entry.inlineSize);
-      }
-    });
-  }, [size, type, containerName]); // eslint-disable-line
+        if (type === 'max-width') return size > inlineSize;
+        else return size <= inlineSize;
+      },
+      [size, type, containerName]
+    )
+  );
 
   return value;
 };

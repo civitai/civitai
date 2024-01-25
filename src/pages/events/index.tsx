@@ -1,6 +1,8 @@
 import { createStyles, Stack, useMantineTheme, Center, Loader, Group } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
@@ -75,3 +77,5 @@ export default function EventsPage() {
     </>
   );
 }
+
+setPageOptions(EventsPage, { innerLayout: FeedLayout });

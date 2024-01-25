@@ -1,6 +1,8 @@
 import { createStyles, Group, Stack, Title, useMantineTheme } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategoriesInfinite } from '~/components/Article/Categories/ArticleCategoriesInfinite';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
@@ -103,3 +105,5 @@ export default function ArticlesPage() {
     </>
   );
 }
+
+setPageOptions(ArticlesPage, { innerLayout: FeedLayout });

@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Card,
+  Center,
   CloseButton,
   createStyles,
   Divider,
@@ -49,6 +50,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { generationPanel } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -59,6 +61,8 @@ export function ImageDetail() {
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
+
+  const nsfw = image.nsfw !== 'None';
 
   return (
     <>
@@ -74,7 +78,7 @@ export function ImageDetail() {
           image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
         }
       />
-      <TrackView entityId={image.id} entityType="Image" type="ImageView" />
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
         <Paper className={classes.root}>
           <CloseButton
@@ -307,6 +311,15 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
+                <AscendeumAd
+                  adunit="Sidebar_A"
+                  m="0 auto"
+                  nsfw={nsfw}
+                  sizes={{ [0]: '300x250' }}
+                  showFeedback
+                  showRemoveAds
+                />
+                {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

@@ -16,10 +16,10 @@ import { Fragment, useCallback, useRef } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
 
@@ -112,7 +112,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
   );
-  const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
+  const { columnWidth, columnGap, columnCount } = useMasonryContext();
   const { classes, cx } = useStyles({
     columnGap,
     columnWidth,

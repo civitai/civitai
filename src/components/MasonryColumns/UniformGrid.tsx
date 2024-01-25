@@ -2,8 +2,8 @@ import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
 type Props<TData> = {
   data: TData[];
@@ -20,8 +20,7 @@ export function UniformGrid<TData>({
   empty = null,
   maxRows,
 }: Props<TData>) {
-  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } =
-    useMasonryContainerContext();
+  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
     columnCount,

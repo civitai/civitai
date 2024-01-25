@@ -47,6 +47,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { RecaptchaWidgetProvider } from '../components/Recaptcha/RecaptchaWidget';
+import { AdsProvider } from '~/components/Ads/AdsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -224,26 +225,28 @@ function MyApp(props: CustomAppProps) {
                         <CookiesProvider value={cookies}>
                           <ReferralsProvider>
                             <FiltersProvider value={filters}>
-                              <HiddenPreferencesProvider>
-                                <CivitaiLinkProvider>
-                                  <NotificationsProvider zIndex={9999}>
-                                    <BrowserRouterProvider>
-                                      <RecaptchaWidgetProvider>
-                                        <BaseLayout>
-                                          <CustomModalsProvider>
-                                            <TosProvider>
-                                              {getLayout(<Component {...pageProps} />)}
-                                            </TosProvider>
-                                            <StripeSetupSuccessProvider />
-                                            <DialogProvider />
-                                            <RoutedDialogProvider />
-                                          </CustomModalsProvider>
-                                        </BaseLayout>
-                                      </RecaptchaWidgetProvider>
-                                    </BrowserRouterProvider>
-                                  </NotificationsProvider>
-                                </CivitaiLinkProvider>
-                              </HiddenPreferencesProvider>
+                              <AdsProvider>
+                                <HiddenPreferencesProvider>
+                                  <CivitaiLinkProvider>
+                                    <NotificationsProvider zIndex={9999}>
+                                      <BrowserRouterProvider>
+                                        <RecaptchaWidgetProvider>
+                                          <BaseLayout>
+                                            <CustomModalsProvider>
+                                              <TosProvider>
+                                                {getLayout(<Component {...pageProps} />)}
+                                              </TosProvider>
+                                              <StripeSetupSuccessProvider />
+                                              <DialogProvider />
+                                              <RoutedDialogProvider />
+                                            </CustomModalsProvider>
+                                          </BaseLayout>
+                                        </RecaptchaWidgetProvider>
+                                      </BrowserRouterProvider>
+                                    </NotificationsProvider>
+                                  </CivitaiLinkProvider>
+                                </HiddenPreferencesProvider>
+                              </AdsProvider>
                             </FiltersProvider>
                           </ReferralsProvider>
                         </CookiesProvider>

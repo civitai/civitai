@@ -85,6 +85,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export function ModelVersionDetails({
   model,
@@ -324,11 +325,11 @@ export function ModelVersionDetails({
         </Group>
       ),
       value: (
-        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId}`}>
+        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId as number}`}>
           Go to bounty
         </Text>
       ),
-      visible: !!model.meta && !!model.meta.bountyId,
+      visible: !!model.meta?.bountyId,
     },
   ];
 
@@ -927,6 +928,14 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
+
+          <AscendeumAd
+            adunit="Sidebar_A"
+            m="0 auto"
+            sizes={{ [0]: '300x250' }}
+            showFeedback
+            showRemoveAds
+          />
         </Stack>
       </ContainerGrid.Col>
 

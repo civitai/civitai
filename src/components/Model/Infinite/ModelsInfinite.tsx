@@ -64,6 +64,7 @@ export function ModelsInfinite({
               render={ModelCard}
               itemId={(x) => x.id}
               empty={<NoContent />}
+              adInterval={[6, 10]}
             />
           ) : (
             <MasonryColumns
@@ -77,6 +78,7 @@ export function ModelsInfinite({
               maxItemHeight={600}
               render={AmbientModelCard}
               itemId={(data) => data.id}
+              adInterval={[6, 10]}
             />
           )}
 
