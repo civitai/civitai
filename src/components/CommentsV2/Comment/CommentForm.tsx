@@ -104,7 +104,7 @@ export const CommentForm = ({
         // If we don't have thread data, child comments will not get a proper parent
         // and convos will be lost.
         if (!hasThreadData) {
-          queryUtils.commentv2.getThreadDetails.invalidate({
+          await queryUtils.commentv2.getThreadDetails.invalidate({
             entityType,
             entityId,
           });

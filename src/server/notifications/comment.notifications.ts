@@ -1,16 +1,13 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { removeEmpty } from '../../utils/object-helpers';
 import { QS } from '../../utils/qs';
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
-  const queryString = QS.stringify(
-    removeEmpty({
-      highlight: details.commentId,
-      commentParentType: details.commentParentType,
-      commentParentId: details.commentParentId,
-      threadId: details.threadId,
-    })
-  );
+  const queryString = QS.stringify({
+    highlight: details.commentId,
+    commentParentType: details.commentParentType,
+    commentParentId: details.commentParentId,
+    threadId: details.threadId,
+  });
 
   return {
     model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,

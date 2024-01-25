@@ -72,20 +72,23 @@ export function RootThreadProvider({
   ...props
 }: Props) {
   const router = useRouter();
-  const [entityType, setEntityType] = useState(initialEntityType);
-  const [entityId, setEntityId] = useState(initialEntityId);
+  const [entity, setEntity] = useState({
+    entityType: initialEntityType,
+    entityId: initialEntityId,
+  });
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
-  const expanded = useNewCommentStore(useCallback((state) => state.expandedComments, []));
+  const expanded = useNewCommentStore((state) => state.expandedComments);
   const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
   const setExpanded = useNewCommentStore((state) => state.setExpanded);
   const utils = trpc.useContext();
-  const isInitialThread = entityId === initialEntityId && entityType === initialEntityType;
+  const isInitialThread =
+    entity.entityId === initialEntityId && entity.entityType === initialEntityType;
   const queryType = router.query.commentParentType as CommentConnectorInput['entityType'];
   const queryId = parseNumericString(router.query.commentParentId);
 
   const { data: activeComment, isLoading } = trpc.commentv2.getSingle.useQuery(
     {
-      id: entityId,
+      id: entity.entityId,
     },
     {
       enabled: !isInitialThread,
@@ -94,20 +97,24 @@ export function RootThreadProvider({
 
   const setRootThread = useCallback(
     (entityType: CommentConnectorInput['entityType'], entityId: number) => {
-      setEntityType(entityType);
-      setEntityId(entityId);
+      setEntity({
+        entityType,
+        entityId,
+      });
     },
     []
   );
 
   const setInitialThread = useCallback(() => {
-    setEntityId(initialEntityId);
-    setEntityType(initialEntityType);
+    setEntity({
+      entityType: initialEntityType,
+      entityId: initialEntityId,
+    });
   }, []);
 
   // Load this main thread first, so we can fill our child threads. It will be loaded anyway by the provider, so no harm really.
   const { data: thread } = trpc.commentv2.getThreadDetails.useQuery(
-    { entityId, entityType, hidden },
+    { entityId: entity.entityId, entityType: entity.entityType, hidden },
     {
       onSuccess: (data) => {
         if ('children' in data) {
@@ -131,8 +138,7 @@ export function RootThreadProvider({
 
   useEffect(() => {
     if (queryType && queryId) {
-      setEntityType(queryType);
-      setEntityId(queryId);
+      setRootThread(queryType, queryId);
     }
   }, [queryType, queryId]);
 
@@ -150,8 +156,8 @@ export function RootThreadProvider({
       }}
     >
       <CommentsProvider
-        entityType={entityType}
-        entityId={entityId}
+        entityType={entity.entityType}
+        entityId={entity.entityId}
         hidden={hidden}
         level={1}
         {...props}
