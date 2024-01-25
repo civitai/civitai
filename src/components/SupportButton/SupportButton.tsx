@@ -18,7 +18,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           component={NextLink}
           variant="light"
           color="gray"
-          href="/pricing"
+          href="/pricing?utm_campaign=badge"
           compact
           className={cx(classes.root, className)}
           px={4}
@@ -34,7 +34,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           component={NextLink}
           variant="outline"
           color="green"
-          href="/pricing"
+          href="/pricing?utm_campaign=doit"
           compact
           className={cx(classes.root, className)}
           pr={2}
@@ -50,7 +50,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           component={NextLink}
           variant="light"
           color="green"
-          href="/pricing"
+          href="/pricing?utm_campaign=emoji_money"
           compact
           className={cx(classes.root, className)}
           px={4}
@@ -66,7 +66,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           component={NextLink}
           variant="light"
           color="green"
-          href="/pricing"
+          href="/pricing?utm_campaign=emoji_kiss"
           compact
           className={cx(classes.root, className)}
           px={4}
@@ -82,7 +82,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           component={NextLink}
           variant="light"
           color="red"
-          href="/pricing"
+          href="/pricing?utm_campaign=icon_heart"
           compact
           className={cx(classes.root, className)}
           px={4}
