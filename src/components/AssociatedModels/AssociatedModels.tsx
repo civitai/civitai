@@ -39,7 +39,6 @@ export function AssociatedModels({
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={4} maxSingleColumnWidth={450}>
       <MasonryContainer
-        fluid
         my="xl"
         pt="xl"
         pb="xl"

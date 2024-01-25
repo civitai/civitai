@@ -58,7 +58,7 @@ export function CsamImageSelection() {
           CSAM Image Selection
         </Title>
         <IsClient>
-          <MasonryContainer size="xl" w="100%">
+          <MasonryContainer w="100%">
             <ImagesProvider images={images}>
               <MasonryColumns
                 data={images}
@@ -87,7 +87,7 @@ export function CsamImageSelection() {
         </IsClient>
       </ScrollArea>
       <Card p="xs" style={{ zIndex: 30 }}>
-        <MasonryContainer size="xl">
+        <MasonryContainer>
           <Group position="right">
             {/* <Button variant="default">Cancel</Button> */}
             <Badge>

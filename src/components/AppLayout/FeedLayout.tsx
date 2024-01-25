@@ -45,7 +45,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
         columnWidth={constants.cardSizes.model}
         maxColumnCount={maxColumnCount}
         maxSingleColumnWidth={450}
-        style={{ margin: 0, flex: 1 }}
+        style={{ margin: 0, flex: 1, zIndex: 10 }}
         px={0}
       >
         <AscendeumAd

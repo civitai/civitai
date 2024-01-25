@@ -64,7 +64,7 @@ export default function TagPage({
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer>
           <Stack spacing="xs">
             <Group position="apart">
               <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as any })} />
