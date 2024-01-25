@@ -239,15 +239,17 @@ export function ExistingChat() {
         autoClose: false,
       });
     },
-    // onSettled() {
-    //   if (!currentUser) return;
-    //
-    //   doIsTyping({
-    //     chatId: state.existingChatId!,
-    //     userId: currentUser.id,
-    //     isTyping: false,
-    //   }).catch();
-    // },
+    onSettled() {
+      throttledTyping.cancel();
+
+      if (!currentUser) return;
+
+      doIsTyping({
+        chatId: state.existingChatId!,
+        userId: currentUser.id,
+        isTyping: false,
+      }).catch();
+    },
   });
 
   const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
