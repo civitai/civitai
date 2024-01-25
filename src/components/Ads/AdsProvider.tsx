@@ -49,9 +49,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
     canLoad: showAds && !nsfw,
   });
-  const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
-    canLoad: showAds && nsfw,
-  });
+  // const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
+  //   canLoad: showAds && nsfw,
+  // });
+  const exoclickReady = true;
 
   const readyRef = useRef(false);
   useEffect(() => {
