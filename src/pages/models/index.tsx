@@ -121,7 +121,7 @@ export default function ModelsPage() {
           ) : (
             <>
               <CategoryTags />
-              <ModelsInfinite filters={queryFilters} showEof />
+              <ModelsInfinite filters={queryFilters} showEof showAds />
             </>
           )}
         </IsClient>

@@ -44,7 +44,6 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
@@ -224,6 +223,7 @@ export default function ImagesAsPostsInfinite({
             [2030]: '300x600',
           }}
           style={{ ...adStyle }}
+          showRemoveAds
         />
         <MasonryProvider
           columnWidth={310}
@@ -377,7 +377,7 @@ export default function ImagesAsPostsInfinite({
                     maxItemHeight={600}
                     render={ImagesAsPostsCard}
                     itemId={(data) => data.images.map((x) => x.id).join('_')}
-                    adInterval={[6, 10]}
+                    withAds
                   />
                   {hasNextPage && (
                     <InViewLoader
@@ -414,6 +414,7 @@ export default function ImagesAsPostsInfinite({
             [2030]: '300x600',
           }}
           style={{ ...adStyle }}
+          showRemoveAds
         />
       </Box>
 

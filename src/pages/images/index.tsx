@@ -79,7 +79,7 @@ export default function ImagesPage() {
           ) : (
             <>
               <ImageCategories />
-              <ImagesInfinite showEof />
+              <ImagesInfinite showEof showAds />
             </>
           )}
         </IsClient>

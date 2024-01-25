@@ -79,7 +79,7 @@ export default function PostsPage() {
           ) : (
             <>
               <PostCategories />
-              <PostsInfinite filters={query} showEof />
+              <PostsInfinite filters={query} showEof showAds />
             </>
           )}
         </IsClient>

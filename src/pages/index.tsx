@@ -1,3 +1,4 @@
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import PersonalizedHomepage from '~/pages/home';
 import ModelsPage from '~/pages/models';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -16,7 +17,13 @@ export const getServerSideProps = createServerSideProps({
 function Home() {
   const features = useFeatureFlags();
 
-  return features.alternateHome ? <PersonalizedHomepage /> : <ModelsPage />;
+  return features.alternateHome ? (
+    <PersonalizedHomepage />
+  ) : (
+    <FeedLayout>
+      <ModelsPage />
+    </FeedLayout>
+  );
 }
 
 export default Home;

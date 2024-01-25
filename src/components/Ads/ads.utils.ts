@@ -1,3 +1,4 @@
+import { add } from 'lodash';
 import { getRandomInt } from '~/utils/number-helpers';
 
 export type AdFeedItem<T> =
@@ -14,13 +15,16 @@ const adMatrices: Record<string, AdMatrix> = {};
 
 export function createAdFeed<T>({
   data,
-  interval,
+  columnCount,
   showAds,
 }: {
   data: T[];
-  interval?: number[];
+  columnCount: number;
   showAds?: boolean;
 }): AdFeed<T> {
+  const interval =
+    adDensity.find(([columns]) => columns === columnCount)?.[1] ??
+    adDensity[adDensity.length - 1][1];
   if (!showAds || !interval) return data.map((data) => ({ type: 'data', data }));
   const key = interval.join('_');
   adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
@@ -102,3 +106,14 @@ export const ascendeumExoclickSizeMap: Record<string, string | null | undefined>
   '160x600': '160x600',
   '120x600': null,
 };
+
+type AdDensity = [columns: number, interval: [min: number, max: number]];
+const adDensity: AdDensity[] = [
+  [1, [6, 10]],
+  [2, [7, 12]],
+  [3, [8, 14]],
+  [4, [9, 15]],
+  [5, [10, 16]],
+  [6, [12, 18]],
+  [7, [14, 20]],
+];

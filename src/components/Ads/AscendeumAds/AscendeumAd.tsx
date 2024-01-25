@@ -102,7 +102,17 @@ export function AscendeumAd<T extends AdUnitType>({
           ) : (
             <>
               {showAscendeumAd && <AscendeumAdContent adunit={adunit} bidSizes={bidSizes} />}
-              {showAlternateAd &&
+              {showAlternateAd && (
+                <NextLink href="/pricing">
+                  <Image
+                    src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+                    alt="Please become a member to support creators today"
+                    width={width}
+                    height={height}
+                  />
+                </NextLink>
+              )}
+              {/* {showAlternateAd &&
                 (zoneId ? (
                   <ExoclickAd zoneId={zoneId} size={size} />
                 ) : (
@@ -114,7 +124,7 @@ export function AscendeumAd<T extends AdUnitType>({
                       height={height}
                     />
                   </NextLink>
-                ))}
+                ))} */}
             </>
           )}
         </>
@@ -123,7 +133,7 @@ export function AscendeumAd<T extends AdUnitType>({
   );
 
   return includeWrapper ? (
-    <Stack spacing={0} {...boxProps} w={width}>
+    <Stack spacing={0} {...boxProps} w={width} justify="center">
       {content}
       <Group position="apart">
         {showRemoveAds && (
