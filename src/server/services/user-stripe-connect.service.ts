@@ -6,6 +6,7 @@ import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
 import { StripeConnectStatus, UserStripeConnect } from '@prisma/client';
 import { createNotification } from './notification.service';
+import { number } from 'zod';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -35,6 +36,13 @@ export async function createUserStripeConnectAccount({ userId }: { userId: numbe
   try {
     const connectedAccount = await stripe.accounts.create({
       type: 'express',
+      settings: {
+        payouts: {
+          schedule: {
+            interval: 'manual',
+          },
+        },
+      },
       metadata: {
         userId: user.id.toString(),
       },
@@ -130,3 +138,36 @@ export async function updateByStripeConnectAccount({
 
   return updated;
 }
+
+export const payToStripeConnectAccount = async ({
+  byUserId,
+  toUserId,
+  amount,
+  description,
+}: {
+  byUserId: number;
+  toUserId: number;
+  amount: number;
+  description: string;
+}) => {
+  const stripe = await getServerStripe();
+  const toUserStripeConnect = await getUserStripeConnectAccount({ userId: toUserId });
+
+  try {
+    const transfer = await stripe.transfers.create({
+      amount,
+      currency: 'usd',
+      destination: toUserStripeConnect.connectedAccountId,
+      description,
+      metadata: {
+        byUserId: byUserId.toString(),
+        toUserId: toUserId.toString(),
+      },
+    });
+
+    return transfer;
+  } catch (error) {
+    log({ method: 'payToStripeConnectAccount', error, byUserId, toUserId, amount, description });
+    throw error;
+  }
+};
