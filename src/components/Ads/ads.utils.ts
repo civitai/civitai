@@ -102,3 +102,12 @@ export const ascendeumExoclickSizeMap: Record<string, string | null | undefined>
   '160x600': '160x600',
   '120x600': null,
 };
+
+type AdDensity = [columns: number, interval: [min: number, max: number]];
+const adDensity: AdDensity[] = [
+  [1, [6, 10]],
+  [2, [7, 12]],
+  [3, [8, 14]],
+  [4, [9, 15]],
+  [5, [10, 16]],
+];
