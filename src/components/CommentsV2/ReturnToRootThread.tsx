@@ -7,7 +7,7 @@ export function ReturnToRootThread() {
   if (isInitialThread || !activeComment) return null;
 
   return (
-    <Anchor size="sm" component="a" onClick={setInitialThread}>
+    <Anchor size="sm" onClick={setInitialThread}>
       Show full conversation
     </Anchor>
   );
