@@ -173,6 +173,7 @@ export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
   features: z.record(z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
+  dismissedAlerts: z.array(z.string()).optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -182,3 +183,5 @@ export const toggleFeatureInputSchema = z.object({
   feature: z.enum([featureKey, ...otherKeys]),
   value: z.boolean().optional(),
 });
+
+export const dismissAlertSchema = z.object({ alertId: z.string() });
