@@ -105,7 +105,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                               )}
                               {features.imageGeneration && image.meta && (
                                 <HoverActionButton
-                                  label="Create"
+                                  label="Remix"
                                   size={30}
                                   color="white"
                                   variant="filled"

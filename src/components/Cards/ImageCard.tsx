@@ -63,7 +63,7 @@ export function UnroutedImageCard({ data }: Props) {
                           <ImageGuard.Report context="image" position="static" withinPortal />
                           {features.imageGeneration && image.meta && (
                             <HoverActionButton
-                              label="Create"
+                              label="Remix"
                               size={30}
                               color="white"
                               variant="filled"
