@@ -30,7 +30,6 @@ import {
   IconBrush,
   IconChevronDown,
   IconCircleDashed,
-  IconClubs,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -72,7 +71,6 @@ import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { EventButton } from '~/components/EventButton/EventButton';
 import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -871,6 +869,7 @@ export function AppHeader({
               </ActionIcon>
             )}
             {currentUser && <CivitaiLinkPopover />}
+            {currentUser && <ChatButton />}
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}

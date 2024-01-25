@@ -53,6 +53,7 @@ const singleChatSelect = {
         select: {
           id: true,
           username: true,
+          isModerator: true,
           // image: true, // is this right? or profilePicture?
         },
       },
@@ -255,6 +256,15 @@ export const createChatHandler = async ({
 
     if (existing) return existing;
 
+    // TODO re-enable
+    // const modInfo = await dbRead.user.findFirst({
+    //   where: {id: userId},
+    //   select: {
+    //     isModerator: true,
+    //   }
+    // });
+    // const isModerator = modInfo?.isModerator === true;
+
     const totalForUser = await dbWrite.chat.count({
       where: { ownerId: userId },
     });
@@ -269,6 +279,7 @@ export const createChatHandler = async ({
       where: { ownerId: userId, createdAt: { gte: dayjs().startOf('date').toDate() } },
     });
 
+    // TODO moderator check
     if (totalTodayForUser >= maxChatsPerDay) {
       throw throwBadRequestError(`Cannot create more than ${maxChatsPerDay} chats per day`);
     }
@@ -295,6 +306,7 @@ export const createChatHandler = async ({
           userId: u,
           chatId: newChat.id,
           isOwner: u === userId,
+          // TODO check here for || isModerator, and if so, autojoin
           status: u === userId ? ChatMemberStatus.Joined : ChatMemberStatus.Invited,
           joinedAt: u === userId ? newChat.createdAt : undefined,
         })),

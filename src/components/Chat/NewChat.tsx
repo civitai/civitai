@@ -26,7 +26,7 @@ export function NewChat() {
       }
 
       setIsCreating(false);
-      if (data) setState((prev) => ({ ...prev, existingChatId: data.id }));
+      if (data) setState((prev) => ({ ...prev, isCreating: false, existingChatId: data.id }));
     },
     onError(error) {
       setIsCreating(false);
@@ -123,7 +123,7 @@ export function NewChat() {
           variant="light"
           color="gray"
           onClick={() => {
-            setState((prev) => ({ ...prev, selectedUsers: [] }));
+            setState((prev) => ({ ...prev, isCreating: false, selectedUsers: [] }));
           }}
         >
           Cancel

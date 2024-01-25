@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
-import { IconSend } from '@tabler/icons-react';
+import { IconChevronLeft, IconSend } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
@@ -31,6 +31,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { SignalMessages } from '~/server/common/enums';
 import { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatAllMessages } from '~/types/router';
@@ -88,6 +89,7 @@ export function ExistingChat() {
   const { connected, worker } = useSignalContext();
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
+  const mobile = useIsMobile();
 
   const lastReadRef = useRef<HTMLDivElement>(null);
   const [chatMsg, setChatMsg] = useState<string>('');
@@ -376,9 +378,18 @@ export function ExistingChat() {
     });
   };
 
+  const goBack = () => {
+    setState((prev) => ({ ...prev, existingChatId: undefined }));
+  };
+
   return (
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart" noWrap>
+        {mobile && (
+          <ActionIcon onClick={goBack}>
+            <IconChevronLeft />
+          </ActionIcon>
+        )}
         {allChatLoading ? (
           <Center h="100%">
             <Loader />

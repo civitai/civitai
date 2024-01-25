@@ -3,6 +3,7 @@ import { IconMessage2 } from '@tabler/icons-react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { ChatWindow } from '~/components/Chat/ChatWindow';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -14,10 +15,12 @@ const useStyles = createStyles((theme) => ({
     zIndex: 500,
     height: 'min(600px, 70%)',
     width: 'min(700px, 80%)',
+    [containerQuery.smallerThan('sm')]: {
+      height: `calc(100% - ${theme.spacing.xs * 2}px)`,
+      width: `calc(100% - ${theme.spacing.md * 2}px)`,
+    },
   },
 }));
-
-// TODO add "message" button across app for user area, which will start a new message with that user selected
 
 export function ChatButton() {
   const { state, setState } = useChatContext();

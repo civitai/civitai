@@ -13,17 +13,11 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import {
-  IconCirclePlus,
-  IconCloudOff,
-  IconSearch,
-  IconUser,
-  IconUsers,
-  IconX,
-} from '@tabler/icons-react';
+import { IconCirclePlus, IconCloudOff, IconSearch, IconUsers, IconX } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import React, { useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -42,6 +36,15 @@ const useStyles = createStyles((theme) => ({
   },
   selectedChat: {
     backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
+  },
+  modChat: {
+    backgroundColor: theme.fn.rgba(theme.colors.red[theme.fn.primaryShade()], 0.05),
+    '&:hover': {
+      backgroundColor: theme.fn.rgba(theme.colors.red[theme.fn.primaryShade()], 0.2),
+    },
+  },
+  modSelectedChat: {
+    backgroundColor: `${theme.fn.rgba(theme.colors.red[theme.fn.primaryShade()], 0.4)} !important`,
   },
 }));
 
@@ -76,7 +79,7 @@ export function ChatList() {
         <ActionIcon>
           <IconCirclePlus
             onClick={() => {
-              setState((prev) => ({ ...prev, existingChatId: undefined }));
+              setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
             }}
           />
         </ActionIcon>
@@ -114,13 +117,19 @@ export function ChatList() {
             <AnimatePresence initial={false} mode="sync">
               {filteredData.map((d) => {
                 const unreadCount = chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
+                const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
+                const isModSender = !!otherMembers.find(
+                  (om) => om.isOwner === true && om.user.isModerator === true
+                );
                 return (
                   <PGroup
                     key={d.id}
                     component={motion.div}
                     noWrap
                     className={cx(classes.selectChat, {
-                      [classes.selectedChat]: d.id === state.existingChatId,
+                      [classes.modChat]: isModSender,
+                      [classes.selectedChat]: !isModSender && d.id === state.existingChatId,
+                      [classes.modSelectedChat]: isModSender && d.id === state.existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -137,7 +146,13 @@ export function ChatList() {
                       inline
                       size={16}
                     >
-                      <Box>{d.chatMembers.length > 2 ? <IconUsers /> : <IconUser />}</Box>
+                      <Box>
+                        {otherMembers.length > 1 ? (
+                          <IconUsers />
+                        ) : (
+                          <UserAvatar userId={otherMembers[0].userId} />
+                        )}
+                      </Box>
                     </Indicator>
                     <Stack sx={{ overflow: 'hidden' }} spacing={0}>
                       <Text
@@ -150,10 +165,7 @@ export function ChatList() {
                           minWidth: 0,
                         }}
                       >
-                        {d.chatMembers
-                          .filter((cm) => cm.userId !== currentUser?.id)
-                          .map((cm) => cm.user.username)
-                          .join(', ')}
+                        {otherMembers.map((cm) => cm.user.username).join(', ')}
                       </Text>
                       {!!d.messages[0]?.content && (
                         <Text

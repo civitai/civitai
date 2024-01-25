@@ -10,6 +10,7 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 type ChatState = {
   open: boolean;
+  isCreating: boolean;
   existingChatId: number | undefined;
   selectedUsers: Partial<UserWithCosmetics>[];
 };
@@ -27,7 +28,12 @@ export const useChatContext = () => {
 
 export const ChatContextProvider = ({
   children,
-  value = { open: false, existingChatId: undefined, selectedUsers: [] } as ChatState,
+  value = {
+    open: false,
+    isCreating: false,
+    existingChatId: undefined,
+    selectedUsers: [],
+  } as ChatState,
 }: {
   children: ReactNode;
   value?: ChatState;
