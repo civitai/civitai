@@ -24,6 +24,7 @@ export function ChatUserButton({
         pl={8}
         pr={12}
         onClick={handleClick}
+        // TODO do we like this color
         sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.success[2] }}
         {...buttonProps}
       >
