@@ -140,7 +140,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     steps: version?.steps ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    requireAuth: version?.requireAuth ?? false,
+    requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
   };
 
@@ -274,10 +274,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 data={[
                   { label: 'None', value: '0' },
                   { label: '1 day', value: '1' },
-                  { label: '2 days', value: '2' },
                   { label: '3 days', value: '3' },
-                  { label: '4 days', value: '4' },
-                  { label: '5 days', value: '5' },
+                  { label: '1 week', value: '7' },
+                  { label: '2 weeks', value: '14' },
                 ]}
                 color="blue"
                 size="xs"

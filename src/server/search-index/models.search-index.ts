@@ -9,9 +9,10 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
+import { isEqual } from 'lodash';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
-import { EnqueuedTask } from 'meilisearch';
+import { EnqueuedTask, TypoTolerance } from 'meilisearch';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -123,6 +124,24 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: updateFilterableAttributesTask created',
       updateFilterableAttributesTask
     );
+  }
+
+  const typoTolerance: TypoTolerance = {
+    enabled: true,
+    minWordSizeForTypos: {
+      oneTypo: 12,
+      twoTypos: 16,
+    },
+    disableOnAttributes: [],
+    disableOnWords: [],
+  };
+
+  if (
+    // Meilisearch stores sorted.
+    !isEqual(settings.typoTolerance, typoTolerance)
+  ) {
+    const updateTypoToleranceTask = await index.updateTypoTolerance(typoTolerance);
+    console.log('onIndexSetup :: updateTypoToleranceTask created', updateTypoToleranceTask);
   }
 };
 

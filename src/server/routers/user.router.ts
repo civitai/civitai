@@ -25,6 +25,7 @@ import {
   deleteUserPaymentMethodHandler,
   getUserFeatureFlagsHandler,
   toggleUserFeatureFlagHandler,
+  dismissAlertHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -52,6 +53,7 @@ import {
   userByReferralCodeSchema,
   completeOnboardStepSchema,
   toggleFeatureInputSchema,
+  dismissAlertSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -153,4 +155,5 @@ export const userRouter = router({
   toggleFeature: protectedProcedure
     .input(toggleFeatureInputSchema)
     .mutation(toggleUserFeatureFlagHandler),
+  dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
 });

@@ -1,35 +1,119 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
+import { Button, ButtonProps, createStyles, HoverCard, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { wiggle } from '~/libs/animations';
+import { getRandom } from '~/utils/array-helpers';
+
 export const SupportButton = ({ className, ...props }: Props) => {
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
+  const [button, setButton] = useState<React.ReactNode>(null);
+
+  useEffect(() => {
+    setButton(
+      getRandom([
+        <Button
+          key={0}
+          component={NextLink}
+          variant="light"
+          color="gray"
+          href="/pricing?utm_campaign=badge"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <EdgeMedia src="501aec85-e3b4-42ec-afda-2fadc2361506" width={24} />
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={1}
+          component={NextLink}
+          variant="outline"
+          color="green"
+          href="/pricing?utm_campaign=doit"
+          compact
+          className={cx(classes.root, className)}
+          pr={2}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text weight={500}>Do It</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={2}
+          component={NextLink}
+          variant="light"
+          color="green"
+          href="/pricing?utm_campaign=emoji_money"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text size={24}>💸</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={3}
+          component={NextLink}
+          variant="light"
+          color="green"
+          href="/pricing?utm_campaign=emoji_kiss"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text size={24}>😘</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={4}
+          component={NextLink}
+          variant="light"
+          color="red"
+          href="/pricing?utm_campaign=icon_heart"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <IconHeart color={theme.colors.red[4]} strokeWidth={2.5} />
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+      ])
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!button) return null;
 
   return (
-    <Box component={NextLink} href="/pricing" className={cx(classes.root, className)} {...props}>
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 24 24"
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={classes.svg}
-      >
-        <path
-          className={classes.pulser}
-          d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
-        />
-        <path
-          className={classes.heart}
-          d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
-        />
-      </svg>
-    </Box>
+    <HoverCard withArrow>
+      <HoverCard.Target>{button}</HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text>You should really press this button.</Text>
+        <Text>{`There's stuff here you wanna see...`}</Text>
+        <Text>Do it! Click it! Really!</Text>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 };
 
 type Props = {
   size?: 'sm' | 'md' | 'lg' | 'xl';
-} & BoxProps;
+} & ButtonProps;
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -39,18 +123,22 @@ const useStyles = createStyles((theme) => ({
     zIndex: 3,
   },
   svg: {
-    height: 30,
+    height: 32,
     transform: 'translateZ(0)',
     // animation: `${pulseSize} 1s ease-in-out infinite`,
 
     [`&:hover`]: {
       animation: `${wiggle()} 750ms ease-in-out infinite`,
     },
+    [theme.fn.largerThan('sm')]: {
+      height: 24,
+      marginRight: 4,
+    },
   },
 
   heart: {
     stroke: '#ff6666',
-    strokeWidth: 2,
+    strokeWidth: 2.5,
     transformOrigin: 'center',
     transform: 'scale(1)',
   },

@@ -9,7 +9,6 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { constants } from '~/server/common/constants';
 import { CollectionSort } from '~/server/common/enums';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
@@ -18,10 +17,8 @@ import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ ctx, session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.profileCollections)
+  resolver: async ({ ctx, features }) => {
+    if (!features?.profileCollections)
       return {
         redirect: {
           destination: `/user/${ctx.query.username}`,

@@ -27,7 +27,7 @@ import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx, features }) => {
+  resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
       await ssg?.user.getCreator.prefetch({ username });

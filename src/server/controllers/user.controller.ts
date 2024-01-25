@@ -1149,3 +1149,21 @@ export const toggleUserFeatureFlagHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export const dismissAlertHandler = async ({
+  input,
+  ctx,
+}: {
+  input: { alertId: string };
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const { dismissedAlerts = [] } = await getUserSettings(id);
+    dismissedAlerts.push(input.alertId);
+
+    await setUserSetting(id, { dismissedAlerts });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
