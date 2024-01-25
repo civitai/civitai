@@ -21,7 +21,7 @@ async function buffer(readable: Readable) {
   return Buffer.concat(chunks);
 }
 
-const relevantEvents = new Set(['account.updated', 'payout.created', 'payout.paid']);
+const relevantEvents = new Set(['account.updated', 'transfer.created']);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
@@ -47,6 +47,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case 'account.updated':
             const data = event.data.object as Stripe.Account;
             await updateByStripeConnectAccount({ stripeAccount: data });
+            break;
+          case 'transfer.created':
+            // TODO: Close transfer request.
+            console.log('transfer created');
             break;
           default:
             throw new Error('Unhandled relevant event!');
