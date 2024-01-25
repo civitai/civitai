@@ -140,7 +140,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     steps: version?.steps ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    requireAuth: version?.requireAuth ?? false,
+    requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
   };
 
