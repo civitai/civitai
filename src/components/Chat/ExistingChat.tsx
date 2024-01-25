@@ -239,6 +239,15 @@ export function ExistingChat() {
         autoClose: false,
       });
     },
+    // onSettled() {
+    //   if (!currentUser) return;
+    //
+    //   doIsTyping({
+    //     chatId: state.existingChatId!,
+    //     userId: currentUser.id,
+    //     isTyping: false,
+    //   }).catch();
+    // },
   });
 
   const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
@@ -266,7 +275,7 @@ export function ExistingChat() {
       chatMemberId: myMember.id,
       lastViewedMessageId: newestMessageId,
     }).catch();
-  }, [allChats, myMember]);
+  }, [allChats, changeLastViewed, myMember]);
 
   useEffect(() => {
     setTypingStatus({});

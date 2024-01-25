@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Card,
-  Center,
   CloseButton,
   createStyles,
   Divider,
@@ -14,43 +13,45 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
+import { CollectionType, NsfwLevel } from '@prisma/client';
 import {
-  IconInfoCircle,
-  IconDotsVertical,
   IconAlertTriangle,
+  IconBrush,
+  IconDotsVertical,
   IconEye,
+  IconInfoCircle,
   IconPlaylistAdd,
+  IconShare3,
 } from '@tabler/icons-react';
-import { IconShare3, IconBrush } from '@tabler/icons-react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
+import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
+import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
-import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
-import { ImageResources } from '~/components/Image/Detail/ImageResources';
-import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { CollectionType, NsfwLevel } from '@prisma/client';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { generationPanel } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { generationPanel } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -129,6 +130,7 @@ export function ImageDetail() {
                     size="md"
                     compact
                   />
+                  <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"
