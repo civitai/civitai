@@ -27,6 +27,7 @@ const _installCaching = (() => {
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = (() => {
   if (env.CACHE_DNS) _installCaching();
+  console.log('clickhouse setup');
 
   return shouldConnect
     ? createClient({

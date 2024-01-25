@@ -5,7 +5,6 @@ import { z } from 'zod';
 
 import { ArticleUpsertForm } from '~/components/Article/ArticleUpsertForm';
 import { dbRead } from '~/server/db/client';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -15,9 +14,8 @@ const querySchema = z.object({ id: z.preprocess(parseNumericString, z.number()) 
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.articleCreate) return { notFound: true };
+  resolver: async ({ session, ctx, features }) => {
+    if (!features?.articleCreate) return { notFound: true };
 
     if (!session)
       return {

@@ -76,7 +76,7 @@ export default function CreatorsClubIntro() {
           </Title>
 
           <Text size={sizing.header.subtitle} lh={1.3} mb="xs">
-            One of the core tenants of Civitai is that creators should be able to monetize their
+            One of the core tenets of Civitai is that creators should be able to monetize their
             work. The Civitai Creators Program is the pathway for creators on Civitai to getting
             paid for their contributions
           </Text>
@@ -264,7 +264,7 @@ const ExclusivePerksSection = () => {
 const waysToEarnBuzz: { text: string; value: number }[] = [
   {
     value: 10,
-    text: 'For every 1000 ad impressions on your images or resources',
+    text: 'For every 1,000 ad impressions on your images or resources',
   },
   {
     value: 10,
@@ -272,7 +272,7 @@ const waysToEarnBuzz: { text: string; value: number }[] = [
   },
   {
     value: 10,
-    text: 'for every 1000 images generated on-site using one of your resources',
+    text: 'For every 1,000 images generated on-site using one of your resources',
   },
 ];
 
@@ -355,21 +355,6 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                   >
                     supported country
                   </Anchor>
-                </Text>
-              </Group>
-              <Divider />
-              <Group noWrap w="100%">
-                <IconBrandStripe size={24} />
-                <Text>
-                  Have a{' '}
-                  <Anchor
-                    href="https://dashboard.stripe.com/register"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Stripe account
-                  </Anchor>{' '}
-                  (We pay through Stripe)
                 </Text>
               </Group>
               <Divider />

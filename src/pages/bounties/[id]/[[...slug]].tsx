@@ -34,7 +34,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -112,10 +111,8 @@ const querySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  useSession: true,
-  resolver: async ({ ctx, ssg, session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.bounties) return { notFound: true };
+  resolver: async ({ ctx, ssg, features }) => {
+    if (!features?.bounties) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
