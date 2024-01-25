@@ -33,6 +33,15 @@ const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
     const mergedRef = useMergedRef(innerRef, ref);
     const { classes, cx } = useStyles({ supportsContainerQuery });
 
+    useEffect(() => {
+      const container = innerRef.current;
+      if (container) {
+        useContainerProviderStore.setState(() => ({
+          [containerName]: { inlineSize: container.clientWidth, blockSize: container.clientHeight },
+        }));
+      }
+    }, []);
+
     return (
       <ContainerContext.Provider value={{ nodeRef: innerRef, containerName }}>
         <Box

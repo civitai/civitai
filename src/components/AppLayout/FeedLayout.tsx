@@ -1,7 +1,8 @@
-import { Box, Divider, useMantineTheme } from '@mantine/core';
+import { useMantineTheme } from '@mantine/core';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React from 'react';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -56,7 +57,9 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           }}
           nsfw={nsfw}
         />
-        <MasonryContainer>{children}</MasonryContainer>
+        <MasonryContainer>
+          <IsClient>{children}</IsClient>
+        </MasonryContainer>
       </MasonryProvider>
       <AscendeumAd
         adunit="StickySidebar_A"
