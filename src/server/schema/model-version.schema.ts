@@ -129,7 +129,7 @@ export const modelVersionUpsertSchema2 = z.object({
   trainingDetails: trainingDetailsObj.nullish(),
   earlyAccessTimeFrame: z.preprocess(
     (value) => (value ? Number(value) : 0),
-    z.number().min(0).max(5).optional()
+    z.number().min(0).max(14).optional()
   ),
   status: z.nativeEnum(ModelStatus).optional(),
   requireAuth: z.boolean().optional(),

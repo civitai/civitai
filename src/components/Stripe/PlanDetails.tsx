@@ -48,7 +48,7 @@ export function PlanDetails({
 export const planDetails: PlanMeta[] = [
   {
     name: 'Supporter Tier',
-    image: 'c056e4d3-5161-433f-0201-31847be0dc00',
+    image: '501aec85-e3b4-42ec-afda-2fadc2361506',
     benefits: [
       { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
       { content: 'Early access to new features' },

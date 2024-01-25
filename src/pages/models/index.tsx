@@ -22,6 +22,8 @@ import { PeriodMode } from '~/server/schema/base.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { QS } from '~/utils/qs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -69,68 +71,63 @@ export default function ModelsPage() {
         description="Browse from thousands of free Stable Diffusion models, spanning unique anime art styles, immersive 3D renders, stunning photorealism, and more"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/models`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer fluid>
-          {username && typeof username === 'string' && <Title>Models by {username}</Title>}
-          {favorites && <Title>Your Liked Models</Title>}
-          {hidden && <Title>Your Hidden Models</Title>}
-          <Stack spacing="xs">
-            <Announcements
-              sx={() => ({
-                marginBottom: -35,
-                [containerQuery.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
-            <Group position="apart" spacing={8}>
-              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
-              <Group className={classes.filtersWrapper} spacing={4}>
-                {periodMode && (
-                  <Popover>
-                    <Popover.Target>
-                      <ActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
-                        <IconExclamationMark size={20} strokeWidth={3} />
-                      </ActionIcon>
-                    </Popover.Target>
-                    <Popover.Dropdown maw={300}>
-                      {`To ensure that you see all possible results, we've disable the period filter.`}
-                      <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
-                        Clear Search
-                      </Button>
-                    </Popover.Dropdown>
-                  </Popover>
-                )}
-                <SortFilter type="models" variant="button" />
-                <ModelFiltersDropdown />
-                {canToggleView && (
-                  <ViewToggle
-                    type="models"
-                    color="gray"
-                    radius="xl"
-                    size={36}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  />
-                )}
-              </Group>
-            </Group>
-            <IsClient>
-              {view === 'categories' ? (
-                <ModelCategoriesInfinite />
-              ) : (
-                <>
-                  <CategoryTags />
-                  <ModelsInfinite filters={queryFilters} showEof />
-                </>
-              )}
-            </IsClient>
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+
+      {username && typeof username === 'string' && <Title>Models by {username}</Title>}
+      {favorites && <Title>Your Liked Models</Title>}
+      {hidden && <Title>Your Hidden Models</Title>}
+      <Stack spacing="xs">
+        <Announcements
+          sx={() => ({
+            marginBottom: -35,
+            [containerQuery.smallerThan('md')]: {
+              marginBottom: -5,
+            },
+          })}
+        />
+        <Group position="apart" spacing={8}>
+          {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+          <Group className={classes.filtersWrapper} spacing={4}>
+            {periodMode && (
+              <Popover>
+                <Popover.Target>
+                  <ActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
+                    <IconExclamationMark size={20} strokeWidth={3} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown maw={300}>
+                  {`To ensure that you see all possible results, we've disable the period filter.`}
+                  <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
+                    Clear Search
+                  </Button>
+                </Popover.Dropdown>
+              </Popover>
+            )}
+            <SortFilter type="models" variant="button" />
+            <ModelFiltersDropdown />
+            {canToggleView && (
+              <ViewToggle
+                type="models"
+                color="gray"
+                radius="xl"
+                size={36}
+                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              />
+            )}
+          </Group>
+        </Group>
+        <IsClient>
+          {view === 'categories' ? (
+            <ModelCategoriesInfinite />
+          ) : (
+            <>
+              <CategoryTags />
+              <ModelsInfinite filters={queryFilters} showEof showAds />
+            </>
+          )}
+        </IsClient>
+      </Stack>
     </>
   );
 }
+
+setPageOptions(ModelsPage, { innerLayout: FeedLayout });

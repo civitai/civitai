@@ -1,5 +1,7 @@
 import { Group, Stack, createStyles, useMantineTheme } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
@@ -47,49 +49,43 @@ export default function PostsPage() {
         description="Discover engaging posts from our growing community on Civitai, featuring unique and creative content generated with custom Stable Diffusion AI resources crafted by talented community members."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer fluid>
-          <Stack spacing="xs">
-            <Announcements
-              sx={(theme) => ({
-                marginBottom: -35,
-                [containerQuery.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
+      <Stack spacing="xs">
+        <Announcements
+          sx={(theme) => ({
+            marginBottom: -35,
+            [containerQuery.smallerThan('md')]: {
+              marginBottom: -5,
+            },
+          })}
+        />
 
-            <Group position="apart" spacing={8}>
-              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
-                <SortFilter type="posts" variant="button" />
-                <PostFiltersDropdown />
-                <ViewToggle
-                  type="posts"
-                  color="gray"
-                  radius="xl"
-                  size={36}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                />
-              </Group>
-            </Group>
-            <IsClient>
-              {view === 'categories' ? (
-                <PostCategoriesInfinite filters={query} />
-              ) : (
-                <>
-                  <PostCategories />
-                  <PostsInfinite filters={query} showEof />
-                </>
-              )}
-            </IsClient>
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+        <Group position="apart" spacing={8}>
+          {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+          <Group className={classes.filtersWrapper} spacing={8} noWrap>
+            <SortFilter type="posts" variant="button" />
+            <PostFiltersDropdown />
+            <ViewToggle
+              type="posts"
+              color="gray"
+              radius="xl"
+              size={36}
+              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            />
+          </Group>
+        </Group>
+        <IsClient>
+          {view === 'categories' ? (
+            <PostCategoriesInfinite filters={query} />
+          ) : (
+            <>
+              <PostCategories />
+              <PostsInfinite filters={query} showEof showAds />
+            </>
+          )}
+        </IsClient>
+      </Stack>
     </>
   );
 }
+
+setPageOptions(PostsPage, { innerLayout: FeedLayout });

@@ -12,10 +12,10 @@ import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 import { isEqual } from 'lodash-es';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { closeModal, openConfirmModal } from '@mantine/modals';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 export const imagesQueryParamSchema = z
   .object({

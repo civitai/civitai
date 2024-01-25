@@ -226,6 +226,10 @@ export const constants = {
     maxTipAmount: 100000000,
     minTipAmount: 50,
     maxEntityTip: 2000,
+    buzzDollarRatio: 1000,
+    platformFee: 0.3,
+    minBuzzWithdrawal: 100000,
+    maxBuzzWithdrawal: 100000000,
   },
   profile: {
     coverImageAspectRatio: 1 / 4,
@@ -513,10 +517,22 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 
 export const CurrencyConfig: Record<
   Currency,
-  { icon: (props: TablerIconsProps) => JSX.Element; color: (theme: MantineTheme) => string }
+  {
+    icon: (props: TablerIconsProps) => JSX.Element;
+    color: (theme: MantineTheme) => string;
+    fill?: (theme: MantineTheme) => string | string;
+  }
 > = {
-  [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
-  [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
+  [Currency.BUZZ]: {
+    icon: IconBolt,
+    color: (theme) => theme.colors.yellow[7],
+    fill: (theme) => theme.colors.yellow[7],
+  },
+  [Currency.USD]: {
+    icon: IconCurrencyDollar,
+    color: (theme) => theme.colors.yellow[7],
+    fill: undefined,
+  },
 };
 
 export const BUZZ_FEATURE_LIST = [

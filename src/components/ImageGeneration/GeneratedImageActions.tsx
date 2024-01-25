@@ -1,4 +1,4 @@
-import { ActionIcon, Text, Tooltip, MantineNumberSize } from '@mantine/core';
+import { ActionIcon, Text, Tooltip, MantineNumberSize, Button, HoverCard } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCloudUpload, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -24,32 +24,58 @@ export function GeneratedImageActions({
   const { selected, deselect, isMutating, deleteSelectedImages, postSelectedImages } =
     useGeneratedImageActions();
 
-  if (!selected.length) return null;
+  const hasSelected = !!selected.length;
   return (
     <>
-      <Text color="dimmed" size="sm" weight={500} inline>
-        {selected.length} selected
-      </Text>
-      <Tooltip label="Deselect all">
-        <ActionIcon size={actionIconSize} onClick={deselect} variant="light">
-          <IconSquareOff size={iconSize} />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Delete selected">
-        <ActionIcon
-          size={actionIconSize}
-          onClick={deleteSelectedImages}
-          color="red"
-          variant="light"
-        >
-          <IconTrash size={iconSize} />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Post images">
-        <ActionIcon size={actionIconSize} variant="light" onClick={postSelectedImages}>
-          <IconCloudUpload size={iconSize} />
-        </ActionIcon>
-      </Tooltip>
+      {hasSelected && (
+        <>
+          <Text color="dimmed" size="sm" weight={500} inline>
+            {selected.length} selected
+          </Text>
+          <Tooltip label="Deselect all">
+            <ActionIcon size={actionIconSize} onClick={deselect} variant="light">
+              <IconSquareOff size={iconSize} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Delete selected">
+            <ActionIcon
+              size={actionIconSize}
+              onClick={deleteSelectedImages}
+              color="red"
+              variant="light"
+            >
+              <IconTrash size={iconSize} />
+            </ActionIcon>
+          </Tooltip>
+        </>
+      )}
+      <HoverCard withinPortal width={200} shadow="sm" offset={5}>
+        <HoverCard.Target>
+          <div>
+            <Button
+              color="blue"
+              size="sm"
+              onClick={postSelectedImages}
+              loading={isMutating}
+              disabled={!hasSelected}
+              sx={(theme) => ({
+                '&[data-disabled]': {
+                  background: theme.colors.blue[theme.fn.primaryShade()],
+                  color: 'white',
+                  opacity: 0.5,
+                },
+              })}
+            >
+              Post
+            </Button>
+          </div>
+        </HoverCard.Target>
+        <HoverCard.Dropdown p="xs">
+          <Text size="sm" lh={1.2}>
+            Select one or more images to post and earn Buzz.
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
       {/* <Tooltip label="Upscale images">
         <span>
           <ActionIcon size={actionIconSize} variant="light" disabled>

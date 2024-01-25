@@ -41,6 +41,7 @@ type ImagesInfiniteProps = {
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
   filterType?: 'images' | 'videos';
+  showAds?: boolean;
 };
 
 export default function ImagesInfinite({
@@ -49,6 +50,7 @@ export default function ImagesInfinite({
   showEof = false,
   renderItem: MasonryItem,
   filterType = 'images',
+  showAds,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
@@ -87,6 +89,7 @@ export default function ImagesInfinite({
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCard}
               itemId={(data) => data.id}
+              adInterval={showAds ? [10, 16] : undefined}
             />
           </ImagesProvider>
           {hasNextPage && (

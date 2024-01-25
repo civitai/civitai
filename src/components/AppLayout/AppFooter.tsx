@@ -88,6 +88,16 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <Button
             component={NextLink}
             prefetch={false}
+            href="/creators-program"
+            {...buttonProps}
+            color="blue"
+            px={mobile ? 5 : 'xs'}
+          >
+            Creators
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
             href="/content/tos"
             {...buttonProps}
             px={mobile ? 5 : 'xs'}

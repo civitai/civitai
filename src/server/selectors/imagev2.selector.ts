@@ -54,6 +54,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
         laughCountAllTime: true,
         likeCountAllTime: true,
         commentCountAllTime: true,
+        collectedCountAllTime: true,
         tippedAmountCountAllTime: true,
         viewCountAllTime: true,
       },
