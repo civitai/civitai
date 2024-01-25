@@ -48,6 +48,7 @@ import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
 import { eventRouter } from '~/server/routers/event.router';
 import { csamRouter } from '~/server/routers/csam.router';
 import { clubAdminRouter } from './clubAdmin.router';
+import { userStripeConnectRouter } from './user-stripe-connect.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -98,6 +99,7 @@ export const appRouter = router({
   cosmetic: cosmeticRouter,
   event: eventRouter,
   csam: csamRouter,
+  userStripeConnect: userStripeConnectRouter,
 });
 
 // export type definition of API

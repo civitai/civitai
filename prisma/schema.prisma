@@ -97,7 +97,7 @@ enum StripeConnectStatus {
 model UserStripeConnect {
   userId             Int                 @unique
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connectedAccountId String
+  connectedAccountId String              @unique
   status             StripeConnectStatus @default(PendingOnboarding)
   payoutsEnabled     Boolean             @default(false)
   chargesEnabled     Boolean             @default(false)
