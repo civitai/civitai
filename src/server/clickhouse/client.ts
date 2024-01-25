@@ -1,4 +1,4 @@
-import { createClient } from '@clickhouse/client';
+import { ClickHouseClient, createClient } from '@clickhouse/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -9,38 +9,38 @@ import {
 } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { cacheDnsEntries } from '~/server/http/dns-cache';
 import { ProhibitedSources } from '~/server/schema/user.schema';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 
-const _installCaching = (() => {
-  let cachingActive = false;
-  return () => {
-    if (!cachingActive) {
-      cachingActive = true;
-      cacheDnsEntries();
-    }
-  };
-})();
+declare global {
+  // eslint-disable-next-line no-var, vars-on-top
+  var globalClickhouse: ClickHouseClient | undefined;
+}
 
+function getClickHouse() {
+  console.log('Creating ClickHouse client');
+  return createClient({
+    host: env.CLICKHOUSE_HOST,
+    username: env.CLICKHOUSE_USERNAME,
+    password: env.CLICKHOUSE_PASSWORD,
+    clickhouse_settings: {
+      async_insert: 1,
+      wait_for_async_insert: 0,
+    },
+  });
+}
+
+export let clickhouse: ClickHouseClient | undefined;
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
-export const clickhouse = (() => {
-  if (env.CACHE_DNS) _installCaching();
-  console.log('clickhouse setup');
-
-  return shouldConnect
-    ? createClient({
-        host: env.CLICKHOUSE_HOST,
-        username: env.CLICKHOUSE_USERNAME,
-        password: env.CLICKHOUSE_PASSWORD,
-        clickhouse_settings: {
-          async_insert: 1,
-          wait_for_async_insert: 0,
-        },
-      })
-    : null;
-})();
+if (shouldConnect) {
+  if (isProd) clickhouse = getClickHouse();
+  else {
+    if (!global.globalClickhouse) global.globalClickhouse = getClickHouse();
+    clickhouse = global.globalClickhouse;
+  }
+}
 
 export type ViewType =
   | 'ProfileView'
