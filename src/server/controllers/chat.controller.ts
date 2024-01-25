@@ -187,7 +187,7 @@ export const getUnreadMessagesForUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const unread = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+    return await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId" as "chatId", count(msg.id)::integer as "cnt"
       from "ChatMember" memb
              left join "ChatMessage" msg
@@ -201,10 +201,6 @@ export const getUnreadMessagesForUserHandler = async ({
       and msg."userId" != ${userId}
       group by memb."chatId"
     `;
-
-    console.log(unread);
-
-    return unread;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

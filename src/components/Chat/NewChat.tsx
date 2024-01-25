@@ -80,14 +80,10 @@ export function NewChat() {
           showIndexSelect={false}
           startingIndex="users"
           placeholder="Select users"
-          filters={
-            state.selectedUsers.length > 0
-              ? state.selectedUsers
-                  .map((x) => `AND NOT id=${x.id}`)
-                  .join(' ')
-                  .slice(4)
-              : undefined
-          }
+          filters={[{ id: currentUser?.id }, ...state.selectedUsers]
+            .map((x) => `AND NOT id=${x.id}`)
+            .join(' ')
+            .slice(4)}
         />
       </Box>
       <Box p="sm" sx={{ flexGrow: 1 }}>
