@@ -71,7 +71,7 @@ export default function PostsInfinite({
             maxItemHeight={600}
             render={PostsCard}
             itemId={(data) => data.id}
-            adInterval={showAds ? [6, 10] : undefined}
+            adInterval={showAds ? [10, 16] : undefined}
           />
           {hasNextPage && (
             <InViewLoader
