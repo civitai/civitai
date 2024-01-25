@@ -10,36 +10,36 @@ import {
   Text,
   useMantineTheme,
 } from '@mantine/core';
+import { CosmeticType } from '@prisma/client';
 import {
   IconAlertCircle,
-  IconDotsVertical,
   IconMapPin,
   IconPencilMinus,
   IconRss,
   IconShare3,
 } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import React, { useMemo, useState } from 'react';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { UserStats } from '~/components/Profile/UserStats';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { formatDate } from '~/utils/date-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-import React, { useMemo, useState } from 'react';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { CollectionType, CosmeticType } from '@prisma/client';
-import { Username } from '~/components/User/Username';
 import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { useRouter } from 'next/router';
+import { Username } from '~/components/User/Username';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { formatDate } from '~/utils/date-helpers';
+import { sortDomainLinks } from '~/utils/domain-link';
+import { trpc } from '~/utils/trpc';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -146,6 +146,14 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       sx={{ fontSize: '14px', fontWeight: 590 }}
     />
   );
+
+  const chatBtn = (
+    <ChatUserButton
+      user={user}
+      sx={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5, color: theme.colors.success[2] }}
+    />
+  );
+
   const shareBtn = (
     <ShareButton url={router.asPath} title={`${user.username} Profile`}>
       <ActionIcon
@@ -189,6 +197,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             {muted ? mutedAlert : editProfileBtn}
             {followUserBtn}
             {tipBuzzBtn}
+            {chatBtn}
             {shareBtn}
             <UserContextMenu username={username} />
           </Group>
@@ -250,6 +259,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       )}
 
       {!isMobile && tipBuzzBtn}
+      {!isMobile && chatBtn}
 
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 

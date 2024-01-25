@@ -1,14 +1,3 @@
-import React, { useEffect } from 'react';
-import { useRouter } from 'next/router';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import ProfileLayout from '~/components/Profile/ProfileLayout';
-import { ProfileHeader } from '~/components/Profile/ProfileHeader';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-import { postgresSlugify } from '~/utils/string-helpers';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { openConfirmModal } from '@mantine/modals';
 import {
   ActionIcon,
   AspectRatio,
@@ -26,18 +15,8 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { Meta } from '~/components/Meta/Meta';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { env } from '~/env/client.mjs';
-import { TrackView } from '~/components/TrackView/TrackView';
-import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Username } from '~/components/User/Username';
-import { formatDate } from '~/utils/date-helpers';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { openConfirmModal } from '@mantine/modals';
+import { NextLink } from '@mantine/next';
 import {
   IconArrowBackUp,
   IconBan,
@@ -54,18 +33,40 @@ import {
   IconTrash,
   IconUserMinus,
 } from '@tabler/icons-react';
-import { NextLink } from '@mantine/next';
-import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
-import { sortDomainLinks } from '~/utils/domain-link';
+import { useRouter } from 'next/router';
+import React, { useEffect } from 'react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { RankBadge } from '~/components/Leaderboard/RankBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { Meta } from '~/components/Meta/Meta';
+import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+import ProfileLayout from '~/components/Profile/ProfileLayout';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { TrackView } from '~/components/TrackView/TrackView';
+import { Username } from '~/components/User/Username';
+import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
+import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { formatDate } from '~/utils/date-helpers';
+import { sortDomainLinks } from '~/utils/domain-link';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { postgresSlugify } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -384,6 +385,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           </Stack>
                           <Group className={classes.userActions} spacing={8} noWrap>
                             <TipBuzzButton toUserId={user.id} size="md" compact />
+                            <ChatUserButton user={user} size="md" compact />
                             <FollowUserButton userId={user.id} size="md" compact />
                             {user.username && <UserContextMenu username={user.username} />}
                           </Group>
