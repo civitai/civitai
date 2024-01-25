@@ -378,7 +378,7 @@ export default function ImagesAsPostsInfinite({
                     maxItemHeight={600}
                     render={ImagesAsPostsCard}
                     itemId={(data) => data.images.map((x) => x.id).join('_')}
-                    adInterval={[10, 16]}
+                    withAds
                   />
                   {hasNextPage && (
                     <InViewLoader

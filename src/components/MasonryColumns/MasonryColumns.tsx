@@ -20,7 +20,7 @@ type Props<TData> = {
   itemId?: (data: TData) => string | number;
   staticItem?: (props: { columnWidth: number; height: number }) => React.ReactNode;
   /** [lowerInterval, upperInterval] */
-  adInterval?: number[];
+  withAds?: boolean;
 };
 
 export function MasonryColumns<TData>({
@@ -31,7 +31,7 @@ export function MasonryColumns<TData>({
   maxItemHeight,
   itemId,
   staticItem,
-  adInterval,
+  withAds,
 }: Props<TData>) {
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
@@ -50,7 +50,7 @@ export function MasonryColumns<TData>({
     imageDimensions,
     adjustHeight,
     maxItemHeight,
-    adInterval
+    withAds
   );
 
   return (

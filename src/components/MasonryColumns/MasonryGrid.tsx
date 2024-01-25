@@ -17,7 +17,7 @@ type Props<TData> = {
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   itemId?: (data: TData) => string | number;
   empty?: React.ReactNode;
-  adInterval?: number[];
+  withAds?: boolean;
 };
 
 export function MasonryGrid<TData>({
@@ -25,7 +25,7 @@ export function MasonryGrid<TData>({
   render: RenderComponent,
   itemId,
   empty = null,
-  adInterval,
+  withAds,
 }: Props<TData>) {
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
@@ -37,7 +37,7 @@ export function MasonryGrid<TData>({
 
   const { showAds } = useAdsContext();
   const items = useMemo(
-    () => createAdFeed({ data, interval: adInterval, showAds }),
+    () => createAdFeed({ data, columnCount, showAds: showAds && withAds }),
     [columnCount, data, showAds]
   );
 

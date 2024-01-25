@@ -7,11 +7,11 @@ import { AdFeedItem, createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 
 // don't know if I need memoized
-export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
-  useMemo(
-    () => getColumnCount(width, columnWidth, gutter, maxColumnCount),
-    [width, columnWidth, gutter, maxColumnCount]
-  );
+// export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
+//   useMemo(
+//     () => getColumnCount(width, columnWidth, gutter, maxColumnCount),
+//     [width, columnWidth, gutter, maxColumnCount]
+//   );
 
 export const getColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) => {
   if (width === 0) return [0, 0];
@@ -29,7 +29,7 @@ export function useMasonryColumns<TData>(
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustDimensions?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
-  adInterval?: number[]
+  withAds?: boolean
 ) {
   const { showAds } = useAdsContext();
 
@@ -42,10 +42,9 @@ export function useMasonryColumns<TData>(
         imageDimensions,
         adjustDimensions,
         maxItemHeight,
-        adInterval,
-        showAds
+        showAds && withAds
       ),
-      [data, columnWidth, columnCount, maxItemHeight, adInterval, showAds] // eslint-disable-line
+      [data, columnWidth, columnCount, maxItemHeight, showAds] // eslint-disable-line
   );
 }
 
@@ -61,14 +60,13 @@ const getMasonryColumns = <TData>(
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustHeight?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
-  adInterval?: number[],
   showAds?: boolean
 ): ColumnItem<AdFeedItem<TData>>[][] => {
   // Track the height of each column.
   // Layout algorithm below always inserts into the shortest column.
   if (columnCount === 0) return [];
 
-  const feed = createAdFeed({ data, interval: adInterval, showAds });
+  const feed = createAdFeed({ data, columnCount, showAds });
 
   const columnHeights: number[] = Array(columnCount).fill(0);
   const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array(columnCount).fill([]);
