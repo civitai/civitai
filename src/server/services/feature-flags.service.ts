@@ -82,6 +82,7 @@ const featureFlags = createFeatureFlags({
   clubs: ['public'],
   createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
+  stripeConnect: ['mod', 'granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

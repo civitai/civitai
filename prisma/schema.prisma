@@ -87,6 +87,22 @@ model UserReferralCode {
   @@index([userId], type: Hash)
 }
 
+enum StripeConnectStatus {
+  PendingOnboarding
+  Approved
+  PendingVerification
+  Rejected
+}
+
+model UserStripeConnect {
+  userId             Int                 @unique
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectedAccountId String
+  status             StripeConnectStatus @default(PendingOnboarding)
+  payoutsEnabled     Boolean             @default(false)
+  chargesEnabled     Boolean             @default(false)
+}
+
 model User {
   id                  Int                   @id @default(autoincrement())
   name                String?
@@ -115,6 +131,7 @@ model User {
   profilePictureId    Int?                  @unique
   profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
   settings            Json?                 @default("{}")
+  connectedAccount    UserStripeConnect?
 
   accounts             Account[]
   sessions             Session[]
