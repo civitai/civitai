@@ -119,7 +119,7 @@ export function ExistingChat() {
   const thisChat = allChatData?.find((c) => c.id === state.existingChatId);
   const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
-  const lastViewed = myMember?.lastViewedMessageId;
+  // const lastViewed = myMember?.lastViewedMessageId;
 
   const { mutateAsync: changeLastViewed } = trpc.chat.modifyUser.useMutation({
     onMutate(data) {
