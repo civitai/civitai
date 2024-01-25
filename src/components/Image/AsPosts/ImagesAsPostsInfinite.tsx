@@ -44,7 +44,6 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { ImageIngestionStatus } from '@prisma/client';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';

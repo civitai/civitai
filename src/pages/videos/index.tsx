@@ -58,7 +58,7 @@ export default function VideosPage() {
         </Group>
         <IsClient>
           <ImageCategories />
-          <ImagesInfinite filters={{ ...filters, types: ['video'] }} showEof />
+          <ImagesInfinite filters={{ ...filters, types: ['video'] }} showEof showAds />
         </IsClient>
       </Stack>
     </>

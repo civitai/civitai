@@ -28,11 +28,13 @@ export type PostsInfiniteState = {
 type PostsInfiniteProps = {
   filters?: PostsInfiniteState;
   showEof?: boolean;
+  showAds?: boolean;
 };
 
 export default function PostsInfinite({
   filters: filterOverrides = {},
   showEof = false,
+  showAds,
 }: PostsInfiniteProps) {
   const postFilters = usePostFilters();
   const filters = removeEmpty({ ...postFilters, ...filterOverrides });
@@ -69,7 +71,7 @@ export default function PostsInfinite({
             maxItemHeight={600}
             render={PostsCard}
             itemId={(data) => data.id}
-            adInterval={[6, 10]}
+            adInterval={showAds ? [6, 10] : undefined}
           />
           {hasNextPage && (
             <InViewLoader
