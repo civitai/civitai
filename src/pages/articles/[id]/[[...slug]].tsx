@@ -41,9 +41,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
-import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -53,10 +51,6 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import {
-  ClubRequirementIndicator,
-  ClubRequirementNotice,
-} from '~/components/Club/ClubRequirementNotice';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -66,9 +60,8 @@ const querySchema = z.object({
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, ssg, session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.articles) return { notFound: true };
+  resolver: async ({ ctx, ssg, features }) => {
+    if (!features?.articles) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };

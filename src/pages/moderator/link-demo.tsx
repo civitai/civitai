@@ -1,27 +1,18 @@
 import {
-  Box,
   Button,
   Code,
   Container,
-  Group,
-  Stack,
-  Title,
-  Text,
-  Divider,
-  Tabs,
-  List,
   CopyButton,
-  Center,
-  Tooltip,
+  Group,
+  List,
   Loader,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
 } from '@mantine/core';
-import { IconCheck, IconCopy, IconPlayerPlay, IconVideo } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
-import { Meta } from '~/components/Meta/Meta';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { IconCheck, IconCopy } from '@tabler/icons-react';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,

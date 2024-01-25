@@ -1,5 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { handleMaintenanceMode } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import requestIp from 'request-ip';
 import { redis, redisLegacy } from '~/server/redis/client';
@@ -54,8 +53,6 @@ export const RateLimitedEndpoint =
     resourceKey = 'base'
   ) =>
   async (req: NextApiRequest, res: NextApiResponse) => {
-    if (handleMaintenanceMode(req, res)) return;
-
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 

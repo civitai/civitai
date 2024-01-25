@@ -156,7 +156,7 @@ type Props = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ session }) => {
     if (session) {
       return {
         redirect: {

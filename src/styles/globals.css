@@ -25,6 +25,10 @@ html {
   }
 }
 
+.show-mobile {
+  display: none;
+}
+
 /* helpful hiding classes for mobile */
 @media only screen and (max-width: 768px) {
   .hide-mobile {
@@ -33,12 +37,6 @@ html {
 
   .show-mobile {
     display: block;
-  }
-}
-
-@media only screen and (min-width: 768px) {
-  .show-mobile {
-    display: none;
   }
 }
 

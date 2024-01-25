@@ -152,6 +152,21 @@ export function ImageDetail() {
             >
               <Group position="apart" spacing={8}>
                 <Group spacing={8}>
+                  {currentUser && image.meta && (
+                    <Button
+                      size="md"
+                      radius="xl"
+                      color="blue"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                      compact
+                    >
+                      <Group spacing={4} noWrap>
+                        <IconBrush size={14} />
+                        <Text size="xs">Remix</Text>
+                      </Group>
+                    </Button>
+                  )}
                   {image.postId &&
                     (!query.postId ? (
                       <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} passHref>
@@ -203,21 +218,6 @@ export function ImageDetail() {
                       <Text size="xs">Save</Text>
                     </Group>
                   </Button>
-                  {currentUser && image.meta && (
-                    <Button
-                      size="md"
-                      radius="xl"
-                      color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                      compact
-                    >
-                      <Group spacing={4} noWrap>
-                        <IconBrush size={14} />
-                        <Text size="xs">Create</Text>
-                      </Group>
-                    </Button>
-                  )}
                   <ShareButton
                     url={shareUrl}
                     title={`Image by ${image.user.username}`}

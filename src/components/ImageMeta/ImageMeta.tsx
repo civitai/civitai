@@ -205,7 +205,7 @@ export function ImageMeta({
             }}
             sx={{ flex: 1 }}
           >
-            Start Creating
+            Remix
           </Button>
         )}
         <GenerationDataButton meta={meta} iconOnly={canCreate} />
