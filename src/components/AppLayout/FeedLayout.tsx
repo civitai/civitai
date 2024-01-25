@@ -40,7 +40,6 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
         style={{ ...adStyle }}
         nsfw={nsfw}
         showRemoveAds
-        showFeedback
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
@@ -72,7 +71,6 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
         style={{ ...adStyle }}
         nsfw={nsfw}
         showRemoveAds
-        showFeedback
       />
     </ScrollArea>
   );
