@@ -321,7 +321,7 @@ const EarnBuzzSection = () => {
       </Alert>
       <Text className={classes.highlightColor} size="xs">
         <IconAsterisk className={classes.highlightColor} size={12} /> Resources may only be in early
-        acess for a maximum of 14 days and then must be made available to all users
+        access for a maximum of 14 days and then must be made available to all users
       </Text>
     </Stack>
   );
