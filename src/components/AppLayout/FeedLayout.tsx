@@ -34,7 +34,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       <AscendeumAd
         adunit="StickySidebar_A"
         sizes={{
-          [theme.breakpoints.md]: '160x600',
+          [theme.breakpoints.md]: '120x600',
           [xl]: '300x600',
         }}
         style={{ ...adStyle }}
@@ -66,7 +66,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       <AscendeumAd
         adunit="StickySidebar_A"
         sizes={{
-          [theme.breakpoints.md]: '160x600',
+          [theme.breakpoints.md]: '120x600',
           [xl]: '300x600',
         }}
         style={{ ...adStyle }}
