@@ -26,6 +26,7 @@ import {
   IconMoneybag,
   IconMoodSmile,
   IconRating18Plus,
+  IconUserCheck,
   IconUsers,
   IconWand,
   IconWindmill,
@@ -36,6 +37,7 @@ import { constants } from '../../server/common/constants';
 import { Currency } from '@prisma/client';
 import { CurrencyIcon } from '../../components/Currency/CurrencyIcon';
 import { Meta } from '../../components/Meta/Meta';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const sizing = {
   header: {
@@ -56,10 +58,10 @@ const sizing = {
   },
 } as const;
 
-const applyFormUrl = 'https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L' as const;
-
 export default function CreatorsClubIntro() {
   const { cx, classes, theme } = useStyles();
+  const currentUser = useCurrentUser();
+  const applyFormUrl = `https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L?Username=${currentUser?.username}`;
   return (
     <>
       <Meta title="Creators Program | Civitai" />
@@ -163,7 +165,7 @@ export default function CreatorsClubIntro() {
           </Grid>
           <ExclusivePerksSection />
           <EarnBuzzSection />
-          <JoinSection />
+          <JoinSection applyFormUrl={applyFormUrl} />
           <FAQ />
         </Stack>
       </Container>
@@ -318,14 +320,14 @@ const EarnBuzzSection = () => {
         sustainable way.
       </Alert>
       <Text className={classes.highlightColor} size="xs">
-        <IconAsterisk className={classes.highlightColor} size={12} /> (resources may only be in
-        early acess for a maximum of 14 days and then must be made available to all users)
+        <IconAsterisk className={classes.highlightColor} size={12} /> Resources may only be in early
+        acess for a maximum of 14 days and then must be made available to all users
       </Text>
     </Stack>
   );
 };
 
-const JoinSection = () => {
+const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   const { cx, classes, theme } = useStyles();
 
   return (
@@ -338,7 +340,7 @@ const JoinSection = () => {
       <Grid>
         <Grid.Col xs={12} sm={6}>
           <Paper withBorder className={cx(classes.card)} h="100%">
-            <Stack spacing="sm">
+            <Stack spacing="sm" h="100%">
               <Text mb="lg" className={classes.highlightColor} size="lg">
                 Creators interested in joining the program must meet the following requirements:
               </Text>
@@ -359,7 +361,7 @@ const JoinSection = () => {
               <Group noWrap w="100%">
                 <IconBrandStripe size={24} />
                 <Text>
-                  Create a{' '}
+                  Have a{' '}
                   <Anchor
                     href="https://dashboard.stripe.com/register"
                     target="_blank"
@@ -367,18 +369,23 @@ const JoinSection = () => {
                   >
                     Stripe account
                   </Anchor>{' '}
-                  (We do payouts through Stripe)
+                  (We pay through Stripe)
                 </Text>
               </Group>
               <Divider />
               <Group noWrap w="100%">
+                <IconUserCheck size={24} />
+                <Text>Account is in good standing</Text>
+              </Group>
+              <Divider />
+              <Group noWrap w="100%" mb="xl">
                 <IconRating18Plus size={24} />
                 <Text>Be 18 or older</Text>
               </Group>
 
               <Button
                 size="lg"
-                mt="xl"
+                mt="auto"
                 rightIcon={<IconCaretRightFilled />}
                 component="a"
                 href={applyFormUrl}
@@ -392,14 +399,18 @@ const JoinSection = () => {
         <Grid.Col xs={12} sm={6}>
           <Paper withBorder className={cx(classes.card)} h="100%">
             <Stack spacing="sm">
-              <Text mb="lg" className={classes.highlightColor} size="lg">
-                Applications will be prioritized by the following engagement metrics:
+              <Text mb="sm" className={classes.highlightColor} size="lg">
+                <strong>For this batch we are accepting 50 creators</strong>. To apply you must meet
+                the following requirements:
               </Text>
               <Group noWrap w="100%">
                 <IconUsers size={24} />
-                <Text>Followers</Text>
+                <Text>1,000 Followers</Text>
               </Group>
               <Divider />
+              <Text mt="lg" className={classes.highlightColor} size="lg">
+                Applications will be prioritized by:
+              </Text>
               <Group noWrap w="100%">
                 <IconCloudDownload size={24} />
                 <Text>Unique Downloads</Text>
@@ -412,7 +423,7 @@ const JoinSection = () => {
               <Divider />
               <Group noWrap w="100%">
                 <IconMoodSmile size={24} />
-                <Text>Unique Reactions</Text>
+                <Text>Unique Reaction To Your Content</Text>
               </Group>
               <Divider />
               <Group noWrap w="100%">

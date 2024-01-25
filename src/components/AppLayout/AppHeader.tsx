@@ -746,11 +746,6 @@ export function AppHeader({
               href="/"
               variant="text"
               onClick={() => setBurgerOpened(false)}
-              sx={(theme) => ({
-                [theme.fn.largerThan('sm')]: {
-                  marginRight: 'auto',
-                },
-              })}
             >
               <Logo />
             </Anchor>
