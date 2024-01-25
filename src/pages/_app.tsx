@@ -23,13 +23,12 @@ import '~/styles/globals.css';
 import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
-import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
-import { isDev, isMaintenanceMode } from '~/env/other';
+import { isDev } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
@@ -68,21 +67,12 @@ type CustomAppProps = {
   cookies: CookiesContext;
   filters: CookiesState;
   flags: FeatureAccess;
-  isMaintenanceMode: boolean | undefined;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: {
-      session,
-      colorScheme: initialColorScheme,
-      cookies,
-      filters,
-      flags,
-      isMaintenanceMode,
-      ...pageProps
-    },
+    pageProps: { session, colorScheme: initialColorScheme, cookies, filters, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme | undefined>(initialColorScheme);
   const toggleColorScheme = useCallback(
@@ -108,52 +98,6 @@ function MyApp(props: CustomAppProps) {
       Component.getLayout ??
       ((page: React.ReactElement) => <AppLayout {...Component.options}>{page}</AppLayout>),
     [Component.getLayout, Component.options]
-  );
-
-  const content = isMaintenanceMode ? (
-    <MaintenanceMode />
-  ) : (
-    <IsClientProvider>
-      <ClientHistoryStore />
-      <RegisterCatchNavigation />
-      <RouterTransition />
-      <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
-        <FeatureFlagsProvider flags={flags}>
-          <SignalProvider>
-            <CivitaiSessionProvider>
-              <CivitaiPosthogProvider>
-                <CookiesProvider value={cookies}>
-                  <ReferralsProvider>
-                    <FiltersProvider value={filters}>
-                      <HiddenPreferencesProvider>
-                        <CivitaiLinkProvider>
-                          <NotificationsProvider zIndex={9999}>
-                            <BrowserRouterProvider>
-                              <RecaptchaWidgetProvider>
-                                <BaseLayout>
-                                  <CustomModalsProvider>
-                                    <TosProvider>
-                                      {getLayout(<Component {...pageProps} />)}
-                                    </TosProvider>
-                                    <StripeSetupSuccessProvider />
-                                    <DialogProvider />
-                                    <RoutedDialogProvider />
-                                  </CustomModalsProvider>
-                                </BaseLayout>
-                              </RecaptchaWidgetProvider>
-                            </BrowserRouterProvider>
-                          </NotificationsProvider>
-                        </CivitaiLinkProvider>
-                      </HiddenPreferencesProvider>
-                    </FiltersProvider>
-                  </ReferralsProvider>
-                </CookiesProvider>
-              </CivitaiPosthogProvider>
-            </CivitaiSessionProvider>
-          </SignalProvider>
-        </FeatureFlagsProvider>
-      </SessionProvider>
-    </IsClientProvider>
   );
 
   return (
@@ -264,7 +208,51 @@ function MyApp(props: CustomAppProps) {
             customDomain="https://analytics.civitai.com"
             selfHosted
           >
-            {content}
+            <IsClientProvider>
+              <ClientHistoryStore />
+              <RegisterCatchNavigation />
+              <RouterTransition />
+              <SessionProvider
+                session={session}
+                refetchOnWindowFocus={false}
+                refetchWhenOffline={false}
+              >
+                <FeatureFlagsProvider flags={flags}>
+                  <SignalProvider>
+                    <CivitaiSessionProvider>
+                      <CivitaiPosthogProvider>
+                        <CookiesProvider value={cookies}>
+                          <ReferralsProvider>
+                            <FiltersProvider value={filters}>
+                              <HiddenPreferencesProvider>
+                                <CivitaiLinkProvider>
+                                  <NotificationsProvider zIndex={9999}>
+                                    <BrowserRouterProvider>
+                                      <RecaptchaWidgetProvider>
+                                        <BaseLayout>
+                                          <CustomModalsProvider>
+                                            <TosProvider>
+                                              {getLayout(<Component {...pageProps} />)}
+                                            </TosProvider>
+                                            <StripeSetupSuccessProvider />
+                                            <DialogProvider />
+                                            <RoutedDialogProvider />
+                                          </CustomModalsProvider>
+                                        </BaseLayout>
+                                      </RecaptchaWidgetProvider>
+                                    </BrowserRouterProvider>
+                                  </NotificationsProvider>
+                                </CivitaiLinkProvider>
+                              </HiddenPreferencesProvider>
+                            </FiltersProvider>
+                          </ReferralsProvider>
+                        </CookiesProvider>
+                      </CivitaiPosthogProvider>
+                    </CivitaiSessionProvider>
+                  </SignalProvider>
+                </FeatureFlagsProvider>
+              </SessionProvider>
+            </IsClientProvider>
           </PlausibleProvider>
         </MantineProvider>
       </ColorSchemeProvider>
@@ -284,39 +272,25 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const parsedCookies = parseCookies(cookies);
   const filters = parseFilterCookies(cookies);
 
-  if (isMaintenanceMode) {
-    return {
-      pageProps: {
-        ...pageProps,
-        colorScheme,
-        cookies: parsedCookies,
-        isMaintenanceMode,
-        filters,
-      },
-      ...appProps,
-    };
-  } else {
-    const hasAuthCookie =
-      !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-    const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
-    const flags = getFeatureFlags({ user: session?.user });
-    // Pass this via the request so we can use it in SSR
-    if (session) {
-      (appContext.ctx.req as any)['session'] = session;
-      (appContext.ctx.req as any)['flags'] = flags;
-    }
-    return {
-      pageProps: {
-        ...pageProps,
-        colorScheme,
-        cookies: parsedCookies,
-        session,
-        flags,
-        filters,
-      },
-      ...appProps,
-    };
+  const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
+  const flags = getFeatureFlags({ user: session?.user });
+  // Pass this via the request so we can use it in SSR
+  if (session) {
+    (appContext.ctx.req as any)['session'] = session;
+    (appContext.ctx.req as any)['flags'] = flags;
   }
+  return {
+    pageProps: {
+      ...pageProps,
+      colorScheme,
+      cookies: parsedCookies,
+      session,
+      flags,
+      filters,
+    },
+    ...appProps,
+  };
 };
 
 export default trpc.withTRPC(MyApp);

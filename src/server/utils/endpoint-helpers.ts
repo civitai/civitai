@@ -4,21 +4,8 @@ import { env } from '~/env/server.mjs';
 import { Partner } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
-import { isMaintenanceMode } from '~/env/other';
 import { Session, SessionUser } from 'next-auth';
 import { AxiomAPIRequest, withAxiom } from 'next-axiom';
-
-export function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse) {
-  if (isMaintenanceMode) {
-    res.status(503);
-    if (req.headers['content-type'] == 'application/json')
-      res.json({ error: `We're performing maintenance check back soon` });
-    else res.redirect('/');
-    return true;
-  }
-
-  return false;
-}
 
 export function TokenSecuredEndpoint(
   token: string,
@@ -75,8 +62,6 @@ export function PublicEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (handleMaintenanceMode(req, res)) return;
-
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
     addPublicCacheHeaders(req, res);
     if (shouldStop) return;
@@ -89,8 +74,6 @@ export function AuthedEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (handleMaintenanceMode(req, res)) return;
-
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
     if (shouldStop) return;
 
@@ -112,8 +95,6 @@ export function MixedAuthEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (handleMaintenanceMode(req, res)) return;
-
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
@@ -131,8 +112,6 @@ export function PartnerEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (handleMaintenanceMode(req, res)) return;
-
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
