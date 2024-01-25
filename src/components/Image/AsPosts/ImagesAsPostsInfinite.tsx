@@ -197,7 +197,10 @@ export default function ImagesAsPostsInfinite({
 
   const adStyle: React.CSSProperties = {
     position: 'sticky',
-    top: '25%',
+    top: 0,
+    height: '100%',
+    // top: '50%',
+    // transform: 'translateY(-50%)',
   };
 
   return (

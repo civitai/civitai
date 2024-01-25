@@ -1,7 +1,7 @@
 import { Button, ButtonProps, createStyles, HoverCard, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons-react';
-import { useEffect, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { wiggle } from '~/libs/animations';
 import { getRandom } from '~/utils/array-helpers';

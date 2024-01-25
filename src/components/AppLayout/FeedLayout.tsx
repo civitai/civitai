@@ -11,7 +11,8 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const adStyle: React.CSSProperties = {
     position: 'sticky',
-    top: '25%',
+    top: 0,
+    height: '100%',
   };
 
   const theme = useMantineTheme();
