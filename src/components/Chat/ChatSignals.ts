@@ -47,9 +47,11 @@ export const useChatNewMessageSignal = () => {
             if (!old) return old;
 
             const tChat = old.find((c) => c.chatId === updated.chatId);
-            if (!tChat) return old;
-
-            tChat.cnt++;
+            if (!tChat) {
+              old.push({ chatId: updated.chatId, cnt: 1 });
+            } else {
+              tChat.cnt++;
+            }
           })
         );
       }
