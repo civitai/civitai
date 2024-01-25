@@ -224,7 +224,6 @@ export default function ImagesAsPostsInfinite({
           }}
           style={{ ...adStyle }}
           showRemoveAds
-          showFeedback
         />
         <MasonryProvider
           columnWidth={310}
@@ -416,7 +415,6 @@ export default function ImagesAsPostsInfinite({
           }}
           style={{ ...adStyle }}
           showRemoveAds
-          showFeedback
         />
       </Box>
 
