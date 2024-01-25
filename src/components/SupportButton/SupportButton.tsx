@@ -1,29 +1,107 @@
-import { Button, ButtonProps, Text, createStyles, HoverCard } from '@mantine/core';
+import { Button, ButtonProps, createStyles, HoverCard, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconArrowRight, IconCaretRightFilled, IconChevronRight } from '@tabler/icons-react';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { planDetails } from '~/components/Stripe/PlanDetails';
+import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { wiggle } from '~/libs/animations';
-export const SupportButton = ({ className, ...props }: Props) => {
-  const { classes, cx } = useStyles();
+import { getRandom } from '~/utils/array-helpers';
 
-  return (
-    <HoverCard withArrow>
-      <HoverCard.Target>
+export const SupportButton = ({ className, ...props }: Props) => {
+  const { classes, cx, theme } = useStyles();
+  const [button, setButton] = useState<React.ReactNode>(null);
+
+  useEffect(() => {
+    setButton(
+      getRandom([
         <Button
+          key={0}
+          component={NextLink}
+          variant="light"
+          color="gray"
+          href="/pricing?utm_campaign=badge"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <EdgeMedia src="501aec85-e3b4-42ec-afda-2fadc2361506" width={24} />
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={1}
           component={NextLink}
           variant="outline"
           color="green"
-          href="/pricing"
+          href="/pricing?utm_campaign=doit"
           compact
           className={cx(classes.root, className)}
-          pr={3}
+          pr={2}
+          py={2}
+          h={36}
           {...props}
         >
           <Text weight={500}>Do It</Text>
-          <IconCaretRightFilled size={16} strokeWidth={2.5} />
-        </Button>
-      </HoverCard.Target>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={2}
+          component={NextLink}
+          variant="light"
+          color="green"
+          href="/pricing?utm_campaign=emoji_money"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text size={24}>💸</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={3}
+          component={NextLink}
+          variant="light"
+          color="green"
+          href="/pricing?utm_campaign=emoji_kiss"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <Text size={24}>😘</Text>
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+        <Button
+          key={4}
+          component={NextLink}
+          variant="light"
+          color="red"
+          href="/pricing?utm_campaign=icon_heart"
+          compact
+          className={cx(classes.root, className)}
+          px={4}
+          py={2}
+          h={36}
+          {...props}
+        >
+          <IconHeart color={theme.colors.red[4]} strokeWidth={2.5} />
+          <IconChevronRight size={18} strokeWidth={2.5} />
+        </Button>,
+      ])
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!button) return null;
+
+  return (
+    <HoverCard withArrow>
+      <HoverCard.Target>{button}</HoverCard.Target>
       <HoverCard.Dropdown>
         <Text>You should really press this button.</Text>
         <Text>{`There's stuff here you wanna see...`}</Text>

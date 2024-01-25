@@ -6,7 +6,6 @@ import {
   OnboardingStep,
   TagEngagementType,
 } from '@prisma/client';
-import { mockProviders } from 'next-auth/client/__tests__/helpers/mocks';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
@@ -175,6 +174,7 @@ export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
   features: z.record(z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
+  dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
 });
 
@@ -185,3 +185,5 @@ export const toggleFeatureInputSchema = z.object({
   feature: z.enum([featureKey, ...otherKeys]),
   value: z.boolean().optional(),
 });
+
+export const dismissAlertSchema = z.object({ alertId: z.string() });
