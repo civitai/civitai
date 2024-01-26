@@ -65,7 +65,7 @@ export default function ArticlesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer>
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <Stack spacing="xs">
             <Announcements

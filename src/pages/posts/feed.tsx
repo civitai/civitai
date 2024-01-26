@@ -22,7 +22,7 @@ export default function PostFeed() {
       maxColumnCount={7}
       maxSingleColumnWidth={450}
     >
-      <MasonryContainer fluid>
+      <MasonryContainer>
         <Stack spacing="xs">
           <Announcements
             sx={(theme) => ({

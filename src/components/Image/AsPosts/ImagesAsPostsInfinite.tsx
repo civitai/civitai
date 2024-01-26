@@ -224,7 +224,6 @@ export default function ImagesAsPostsInfinite({
           }}
           style={{ ...adStyle }}
           showRemoveAds
-          showFeedback
         />
         <MasonryProvider
           columnWidth={310}
@@ -232,7 +231,7 @@ export default function ImagesAsPostsInfinite({
           maxSingleColumnWidth={450}
           style={{ flex: 1 }}
         >
-          <MasonryContainer fluid>
+          <MasonryContainer>
             <Stack spacing="md">
               <AscendeumAd
                 adunit="Leaderboard_B"
@@ -416,7 +415,6 @@ export default function ImagesAsPostsInfinite({
           }}
           style={{ ...adStyle }}
           showRemoveAds
-          showFeedback
         />
       </Box>
 

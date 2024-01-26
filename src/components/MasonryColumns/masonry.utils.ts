@@ -7,13 +7,18 @@ import { AdFeedItem, createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 
 // don't know if I need memoized
-// export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
-//   useMemo(
-//     () => getColumnCount(width, columnWidth, gutter, maxColumnCount),
-//     [width, columnWidth, gutter, maxColumnCount]
-//   );
+export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
+  useMemo(
+    () => getColumnCount(width, columnWidth, gutter, maxColumnCount),
+    [width, columnWidth, gutter, maxColumnCount]
+  );
 
-export const getColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) => {
+export const getColumnCount = (
+  width = 0,
+  columnWidth = 0,
+  gutter = 8,
+  maxColumnCount?: number
+): [columnCount: number, combinedWidth: number] => {
   if (width === 0) return [0, 0];
   const count =
     Math.min(Math.floor((width + gutter) / (columnWidth + gutter)), maxColumnCount || Infinity) ||

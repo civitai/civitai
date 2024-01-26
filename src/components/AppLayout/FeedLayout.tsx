@@ -31,47 +31,47 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
         gap: theme.spacing.md,
       }}
     >
-      <AscendeumAd
-        adunit="StickySidebar_A"
-        sizes={{
-          [theme.breakpoints.md]: '120x600',
-          [xl]: '300x600',
-        }}
-        style={{ ...adStyle }}
-        nsfw={nsfw}
-        showRemoveAds
-      />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={maxColumnCount}
-        maxSingleColumnWidth={450}
-        style={{ margin: 0, flex: 1 }}
-        px={0}
-      >
+      <IsClient>
         <AscendeumAd
-          adunit="Leaderboard_A"
-          style={{ margin: `0 auto ${theme.spacing.xs}px`, zIndex: 10 }}
+          adunit="StickySidebar_A"
           sizes={{
-            [0]: '300x100',
-            [theme.breakpoints.md]: '728x90',
-            [theme.breakpoints.lg]: ['970x90', '728x90'],
+            [theme.breakpoints.md]: '120x600',
+            [xl]: '300x600',
           }}
+          style={{ ...adStyle }}
           nsfw={nsfw}
+          showRemoveAds
         />
-        <MasonryContainer>
-          <IsClient>{children}</IsClient>
-        </MasonryContainer>
-      </MasonryProvider>
-      <AscendeumAd
-        adunit="StickySidebar_A"
-        sizes={{
-          [theme.breakpoints.md]: '120x600',
-          [xl]: '300x600',
-        }}
-        style={{ ...adStyle }}
-        nsfw={nsfw}
-        showRemoveAds
-      />
+        <MasonryProvider
+          columnWidth={constants.cardSizes.model}
+          maxColumnCount={maxColumnCount}
+          maxSingleColumnWidth={450}
+          style={{ margin: 0, flex: 1, zIndex: 10 }}
+          px={0}
+        >
+          <AscendeumAd
+            adunit="Leaderboard_A"
+            style={{ margin: `0 auto ${theme.spacing.xs}px`, zIndex: 10 }}
+            sizes={{
+              [0]: '300x100',
+              [theme.breakpoints.md]: '728x90',
+              [theme.breakpoints.lg]: ['970x90', '728x90'],
+            }}
+            nsfw={nsfw}
+          />
+          <MasonryContainer>{children}</MasonryContainer>
+        </MasonryProvider>
+        <AscendeumAd
+          adunit="StickySidebar_A"
+          sizes={{
+            [theme.breakpoints.md]: '120x600',
+            [xl]: '300x600',
+          }}
+          style={{ ...adStyle }}
+          nsfw={nsfw}
+          showRemoveAds
+        />
+      </IsClient>
     </ScrollArea>
   );
 }

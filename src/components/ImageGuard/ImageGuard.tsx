@@ -358,7 +358,7 @@ ImageGuard.Report = function ReportImage({
   };
 
   let NeedsReviewBadge = needsReview && (
-    <ThemeIcon size="lg" color="yellow">
+    <ThemeIcon size="lg" color={needsReview === 'csam' && isModerator ? 'red' : 'yellow'}>
       {needsReview === 'poi' ? (
         <IconUser strokeWidth={2.5} size={26} />
       ) : (
@@ -367,7 +367,7 @@ ImageGuard.Report = function ReportImage({
     </ThemeIcon>
   );
 
-  if (needsReview && isModerator)
+  if (needsReview && needsReview !== 'csam' && isModerator)
     NeedsReviewBadge = (
       <Menu position="bottom">
         <Menu.Target>
@@ -405,7 +405,7 @@ ImageGuard.Report = function ReportImage({
         </Menu.Dropdown>
       </Menu>
     );
-  else if (needsReview) {
+  else if (needsReview && !isModerator) {
     NeedsReviewBadge = (
       <HoverCard width={200} withArrow>
         <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>

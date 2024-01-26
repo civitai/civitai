@@ -1,15 +1,15 @@
-import { createStyles, ContainerProps, Box } from '@mantine/core';
+import { createStyles, ContainerProps, Box, BoxProps } from '@mantine/core';
 import React, { CSSProperties } from 'react';
 import {
   MasonryContextState,
   useMasonryContext,
 } from '~/components/MasonryColumns/MasonryProvider';
 
-type MasonryContainerProps = Omit<ContainerProps, 'children'> & {
+type MasonryContainerProps = Omit<BoxProps, 'children'> & {
   children: React.ReactNode | ((state: MasonryContextState) => React.ReactNode);
 };
 
-export function MasonryContainer({ children, ...containerProps }: MasonryContainerProps) {
+export function MasonryContainer({ children, ...boxProps }: MasonryContainerProps) {
   const masonryProviderState = useMasonryContext();
   const { columnWidth, columnGap, maxColumnCount, columnCount, combinedWidth } =
     masonryProviderState;
@@ -25,7 +25,7 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
   };
 
   return (
-    <Box {...containerProps}>
+    <Box {...boxProps}>
       <div className={classes.container}>
         <div
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}

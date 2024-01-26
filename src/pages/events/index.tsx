@@ -45,7 +45,7 @@ export default function EventsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer>
           <Stack spacing="xs">
             <Announcements
               sx={(theme) => ({

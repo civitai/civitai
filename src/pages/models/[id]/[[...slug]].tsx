@@ -975,15 +975,17 @@ export default function ModelDetailsV2({
         (!model.locked ? (
           <Container size="xl" my="xl">
             <Stack spacing="md">
-              <AscendeumAd
-                adunit="Leaderboard_B"
-                style={{ margin: '0 auto' }}
-                sizes={{
-                  [0]: '300x100',
-                  [theme.breakpoints.md]: '728x90',
-                  [theme.breakpoints.lg]: '970x90',
-                }}
-              />
+              {model.hasSuggestedResources && (
+                <AscendeumAd
+                  adunit="Leaderboard_B"
+                  style={{ margin: '0 auto' }}
+                  sizes={{
+                    [0]: '300x100',
+                    [theme.breakpoints.md]: '728x90',
+                    [theme.breakpoints.lg]: '970x90',
+                  }}
+                />
+              )}
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                 <Group spacing="xs">
                   <Title order={2}>Discussion</Title>

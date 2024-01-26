@@ -79,7 +79,7 @@ export default function Home() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid sx={{ overflow: 'hidden' }}>
+        <MasonryContainer sx={{ overflow: 'hidden' }}>
           <AscendeumAd
             adunit="Leaderboard_A"
             style={{ margin: `0 auto ${theme.spacing.xs}px` }}

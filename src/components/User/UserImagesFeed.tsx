@@ -13,7 +13,7 @@ export function UserImagesFeed({ username }: Props) {
       maxColumnCount={7}
       maxSingleColumnWidth={450}
     >
-      <MasonryContainer fluid>
+      <MasonryContainer>
         <Stack spacing="xs">
           <Group position="apart" spacing={0}>
             <SortFilter type="images" />

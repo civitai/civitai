@@ -1,6 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Button, Stack, createStyles } from '@mantine/core';
+import { Button, Stack, createStyles, useMantineTheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { createAdFeed } from '~/components/Ads/ads.utils';
@@ -11,6 +11,7 @@ import { Paper, Text } from '@mantine/core';
 import { Logo } from '~/components/Logo/Logo';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
+import Image from 'next/image';
 
 type Props<TData> = {
   data: TData[];
@@ -27,6 +28,7 @@ export function MasonryGrid<TData>({
   empty = null,
   withAds,
 }: Props<TData>) {
+  const theme = useMantineTheme();
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
@@ -67,7 +69,7 @@ export function MasonryGrid<TData>({
                     theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'flx-end',
+                  justifyContent: 'flex-end',
                   flexDirection: 'column',
                 })}
                 pb={10}
@@ -76,7 +78,14 @@ export function MasonryGrid<TData>({
                 shadow="sm"
               >
                 <Stack mb="auto" spacing="xs">
-                  <Logo />
+                  <div style={{ height: 30 }}>
+                    <Image
+                      src={`/images/logo_${theme.colorScheme}_mode.png`}
+                      alt="Civitai logo"
+                      height={30}
+                      width={142}
+                    />
+                  </div>
                   <Text>Become a supporter to turn off ads today.</Text>
                   <Button
                     component={NextLink}
