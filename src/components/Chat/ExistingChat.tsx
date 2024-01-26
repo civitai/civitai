@@ -20,7 +20,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -567,28 +566,14 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
                 <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
               </Group>
               {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
-              <ReactMarkdown
-                allowedElements={['strong', 'em', 'code', 'u', 'ul', 'li']} // TODO check more of these: 'pre', 'img', 'a'
-                // rehypePlugins={[rehypeRaw, remarkGfm, remarkGemoji]}
-                unwrapDisallowed
-                // components={{
-                //   a: ({ node, ...props }) => {
-                //     return (
-                //       <Link href={props.href as string}>
-                //         <a target={props.href?.includes('http') ? '_blank' : '_self'}>
-                //           {props.children[0]}
-                //         </a>
-                //       </Link>
-                //     );
-                //   },
-                // }}
-                className={cx(classes.chatMessage, 'markdown-content', {
+              <Text
+                className={cx(classes.chatMessage, {
                   [classes.otherMessage]: c.userId !== currentUser?.id,
                   [classes.myMessage]: c.userId === currentUser?.id,
                 })}
               >
                 {c.content}
-              </ReactMarkdown>
+              </Text>
             </>
           )}
         </PStack>
