@@ -784,7 +784,7 @@ export function AppHeader({
               )}
               {currentUser?.showNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
-              {currentUser && <ChatButton />}
+              {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
             </Group>
             {!currentUser ? (
@@ -875,7 +875,7 @@ export function AppHeader({
               </ActionIcon>
             )}
             {currentUser && <CivitaiLinkPopover />}
-            {currentUser && <ChatButton />}
+            {currentUser && features.chat && <ChatButton />}
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}

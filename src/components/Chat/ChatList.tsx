@@ -21,6 +21,7 @@ import {
   IconCloudOff,
   IconSearch,
   IconUsers,
+  IconUserX,
   IconX,
 } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -158,6 +159,8 @@ export function ChatList() {
                       <Box>
                         {otherMembers.length > 1 ? (
                           <IconUsers />
+                        ) : otherMembers.length === 0 ? (
+                          <IconUserX />
                         ) : (
                           <UserAvatar userId={otherMembers[0].userId} />
                         )}

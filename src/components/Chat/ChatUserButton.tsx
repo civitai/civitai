@@ -2,6 +2,7 @@ import { Button, ButtonProps, Group, useMantineTheme } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 export function ChatUserButton({
@@ -10,10 +11,13 @@ export function ChatUserButton({
 }: { user: Partial<UserWithCosmetics> } & ButtonProps) {
   const { setState } = useChatContext();
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
 
   const handleClick = () => {
     setState((prev) => ({ ...prev, open: true, existingChatId: undefined, selectedUsers: [user] }));
   };
+
+  if (!features.chat) return <></>;
 
   return (
     <LoginPopover>
