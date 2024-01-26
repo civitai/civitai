@@ -94,11 +94,11 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
   })
 );
 
-export const SocialHomeBlock = ({ ...props }: Props) => {
+export const SocialHomeBlock = ({ showAds, ...props }: Props) => {
   if (!props.metadata.socials?.length) return null;
 
   return (
-    <HomeBlockWrapper py={32}>
+    <HomeBlockWrapper py={32} showAds={showAds}>
       <SocialHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -256,4 +256,4 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   );
 };
 
-type Props = { metadata: HomeBlockMetaSchema };
+type Props = { metadata: HomeBlockMetaSchema; showAds?: boolean };

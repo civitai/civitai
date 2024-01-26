@@ -21,7 +21,7 @@ import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
+type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
 
 const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
   (theme, { columnGap, columnWidth }, getRef) => ({
@@ -99,9 +99,9 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
   })
 );
 
-export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
+export const LeaderboardsHomeBlock = ({ showAds, ...props }: Props) => {
   return (
-    <HomeBlockWrapper py={32}>
+    <HomeBlockWrapper py={32} showAds={showAds}>
       <LeaderboardsHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );

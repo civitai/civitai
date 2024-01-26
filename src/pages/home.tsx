@@ -68,33 +68,6 @@ export default function Home() {
     }
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
-  const renderHomeBlock = (homeBlock: HomeBlockWithData) => {
-    switch (homeBlock.type) {
-      case HomeBlockType.Collection:
-        return (
-          <CollectionHomeBlock
-            key={homeBlock.id}
-            homeBlockId={homeBlock.id}
-            metadata={homeBlock.metadata}
-          />
-        );
-      case HomeBlockType.Announcement:
-        return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-      case HomeBlockType.Leaderboard:
-        return (
-          <LeaderboardsHomeBlock
-            key={homeBlock.id}
-            homeBlockId={homeBlock.id}
-            metadata={homeBlock.metadata}
-          />
-        );
-      case HomeBlockType.Social:
-        return <SocialHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
-      case HomeBlockType.Event:
-        return <EventHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
-    }
-  };
-
   return (
     <>
       <Meta
@@ -148,7 +121,8 @@ export default function Home() {
             },
           })}
         >
-          {homeBlocks.map((homeBlock) => {
+          {homeBlocks.map((homeBlock, i) => {
+            const showAds = i % 2 === 0;
             switch (homeBlock.type) {
               case HomeBlockType.Collection:
                 return (
@@ -156,29 +130,49 @@ export default function Home() {
                     key={homeBlock.id}
                     homeBlockId={homeBlock.id}
                     metadata={homeBlock.metadata}
+                    showAds={showAds}
                   />
                 );
               case HomeBlockType.Announcement:
-                return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+                return (
+                  <AnnouncementHomeBlock
+                    key={homeBlock.id}
+                    homeBlockId={homeBlock.id}
+                    showAds={showAds}
+                  />
+                );
               case HomeBlockType.Leaderboard:
                 return (
                   <LeaderboardsHomeBlock
                     key={homeBlock.id}
                     homeBlockId={homeBlock.id}
                     metadata={homeBlock.metadata}
+                    showAds={showAds}
                   />
                 );
               case HomeBlockType.Social:
-                return <SocialHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+                return (
+                  <SocialHomeBlock
+                    key={homeBlock.id}
+                    metadata={homeBlock.metadata}
+                    showAds={showAds}
+                  />
+                );
               case HomeBlockType.Event:
-                return <EventHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+                return (
+                  <EventHomeBlock
+                    key={homeBlock.id}
+                    metadata={homeBlock.metadata}
+                    showAds={showAds}
+                  />
+                );
             }
           })}
 
           <HiddenPreferencesProvider browsingMode={BrowsingMode.SFW}>
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
-                <HomeBlockWrapper py={32}>
+                <MasonryContainer py={32}>
                   {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
                     <IsClient>
                       <Group mb="md" position="apart">
@@ -239,11 +233,11 @@ export default function Home() {
                       />
                     </IsClient>
                   )}
-                </HomeBlockWrapper>
+                </MasonryContainer>
               </Box>
             ) : (
               <Box ref={ref}>
-                <HomeBlockWrapper py={32}>
+                <MasonryContainer py={32}>
                   {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
                     <IsClient>
                       <Group mb="md" position="apart">
@@ -311,7 +305,7 @@ export default function Home() {
                       />
                     </IsClient>
                   )}
-                </HomeBlockWrapper>
+                </MasonryContainer>
               </Box>
             )}
           </HiddenPreferencesProvider>
