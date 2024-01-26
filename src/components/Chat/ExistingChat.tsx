@@ -572,7 +572,7 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
               </Group>
               {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
               <ReactMarkdown
-                allowedElements={['a', 'strong', 'em', 'code', 'u', 'img', 'ul', 'li']} // TODO check more of these: 'pre'
+                allowedElements={['strong', 'em', 'code', 'u', 'ul', 'li']} // TODO check more of these: 'pre', 'img', 'a'
                 rehypePlugins={[rehypeRaw, remarkGfm, remarkGemoji]}
                 unwrapDisallowed
                 components={{
