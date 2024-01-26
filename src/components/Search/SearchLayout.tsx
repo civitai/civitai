@@ -1,6 +1,7 @@
 import {
   Container,
   createStyles,
+  Divider,
   Group,
   Stack,
   Text,
@@ -62,22 +63,19 @@ export const useSearchLayout = () => {
 };
 
 const useStyles = createStyles((theme, _, getRef) => {
-  const sidebarRef = getRef('sidebar');
-  const contentRef = getRef('content');
-
   return {
     sidebar: {
-      ref: sidebarRef,
       height: '100%',
       marginLeft: `-${SIDEBAR_SIZE}px`,
       width: `${SIDEBAR_SIZE}px`,
-      overflowY: 'auto',
-      padding: theme.spacing.md,
+
       transition: 'margin 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
       zIndex: 200,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+      display: 'flex',
+      flexDirection: 'column',
 
       [containerQuery.smallerThan('sm')]: {
         top: 0,
@@ -87,6 +85,12 @@ const useStyles = createStyles((theme, _, getRef) => {
         marginLeft: `-100%`,
         position: 'absolute',
       },
+    },
+
+    scrollable: {
+      padding: theme.spacing.md,
+      overflowY: 'auto',
+      flex: 1,
     },
 
     root: { height: '100%', width: '100%', display: 'flex' },
@@ -159,8 +163,8 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
   const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <Stack className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
-      <Group>
+    <div className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+      <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
             <ThemeIcon
@@ -176,8 +180,9 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
         </Tooltip>
         <Text size="lg">Filters &amp; sorting</Text>
       </Group>
-      {children}
-    </Stack>
+      <Divider />
+      <div className={classes.scrollable}>{children}</div>
+    </div>
   );
 };
 
