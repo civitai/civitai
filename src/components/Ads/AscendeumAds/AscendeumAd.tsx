@@ -102,7 +102,7 @@ export function AscendeumAd<T extends AdUnitType>({
           ) : (
             <>
               {showAscendeumAd && <AscendeumAdContent adunit={adunit} bidSizes={bidSizes} />}
-              {showAlternateAd && (
+              {/* {showAlternateAd && (
                 <NextLink href="/pricing">
                   <Image
                     src={`/images/become-a-member/${width}x${height}.jpg`}
@@ -111,8 +111,8 @@ export function AscendeumAd<T extends AdUnitType>({
                     height={height}
                   />
                 </NextLink>
-              )}
-              {/* {showAlternateAd &&
+              )} */}
+              {showAlternateAd &&
                 (zoneId ? (
                   <ExoclickAd zoneId={zoneId} size={size} />
                 ) : (
@@ -124,7 +124,7 @@ export function AscendeumAd<T extends AdUnitType>({
                       height={height}
                     />
                   </NextLink>
-                ))} */}
+                ))}
             </>
           )}
         </>
