@@ -4,7 +4,6 @@ import { ChatMemberStatus } from '@prisma/client';
 import {
   IconBell,
   IconBellOff,
-  IconDoorExit,
   IconEar,
   IconEarOff,
   IconFlag,
@@ -158,9 +157,10 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
               <Menu.Item icon={<IconFlag size={18} />} color="orange" onClick={reportModal}>
                 Report
               </Menu.Item>
-              <Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveModal}>
-                Leave
-              </Menu.Item>
+              {/*TODO reenable*/}
+              {/*<Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveModal}>*/}
+              {/*  Leave*/}
+              {/*</Menu.Item>*/}
             </>
           )}
           <Menu.Label>Global</Menu.Label>
