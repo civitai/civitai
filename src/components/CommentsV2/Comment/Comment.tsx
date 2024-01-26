@@ -205,10 +205,12 @@ export function CommentContent({
         <Stack style={{ flex: 1 }} spacing={4}>
           {!editing ? (
             <>
-              <RenderHtml
-                html={comment.content}
-                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-              />
+              <Box my={5}>
+                <RenderHtml
+                  html={comment.content}
+                  sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                />
+              </Box>
               {/* COMMENT INTERACTION */}
               <Group spacing={4}>
                 <CommentReactions comment={comment} />
@@ -219,6 +221,7 @@ export function CommentContent({
                     radius="xl"
                     onClick={() => setReplying(true)}
                     compact
+                    color="gray"
                   >
                     <Group spacing={4}>
                       <IconArrowBackUp size={14} />
@@ -226,7 +229,7 @@ export function CommentContent({
                     </Group>
                   </Button>
                 )}
-                {replyCount > 0 && !viewOnly && (
+                {replyCount > 0 && !viewOnly && !isExpanded && (
                   <Button variant="subtle" size="xs" radius="xl" onClick={onToggleReplies} compact>
                     {isExpanded ? 'Hide' : 'Show'}{' '}
                     {`${replyCount.toLocaleString()} ${replyCount === 1 ? 'Reply' : 'Replies'}`}
@@ -270,15 +273,23 @@ export const useCommentStyles = createStyles((theme) => ({
   repliesIndicator: {
     position: 'absolute',
     top: 26 + 8,
-    width: 4,
+    width: 2,
     height: 'calc(100% - 26px - 8px)',
-    background: 'rgba(0,0,0,0.15)',
+    background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)',
     // Size of the image / 2, minus the size of the border / 2
-    left: 26 / 2 - 4 / 2,
+    left: 26 / 2 - 2 / 2,
+    '&:hover': {
+      background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
+    },
   },
   replyInset: {
     // Size of the image / 2, minus the size of the border / 2
     marginLeft: -12,
   },
-  rootCommentReplyInset: { borderLeft: '4px solid rgba(0,0,0,0.15)', paddingLeft: 46 },
+  rootCommentReplyInset: {
+    borderLeft: `2px solid ${
+      theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)'
+    }`,
+    paddingLeft: 46,
+  },
 }));
