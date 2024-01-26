@@ -7,8 +7,9 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { planDetails } from '~/components/Stripe/PlanDetails';
+import { planDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
@@ -40,8 +41,7 @@ export function SubscriptionCard() {
         value: (
           <Group align="flex-end" position="apart">
             <Text>
-              {'$' +
-                price.unitAmount / 100 +
+              {getStripeCurrencyDisplay(price.unitAmount, price.currency) +
                 ' ' +
                 price.currency.toUpperCase() +
                 ' per ' +

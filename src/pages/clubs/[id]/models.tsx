@@ -57,7 +57,7 @@ const ClubModels = () => {
         </Group>
       </Stack>
       <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
-        <MasonryContainer fluid mt="md" p={0}>
+        <MasonryContainer mt="md" p={0}>
           <ModelsInfinite
             disableStoreFilters
             filters={{

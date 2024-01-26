@@ -232,7 +232,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                   maxColumnCount={4}
                   maxSingleColumnWidth={450}
                 >
-                  <MasonryContainer m={0} p={0} fluid>
+                  <MasonryContainer m={0} p={0}>
                     <ScrollArea.Autosize maxHeight="500px">
                       {currentUser && (
                         <ImagesInfinite

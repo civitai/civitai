@@ -231,7 +231,7 @@ export default function ImagesAsPostsInfinite({
           maxSingleColumnWidth={450}
           style={{ flex: 1 }}
         >
-          <MasonryContainer fluid>
+          <MasonryContainer>
             <Stack spacing="md">
               <AscendeumAd
                 adunit="Leaderboard_B"
