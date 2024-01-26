@@ -31,6 +31,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { z } from 'zod';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 const SIDEBAR_SIZE = 377;
 
@@ -67,14 +68,12 @@ const useStyles = createStyles((theme, _, getRef) => {
   return {
     sidebar: {
       ref: sidebarRef,
-      height: 'calc(100vh - 2 * var(--mantine-header-height, 50px))',
-      position: 'fixed',
-      left: -SIDEBAR_SIZE,
-      top: 'var(--mantine-header-height,50px)',
+      height: '100%',
+      marginLeft: `-${SIDEBAR_SIZE}px`,
       width: `${SIDEBAR_SIZE}px`,
       overflowY: 'auto',
       padding: theme.spacing.md,
-      transition: 'transform 200ms ease',
+      transition: 'margin 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
       zIndex: 200,
@@ -82,36 +81,18 @@ const useStyles = createStyles((theme, _, getRef) => {
 
       [containerQuery.smallerThan('sm')]: {
         top: 0,
-        height: '100vh',
-        left: '-100vw',
-        width: '100vw',
-        position: 'fixed',
+        left: 0,
+        height: '100%',
+        width: '100%',
+        marginLeft: `-100%`,
+        position: 'absolute',
       },
     },
 
-    content: {
-      ref: contentRef,
-      width: '100%',
-      paddingLeft: 0,
-      // TODO: Performance wise - padding left is not the best route here.
-      // We should probably use a transform instead
-      transition: 'padding-left 200ms ease',
-    },
+    root: { height: '100%', width: '100%', display: 'flex' },
 
-    sidebarOpen: {
-      [`& .${sidebarRef}`]: {
-        transform: `translate(${SIDEBAR_SIZE}px, 0)`,
-        [containerQuery.smallerThan('sm')]: {
-          transform: `translate(100vw, 0)`,
-          paddingBottom: theme.spacing.xl,
-        },
-      },
-      [`& .${contentRef}`]: {
-        paddingLeft: `${SIDEBAR_SIZE}px`,
-        [containerQuery.smallerThan('sm')]: {
-          paddingLeft: 0,
-        },
-      },
+    active: {
+      marginLeft: '0 !important',
     },
   };
 });
@@ -158,30 +139,27 @@ export function SearchLayout({
         routing={routing}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
-        <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
+        <AppLayout renderSearchComponent={renderSearchComponent} withScrollArea={false}>
+          {children}
+        </AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>
   );
 }
 
 SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
-  const { classes, cx } = useStyles();
-  const { sidebarOpen } = useSearchLayout();
+  const { classes } = useStyles();
 
-  return (
-    <Container fluid className={cx({ [classes.sidebarOpen]: sidebarOpen })}>
-      {children}
-    </Container>
-  );
+  return <div className={classes.root}>{children}</div>;
 };
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
   const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <Stack className={classes.sidebar}>
+    <Stack className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
       <Group>
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -204,8 +182,11 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
 };
 
 SearchLayout.Content = function Content({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
-  return <Stack className={classes.content}>{children}</Stack>;
+  return (
+    <ScrollArea p="md">
+      <Stack>{children}</Stack>
+    </ScrollArea>
+  );
 };
 
 export const useSearchLayoutStyles = createStyles((theme) => ({
