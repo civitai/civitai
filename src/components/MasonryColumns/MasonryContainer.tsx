@@ -25,7 +25,7 @@ export function MasonryContainer({ children, ...boxProps }: MasonryContainerProp
   };
 
   return (
-    <Box {...boxProps}>
+    <Box px="md" {...boxProps}>
       <div className={classes.container}>
         <div
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}

@@ -194,13 +194,13 @@ export default function ImagesAsPostsInfinite({
   const hasModerationPreferences =
     galleryHiddenImages.size > 0 || galleryHiddenTags.size > 0 || galleryHiddenUsers.size > 0;
 
-  const adStyle: React.CSSProperties = {
-    position: 'sticky',
-    top: 0,
-    height: '100%',
-    // top: '50%',
-    // transform: 'translateY(-50%)',
-  };
+  // const adStyle: React.CSSProperties = {
+  //   position: 'sticky',
+  //   top: 0,
+  //   height: '100%',
+  //   // top: '50%',
+  //   // transform: 'translateY(-50%)',
+  // };
 
   return (
     <ImagesAsPostsInfiniteContext.Provider
@@ -216,7 +216,7 @@ export default function ImagesAsPostsInfinite({
           background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
         })}
       >
-        <AscendeumAd
+        {/* <AscendeumAd
           adunit="StickySidebar_B"
           sizes={{
             [theme.breakpoints.md]: '120x600',
@@ -224,7 +224,7 @@ export default function ImagesAsPostsInfinite({
           }}
           style={{ ...adStyle }}
           showRemoveAds
-        />
+        /> */}
         <MasonryProvider
           columnWidth={310}
           maxColumnCount={6}
@@ -407,7 +407,7 @@ export default function ImagesAsPostsInfinite({
             </Stack>
           </MasonryContainer>
         </MasonryProvider>
-        <AscendeumAd
+        {/* <AscendeumAd
           adunit="StickySidebar_B"
           sizes={{
             [theme.breakpoints.md]: '120x600',
@@ -415,7 +415,7 @@ export default function ImagesAsPostsInfinite({
           }}
           style={{ ...adStyle }}
           showRemoveAds
-        />
+        /> */}
       </Box>
 
       {/* {isLoading && (

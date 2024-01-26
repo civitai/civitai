@@ -10,15 +10,15 @@ import { constants } from '~/server/common/constants';
 
 export function FeedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const adStyle: React.CSSProperties = {
-    position: 'sticky',
-    top: 0,
-    height: '100%',
-  };
+  // const adStyle: React.CSSProperties = {
+  //   position: 'sticky',
+  //   top: 0,
+  //   height: '100%',
+  // };
 
   const theme = useMantineTheme();
   const maxColumnCount = 7;
-  const xl = 2030;
+  // const xl = 2030;
 
   const nsfw = router.pathname.includes('articles') ? true : undefined;
 
@@ -32,7 +32,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       }}
     >
       <IsClient>
-        <AscendeumAd
+        {/* <AscendeumAd
           adunit="StickySidebar_A"
           sizes={{
             [theme.breakpoints.md]: '120x600',
@@ -41,7 +41,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           style={{ ...adStyle }}
           nsfw={nsfw}
           showRemoveAds
-        />
+        /> */}
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={maxColumnCount}
@@ -61,7 +61,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           />
           <MasonryContainer>{children}</MasonryContainer>
         </MasonryProvider>
-        <AscendeumAd
+        {/* <AscendeumAd
           adunit="StickySidebar_A"
           sizes={{
             [theme.breakpoints.md]: '120x600',
@@ -70,7 +70,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           style={{ ...adStyle }}
           nsfw={nsfw}
           showRemoveAds
-        />
+        /> */}
       </IsClient>
     </ScrollArea>
   );

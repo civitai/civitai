@@ -39,6 +39,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { HomeBlockWithData } from '~/server/services/home-block.service';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -67,6 +68,33 @@ export default function Home() {
     }
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
+  const renderHomeBlock = (homeBlock: HomeBlockWithData) => {
+    switch (homeBlock.type) {
+      case HomeBlockType.Collection:
+        return (
+          <CollectionHomeBlock
+            key={homeBlock.id}
+            homeBlockId={homeBlock.id}
+            metadata={homeBlock.metadata}
+          />
+        );
+      case HomeBlockType.Announcement:
+        return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+      case HomeBlockType.Leaderboard:
+        return (
+          <LeaderboardsHomeBlock
+            key={homeBlock.id}
+            homeBlockId={homeBlock.id}
+            metadata={homeBlock.metadata}
+          />
+        );
+      case HomeBlockType.Social:
+        return <SocialHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+      case HomeBlockType.Event:
+        return <EventHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+    }
+  };
+
   return (
     <>
       <Meta
@@ -79,14 +107,14 @@ export default function Home() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer sx={{ overflow: 'hidden' }}>
+        <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
           <AscendeumAd
             adunit="Leaderboard_A"
             style={{ margin: `0 auto ${theme.spacing.xs}px` }}
             sizes={{
               [0]: '300x100',
               [theme.breakpoints.md]: '728x90',
-              [theme.breakpoints.lg]: '970x90',
+              [theme.breakpoints.lg]: ['970x90', '728x90'],
             }}
           />
           <Group position="apart" noWrap>
@@ -198,6 +226,7 @@ export default function Home() {
                       </Group>
 
                       <ImagesInfinite
+                        showAds
                         filters={{
                           // Required to override localStorage filters
                           period: MetricTimeframe.Week,
@@ -262,6 +291,7 @@ export default function Home() {
                       </Group>
 
                       <ModelsInfinite
+                        showAds
                         filters={{
                           excludedImageTagIds: [
                             ...homeExcludedTags.map((tag) => tag.id),

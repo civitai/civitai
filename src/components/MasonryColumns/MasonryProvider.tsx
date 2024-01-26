@@ -76,7 +76,7 @@ export function MasonryProvider({
         combinedWidth,
       }}
     >
-      <Box ref={containerRef} p="md" {...boxProps}>
+      <Box ref={containerRef} {...boxProps}>
         {children}
       </Box>
     </MasonryContext.Provider>
