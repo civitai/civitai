@@ -224,8 +224,8 @@ export const createChatHandler = async ({
     if (dedupedUserIds.length < 2) {
       throw throwBadRequestError('Must choose at least 1 user');
     }
-    if (dedupedUserIds.length >= maxUsersPerChat) {
-      throw throwBadRequestError(`Must choose fewer than ${maxUsersPerChat - 1} users`);
+    if (dedupedUserIds.length > maxUsersPerChat) {
+      throw throwBadRequestError(`Must choose fewer than ${maxUsersPerChat} users`);
     }
     if (!dedupedUserIds.includes(userId)) {
       throw throwBadRequestError('Creator must be in the chat');
@@ -250,33 +250,37 @@ export const createChatHandler = async ({
       select: { id: true },
     });
 
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
 
-    // TODO re-enable
-    // const modInfo = await dbRead.user.findFirst({
-    //   where: {id: userId},
-    //   select: {
-    //     isModerator: true,
-    //   }
-    // });
-    // const isModerator = modInfo?.isModerator === true;
+    const modInfo = await dbRead.user.findFirst({
+      where: { id: userId },
+      select: {
+        isModerator: true,
+        subscriptionId: true,
+      },
+    });
+    const isModerator = modInfo?.isModerator === true;
+    const isSupporter = !!modInfo?.subscriptionId; // TODO add check for CustomerSubscription = active/trialing
+    const canBypassLimits = isModerator || isSupporter;
 
     const totalForUser = await dbWrite.chat.count({
       where: { ownerId: userId },
     });
 
     // TODO need a way to archive/delete chats that will still let the users see messages
-    if (totalForUser >= maxChats) {
+
+    if (totalForUser >= maxChats && !canBypassLimits) {
       throw throwBadRequestError(`Cannot have more than ${maxChats} chats`);
     }
 
-    // limit chats per day, resetting at beginning of each day (not rolling)
+    // - limit chats per day, resetting at beginning of each day (not rolling)
     const totalTodayForUser = await dbWrite.chat.count({
       where: { ownerId: userId, createdAt: { gte: dayjs().startOf('date').toDate() } },
     });
 
-    // TODO moderator check
-    if (totalTodayForUser >= maxChatsPerDay) {
+    if (totalTodayForUser >= maxChatsPerDay && !canBypassLimits) {
       throw throwBadRequestError(`Cannot create more than ${maxChatsPerDay} chats per day`);
     }
 

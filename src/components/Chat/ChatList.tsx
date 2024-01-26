@@ -12,8 +12,17 @@ import {
   Loader,
   Stack,
   Text,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
-import { IconCirclePlus, IconCloudOff, IconSearch, IconUsers, IconX } from '@tabler/icons-react';
+import {
+  IconBadge,
+  IconCirclePlus,
+  IconCloudOff,
+  IconSearch,
+  IconUsers,
+  IconX,
+} from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import React, { useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
@@ -87,7 +96,7 @@ export function ChatList() {
       <Box p="sm" pt={0}>
         <Input
           icon={<IconSearch size={16} />}
-          placeholder="Search users"
+          placeholder="Filter by user"
           value={searchInput}
           onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
           rightSection={
@@ -181,6 +190,22 @@ export function ChatList() {
                         </Text>
                       )}
                     </Stack>
+                    {isModSender && (
+                      <Tooltip
+                        withArrow={false}
+                        label="Moderator chat"
+                        sx={{ border: '1px solid gray' }}
+                      >
+                        <ThemeIcon
+                          size="xs"
+                          color="violet"
+                          variant="filled"
+                          sx={{ marginLeft: 'auto' }}
+                        >
+                          <IconBadge />
+                        </ThemeIcon>
+                      </Tooltip>
+                    )}
                   </PGroup>
                 );
               })}

@@ -822,6 +822,7 @@ model Report {
   collection     CollectionReport?
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
+  chat           ChatReport?
 }
 
 model ResourceReviewReport {
@@ -932,6 +933,16 @@ model BountyEntryReport {
 
   @@id([reportId, bountyEntryId])
   @@index([bountyEntryId], type: Hash)
+}
+
+model ChatReport {
+  chatId Int
+  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  reportId      Int         @unique
+  report        Report      @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, chatId])
+  @@index([chatId], type: Hash)
 }
 
 model ResourceReview {
@@ -2570,6 +2581,7 @@ model Chat {
 
   chatMembers ChatMember[]
   messages    ChatMessage[]
+  reports     ChatReport[]
 }
 
 enum ChatMemberStatus {

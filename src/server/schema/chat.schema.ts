@@ -25,7 +25,7 @@ export const modifyUserInput = z.object({
 export type CreateMessageInput = z.infer<typeof createMessageInput>;
 export const createMessageInput = z.object({
   chatId: z.number(),
-  content: z.string().min(1),
+  content: z.string().min(1).max(2000),
   contentType: z.nativeEnum(ChatMessageType).optional().default('Markdown'),
   referenceMessageId: z.number().optional(),
 });
