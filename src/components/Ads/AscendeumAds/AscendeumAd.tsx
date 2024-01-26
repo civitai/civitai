@@ -93,7 +93,7 @@ export function AscendeumAd<T extends AdUnitType>({
           {adsBlocked ? (
             <NextLink href="/pricing">
               <Image
-                src={`/images/ad-placeholders/adblock/${width}x${height}.jpg`}
+                src={`/images/support-us/${width}x${height}.jpg`}
                 alt="Please support civitai and creators by disabling adblock"
                 width={width}
                 height={height}
@@ -105,7 +105,7 @@ export function AscendeumAd<T extends AdUnitType>({
               {showAlternateAd && (
                 <NextLink href="/pricing">
                   <Image
-                    src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+                    src={`/images/become-a-member/${width}x${height}.jpg`}
                     alt="Please become a member to support creators today"
                     width={width}
                     height={height}
@@ -118,7 +118,7 @@ export function AscendeumAd<T extends AdUnitType>({
                 ) : (
                   <NextLink href="/pricing">
                     <Image
-                      src={`/images/ad-placeholders/member/${width}x${height}.jpg`}
+                      src={`/images/support-us/${width}x${height}.jpg`}
                       alt="Please become a member to support creators today"
                       width={width}
                       height={height}
