@@ -36,7 +36,7 @@ const SearchIndexMap = {
 } as const;
 
 function transformItems(items: any[], metadata: TransformItemsMetadata) {
-  if (!metadata.results) return [];
+  if (!metadata.results) return items;
   const index = metadata.results.index as SearchIndexKey;
   const type = SearchIndexMap[index];
   switch (type) {
@@ -55,8 +55,7 @@ function transformItems(items: any[], metadata: TransformItemsMetadata) {
         tags: item.tags?.map((t) => t.id),
       }));
     case 'articles':
-      const test = type;
-      return items as DataIndex[typeof type][];
+      return items as ArticleSearchIndexRecord[];
     case 'bounties':
       return items as BountySearchIndexRecord[];
     case 'collections':
