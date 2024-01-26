@@ -7,14 +7,21 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 export function ChatUserButton({
   user,
+  label,
   ...buttonProps
-}: { user: Partial<UserWithCosmetics> } & ButtonProps) {
+}: { user: Partial<UserWithCosmetics>; label?: string } & ButtonProps) {
   const { setState } = useChatContext();
   const theme = useMantineTheme();
   const features = useFeatureFlags();
 
   const handleClick = () => {
-    setState((prev) => ({ ...prev, open: true, existingChatId: undefined, selectedUsers: [user] }));
+    setState((prev) => ({
+      ...prev,
+      open: true,
+      isCreating: true,
+      existingChatId: undefined,
+      selectedUsers: [user],
+    }));
   };
 
   if (!features.chat) return <></>;
@@ -34,7 +41,7 @@ export function ChatUserButton({
       >
         <Group spacing={4} noWrap>
           <IconMessage2 size={14} />
-          Chat
+          {label ?? 'Chat'}
         </Group>
       </Button>
     </LoginPopover>
