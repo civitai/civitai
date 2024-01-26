@@ -205,7 +205,7 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
   );
 }
 
-type Props = Omit<ButtonProps, 'onClick'> & {
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<ArticleQueryInput>;
   onChange?: (params: Partial<ArticleQueryInput>) => void;
 };

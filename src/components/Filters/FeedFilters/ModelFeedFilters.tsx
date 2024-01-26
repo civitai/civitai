@@ -27,7 +27,7 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
             </ActionIcon>
           </Popover.Target>
           <Popover.Dropdown maw={300}>
-            {`To ensure that you see all possible results, we've disable the period filter.`}
+            {`To ensure that you see all possible results, we've disabled the period filter.`}
             <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
               Clear Search
             </Button>
