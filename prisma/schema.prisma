@@ -103,6 +103,43 @@ model UserStripeConnect {
   chargesEnabled     Boolean             @default(false)
 }
 
+enum BuzzWithdrawalRequestStatus {
+  Requested
+  Rejected
+  Approved
+  Reverted
+  Transfered
+}
+
+model BuzzWithdrawalRequestHistory {
+  id          String                      @id @default(cuid())
+  requestId   String
+  request     BuzzWithdrawalRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  updatedById Int?
+  updatedBy   User?                       @relation(fields: [updatedById], references: [id])
+  status      BuzzWithdrawalRequestStatus @default(Requested)
+  note        String?
+  metadata    Json                        @default("{}")
+  createdAt   DateTime                    @default(now())
+}
+
+model BuzzWithdrawalRequest {
+  id                    String                         @id @default(cuid())
+  userId                Int?
+  user                  User?                          @relation(fields: [userId], references: [id])
+  connectedAccountId    String // Keeping this for double safe-measure :)                 
+  requestedBuzzAmount   Int
+  buzzPlatformFeeAmount Int?
+  toTransferBuzzAmount  Int?
+  transferedAmount      Int?
+  currency              Currency // We should always transfer on 
+  metadata              Json                           @default("{}")
+  createdAt             DateTime                       @default(now())
+  updatedAt             DateTime                       @updatedAt
+  status                BuzzWithdrawalRequestStatus    @default(Requested) // Computed from the history? :) 
+  history               BuzzWithdrawalRequestHistory[]
+}
+
 model User {
   id                  Int                   @id @default(autoincrement())
   name                String?
@@ -163,43 +200,45 @@ model User {
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
-  imageReactions          ImageReaction[]
-  sessionInvalidation     SessionInvalidation[]
-  stats                   UserStat?
-  rank                    UserRank?
-  downloads               DownloadHistory[]
-  purchases               Purchase[]
-  cosmetics               UserCosmetic[]
-  postReactions           PostReaction[]
-  posts                   Post[]
-  resourceReviews         ResourceReview[]
-  tagImageVotes           TagsOnImageVote[]
-  tagModelVotes           TagsOnModelsVote[]
-  tagPostVotes            TagsOnPostVote[]
-  resourceReviewReactions ResourceReviewReaction[]
-  articleReactions        ArticleReaction[]
-  articles                Article[]
-  articleEngagements      ArticleEngagement[]
-  leaderboardResults      LeaderboardResult[]
-  receivedReports         UserReport[]
-  engagedImages           ImageEngagement[]
-  collections             Collection[]
-  collectionItems         CollectionItem[]
-  reviewedCollectionItems CollectionItem[]         @relation("reviewedBy")
-  contributingCollections CollectionContributor[]
-  homeBlocks              HomeBlock[]
-  bounties                Bounty[]
-  bountyEntries           BountyEntry[]
-  sponsoredBounties       BountyBenefactor[]
-  engagedBounties         BountyEngagement[]
-  bountyEntryReactions    BountyEntryReaction[]
-  referralCodes           UserReferralCode[]
-  clubs                   Club[]
-  memberships             ClubMembership[]
-  addedClubPosts          ClubPost[]
-  accessGrantedBy         EntityAccess[]
-  clubAdmin               ClubAdmin[]
-  clubPostReactions       ClubPostReaction[]
+  imageReactions             ImageReaction[]
+  sessionInvalidation        SessionInvalidation[]
+  stats                      UserStat?
+  rank                       UserRank?
+  downloads                  DownloadHistory[]
+  purchases                  Purchase[]
+  cosmetics                  UserCosmetic[]
+  postReactions              PostReaction[]
+  posts                      Post[]
+  resourceReviews            ResourceReview[]
+  tagImageVotes              TagsOnImageVote[]
+  tagModelVotes              TagsOnModelsVote[]
+  tagPostVotes               TagsOnPostVote[]
+  resourceReviewReactions    ResourceReviewReaction[]
+  articleReactions           ArticleReaction[]
+  articles                   Article[]
+  articleEngagements         ArticleEngagement[]
+  leaderboardResults         LeaderboardResult[]
+  receivedReports            UserReport[]
+  engagedImages              ImageEngagement[]
+  collections                Collection[]
+  collectionItems            CollectionItem[]
+  reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
+  contributingCollections    CollectionContributor[]
+  homeBlocks                 HomeBlock[]
+  bounties                   Bounty[]
+  bountyEntries              BountyEntry[]
+  sponsoredBounties          BountyBenefactor[]
+  engagedBounties            BountyEngagement[]
+  bountyEntryReactions       BountyEntryReaction[]
+  referralCodes              UserReferralCode[]
+  clubs                      Club[]
+  memberships                ClubMembership[]
+  addedClubPosts             ClubPost[]
+  accessGrantedBy            EntityAccess[]
+  clubAdmin                  ClubAdmin[]
+  clubPostReactions          ClubPostReaction[]
+  withdrawalRequests         BuzzWithdrawalRequest[]
+  actionedWithdrawalRequests BuzzWithdrawalRequestHistory[]
 }
 
 enum OnboardingStep {
