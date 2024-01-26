@@ -246,6 +246,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           {followUserBtn}
         </Group>
       )}
+      {!isMobile && tipBuzzBtn}
+      {!isMobile && chatBtn}
 
       <Divider my={sizeOpts.spacing} />
 
@@ -257,9 +259,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           downloads={stats.downloadCountAllTime}
         />
       )}
-
-      {!isMobile && tipBuzzBtn}
-      {!isMobile && chatBtn}
 
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 

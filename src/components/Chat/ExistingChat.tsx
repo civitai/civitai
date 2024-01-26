@@ -27,6 +27,7 @@ import remarkGemoji from 'remark-gemoji';
 import remarkGfm from 'remark-gfm';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -411,7 +412,19 @@ export function ExistingChat() {
             {/* TODO improve useravatar to show loading */}
             {/* TODO mark when a user is the owner, online status (later), blocked users, etc */}
             {otherMembers?.map((cm) => (
-              <UserAvatar key={cm.userId} userId={cm.userId} size="sm" withUsername linkToProfile />
+              <UserAvatar
+                key={cm.userId}
+                userId={cm.userId}
+                size="sm"
+                withUsername
+                linkToProfile
+                // TODO don't do the uuid thing
+                badge={
+                  cm.user.isModerator ? (
+                    <EdgeMedia src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'} width={20} />
+                  ) : undefined
+                }
+              />
             ))}
           </Group>
         )}

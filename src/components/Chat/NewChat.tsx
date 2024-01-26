@@ -26,7 +26,13 @@ export function NewChat() {
       }
 
       setIsCreating(false);
-      if (data) setState((prev) => ({ ...prev, isCreating: false, existingChatId: data.id }));
+      if (data)
+        setState((prev) => ({
+          ...prev,
+          isCreating: false,
+          selectedUsers: [],
+          existingChatId: data.id,
+        }));
     },
     onError(error) {
       setIsCreating(false);
@@ -80,6 +86,7 @@ export function NewChat() {
           showIndexSelect={false}
           startingIndex="users"
           placeholder="Select users"
+          hideBlankQuery={true}
           filters={[{ id: currentUser?.id }, ...state.selectedUsers]
             .map((x) => `AND NOT id=${x.id}`)
             .join(' ')

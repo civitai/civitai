@@ -15,10 +15,11 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
+import { ChatMemberStatus } from '@prisma/client';
 import {
-  IconBadge,
   IconCirclePlus,
   IconCloudOff,
+  IconMail,
   IconSearch,
   IconUsers,
   IconUserX,
@@ -27,6 +28,7 @@ import {
 import { AnimatePresence, motion } from 'framer-motion';
 import React, { useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
@@ -127,19 +129,22 @@ export function ChatList() {
             <AnimatePresence initial={false} mode="sync">
               {filteredData.map((d) => {
                 const unreadCount = chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
+                const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
                 const isModSender = !!otherMembers.find(
                   (om) => om.isOwner === true && om.user.isModerator === true
                 );
+                const hasMod = otherMembers.some((om) => om.user.isModerator === true);
+
                 return (
                   <PGroup
                     key={d.id}
                     component={motion.div}
                     noWrap
                     className={cx(classes.selectChat, {
-                      [classes.modChat]: isModSender,
+                      // [classes.modChat]: isModSender,
                       [classes.selectedChat]: !isModSender && d.id === state.existingChatId,
-                      [classes.modSelectedChat]: isModSender && d.id === state.existingChatId,
+                      // [classes.modSelectedChat]: isModSender && d.id === state.existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -176,6 +181,7 @@ export function ChatList() {
                           textOverflow: 'ellipsis',
                           minWidth: 0,
                         }}
+                        color={hasMod ? 'red' : undefined}
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
                       </Text>
@@ -193,22 +199,32 @@ export function ChatList() {
                         </Text>
                       )}
                     </Stack>
-                    {isModSender && (
-                      <Tooltip
-                        withArrow={false}
-                        label="Moderator chat"
-                        sx={{ border: '1px solid gray' }}
-                      >
-                        <ThemeIcon
-                          size="xs"
-                          color="violet"
-                          variant="filled"
-                          sx={{ marginLeft: 'auto' }}
+                    <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
+                      {myMember?.status === ChatMemberStatus.Invited && (
+                        <Tooltip
+                          withArrow={false}
+                          label="Pending request"
+                          sx={{ border: '1px solid gray' }}
                         >
-                          <IconBadge />
-                        </ThemeIcon>
-                      </Tooltip>
-                    )}
+                          <ThemeIcon size="xs" color="green" variant="filled">
+                            <IconMail />
+                          </ThemeIcon>
+                        </Tooltip>
+                      )}
+                      {isModSender && (
+                        <Tooltip
+                          withArrow={false}
+                          label="Moderator chat"
+                          sx={{ border: '1px solid gray' }}
+                        >
+                          <ThemeIcon size="xs" variant="light">
+                            {/*<IconBadge />*/}
+                            {/* TODO don't do the uuid thing */}
+                            <EdgeMedia src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'} />
+                          </ThemeIcon>
+                        </Tooltip>
+                      )}
+                    </Group>
                   </PGroup>
                 );
               })}

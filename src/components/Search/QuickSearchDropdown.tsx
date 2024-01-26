@@ -154,6 +154,7 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   startingIndex?: TargetIndex;
   showIndexSelect?: boolean;
   placeholder?: string;
+  hideBlankQuery?: boolean;
 };
 
 export const QuickSearchDropdown = ({
@@ -210,6 +211,7 @@ const QuickSearchDropdownContent = ({
   dropdownItemLimit = 5,
   showIndexSelect = true,
   placeholder,
+  hideBlankQuery = false,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TargetIndex;
@@ -240,6 +242,7 @@ const QuickSearchDropdownContent = ({
 
   const items = useMemo(() => {
     if (!results || !results.nbHits) return [];
+    if (hideBlankQuery && !query) return [];
 
     const getFilteredResults = () => {
       const opts = {
