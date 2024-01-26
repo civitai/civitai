@@ -7,7 +7,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
-const messageSound = '/sounds/message.mp3'; // message2
+const messageSound = '/sounds/message2.mp3'; // message
 
 export const useChatNewMessageSignal = () => {
   const queryUtils = trpc.useUtils();
