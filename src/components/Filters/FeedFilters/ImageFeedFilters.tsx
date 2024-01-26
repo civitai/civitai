@@ -1,12 +1,11 @@
 import { Group, GroupProps } from '@mantine/core';
 import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
-import { SortFilter } from '../SortFilter';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
-import { ViewToggle } from '../ViewToggle';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { SortFilter } from '../SortFilter';
+import { ViewToggle } from '../ViewToggle';
 
 export function ImageFeedFilters({ ...groupProps }: GroupProps) {
   const { classes, theme } = useFeedFiltersStyles();
@@ -16,19 +15,18 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
   const canViewNewest = currentUser?.showNsfw ?? false;
 
-  const mobile = useContainerSmallerThan('sm');
-
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+      {/* // TODO.justin: adjust the background color */}
       <SortFilter type="images" variant="button" includeNewest={canViewNewest} />
-      <ImageFiltersDropdown size={mobile ? 'sm' : 'xs'} compact />
+      <ImageFiltersDropdown size="sm" compact />
       {canToggleView && (
         <ViewToggle
           type="images"
           color="gray"
           radius="xl"
           size="sm"
-          iconSize={mobile ? 16 : 14}
+          iconSize={16}
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         />
       )}

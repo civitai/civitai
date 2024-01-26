@@ -1,6 +1,5 @@
 import { ActionIcon, Button, Group, GroupProps, Popover } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 import { SortFilter, ViewToggle } from '~/components/Filters';
 import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
@@ -17,8 +16,6 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   if (periodMode) queryFilters.periodMode = periodMode;
   const canToggleView =
     env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !username && !favorites && !hidden && !collectionId;
-
-  const mobile = useContainerSmallerThan('sm');
 
   return (
     <Group className={classes.filtersWrapper} spacing={4} noWrap {...groupProps}>
@@ -38,13 +35,14 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         </Popover>
       )}
       <SortFilter type="models" variant="button" />
-      <ModelFiltersDropdown size={mobile ? 'sm' : 'xs'} compact />
+      {/* TODO.justin: adjust the background color of the button */}
+      <ModelFiltersDropdown size="sm" compact />
       {canToggleView && (
         <ViewToggle
           type="models"
           color="gray"
           radius="xl"
-          size={mobile ? 26 : 22}
+          size={26}
           iconSize={14}
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         />

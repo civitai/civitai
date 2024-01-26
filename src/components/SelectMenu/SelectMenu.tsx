@@ -106,13 +106,14 @@ export function SelectMenuV2<T extends string | number>({
 
   const target = (
     <Button
+      // TODO.justin: adjust the background color of the button
       color="gray"
       radius="xl"
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       disabled={disabled}
       rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
       onClick={() => setOpened((o) => !o)}
-      size={mobile ? 'sm' : 'xs'}
+      size="sm"
       compact
     >
       <Group spacing={4} noWrap>

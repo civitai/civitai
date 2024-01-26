@@ -27,7 +27,6 @@ import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { useContainerSmallerThan } from '../ContainerProvider/useContainerSmallerThan';
 
 const homeOptions = {
   home: {
@@ -175,22 +174,13 @@ const useTabsStyles = createStyles(() => ({
     overflow: 'auto hidden',
   },
   tab: {
-    paddingTop: 4,
-    paddingBottom: 4,
-    paddingLeft: 6,
-    paddingRight: 10,
-
-    [containerQuery.smallerThan('md')]: {
-      paddingTop: 8,
-      paddingBottom: 8,
-      paddingLeft: 10,
-      paddingRight: 16,
-    },
+    paddingTop: 8,
+    paddingBottom: 8,
+    paddingLeft: 10,
+    paddingRight: 16,
   },
   tabLabel: {
-    [containerQuery.smallerThan('md')]: {
-      fontSize: 14,
-    },
+    fontSize: 16,
   },
   tabsList: {
     backgroundColor: 'transparent',
@@ -210,25 +200,22 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/')[1] || 'home';
   const { classes, theme } = useTabsStyles();
-  const mobile = useContainerSmallerThan('md');
 
   const tabs = Object.entries(homeOptions)
     .filter(([key]) => ![key === 'bounties' && !features.bounties].some((b) => b))
     .map(([key, value]) => (
       <Link key={key} href={value.url} passHref>
-        <Anchor variant="text">
+        <Anchor variant="text" onClick={() => set(key as HomeOptions)}>
           <Tabs.Tab
+            // TODO.justin: adjust the background color of the tabs
             value={key}
             icon={value.icon({
-              size: mobile ? 16 : 14,
+              size: 16,
               color:
                 theme.colorScheme === 'dark' || activePath === key
                   ? theme.white
                   : theme.colors.dark[7],
             })}
-            onClick={() => {
-              set(key as HomeOptions);
-            }}
           >
             <Text className={classes.tabLabel} transform="capitalize" inline>
               {getDisplayName(key)}
@@ -238,6 +225,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
       </Link>
     ));
 
+  // TODO.homeTabs: make these be a select dropdown on mobile
   return (
     <Tabs
       variant="pills"

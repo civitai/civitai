@@ -1,11 +1,6 @@
 import { Group, Paper, createStyles } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { useRef } from 'react';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
-import {
-  HomeContentToggle,
-  HomeTabs,
-  useHomeSelection,
-} from '~/components/HomeContentToggle/HomeContentToggle';
 import { ArticleFeedFilters } from '~/components/Filters/FeedFilters/ArticleFeedFilters';
 import { BountyFeedFilters } from '~/components/Filters/FeedFilters/BountyFeedFilters';
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
@@ -13,7 +8,8 @@ import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilt
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
-import { useRouter } from 'next/router';
+import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 
 const useStyles = createStyles((theme) => ({
   subNav: {
@@ -37,7 +33,9 @@ const filtersBySection = {
   articles: <ArticleFeedFilters ml="auto" />,
   bounties: <BountyFeedFilters ml="auto" />,
   events: null,
-};
+} as const;
+type HomeSection = keyof typeof filtersBySection;
+const sections = Object.keys(filtersBySection) as Array<HomeSection>;
 
 export function SubNav() {
   const { classes } = useStyles();
@@ -46,9 +44,8 @@ export function SubNav() {
   const currentScroll = useRef(0);
   const subNavRef = useRef<HTMLDivElement>(null);
 
-  const { home } = useHomeSelection();
   const currentPath = router.pathname.replace('/', '') || 'home';
-  const isFeedPage = home === currentPath;
+  const isFeedPage = sections.includes(currentPath as HomeSection);
 
   const node = useScrollAreaRef({
     onScroll: () => {
@@ -75,7 +72,7 @@ export function SubNav() {
       <Group spacing={8} position="apart" noWrap={currentPath === 'home'}>
         <HomeTabs />
 
-        {home && isFeedPage && (filtersBySection[currentPath] ?? null)}
+        {isFeedPage && (filtersBySection[currentPath as HomeSection] ?? null)}
       </Group>
     </Paper>
   );
