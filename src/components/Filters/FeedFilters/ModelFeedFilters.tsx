@@ -34,9 +34,14 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
           </Popover.Dropdown>
         </Popover>
       )}
-      <SortFilter type="models" variant="button" />
-      {/* TODO.justin: adjust the background color of the button */}
-      <ModelFiltersDropdown size="sm" compact />
+      <SortFilter
+        type="models"
+        variant="button"
+        buttonProps={{
+          className: classes.subnavDropdown,
+        }}
+      />
+      <ModelFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="models"

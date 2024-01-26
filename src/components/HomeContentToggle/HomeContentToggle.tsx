@@ -169,7 +169,7 @@ type Props = {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 } & Omit<SegmentedControlProps, 'data' | 'value' | 'onChange'>;
 
-const useTabsStyles = createStyles(() => ({
+const useTabsStyles = createStyles((theme) => ({
   root: {
     overflow: 'auto hidden',
   },
@@ -178,9 +178,22 @@ const useTabsStyles = createStyles(() => ({
     paddingBottom: 8,
     paddingLeft: 10,
     paddingRight: 16,
+    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
+    [`&[data-active]`]: {
+      color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
+      [`&:hover`]: {
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
+      },
+    },
+    [`&:hover`]: {
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
+    },
   },
   tabLabel: {
     fontSize: 16,
+    fontWeight: 500,
+    textTransform: 'capitalize',
   },
   tabsList: {
     backgroundColor: 'transparent',
@@ -206,18 +219,8 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
     .map(([key, value]) => (
       <Link key={key} href={value.url} passHref>
         <Anchor variant="text" onClick={() => set(key as HomeOptions)}>
-          <Tabs.Tab
-            // TODO.justin: adjust the background color of the tabs
-            value={key}
-            icon={value.icon({
-              size: 16,
-              color:
-                theme.colorScheme === 'dark' || activePath === key
-                  ? theme.white
-                  : theme.colors.dark[7],
-            })}
-          >
-            <Text className={classes.tabLabel} transform="capitalize" inline>
+          <Tabs.Tab value={key} icon={value.icon({ size: 16 })}>
+            <Text className={classes.tabLabel} inline>
               {getDisplayName(key)}
             </Text>
           </Tabs.Tab>

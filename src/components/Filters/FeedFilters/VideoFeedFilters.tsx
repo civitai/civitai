@@ -8,9 +8,14 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <SortFilter type="videos" variant="button" />
-      {/* // TODO.justin: adjust the background color */}
-      <VideoFiltersDropdown size="sm" compact />
+      <SortFilter
+        type="videos"
+        variant="button"
+        buttonProps={{
+          className: classes.subnavDropdown,
+        }}
+      />
+      <VideoFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
     </Group>
   );
 }

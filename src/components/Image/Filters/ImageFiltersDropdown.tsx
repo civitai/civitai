@@ -123,9 +123,10 @@ export function ImageFiltersDropdown({ query, onChange, ...buttonProps }: Props)
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        {...buttonProps}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />

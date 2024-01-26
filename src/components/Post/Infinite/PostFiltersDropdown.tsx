@@ -111,6 +111,7 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
         {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />

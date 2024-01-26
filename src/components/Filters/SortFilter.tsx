@@ -1,3 +1,4 @@
+import { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
@@ -15,6 +16,15 @@ import {
   ThreadSort,
 } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
+
+type SortFilterButtonProps = {
+  variant: 'button';
+  buttonProps?: ButtonProps;
+};
+type SortFilterMenuProps = {
+  variant: 'menu';
+};
+type SortFilterComponentProps = SortFilterButtonProps | SortFilterMenuProps;
 
 type SortFilterProps = StatefulProps | DumbProps;
 
@@ -39,7 +49,6 @@ export function SortFilter(props: SortFilterProps) {
 
 type DumbProps = {
   type: FilterSubTypes;
-  variant?: 'menu' | 'button';
   includeNewest?: boolean;
   value:
     | ModelSort
@@ -63,14 +72,8 @@ type DumbProps = {
       | ClubSort
       | ThreadSort
   ) => void;
-};
-function DumbSortFilter({
-  type,
-  value,
-  onChange,
-  variant = 'menu',
-  includeNewest = true,
-}: DumbProps) {
+} & SortFilterComponentProps;
+function DumbSortFilter({ type, value, onChange, includeNewest = true, ...props }: DumbProps) {
   const sharedProps = {
     label: value,
     options: sortOptions[type]
@@ -82,8 +85,10 @@ function DumbSortFilter({
 
   return (
     <IsClient>
-      {variant === 'menu' && <SelectMenu {...sharedProps} />}
-      {variant === 'button' && <SelectMenuV2 {...sharedProps} />}
+      {props.variant === 'menu' && <SelectMenu {...sharedProps} />}
+      {props.variant === 'button' && (
+        <SelectMenuV2 {...sharedProps} buttonProps={props.buttonProps} />
+      )}
     </IsClient>
   );
 }
@@ -92,10 +97,9 @@ type StatefulProps = {
   type: FilterSubTypes;
   value?: undefined;
   onChange?: undefined;
-  variant?: 'menu' | 'button';
   includeNewest?: boolean;
-};
-function StatefulSortFilter({ type, variant, includeNewest }: StatefulProps) {
+} & SortFilterComponentProps;
+function StatefulSortFilter({ type, variant, includeNewest, ...props }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
   const globalSort = useFiltersContext((state) => state[type].sort);
   const querySort = query.sort as typeof globalSort | undefined;
@@ -117,6 +121,7 @@ function StatefulSortFilter({ type, variant, includeNewest }: StatefulProps) {
       onChange={setSort}
       variant={variant}
       includeNewest={includeNewest}
+      {...props}
     />
   );
 }

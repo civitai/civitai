@@ -15,9 +15,14 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <SortFilter type="articles" variant="button" />
-      {/* // TODO.justin: adjust the background color */}
-      <ArticleFiltersDropdown size="sm" compact />
+      <SortFilter
+        type="articles"
+        variant="button"
+        buttonProps={{
+          className: classes.subnavDropdown,
+        }}
+      />
+      <ArticleFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="articles"

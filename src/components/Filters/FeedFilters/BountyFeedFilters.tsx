@@ -8,9 +8,14 @@ export function BountyFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <SortFilter type="bounties" variant="button" />
-      {/* // TODO.justin: adjust the background color */}
-      <BountyFiltersDropdown size="sm" compact />
+      <SortFilter
+        type="bounties"
+        variant="button"
+        buttonProps={{
+          className: classes.subnavDropdown,
+        }}
+      />
+      <BountyFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
     </Group>
   );
 }

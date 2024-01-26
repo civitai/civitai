@@ -11,9 +11,14 @@ export function PostFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <SortFilter type="posts" variant="button" />
-      {/* // TODO.justin: adjust the background color */}
-      <PostFiltersDropdown size="sm" compact />
+      <SortFilter
+        type="posts"
+        variant="button"
+        buttonProps={{
+          className: classes.subnavDropdown,
+        }}
+      />
+      <PostFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="posts"

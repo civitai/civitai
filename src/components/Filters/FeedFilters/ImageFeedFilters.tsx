@@ -17,9 +17,15 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      {/* // TODO.justin: adjust the background color */}
-      <SortFilter type="images" variant="button" includeNewest={canViewNewest} />
-      <ImageFiltersDropdown size="sm" compact />
+      <SortFilter
+        type="images"
+        variant="button"
+        includeNewest={canViewNewest}
+        buttonProps={{
+          className: classes.subnavDropdown,
+        }}
+      />
+      <ImageFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="images"
