@@ -19,6 +19,21 @@ export function splitUppercase(value: string, options?: { splitNumbers?: boolean
     .join(' ');
 }
 
+const stripeCurrencyMap: Record<string, [string, number]> = {
+  usd: ['$', 100],
+  aud: ['$', 100],
+  cad: ['$', 100],
+  eur: ['€', 100],
+  gbp: ['£', 100],
+  jpy: ['¥', 1],
+  krw: ['₩', 1],
+};
+
+export function getStripeCurrencyDisplay(unitAmount: number, currency: string) {
+  const [symbol, divisor] = stripeCurrencyMap[currency.toLowerCase()] ?? ['$', 100];
+  return symbol + (unitAmount / divisor).toLocaleString();
+}
+
 const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
