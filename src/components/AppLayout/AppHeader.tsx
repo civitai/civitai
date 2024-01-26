@@ -30,7 +30,6 @@ import {
   IconBrush,
   IconChevronDown,
   IconCircleDashed,
-  IconClubs,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -68,6 +67,7 @@ import {
   useState,
 } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -784,6 +784,7 @@ export function AppHeader({
               )}
               {currentUser?.showNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
+              {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
             </Group>
             {!currentUser ? (
@@ -874,6 +875,7 @@ export function AppHeader({
               </ActionIcon>
             )}
             {currentUser && <CivitaiLinkPopover />}
+            {currentUser && features.chat && <ChatButton />}
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}

@@ -25,6 +25,7 @@ import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
   sd_1_5: 'SD_1_5',
+  // anime: 'civitai:9409@33672', // TODO [bw] adjust this with rick
   anime: 'anime',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',

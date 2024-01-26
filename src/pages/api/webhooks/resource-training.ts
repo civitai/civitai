@@ -1,6 +1,7 @@
 import { TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
 import { env } from '~/env/server.mjs';
+import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
@@ -233,9 +234,12 @@ async function updateRecords(
     });
   }
 
-  await fetch(`${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/training:update`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
-  });
+  await fetch(
+    `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
+    }
+  );
 }

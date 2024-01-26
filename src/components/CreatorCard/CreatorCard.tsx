@@ -1,16 +1,17 @@
 import { ActionIcon, Card, Group, Stack } from '@mantine/core';
+import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { formatDate } from '~/utils/date-helpers';
-import { trpc } from '~/utils/trpc';
-import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
-import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { constants } from '~/server/common/constants';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { formatDate } from '~/utils/date-helpers';
+import { sortDomainLinks } from '~/utils/domain-link';
+import { trpc } from '~/utils/trpc';
+import { TipBuzzButton } from '../Buzz/TipBuzzButton';
+import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
 
 export function CreatorCard({
   user,
@@ -65,6 +66,7 @@ export function CreatorCard({
                   entityId={tipBuzzEntityId}
                   entityType={tipBuzzEntityType}
                 />
+                <ChatUserButton user={creator} size="xs" compact />
                 <FollowUserButton userId={creator.id} size="xs" compact />
               </Group>
             )}
