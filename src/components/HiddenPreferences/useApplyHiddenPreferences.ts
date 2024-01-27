@@ -12,15 +12,14 @@ export function useApplyHiddenPreferences<
 >({
   type,
   data,
-  options,
+  showHidden,
+  disabled,
 }: {
   type: T;
-  data: TData;
-  options?: {
-    showHidden?: boolean;
-  };
+  data?: TData;
+  showHidden?: boolean;
+  disabled?: boolean;
 }) {
-  const { showHidden } = options ?? {};
   const currentUser = useCurrentUser();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const {
@@ -28,11 +27,12 @@ export function useApplyHiddenPreferences<
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
-    isLoading,
+    isLoading: loadingPreferences,
   } = useHiddenPreferencesContext();
 
   const items = useMemo(() => {
-    if (isLoading) return [];
+    if (disabled) return data ?? [];
+    if (loadingPreferences || !data) return [];
     const { key, value } = paired<DataTypeMap>(type, data);
 
     switch (key) {
@@ -81,7 +81,7 @@ export function useApplyHiddenPreferences<
           if (hiddenUsers.get(user.id)) return false;
           return true;
         });
-      case 'collection':
+      case 'collections':
         return value
           .filter((collection) => {
             if (collection.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
@@ -107,7 +107,7 @@ export function useApplyHiddenPreferences<
               : null;
           })
           .filter(isDefined);
-      case 'bounty':
+      case 'bounties':
         return value
           .filter((bounty) => {
             if (bounty.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
@@ -119,7 +119,7 @@ export function useApplyHiddenPreferences<
           .map(({ images, ...x }) => {
             const filteredImages = images?.filter((i) => {
               if (hiddenImages.get(i.id)) return false;
-              for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
+              for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
               return true;
             });
             return filteredImages.length
@@ -141,12 +141,17 @@ export function useApplyHiddenPreferences<
     hiddenImages,
     hiddenTags,
     hiddenUsers,
-    isLoading,
+    loadingPreferences,
     browsingMode,
     showHidden,
+    disabled,
   ]);
 
-  return { isLoading, items: items as TData, hiddenCount: data.length - items.length };
+  return {
+    loadingPreferences,
+    items: items as TData,
+    hiddenCount: !!data?.length ? data.length - items.length : 0,
+  };
 }
 
 type BaseImage = {
@@ -159,7 +164,7 @@ type BaseImage = {
 type BaseModel = {
   id: number;
   user: { id: number };
-  images: { id: number; tags: number[] }[];
+  images: { id: number; tags?: number[] }[];
   tags?: number[];
 };
 
@@ -200,7 +205,7 @@ type BaseBounty = {
   tags?: number[];
   images: {
     id: number;
-    tags?: number[];
+    tagIds?: number[];
   }[];
 };
 
@@ -209,8 +214,8 @@ type DataTypeMap = {
   models: BaseModel[];
   articles: BaseArticle[];
   users: BaseUser[];
-  collection: BaseCollection[];
-  bounty: BaseBounty[];
+  collections: BaseCollection[];
+  bounties: BaseBounty[];
 };
 
 type Boxed<Mapping> = { [K in keyof Mapping]: { key: K; value: Mapping[K] } }[keyof Mapping];

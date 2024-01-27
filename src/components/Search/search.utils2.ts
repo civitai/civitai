@@ -61,22 +61,28 @@ function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
 
 type ArticlesTransformed = ReturnType<typeof articlesTransform>;
 function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
-  return items;
+  return items.map((article) => ({ ...article }));
 }
 
 type BountiesTransformed = ReturnType<typeof bountiesTransform>;
 function bountiesTransform(items: Hit<BountySearchIndexRecord>[]) {
-  return items;
+  return items.map((bounty) => ({
+    ...bounty,
+    tags: bounty.tags.map((x) => x.id),
+    images: bounty.images.map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) })),
+  }));
 }
 
 type CollectionsTransformed = ReturnType<typeof collectionsTransform>;
 function collectionsTransform(items: Hit<CollectionSearchIndexRecord>[]) {
   return items.map((collection) => ({
     ...collection,
-    image: {
-      ...collection.image,
-      tagIds: collection.image?.tags.map((x) => x.id),
-    },
+    image: collection.image
+      ? {
+          ...collection.image,
+          tagIds: collection.image?.tags.map((x) => x.id),
+        }
+      : null,
     images: collection.images.map((image) => ({
       ...image,
       tagIds: image.tags.map((x) => x.id),

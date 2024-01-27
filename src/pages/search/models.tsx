@@ -24,6 +24,10 @@ import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { NoContent } from '~/components/NoContent/NoContent';
 
 export default function ModelsSearch() {
   return (
@@ -93,33 +97,16 @@ const RenderFilters = () => {
 };
 
 export function ModelsHitList() {
-  const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
+  const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const { status } = useInstantSearch();
   const { classes } = useSearchLayoutStyles();
-  const currentUser = useCurrentUser();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
 
-  const {
-    models: hiddenModels,
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
-
-  const models = useMemo(() => {
-    return applyUserPreferencesModels({
-      items: hits,
-      hiddenModels,
-      hiddenImages,
-      hiddenTags,
-      hiddenUsers,
-      currentUserId: currentUser?.id,
-    });
-  }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
-
-  const hiddenItems = hits.length - models.length;
+  const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
+    type: 'models',
+    data: hits,
+  });
 
   useEffect(() => {
     if (!modelId) {
@@ -137,9 +124,9 @@ export function ModelsHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems} models have been hidden due to your settings.
+                {hiddenCount} models have been hidden due to your settings.
               </Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
@@ -191,18 +178,16 @@ export function ModelsHitList() {
 
   return (
     <Stack>
-      {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} models have been hidden due to your settings.</Text>
+      {hiddenCount > 0 && (
+        <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
-      <Box className={classes.grid}>
-        {models.map((model, index) => {
-          return (
-            <div key={index} id={model.id.toString()}>
-              {createRenderElement(ModelCard, index, model)}
-            </div>
-          );
-        })}
-      </Box>
+      <MasonryGrid
+        data={items as any}
+        render={ModelCard}
+        itemId={(x) => x.id}
+        empty={<NoContent />}
+        withAds
+      />
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

@@ -81,7 +81,7 @@ function ImagesHitList() {
 
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'images'>();
 
-  const { isLoading, items, hiddenCount } = useApplyHiddenPreferences({
+  const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'images',
     data: hits,
   });
@@ -133,7 +133,7 @@ function ImagesHitList() {
     );
   }
 
-  if (isLoading) {
+  if (loadingPreferences) {
     return (
       <Box>
         <Center mt="md">

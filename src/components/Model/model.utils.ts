@@ -1,10 +1,9 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput, GetModelsByCategoryInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
@@ -13,10 +12,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isDefined } from '~/utils/type-guards';
 import { isEqual } from 'lodash-es';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 const modelQueryParamSchema = z
   .object({
@@ -109,59 +107,15 @@ export const useQueryModels = (
     },
     ...options,
   });
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
 
-  const currentUser = useCurrentUser();
-  const {
-    models: hiddenModels,
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: isLoadingHidden,
-  } = useHiddenPreferencesContext();
-  const models = useMemo(() => {
-    if (isLoadingHidden) return [];
-    const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
-    const filtered = arr
-      .filter((x) => {
-        // TODO safe mode
-        if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-        if (hiddenUsers.get(x.user.id)) return false;
-        if (hiddenModels.get(x.id) && !_filters.hidden) return false;
-        for (const tag of x.tags) if (hiddenTags.get(tag)) return false;
-        return true;
-      })
-      .map(({ images, ...x }) => {
-        const filteredImages = images?.filter((i) => {
-          if (hiddenImages.get(i.id)) return false;
-          for (const tag of i.tags ?? []) {
-            if (hiddenTags.get(tag)) return false;
-          }
-          return true;
-        });
+  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const { items, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'models',
+    data: flatData,
+    showHidden: !!_filters.hidden,
+  });
 
-        if (!filteredImages?.length) return null;
-
-        return {
-          ...x,
-          image: filteredImages[0],
-        };
-      })
-      .filter(isDefined);
-
-    return filtered;
-  }, [
-    data,
-    hiddenModels,
-    hiddenImages,
-    hiddenTags,
-    hiddenUsers,
-    currentUser,
-    isLoadingHidden,
-    _filters.hidden,
-  ]);
-
-  return { data, models, isLoading: isLoading || isLoadingHidden, ...rest };
+  return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
 export const useQueryModelCategories = (

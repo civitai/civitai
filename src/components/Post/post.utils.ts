@@ -60,6 +60,7 @@ export const useQueryPosts = (
     isLoading: loadingHidden,
   } = useHiddenPreferencesContext();
 
+  // TODO - abstract to `useApplyHiddenPreferences
   const posts = useMemo(() => {
     if (loadingHidden) return [];
 

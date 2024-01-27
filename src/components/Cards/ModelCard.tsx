@@ -6,8 +6,6 @@ import {
   Menu,
   Stack,
   Text,
-  ThemeIcon,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -20,7 +18,6 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
-  IconClubs,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -76,11 +73,9 @@ export function ModelCard({ data, forceInView }: Props) {
     skip: forceInView,
     initialInView: forceInView,
   });
+  const image = data.images[0];
   const { classes, cx, theme } = useCardStyles({
-    aspectRatio:
-      data.image && data.image.width && data.image.height
-        ? data.image.width / data.image.height
-        : 1,
+    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
   const router = useRouter();
@@ -110,7 +105,7 @@ export function ModelCard({ data, forceInView }: Props) {
     />
   );
 
-  const reportImageOption = data.image && (
+  const reportImageOption = image && (
     <ReportMenuItem
       key="report-image"
       label="Report image"
@@ -118,7 +113,7 @@ export function ModelCard({ data, forceInView }: Props) {
         openContext('report', {
           entityType: ReportEntity.Image,
           // Explicitly cast to number because we know it's not undefined
-          entityId: data.image?.id as number,
+          entityId: image?.id as number,
         })
       }
     />
@@ -204,19 +199,19 @@ export function ModelCard({ data, forceInView }: Props) {
 
   return (
     <HolidayFrame {...cardDecoration}>
-      <FeedCard className={!data.image ? classes.noImage : undefined} href={href}>
+      <FeedCard className={!image ? classes.noImage : undefined} href={href}>
         <div className={classes.root} ref={ref}>
-          {data.image && (
+          {image && (
             <div className={classes.blurHash}>
-              <MediaHash {...data.image} />
+              <MediaHash {...image} />
             </div>
           )}
           <div className={classes.content} style={{ opacity: inView ? 1 : undefined }}>
             {inView && (
               <>
-                {data.image && (
+                {image && (
                   <ImageGuard
-                    images={[data.image]}
+                    images={[image]}
                     connect={{ entityId: data.id, entityType: 'model' }}
                     render={(image) => (
                       <ImageGuard.Content>

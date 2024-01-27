@@ -203,8 +203,9 @@ export function AmbientModelCard({ data, height }: Props) {
   const features = useFeatureFlags();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
-  const { id, image, name, rank, user, locked, earlyAccessDeadline } = data ?? {};
+  const { id, images, name, rank, user, locked, earlyAccessDeadline } = data ?? {};
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
+  const image = images[0];
 
   const [loading, setLoading] = useState(false);
 
