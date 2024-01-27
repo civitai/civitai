@@ -1,26 +1,24 @@
 import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { useMemo } from 'react';
-import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
-import { ImageCard } from '~/components/Cards/ImageCard';
+import { useInstantSearch } from 'react-instantsearch';
 import {
   ChipRefinementList,
   DateRangeRefinement,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export default function ImageSearch() {
   return (
@@ -79,38 +77,23 @@ function RenderFilters() {
 }
 
 function ImagesHitList() {
-  const { classes } = useSearchLayoutStyles();
   const { status } = useInstantSearch();
 
-  const { hits, showMore, isLastPage } = useInfiniteHits<ImageSearchIndexRecord>();
-  const currentUser = useCurrentUser();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
+  const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'images'>();
 
-  const images = useMemo(() => {
-    return applyUserPreferencesImages<ImageSearchIndexRecord>({
-      items: hits,
-      hiddenImages,
-      hiddenTags,
-      hiddenUsers,
-      currentUserId: currentUser?.id,
-    });
-  }, [hits, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
-
-  const hiddenItems = hits.length - images.length;
+  const { isLoading, items, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: hits,
+  });
 
   if (hits.length === 0) {
     const NotFound = (
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems} images have been hidden due to your settings.
+                {hiddenCount} images have been hidden due to your settings.
               </Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
@@ -150,7 +133,7 @@ function ImagesHitList() {
     );
   }
 
-  if (loadingPreferences) {
+  if (isLoading) {
     return (
       <Box>
         <Center mt="md">
@@ -162,23 +145,37 @@ function ImagesHitList() {
 
   return (
     <Stack>
-      {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} images have been hidden due to your settings.</Text>
+      {hiddenCount > 0 && (
+        <Text color="dimmed">{hiddenCount} images have been hidden due to your settings.</Text>
       )}
-      <div
+      {/* <div
         className={classes.grid}
         style={{
-          // Overwrite default sizing here.
           gridTemplateColumns: `repeat(auto-fill, minmax(290px, 1fr))`,
         }}
       >
-        {/* TODO - fix type issues here. Problem is a type mismatch between ImageSearchIndexRecord and ImageGetInfinite  */}
+
         <ImagesProvider images={images as any}>
           {images.map((hit) => (
             <ImageCard key={hit.id} data={hit} />
           ))}
         </ImagesProvider>
-      </div>
+      </div> */}
+      <ImagesProvider images={items as any}>
+        {/* TODO - fix type issues here. Problem is a type mismatch between ImageSearchIndexRecord and ImageGetInfinite  */}
+        <MasonryColumns
+          data={items as any}
+          imageDimensions={(data) => {
+            const width = data?.width ?? 450;
+            const height = data?.height ?? 450;
+            return { width, height };
+          }}
+          maxItemHeight={600}
+          render={ImagesCard}
+          itemId={(data) => data.id}
+          withAds
+        />
+      </ImagesProvider>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

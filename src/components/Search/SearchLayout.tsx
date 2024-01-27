@@ -33,6 +33,9 @@ import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { z } from 'zod';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants } from '~/server/common/constants';
 
 const SIDEBAR_SIZE = 377;
 
@@ -186,10 +189,19 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
   );
 };
 
+const maxColumnCount = 7;
 SearchLayout.Content = function Content({ children }: { children: React.ReactNode }) {
   return (
     <ScrollArea p="md">
-      <Stack>{children}</Stack>
+      <MasonryProvider
+        columnWidth={constants.cardSizes.model}
+        maxColumnCount={maxColumnCount}
+        maxSingleColumnWidth={450}
+      >
+        <MasonryContainer p={0}>
+          <Stack>{children}</Stack>
+        </MasonryContainer>
+      </MasonryProvider>
     </ScrollArea>
   );
 };
