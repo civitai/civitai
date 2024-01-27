@@ -22,7 +22,7 @@ type SortFilterButtonProps = {
   buttonProps?: ButtonProps;
 };
 type SortFilterMenuProps = {
-  variant: 'menu';
+  variant?: 'menu';
 };
 type SortFilterComponentProps = SortFilterButtonProps | SortFilterMenuProps;
 

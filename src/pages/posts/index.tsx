@@ -2,12 +2,7 @@ import { Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
-import { SortFilter, ViewToggle } from '~/components/Filters';
-import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { PostCategoriesInfinite } from '~/components/Post/Categories/PostCategoriesInfinite';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
@@ -16,7 +11,6 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function PostsPage() {

@@ -48,7 +48,6 @@ export default function ArticlesPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer>
-          {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <Stack spacing="xs">
             <Announcements
               sx={() => ({

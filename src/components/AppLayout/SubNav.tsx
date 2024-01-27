@@ -16,7 +16,7 @@ const useStyles = createStyles((theme) => ({
     position: 'sticky',
     top: 0,
     left: 0,
-    zIndex: 10,
+    zIndex: 100,
     padding: `0 ${theme.spacing.md}px`,
     borderRadius: 0,
     transition: 'transform 0.3s',

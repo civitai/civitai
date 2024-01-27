@@ -35,6 +35,7 @@ import { NextLink } from '@mantine/next';
 import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInput';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openConfirmModal } from '@mantine/modals';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -44,6 +45,7 @@ const tagColor: Record<TagsOnTagsType, MantineColor> = {
 
 export default function Tags() {
   const queryUtils = trpc.useUtils();
+  const features = useFeatureFlags();
   const [sorting, setSorting] = useState<MRT_SortingState>([]);
 
   const { data, isLoading } = trpc.tag.getManagableTags.useQuery();

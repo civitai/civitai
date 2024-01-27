@@ -1089,7 +1089,7 @@ setPageOptions(BountyDetailsPage, {
     <ImageViewer>
       <ScrollAreaMain style={{ paddingTop: 0 }}>
         <SubNav />
-        {page}
+        {children}
       </ScrollAreaMain>
     </ImageViewer>
   ),
