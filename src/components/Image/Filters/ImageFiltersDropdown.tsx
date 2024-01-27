@@ -1,5 +1,6 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   createStyles,
@@ -7,6 +8,7 @@ import {
   Drawer,
   Group,
   Indicator,
+  MantineNumberSize,
   Popover,
   Stack,
 } from '@mantine/core';
@@ -55,9 +57,12 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function ImageFiltersDropdown({ query, onChange }: Props) {
+export function ImageFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -110,6 +115,7 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -118,7 +124,9 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        {...buttonProps}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />
@@ -246,7 +254,7 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
   );
 }
 
-type Props = {
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesInput>;
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
 };

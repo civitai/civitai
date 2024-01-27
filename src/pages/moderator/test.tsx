@@ -8,7 +8,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';

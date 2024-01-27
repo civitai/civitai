@@ -113,7 +113,7 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
     minWidth: 300,
     maxWidth: 600,
     // top: 'calc(var(--mantine-header-height,0) + 16px)',
-    top: 0,
+    top: 8,
     position: 'sticky',
     margin: '0 auto',
     alignSelf: 'center',

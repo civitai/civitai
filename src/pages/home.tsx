@@ -10,7 +10,6 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType, MetricTimeframe } from '@prisma/client';
@@ -90,19 +89,6 @@ export default function Home() {
               [theme.breakpoints.lg]: ['970x90', '728x90'],
             }}
           />
-          <Group position="apart" noWrap>
-            <FullHomeContentToggle />
-            {user && (
-              <ActionIcon
-                size="sm"
-                variant="light"
-                color="dark"
-                onClick={() => openContext('manageHomeBlocks', {})}
-              >
-                <IconSettings />
-              </ActionIcon>
-            )}
-          </Group>
         </MasonryContainer>
 
         {isLoading && (
