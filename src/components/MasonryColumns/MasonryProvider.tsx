@@ -1,4 +1,8 @@
-import React, { createContext, useContext } from 'react';
+import { Box, BoxProps } from '@mantine/core';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useColumnCount } from '~/components/MasonryColumns/masonry.utils';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { useDebouncer } from '~/utils/debouncer';
 
 export type MasonryContextState = {
   columnWidth: number;
@@ -6,6 +10,8 @@ export type MasonryContextState = {
   rowGap: number;
   maxColumnCount: number;
   maxSingleColumnWidth?: number;
+  columnCount: number;
+  combinedWidth: number;
 };
 
 const MasonryContext = createContext<MasonryContextState | null>(null);
@@ -23,7 +29,7 @@ type Props = {
   rowGap?: number;
   maxSingleColumnWidth?: number;
   children: React.ReactNode;
-};
+} & BoxProps;
 
 export function MasonryProvider({
   children,
@@ -33,7 +39,31 @@ export function MasonryProvider({
   columnGap = gap,
   rowGap = gap,
   maxSingleColumnWidth = columnWidth,
+  ...boxProps
 }: Props) {
+  // width will be set to the inner width of the element. (clientWidth - paddingX)
+  const [width, setWidth] = useState(0);
+  const debouncer = useDebouncer(100);
+  const containerRef = useResizeObserver<HTMLDivElement>((entry) => {
+    debouncer(() => setWidth(entry.contentRect.width));
+  });
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (node) {
+      const style = getComputedStyle(node);
+      const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      setWidth(node.clientWidth - paddingX);
+    }
+  }, []);
+
+  const [columnCount, combinedWidth] = useColumnCount(
+    width,
+    columnWidth,
+    columnGap,
+    maxColumnCount
+  );
+
   return (
     <MasonryContext.Provider
       value={{
@@ -42,9 +72,13 @@ export function MasonryProvider({
         rowGap,
         maxColumnCount,
         maxSingleColumnWidth,
+        columnCount,
+        combinedWidth,
       }}
     >
-      {children}
+      <Box ref={containerRef} {...boxProps}>
+        {children}
+      </Box>
     </MasonryContext.Provider>
   );
 }

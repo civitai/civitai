@@ -80,7 +80,7 @@ export default function UserModelsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid p={0}>
+        <MasonryContainer p={0}>
           <Stack spacing="xs">
             <Group spacing={8}>
               {selfView && (

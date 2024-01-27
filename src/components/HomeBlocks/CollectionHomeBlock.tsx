@@ -113,9 +113,9 @@ const icons = {
   article: IconFileText,
 };
 
-export const CollectionHomeBlock = ({ ...props }: Props) => {
+export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   return (
-    <HomeBlockWrapper py={32}>
+    <HomeBlockWrapper py={32} showAds={showAds}>
       <CollectionHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -388,4 +388,4 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 };
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
+type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };

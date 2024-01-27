@@ -49,7 +49,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Model Card V2',
     description: `A fresh style for model cards with more information and a better layout.`,
-    availability: ['user'],
+    availability: ['public'],
   },
   profileCollections: ['public'],
   imageSearch: ['dev'],
@@ -76,6 +76,7 @@ const featureFlags = createFeatureFlags({
   clubs: ['public'],
   createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
+  chat: ['user'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

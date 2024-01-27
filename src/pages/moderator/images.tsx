@@ -150,7 +150,7 @@ export default function Images() {
 
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
-      <MasonryContainer py="xl" size="xl">
+      <MasonryContainer py="xl">
         <Stack>
           <Paper
             withBorder

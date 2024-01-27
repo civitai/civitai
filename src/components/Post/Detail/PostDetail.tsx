@@ -12,13 +12,19 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
+import { CollectionType } from '@prisma/client';
 import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { Collection } from '~/components/Collection/Collection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -30,19 +36,13 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { toStringList } from '~/utils/array-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { CollectionType } from '@prisma/client';
-import { Collection } from '~/components/Collection/Collection';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { env } from '~/env/client.mjs';
-import { toStringList } from '~/utils/array-helpers';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ClubRequirementIndicator, ClubRequirementNotice } from '../../Club/ClubRequirementNotice';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -225,6 +225,7 @@ export function PostDetail({ postId }: { postId: number }) {
                   size="md"
                   compact
                 />
+                <ChatUserButton user={post.user} size="md" compact />
                 <FollowUserButton userId={post.user.id} size="md" compact />
               </Group>
             </Group>

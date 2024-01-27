@@ -264,7 +264,7 @@ const ExclusivePerksSection = () => {
 const waysToEarnBuzz: { text: string; value: number }[] = [
   {
     value: 10,
-    text: 'For every 1,000 ad impressions on your images or resources',
+    text: 'For every 1,000 ad or member views on your content',
   },
   {
     value: 10,

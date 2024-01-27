@@ -1,5 +1,3 @@
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { env } from '~/env/client.mjs';
 import {
   AutocompleteItem,
   AutocompleteProps,
@@ -8,6 +6,33 @@ import {
   Select,
   Text,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { IconChevronDown } from '@tabler/icons-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Configure, InstantSearch, useHits, useSearchBox } from 'react-instantsearch';
+import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
+import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
+import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
+import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
+import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
+import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
+import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
+import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
+import {
+  applyUserPreferencesArticles,
+  applyUserPreferencesBounties,
+  applyUserPreferencesCollections,
+  applyUserPreferencesImages,
+  applyUserPreferencesModels,
+  applyUserPreferencesUsers,
+} from '~/components/Search/search.utils';
+import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import { IndexToLabel, SearchPathToIndexMap } from '~/components/Search/useSearchState';
+import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
@@ -17,37 +42,12 @@ import {
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import React, { useEffect, useMemo, useState } from 'react';
-import { Configure, InstantSearch, useHits, useSearchBox } from 'react-instantsearch';
-import { SearchIndex, SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useDebouncedValue } from '@mantine/hooks';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
-import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
-import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
-import {
-  applyUserPreferencesArticles,
-  applyUserPreferencesBounties,
-  applyUserPreferencesCollections,
-  applyUserPreferencesImages,
-  applyUserPreferencesModels,
-  applyUserPreferencesUsers,
-} from '~/components/Search/search.utils';
-import { IconChevronDown } from '@tabler/icons-react';
-import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
-import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
-import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
-import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
-import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
-import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
-import { IndexToLabel, SearchPathToIndexMap } from '~/components/Search/useSearchState';
+import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
+import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const meilisearch = instantMeiliSearch(
@@ -151,14 +151,19 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   filters?: string;
   dropdownItemLimit?: number;
   clearable?: boolean;
+  startingIndex?: TargetIndex;
+  showIndexSelect?: boolean;
+  placeholder?: string;
+  hideBlankQuery?: boolean;
 };
 
 export const QuickSearchDropdown = ({
   filters,
   dropdownItemLimit = 5,
+  startingIndex,
   ...props
 }: QuickSearchDropdownProps) => {
-  const [targetIndex, setTargetIndex] = useState<TargetIndex>('models');
+  const [targetIndex, setTargetIndex] = useState<TargetIndex>(startingIndex ?? 'models');
   const handleTargetChange = (value: TargetIndex) => {
     setTargetIndex(value);
   };
@@ -204,6 +209,9 @@ const QuickSearchDropdownContent = ({
   filters,
   supportedIndexes,
   dropdownItemLimit = 5,
+  showIndexSelect = true,
+  placeholder,
+  hideBlankQuery = false,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TargetIndex;
@@ -234,6 +242,7 @@ const QuickSearchDropdownContent = ({
 
   const items = useMemo(() => {
     if (!results || !results.nbHits) return [];
+    if (hideBlankQuery && !query) return [];
 
     const getFilteredResults = () => {
       const opts = {
@@ -301,28 +310,30 @@ const QuickSearchDropdownContent = ({
 
   return (
     <Group className={classes.wrapper} spacing={0} noWrap>
-      <Select
-        classNames={{
-          root: classes.targetSelectorRoot,
-          input: classes.targetSelectorInput,
-          rightSection: classes.targetSelectorRightSection,
-        }}
-        maxDropdownHeight={280}
-        defaultValue={availableIndexes[0]}
-        // Ensure we disable search targets if they are not enabled
-        data={availableIndexes
-          .filter((value) =>
-            features.imageSearch ? true : SearchPathToIndexMap[value] !== IMAGES_SEARCH_INDEX
-          )
-          .map((index) => ({ label: IndexToLabel[SearchPathToIndexMap[index]], value: index }))}
-        rightSection={<IconChevronDown size={16} color="currentColor" />}
-        sx={{ flexShrink: 1 }}
-        onChange={onIndexNameChange}
-      />
+      {!!showIndexSelect && (
+        <Select
+          classNames={{
+            root: classes.targetSelectorRoot,
+            input: classes.targetSelectorInput,
+            rightSection: classes.targetSelectorRightSection,
+          }}
+          maxDropdownHeight={280}
+          defaultValue={availableIndexes[0]}
+          // Ensure we disable search targets if they are not enabled
+          data={availableIndexes
+            .filter((value) =>
+              features.imageSearch ? true : SearchPathToIndexMap[value] !== IMAGES_SEARCH_INDEX
+            )
+            .map((index) => ({ label: IndexToLabel[SearchPathToIndexMap[index]], value: index }))}
+          rightSection={<IconChevronDown size={16} color="currentColor" />}
+          sx={{ flexShrink: 1 }}
+          onChange={onIndexNameChange}
+        />
+      )}
       <ClearableAutoComplete
         key={indexName}
         classNames={classes}
-        placeholder="Search Civitai"
+        placeholder={placeholder ?? 'Search Civitai'}
         type="search"
         maxDropdownHeight={300}
         nothingFound={

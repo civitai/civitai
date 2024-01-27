@@ -3,7 +3,7 @@ import { Carousel } from '@mantine/carousel';
 import { createStyles } from '@mantine/core';
 import trieMemoize from 'trie-memoize';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props<TData> = {
@@ -28,7 +28,7 @@ export function MasonryCarousel<TData>({
   itemWrapperProps,
 }: Props<TData>) {
   const { classes } = useStyles();
-  const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContainerContext();
+  const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContext();
 
   const totalItems = data.length + (extra ? 1 : 0);
   // const key = id ?? (itemId ? data.map(itemId).join('_') : undefined);

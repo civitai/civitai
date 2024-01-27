@@ -21,12 +21,14 @@ type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
   disableStoreFilters?: boolean;
   showEof?: boolean;
+  showAds?: boolean;
 };
 
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
   disableStoreFilters = false,
+  showAds,
 }: InfiniteModelsProps) {
   const features = useFeatureFlags();
   const modelFilters = useModelFilters();
@@ -64,6 +66,7 @@ export function ModelsInfinite({
               render={ModelCard}
               itemId={(x) => x.id}
               empty={<NoContent />}
+              withAds={showAds}
             />
           ) : (
             <MasonryColumns
@@ -77,6 +80,7 @@ export function ModelsInfinite({
               maxItemHeight={600}
               render={AmbientModelCard}
               itemId={(data) => data.id}
+              withAds={showAds}
             />
           )}
 

@@ -1,15 +1,9 @@
 import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
-import { SessionUser } from 'next-auth';
 
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import {
-  CreateReportInput,
-  GetReportCountInput,
-  GetReportsInput,
-  ReportEntity,
-} from '~/server/schema/report.schema';
+import { CreateReportInput, GetReportsInput, ReportEntity } from '~/server/schema/report.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { addTagVotes } from '~/server/services/tag.service';
 import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
@@ -84,6 +78,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Collection]: 'collection',
   [ReportEntity.Bounty]: 'bounty',
   [ReportEntity.BountyEntry]: 'bountyEntry',
+  [ReportEntity.Chat]: 'chat',
 };
 
 const reportTypeConnectionMap = {
@@ -98,6 +93,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Collection]: 'collectionId',
   [ReportEntity.Bounty]: 'bountyId',
   [ReportEntity.BountyEntry]: 'bountyEntryId',
+  [ReportEntity.Chat]: 'chatId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {

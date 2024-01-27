@@ -54,15 +54,19 @@ export const getPlans = async () => {
     .filter(({ metadata }) => {
       return !!(metadata as any)?.[env.STRIPE_METADATA_KEY];
     })
-    .map(({ prices, ...product }) => {
+    .map((product) => {
+      const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
       const price = prices.filter((x) => x.id === product.defaultPriceId)[0];
+
       return {
         ...product,
-        price: { ...price, unitAmount: price.unitAmount ?? 0 },
+        price,
+        prices,
       };
     })
     .sort((a, b) => a.price.unitAmount - b.price.unitAmount);
 };
+export type StripePlan = Awaited<ReturnType<typeof getPlans>>[number];
 
 export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
   const subscription = await dbRead.customerSubscription.findUnique({
@@ -104,6 +108,7 @@ export const getUserSubscription = async ({ userId }: Schema.GetUserSubscription
     price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
   };
 };
+export type StripeSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
 
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();

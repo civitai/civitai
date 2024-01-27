@@ -1,34 +1,33 @@
 import {
+  ActionIcon,
   Button,
+  Center,
+  CloseButton,
   Group,
+  Loader,
   Radio,
   Stack,
   Text,
-  CloseButton,
-  ActionIcon,
-  Loader,
-  Center,
 } from '@mantine/core';
 
-import { showNotification, hideNotification } from '@mantine/notifications';
-import { NsfwLevel, ReportReason } from '@prisma/client';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import { ReportReason } from '@prisma/client';
 import { IconArrowLeft } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import produce from 'immer';
+import { useRouter } from 'next/router';
+import { useEffect, useMemo, useState } from 'react';
+import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
 import { ArticleNsfwForm, ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
-import { trpc } from '~/utils/trpc';
-import produce from 'immer';
-import { useRouter } from 'next/router';
-import { getLoginLink } from '~/utils/login-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useEffect } from 'react';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 const reports = [
   {
@@ -89,6 +88,7 @@ const reports = [
       ReportEntity.Collection,
       ReportEntity.Bounty,
       ReportEntity.BountyEntry,
+      ReportEntity.Chat,
     ],
   },
   {

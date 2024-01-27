@@ -1,6 +1,8 @@
 import { Stack, Title } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategoriesInfinite } from '~/components/Article/Categories/ArticleCategoriesInfinite';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
@@ -45,7 +47,8 @@ export default function ArticlesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer>
+          {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <Stack spacing="xs">
             <Announcements
               sx={() => ({
@@ -70,3 +73,5 @@ export default function ArticlesPage() {
     </>
   );
 }
+
+setPageOptions(ArticlesPage, { innerLayout: FeedLayout });

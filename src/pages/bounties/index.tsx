@@ -10,6 +10,8 @@ import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -73,7 +75,7 @@ export default function BountiesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer>
           <Stack spacing="xs">
             <Announcements
               sx={() => ({
@@ -104,3 +106,5 @@ export default function BountiesPage() {
     </>
   );
 }
+
+setPageOptions(BountiesPage, { innerLayout: FeedLayout });

@@ -52,13 +52,18 @@ export function CsamImageSelection() {
   if (!images.length) return <NoContent p="xl" message="No images found for this user" />;
 
   return (
-    <MasonryProvider columnWidth={300} maxColumnCount={7} maxSingleColumnWidth={450}>
+    <MasonryProvider
+      columnWidth={300}
+      maxColumnCount={7}
+      maxSingleColumnWidth={450}
+      style={{ height: '100%', width: '100%' }}
+    >
       <ScrollArea>
         <Title align="center" mb="md">
           CSAM Image Selection
         </Title>
         <IsClient>
-          <MasonryContainer size="xl" w="100%">
+          <MasonryContainer>
             <ImagesProvider images={images}>
               <MasonryColumns
                 data={images}
@@ -87,7 +92,7 @@ export function CsamImageSelection() {
         </IsClient>
       </ScrollArea>
       <Card p="xs" style={{ zIndex: 30 }}>
-        <MasonryContainer size="xl">
+        <MasonryContainer>
           <Group position="right">
             {/* <Button variant="default">Cancel</Button> */}
             <Badge>

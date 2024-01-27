@@ -8,7 +8,7 @@ import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBloc
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
-type Props = { homeBlockId: number };
+type Props = { homeBlockId: number; showAds?: boolean };
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -17,7 +17,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const AnnouncementHomeBlock = ({ homeBlockId }: Props) => {
+export const AnnouncementHomeBlock = ({ homeBlockId, showAds }: Props) => {
   const { classes } = useStyles();
 
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
@@ -83,7 +83,7 @@ export const AnnouncementHomeBlock = ({ homeBlockId }: Props) => {
     });
 
   return (
-    <HomeBlockWrapper className={classes.root}>
+    <HomeBlockWrapper className={classes.root} showAds={showAds}>
       <HomeBlockHeaderMeta metadata={metadata} />
       <ContainerGrid gutter="md">
         {announcements.map((announcement, index) => {

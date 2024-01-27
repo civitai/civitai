@@ -1,6 +1,8 @@
 import { Center, Loader, Stack } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
@@ -39,7 +41,7 @@ export default function EventsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid>
+        <MasonryContainer>
           <Stack spacing="xs">
             <Announcements
               sx={() => ({
@@ -67,3 +69,5 @@ export default function EventsPage() {
     </>
   );
 }
+
+setPageOptions(EventsPage, { innerLayout: FeedLayout });
