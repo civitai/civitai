@@ -1,9 +1,4 @@
-import {
-  HttpTransportType,
-  HubConnection,
-  HubConnectionBuilder,
-  HubConnectionState,
-} from '@microsoft/signalr';
+import { HttpTransportType, HubConnection, HubConnectionBuilder, HubConnectionState, } from '@microsoft/signalr';
 import { env } from '~/env/client.mjs';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
@@ -14,6 +9,7 @@ import { Deferred, EventEmitter } from './utils';
 interface SharedWorkerGlobalScope {
   onconnect: (event: MessageEvent) => void;
 }
+
 const _self: SharedWorkerGlobalScope = self as any;
 
 let connection: HubConnection | undefined;
@@ -89,7 +85,7 @@ const registerEvents = async (targets: string[]) => {
 
 const start = async (port: MessagePort) => {
   if (!port.postMessage) return;
-  port.start();
+  if (port.start) port.start();
 
   const postMessage = (req: WorkerOutgoingMessage) => port.postMessage(req);
   postMessage({ type: 'worker:ready' });
