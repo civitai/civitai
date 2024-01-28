@@ -55,6 +55,7 @@ import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { clickhouse } from '~/server/clickhouse/client';
+import dayjs from 'dayjs';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -437,10 +438,13 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('Generation is currently disabled');
 
   // Handle rate limiting
-  if (await generationLimiter.hasExceededLimit(userId.toString()))
-    throw throwRateLimitError(
-      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back in 1 hour.`
-    );
+  if (await generationLimiter.hasExceededLimit(userId.toString())) {
+    const limitHitTime = await generationLimiter.getLimitHitTime(userId.toString());
+    let message = 'You have exceeded the generation limit.';
+    if (!limitHitTime) message += ' Please try again later.';
+    else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
+    throw throwRateLimitError(message);
+  }
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');

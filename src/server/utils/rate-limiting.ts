@@ -89,23 +89,44 @@ export function createLimiter({
     return Number(countStr);
   }
 
+  async function setLimitHitTime(userKey: string) {
+    await redis.set(`${limitKey}:${userKey}`, Date.now(), {
+      EX: refetchInterval,
+      NX: true,
+    });
+  }
+
+  async function getLimit(userKey: string, fallbackKey = 'default') {
+    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
+    return Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
+  }
+
   async function hasExceededLimit(userKey: string, fallbackKey = 'default') {
     const count = await getCount(userKey);
     if (count === undefined) return false;
 
-    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
-    const limit = Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
+    const limit = await getLimit(userKey, fallbackKey);
     return limit !== 0 && count > limit;
   }
 
   async function increment(userKey: string, by = 1) {
-    const count = await getCount(userKey);
-    if (count === undefined) await populateCount(userKey);
+    let count = await getCount(userKey);
+    if (count === undefined) count = await populateCount(userKey);
     await redis.incrBy(`${counterKey}:${userKey}`, by);
+
+    const limit = await getLimit(userKey);
+    if (limit !== 0 && count && count + by > limit) await setLimitHitTime(userKey);
+  }
+
+  async function getLimitHitTime(userKey: string) {
+    const limitHitTime = await redis.get(`${limitKey}:${userKey}`);
+    if (!limitHitTime) return undefined;
+    return new Date(Number(limitHitTime));
   }
 
   return {
     hasExceededLimit,
+    getLimitHitTime,
     increment,
   };
 }
