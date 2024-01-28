@@ -1,6 +1,17 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import { ActionIcon, Center, Group, Menu, Paper, Text, Tooltip, createStyles } from '@mantine/core';
-import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Center,
+  Group,
+  Menu,
+  Paper,
+  Text,
+  Tooltip,
+  createStyles,
+  Stack,
+} from '@mantine/core';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { IconExclamationMark, IconInfoCircle, IconMessage, IconBrush } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
@@ -22,6 +33,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import { generationPanel } from '~/store/generation.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ImagesAsPostsCard({
   data,
@@ -33,8 +46,9 @@ export function ImagesAsPostsCard({
   height: number;
 }) {
   const { ref, inView } = useInView({ rootMargin: '200%' });
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   const { modelVersions, showModerationOptions, model } = useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
@@ -165,11 +179,39 @@ export function ImagesAsPostsCard({
                           {image.meta && 'civitaiResources' in (image.meta as object) && (
                             <OnsiteIndicator />
                           )}
-                          <ImageGuard.Report
-                            additionalMenuItems={moderationOptions(image.id)}
-                            withinPortal
-                          />
-                          <ImageGuard.ToggleImage position="top-left" />
+                          <Group
+                            position="apart"
+                            align="start"
+                            spacing={4}
+                            className={cx(classes.contentOverlay, classes.top)}
+                          >
+                            <ImageGuard.ToggleImage position="top-left" />
+                            <Stack spacing="xs" ml="auto">
+                              <ImageGuard.Report
+                                position="static"
+                                additionalMenuItems={moderationOptions(image.id)}
+                                withinPortal
+                              />
+                              {features.imageGeneration && image.meta && (
+                                <HoverActionButton
+                                  label="Remix"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    generationPanel.open({
+                                      type: 'image',
+                                      id: image.id,
+                                    });
+                                  }}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
+                            </Stack>
+                          </Group>
                           <RoutedDialogLink
                             name="imageDetail"
                             state={{ imageId: image.id, images: [image] }}
@@ -277,11 +319,39 @@ export function ImagesAsPostsCard({
                                 {image.meta && 'civitaiResources' in (image.meta as object) && (
                                   <OnsiteIndicator />
                                 )}
-                                <ImageGuard.Report
-                                  additionalMenuItems={moderationOptions(image.id)}
-                                  withinPortal
-                                />
-                                <ImageGuard.ToggleConnect position="top-left" />
+                                <Group
+                                  position="apart"
+                                  align="start"
+                                  spacing={4}
+                                  className={cx(classes.contentOverlay, classes.top)}
+                                >
+                                  <ImageGuard.ToggleConnect position="top-left" />
+                                  <Stack spacing="xs" ml="auto">
+                                    <ImageGuard.Report
+                                      additionalMenuItems={moderationOptions(image.id)}
+                                      position="static"
+                                      withinPortal
+                                    />
+                                    {features.imageGeneration && image.meta && (
+                                      <HoverActionButton
+                                        label="Remix"
+                                        size={30}
+                                        color="white"
+                                        variant="filled"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          generationPanel.open({
+                                            type: 'image',
+                                            id: image.id,
+                                          });
+                                        }}
+                                      >
+                                        <IconBrush stroke={2.5} size={16} />
+                                      </HoverActionButton>
+                                    )}
+                                  </Stack>
+                                </Group>
                                 <RoutedDialogLink
                                   name="imageDetail"
                                   state={{ imageId: image.id, images: data.images }}
@@ -401,6 +471,14 @@ const useStyles = createStyles((theme) => ({
     flexDirection: 'column',
     overflow: 'hidden',
   },
+  contentOverlay: {
+    position: 'absolute',
+    width: '100%',
+    left: 0,
+    zIndex: 10,
+    padding: theme.spacing.sm,
+  },
+  top: { top: 0 },
   reactions: {
     position: 'absolute',
     bottom: 6,
