@@ -105,39 +105,41 @@ model UserStripeConnect {
 
 enum BuzzWithdrawalRequestStatus {
   Requested
+  Canceled // Refunds buzz - allows user to cancel existing one.
   Rejected
-  Approved
+  Approved // Different than transferred in that a 3rd party can say it's a valid request, and the owners can reject after the fact.
   Reverted
-  Transfered
+  Transferred
 }
 
 model BuzzWithdrawalRequestHistory {
   id          String                      @id @default(cuid())
   requestId   String
   request     BuzzWithdrawalRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  updatedById Int?
-  updatedBy   User?                       @relation(fields: [updatedById], references: [id])
+  updatedById Int
+  updatedBy   User                        @relation(fields: [updatedById], references: [id], onDelete: Cascade)
   status      BuzzWithdrawalRequestStatus @default(Requested)
   note        String?
-  metadata    Json                        @default("{}")
   createdAt   DateTime                    @default(now())
+  metadata    Json                        @default("{}")
 }
 
 model BuzzWithdrawalRequest {
-  id                    String                         @id @default(cuid())
-  userId                Int?
-  user                  User?                          @relation(fields: [userId], references: [id])
-  connectedAccountId    String // Keeping this for double safe-measure :)                 
-  requestedBuzzAmount   Int
-  buzzPlatformFeeAmount Int?
-  toTransferBuzzAmount  Int?
-  transferedAmount      Int?
-  currency              Currency // We should always transfer on 
-  metadata              Json                           @default("{}")
-  createdAt             DateTime                       @default(now())
-  updatedAt             DateTime                       @updatedAt
-  status                BuzzWithdrawalRequestStatus    @default(Requested) // Computed from the history? :) 
-  history               BuzzWithdrawalRequestHistory[]
+  id                          String                         @id @default(cuid())
+  userId                      Int?
+  user                        User?                          @relation(fields: [userId], references: [id])
+  connectedAccountId          String // Keeping this for double safe-measure :)                 
+  buzzWithdrawalTransactionId String // from Buzz Service
+  requestedBuzzAmount         Int // 1000
+  platformFeeRate             Int // 3000 = 30% so we can do 30.25
+  transferredAmount           Int?
+  transferId                  String? // Stripe ID
+  currency                    Currency? // We should always transfer on USD really (?)
+  metadata                    Json                           @default("{}")
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
+  status                      BuzzWithdrawalRequestStatus    @default(Requested) // updated with trigger
+  history                     BuzzWithdrawalRequestHistory[]
 }
 
 model User {
