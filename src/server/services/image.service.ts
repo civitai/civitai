@@ -1,4 +1,5 @@
 import {
+  Availability,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -794,6 +795,7 @@ export const getAllImages = async ({
       i."postId",
       p."title" "postTitle",
       i."index",
+      i."availability",
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -1193,6 +1195,7 @@ type ImagesForModelVersions = {
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
+  availability: Availability;
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -1279,10 +1282,12 @@ export const getImagesForModelVersion = async ({
       i.hash,
       i.type,
       i.metadata,
-      t."modelVersionId"
+      t."modelVersionId", 
+      p."availability",
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
+    JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
 
