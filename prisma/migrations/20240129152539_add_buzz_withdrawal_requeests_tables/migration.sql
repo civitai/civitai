@@ -41,3 +41,17 @@ ALTER TABLE "BuzzWithdrawalRequestHistory" ADD CONSTRAINT "BuzzWithdrawalRequest
 
 -- AddForeignKey
 ALTER TABLE "BuzzWithdrawalRequest" ADD CONSTRAINT "BuzzWithdrawalRequest_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+CREATE OR REPLACE FUNCTION update_buzz_withdrawal_request_status()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Update status to be the latest
+    UPDATE "BuzzWithdrawalRequest" SET "status" = NEW."status", "updatedAt" = now() WHERE "id" = NEW."requestId";
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+---
+CREATE OR REPLACE TRIGGER trigger_update_buzz_withdrawal_request_status
+AFTER INSERT ON "UserBuzzWithdrawalRequestHistory"
+FOR EACH ROW
+EXECUTE FUNCTION update_buzz_withdrawal_request_status();
