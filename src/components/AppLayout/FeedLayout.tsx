@@ -7,6 +7,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { constants } from '~/server/common/constants';
+import { SubNav } from './SubNav';
 
 export function FeedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -23,14 +24,8 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
   const nsfw = router.pathname.includes('articles') ? true : undefined;
 
   return (
-    <ScrollArea
-      px="md"
-      sx={{
-        display: 'flex',
-        justifyContent: 'space-around',
-        gap: theme.spacing.md,
-      }}
-    >
+    <ScrollArea py={0}>
+      <SubNav />
       <IsClient>
         {/* <AscendeumAd
           adunit="StickySidebar_A"
@@ -47,7 +42,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           maxColumnCount={maxColumnCount}
           maxSingleColumnWidth={450}
           style={{ margin: 0, flex: 1, zIndex: 10 }}
-          px={0}
+          p="md"
         >
           <AscendeumAd
             adunit="Leaderboard_A"

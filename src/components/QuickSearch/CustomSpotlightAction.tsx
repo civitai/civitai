@@ -91,13 +91,12 @@ export function CustomSpotlightAction({
 }: SpotlightActionProps) {
   const { classes } = useStyles({ hovered }, { styles, classNames, name: 'Spotlight' });
   const { closeSpotlight } = useSpotlight();
-  const features = useFeatureFlags();
   const { group, ...actionProps } = action;
   const { updatedQuery } = applyQueryMatchers(query);
 
   const { Component: ActionItem, getHref } = actions[group as ActionType] ?? {
     Component: DefaultSpotlightAction,
-    getHref: () => `${features.alternateHome ? '/models' : '/'}?query=${updatedQuery}&view=feed`,
+    getHref: () => `/models?query=${updatedQuery}&view=feed`,
   };
 
   return (

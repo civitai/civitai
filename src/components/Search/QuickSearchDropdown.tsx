@@ -44,6 +44,7 @@ import { ModelSearchIndexRecord } from '~/server/search-index/models.search-inde
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
+import { searchClient } from '~/components/Search/search.client';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -141,12 +142,14 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   showIndexSelect?: boolean;
   placeholder?: string;
   hideBlankQuery?: boolean;
+  disableInitialSearch?: boolean;
 };
 
 export const QuickSearchDropdown = ({
   filters,
   dropdownItemLimit = 5,
   startingIndex,
+  disableInitialSearch,
   ...props
 }: QuickSearchDropdownProps) => {
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(startingIndex ?? 'models');
@@ -155,7 +158,10 @@ export const QuickSearchDropdown = ({
   };
 
   return (
-    <InstantSearch searchClient={meilisearch} indexName={searchIndexMap[targetIndex]}>
+    <InstantSearch
+      searchClient={disableInitialSearch ? searchClient : meilisearch}
+      indexName={searchIndexMap[targetIndex]}
+    >
       <Configure hitsPerPage={dropdownItemLimit} filters={filters} />
 
       <QuickSearchDropdownContent

@@ -17,7 +17,6 @@ import {
   ThemeIcon,
   Alert,
   ScrollArea,
-  Textarea,
   Modal,
   NumberInput,
   Menu,
@@ -103,6 +102,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { ScrollArea as ScrollAreaMain } from '~/components/ScrollArea/ScrollArea';
+import { SubNav } from '~/components/AppLayout/SubNav';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -129,7 +129,7 @@ export default function BountyDetailsPage({
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
@@ -1087,7 +1087,10 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 setPageOptions(BountyDetailsPage, {
   innerLayout: ({ children }: { children: React.ReactNode }) => (
     <ImageViewer>
-      <ScrollAreaMain>{children}</ScrollAreaMain>
+      <ScrollAreaMain style={{ paddingTop: 0 }}>
+        <SubNav />
+        {children}
+      </ScrollAreaMain>
     </ImageViewer>
   ),
 });

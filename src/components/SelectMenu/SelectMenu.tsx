@@ -4,13 +4,13 @@ import {
   Text,
   createStyles,
   useMantineTheme,
-  MenuProps,
   Button,
   Drawer,
   Stack,
   UnstyledButton,
+  ButtonProps,
 } from '@mantine/core';
-import { IconCheck, IconChevronDown, IconFilter, IconSortDescending } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -21,6 +21,7 @@ type SelectMenu<T extends string | number> = {
   value?: T;
   disabled?: boolean;
   children?: React.ReactNode;
+  buttonProps?: ButtonProps;
 };
 
 export function SelectMenu<T extends string | number>({
@@ -100,6 +101,7 @@ export function SelectMenuV2<T extends string | number>({
   value,
   disabled,
   children,
+  buttonProps,
 }: SelectMenu<T>) {
   const { classes, theme, cx } = useStyles();
   const [opened, setOpened] = useState(false);
@@ -112,6 +114,9 @@ export function SelectMenuV2<T extends string | number>({
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       disabled={disabled}
       rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+      size="sm"
+      compact
+      {...buttonProps}
       onClick={() => setOpened((o) => !o)}
     >
       <Group spacing={4} noWrap>

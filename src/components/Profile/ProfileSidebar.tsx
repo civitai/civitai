@@ -136,20 +136,21 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     />
   );
 
-  const tipBuzzBtn = (
+  const TipBuzzBtn = ({ label }: { label?: string }) => (
     <TipBuzzButton
       toUserId={user.id}
       size={sizeOpts.button}
       variant={isMobile ? 'filled' : 'light'}
       color="yellow.7"
-      label="Tip"
+      label={label}
       sx={{ fontSize: '14px', fontWeight: 590 }}
     />
   );
 
-  const chatBtn = (
+  const ChatBtn = ({ label }: { label?: string }) => (
     <ChatUserButton
       user={user}
+      label={label}
       sx={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5, color: theme.colors.success[2] }}
     />
   );
@@ -196,8 +197,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           <Group noWrap spacing={4}>
             {muted ? mutedAlert : editProfileBtn}
             {followUserBtn}
-            {tipBuzzBtn}
-            {chatBtn}
+            <TipBuzzBtn label="" />
+            <ChatBtn label="" />
             {shareBtn}
             <UserContextMenu username={username} />
           </Group>
@@ -246,8 +247,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           {followUserBtn}
         </Group>
       )}
-      {!isMobile && tipBuzzBtn}
-      {!isMobile && chatBtn}
+      {!isMobile && <TipBuzzBtn />}
+      {!isMobile && <ChatBtn />}
 
       <Divider my={sizeOpts.spacing} />
 

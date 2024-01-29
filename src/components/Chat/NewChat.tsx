@@ -68,6 +68,7 @@ export function NewChat() {
       </Group>
       <Box px="sm">
         <QuickSearchDropdown
+          disableInitialSearch
           supportedIndexes={['users']}
           onItemSelected={(_entity, item) => {
             const newUsers = [...state.selectedUsers, item as UserSearchIndexRecord];

@@ -15,8 +15,8 @@ export const searchClient: InstantSearchProps['searchClient'] = {
     // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
     // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
     if (
-      requests.every(({ params }) => !params?.query) &&
-      !location.pathname.startsWith('/search')
+      requests.every(({ params }) => !params?.query)
+      // && !location.pathname.startsWith('/search')
     ) {
       return Promise.resolve({
         results: requests.map(() => ({
