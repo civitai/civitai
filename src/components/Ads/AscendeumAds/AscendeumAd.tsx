@@ -1,4 +1,4 @@
-import { BoxProps, Center, Group, Paper, Stack, Text } from '@mantine/core';
+import { Box, BoxProps, Center, Group, Paper, Stack, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
@@ -87,7 +87,7 @@ export function AscendeumAd<T extends AdUnitType>({
   const zoneId = exoclickSizes[size];
 
   const content = (
-    <Paper ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
+    <Box ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
       {isCurrentStack && inView && (
         <>
           {adsBlocked ? (
@@ -129,7 +129,7 @@ export function AscendeumAd<T extends AdUnitType>({
           )}
         </>
       )}
-    </Paper>
+    </Box>
   );
 
   return includeWrapper ? (

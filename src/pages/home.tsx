@@ -82,7 +82,7 @@ export default function Home() {
         <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
           <AscendeumAd
             adunit="Leaderboard_A"
-            style={{ margin: `0 auto ${theme.spacing.xs}px` }}
+            style={{ margin: `${theme.spacing.md}px auto ${theme.spacing.xs}px` }}
             sizes={{
               [0]: '300x100',
               [theme.breakpoints.md]: '728x90',
