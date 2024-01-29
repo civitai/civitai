@@ -116,13 +116,11 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             }
           />
         )}
-        {
-          <ToggleSearchableMenuItem
-            entityType="Article"
-            entityId={article.id}
-            key="toggle-searchable-menu-item"
-          />
-        }
+        <ToggleSearchableMenuItem
+          entityType="Article"
+          entityId={article.id}
+          key="toggle-searchable-menu-item"
+        />
         {currentUser && (isOwner || isModerator) && (
           <>
             <Menu.Item

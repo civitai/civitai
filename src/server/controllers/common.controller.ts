@@ -1,6 +1,11 @@
 import { Context } from '~/server/createContext';
 import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
-import { AvailabilityInput, GetByEntityInput } from '~/server/schema/base.schema';
+import {
+  AvailabilityInput,
+  GetByEntityInput,
+  SupportedAvailabilityResources,
+  supportedAvailabilityResources,
+} from '~/server/schema/base.schema';
 import {
   entityAvailabilityUpdate,
   entityRequiresClub,
@@ -25,13 +30,13 @@ export const getEntityAccessHandler = async ({
   input: GetByEntityInput;
 }) => {
   try {
-    if (!supportedClubEntities.some((e) => (e as string) === entityType)) {
+    if (!supportedAvailabilityResources.some((e) => (e as string) === entityType)) {
       throw throwBadRequestError(`Unsupported entity type: ${entityType}`);
     }
 
     const entityAccess = await hasEntityAccess({
       entityIds: entityId,
-      entityType: entityType as SupportedClubEntities,
+      entityType: entityType as SupportedAvailabilityResources,
       userId: ctx.user?.id,
       isModerator: !!ctx.user?.isModerator,
     });

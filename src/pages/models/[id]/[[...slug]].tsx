@@ -109,6 +109,7 @@ import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -750,6 +751,11 @@ export default function ModelDetailsV2({
                         entityId={model.id}
                       />
                     )}
+                    <ToggleSearchableMenuItem
+                      entityType="Model"
+                      entityId={model.id}
+                      key="toggle-searchable-menu-item"
+                    />
                     {(!currentUser || !isOwner || isModerator) && (
                       <LoginRedirect reason="report-model">
                         <Menu.Item

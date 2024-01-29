@@ -9,6 +9,7 @@ import { useMutateBounty } from './bounty.utils';
 import { ReportMenuItem } from '../MenuItems/ReportMenuItem';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 export function BountyContextMenu({
   bounty,
@@ -56,6 +57,13 @@ export function BountyContextMenu({
       >
         Delete
       </Menu.Item>
+    ) : null,
+    isModerator ? (
+      <ToggleSearchableMenuItem
+        entityType="Bounty"
+        entityId={bounty.id}
+        key="toggle-searchable-menu-item"
+      />
     ) : null,
     isModerator || (!expired && isOwner) ? (
       <Link key="edit" href={`/bounties/${bounty.id}/edit`} passHref>

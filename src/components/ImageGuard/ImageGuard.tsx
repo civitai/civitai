@@ -56,6 +56,7 @@ import { constants } from '~/server/common/constants';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useImageStore } from '~/store/image.store';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 export type ImageGuardConnect = {
   entityType:
@@ -444,6 +445,19 @@ ImageGuard.Report = function ReportImage({
               }
             }
           }}
+        />
+      ),
+    });
+  }
+
+  if (image.postId) {
+    defaultMenuItems.push({
+      key: 'toggle-searchable-menu-item',
+      component: (
+        <ToggleSearchableMenuItem
+          entityType="Post"
+          entityId={image.postId}
+          key="toggle-searchable-menu-item"
         />
       ),
     });

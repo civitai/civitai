@@ -64,7 +64,7 @@ export const resourceInput = z.object({
 
 export type ResourceInput = z.infer<typeof resourceInput>;
 
-const supportedAvailabilityResources = [
+export const supportedAvailabilityResources = [
   'ModelVersion',
   'Article',
   'Post',
