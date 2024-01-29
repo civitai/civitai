@@ -1,4 +1,4 @@
-import { Alert, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Anchor, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   CheckpointType,
   CommercialUse,
@@ -35,10 +35,13 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 const schema = modelUpsertSchema
   .extend({
     category: z.number().optional(),
+    description: getSanitizedStringSchema(),
   })
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
@@ -61,7 +64,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
-    description: model?.description ?? null,
+    description: model?.description ?? '',
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: model?.type ?? 'Checkpoint',
@@ -76,13 +79,9 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
   };
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
-  const [type, allowDerivatives, allowCommercialUse] = form.watch([
-    'type',
-    'allowDerivatives',
-    'allowCommercialUse',
-  ]);
+  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
 
@@ -135,6 +134,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
         ...model,
         tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
         category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+        description: model.description ?? '',
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultCategory, model]);
@@ -193,7 +193,16 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             </Stack>
             <InputSelect
               name="category"
-              label="Category"
+              label={
+                <Group spacing={4}>
+                  <Input.Label>Category</Input.Label>
+                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                    {/* TODO.howto: get the right content and link */}
+                    <Text>Hello, we are missing the content for this bubble</Text>
+                  </InfoPopover>
+                </Group>
+              }
+              placeholder="Select a Category"
               nothingFound="Nothing found"
               data={categories}
               loading={loadingCategories}
@@ -201,7 +210,15 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             />
             <InputTags
               name="tagsOnModels"
-              label="Tags"
+              label={
+                <Group spacing={4}>
+                  <Input.Label>Tags</Input.Label>
+                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                    {/* TODO.howto: get the right content and link */}
+                    <Text>Hello, we are missing the content for this bubble</Text>
+                  </InfoPopover>
+                </Group>
+              }
               description="Search or create tags for your model"
               target={[TagTarget.Model]}
               filter={(tag) =>
@@ -210,7 +227,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             />
             <InputRTE
               name="description"
-              label="About your model"
+              label="Model Description"
               description="Tell us what your model does"
               includeControls={[
                 'heading',
@@ -222,6 +239,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 'colors',
               ]}
               editorSize="xl"
+              withAsterisk
             />
           </Stack>
         </ContainerGrid.Col>
@@ -242,19 +260,36 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         label="Use different permissions on merges"
                       />
                     )}
+                    <Text size="xs" color="dimmed">
+                      Learn more about how licensing works by reading our{' '}
+                      <Anchor
+                        href="https://education.civitai.com"
+                        target="_blank"
+                        rel="nofollow noreferrer"
+                      >
+                        {/* TODO.howto: get the right wording and link */}
+                        Licensing Article goes here
+                      </Anchor>
+                    </Text>
                   </Stack>
                 </ContainerGrid.Col>
                 <ContainerGrid.Col xs={12} sm={6}>
                   <Stack spacing="xs">
                     <Stack spacing={4}>
-                      <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
-                        Commercial Use
-                      </Text>
+                      <Group spacing={4}>
+                        <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
+                          Commercial Use
+                        </Text>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                          <Text>Hello, we are missing the content for this bubble</Text>
+                        </InfoPopover>
+                      </Group>
                       <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
                         Select the most permissive option that applies to your model. Options are
                         listed from least to most permissive.
                       </Text>
                     </Stack>
+                    {/* TODO.howto: transform this into input checkboxes */}
                     <InputSegmentedControl
                       name="allowCommercialUse"
                       orientation="vertical"

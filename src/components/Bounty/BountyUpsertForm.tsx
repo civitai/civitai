@@ -73,6 +73,10 @@ import { stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
+import { InfoPopover } from '../InfoPopover/InfoPopover';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -328,6 +332,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           <Title className={classes.title}>
             {bounty ? `Editing ${bounty.name} bounty` : 'Create a new bounty'}
           </Title>
+          <FeatureIntroduction
+            feature="bounty-create"
+            contentSlug={['feature-introduction', 'bounty-create']}
+            actionButton={<HelpButton size="md" radius="xl" />}
+          />
         </Group>
         {alreadyStarted && (
           <AlertWithIcon icon={<IconExclamationMark size={20} />} iconColor="blue" size="sm">
@@ -351,9 +360,27 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       <InputSelect
                         className={classes.fluid}
                         name="type"
-                        label="Bounty Type"
+                        label={
+                          <Group spacing={4}>
+                            <Input.Label required>Bounty Type</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              {/* TODO.howto: get correct text and link */}
+                              <Text>
+                                Not sure which type to choose? Learn more about{' '}
+                                <Anchor
+                                  href="https://education.civitai.com/civitais-guide-to-bounties/"
+                                  target="_blank"
+                                  rel="nofollow noreferrer"
+                                  span
+                                >
+                                  bounties
+                                </Anchor>
+                                .
+                              </Text>
+                            </InfoPopover>
+                          </Group>
+                        }
                         placeholder="Please select a bounty type"
-                        withAsterisk
                         data={Object.values(BountyType).map((value) => ({
                           value,
                           label: getDisplayName(value),
@@ -556,7 +583,21 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 )}
 
-                <Divider label="Bounty rewards" />
+                <Stack spacing={4}>
+                  <Divider label="Bounty rewards" />
+                  <Text size="xs" color="dimmed">
+                    Learn more about rewards and buzz system{' '}
+                    <Anchor
+                      href="https://education.civitai.com/civitais-guide-to-buzz"
+                      target="_blank"
+                      rel="nofollow noreferrer"
+                      span
+                    >
+                      here
+                    </Anchor>
+                    .
+                  </Text>
+                </Stack>
                 {!bounty ? (
                   <>
                     {bountyModeEnabled && (
@@ -742,7 +783,19 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Input.Wrapper>
                 </Stack>
               )}
-              <InputTags name="tags" label="Tags" target={[TagTarget.Bounty]} />
+              <InputTags
+                name="tags"
+                label={
+                  <Group spacing={4}>
+                    <Input.Label>Tags</Input.Label>
+                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                      {/* TODO.howto: get the right content and link */}
+                      <Text>Hello, we are missing the content for this bubble</Text>
+                    </InfoPopover>
+                  </Group>
+                }
+                target={[TagTarget.Bounty]}
+              />
               <InputSwitch
                 name="poi"
                 label={
@@ -802,6 +855,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </List.Item>
                 <List.Item>
                   Bounties cannot be used to farm reviews or image posts on your resources.
+                </List.Item>
+                <List.Item>
+                  <ContentPolicyLink />
                 </List.Item>
               </List>
             </Stack>

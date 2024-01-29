@@ -37,6 +37,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzz } from '~/components/Buzz/useBuzz';
+import { NextLink } from '@mantine/next';
 
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
@@ -317,7 +318,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const router = useRouter();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { balance } = useBuzz();
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -681,9 +682,24 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Accordion>
         {/* TODO [bw] sample images here */}
 
-        <Title mt="md" order={5}>
-          Base Model for Training
-        </Title>
+        <Stack spacing={0}>
+          <Title mt="md" order={5}>
+            Base Model for Training
+          </Title>
+          {/* TODO.howto: Add correct text and link */}
+          <Text color="dimmed" size="sm">
+            Not sure which one to choose? Read our{' '}
+            <Text
+              component={NextLink}
+              variant="link"
+              target="_blank"
+              href="/content/training/dataset-guidelines"
+            >
+              Dataset and Training Guidelines
+            </Text>{' '}
+            for more info.
+          </Text>
+        </Stack>
         <Input.Wrapper
           label="Select a base model to train your model on"
           withAsterisk

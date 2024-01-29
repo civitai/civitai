@@ -6,8 +6,9 @@ const ICON_CONTAINER_SIZE_RATIO = 1.6;
 export function NoContent({
   message,
   iconSize = 128,
+  children,
   ...props
-}: Omit<StackProps, 'children' | 'align'> & { message?: string; iconSize?: number }) {
+}: Omit<StackProps, 'align'> & { message?: string; iconSize?: number }) {
   return (
     <Stack {...props} align="center">
       <ThemeIcon size={iconSize} radius={100}>
@@ -19,6 +20,7 @@ export function NoContent({
       <Text align="center">
         {message ?? "Try adjusting your search or filters to find what you're looking for"}
       </Text>
+      {children}
     </Stack>
   );
 }

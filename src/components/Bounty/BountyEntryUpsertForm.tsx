@@ -44,9 +44,10 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
-import { TRPCClientError } from '@trpc/client';
 import { getFilesHash } from '~/client-utils/file-hashing';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { FeatureIntroduction } from '../FeatureIntroduction/FeatureIntroduction';
+import { HelpButton } from '../HelpButton/HelpButton';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -89,7 +90,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [bountyEntryImages, setBountyEntryImages] = useState<BountyEntryGetById['images']>(
     bountyEntry?.images ?? []
   );
@@ -187,6 +188,12 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         <Group spacing="md">
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
+          {/* TODO.howto: need video? */}
+          <FeatureIntroduction
+            feature="bounty-create"
+            contentSlug={['feature-introduction', 'bounty-create']}
+            actionButton={<HelpButton size="md" radius="xl" />}
+          />
         </Group>
         {bounty.poi && <PoiAlert size="sm" />}
         <InputRTE

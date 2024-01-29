@@ -102,7 +102,7 @@ export default function UserModelsPage() {
                       value={sort}
                       onChange={(x) => set({ sort: x as ModelSort })}
                     />
-                    <ModelFiltersDropdown filterMode="query" position="left" />
+                    <ModelFiltersDropdown filterMode="query" position="left" size="sm" compact />
                   </Group>
                 </>
               )}
@@ -116,6 +116,7 @@ export default function UserModelsPage() {
                     sort,
                     period,
                   }}
+                  showEmptyCta={selfView}
                 />
               </>
             ) : viewingDraft ? (

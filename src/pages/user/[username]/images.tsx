@@ -173,6 +173,8 @@ export function UserImagesPage() {
                 <ImageFiltersDropdown
                   query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
+                  size="sm"
+                  compact
                 />
               </Group>
             </Group>
@@ -187,6 +189,7 @@ export function UserImagesPage() {
                 username: viewingReactions ? undefined : username,
                 followed,
               }}
+              showEmptyCta={isSameUser}
             />
           </Stack>
         </MasonryContainer>

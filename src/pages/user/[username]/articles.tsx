@@ -98,6 +98,8 @@ export default function UserArticlesPage() {
                   <ArticleFiltersDropdown
                     query={{ ...query, period, followed }}
                     onChange={(filters) => replace(filters)}
+                    size="sm"
+                    compact
                   />
                 </Group>
               )}
@@ -110,6 +112,7 @@ export default function UserArticlesPage() {
                   period,
                   includeDrafts: !!currentUser?.isModerator,
                 }}
+                showEmptyCta={selfView}
               />
             ) : (
               <UserDraftArticles />
