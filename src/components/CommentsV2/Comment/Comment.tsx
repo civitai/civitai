@@ -26,6 +26,7 @@ import {
   IconArrowBackUp,
   IconEye,
   IconEyeOff,
+  IconArrowsMaximize,
 } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -119,7 +120,14 @@ export function CommentContent({
         [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
-      <UserAvatar user={comment.user} size="sm" linkToProfile />
+      <Group spacing="xs">
+        {replyCount > 0 && !viewOnly && !isExpanded && (
+          <UnstyledButton onClick={onToggleReplies}>
+            <IconArrowsMaximize size={16} />
+          </UnstyledButton>
+        )}
+        <UserAvatar user={comment.user} size="sm" linkToProfile />
+      </Group>
 
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
@@ -229,12 +237,6 @@ export function CommentContent({
                     </Group>
                   </Button>
                 )}
-                {replyCount > 0 && !viewOnly && !isExpanded && (
-                  <Button variant="subtle" size="xs" radius="xl" onClick={onToggleReplies} compact>
-                    {isExpanded ? 'Hide' : 'Show'}{' '}
-                    {`${replyCount.toLocaleString()} ${replyCount === 1 ? 'Reply' : 'Replies'}`}
-                  </Button>
-                )}
               </Group>
             </>
           ) : (
@@ -253,7 +255,7 @@ export function CommentContent({
           </Box>
         )}
       </Stack>
-      {replyCount > 0 && (
+      {replyCount > 0 && !viewOnly && (
         <UnstyledButton onClick={onToggleReplies} className={classes.repliesIndicator} />
       )}
     </Group>
@@ -287,9 +289,6 @@ export const useCommentStyles = createStyles((theme) => ({
     marginLeft: -12,
   },
   rootCommentReplyInset: {
-    borderLeft: `2px solid ${
-      theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)'
-    }`,
     paddingLeft: 46,
   },
 }));
