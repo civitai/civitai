@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Center,
@@ -16,9 +15,8 @@ import { HomeBlockType, MetricTimeframe } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
-import { IconArrowRight, IconInfoCircle, IconSettings } from '@tabler/icons-react';
+import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
@@ -26,7 +24,6 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { BrowsingMode, ImageSort, ModelSort } from '~/server/common/enums';
-import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -38,7 +35,6 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
-import { HomeBlockWithData } from '~/server/services/home-block.service';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
