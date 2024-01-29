@@ -92,7 +92,6 @@ export function createLimiter({
   async function setLimitHitTime(userKey: string) {
     await redis.set(`${limitKey}:${userKey}`, Date.now(), {
       EX: refetchInterval,
-      NX: true,
     });
   }
 
