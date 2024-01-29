@@ -7,12 +7,6 @@ import { env } from '~/env/client.mjs';
 import { useScript } from '~/hooks/useScript';
 import { isProd } from '~/env/other';
 
-enum Test {
-  Member,
-  AdsBlocked,
-  Ads,
-}
-
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
@@ -21,6 +15,7 @@ const AscendeumAdsContext = createContext<{
   isMember: boolean;
   enabled: boolean;
   ascendeumReady: boolean;
+  // adSenseReady: boolean;
   exoclickReady: boolean;
 } | null>(null);
 
@@ -50,10 +45,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
     canLoad: showAds && !nsfw,
   });
-  const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
-    canLoad: showAds && nsfw,
-  });
-  // const exoclickReady = true;
+  // const adSenseReady = useScript(
+  //   'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
+  //   {
+  //     canLoad: showAds && !nsfw,
+  //   }
+  // );
+  // const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
+  //   canLoad: showAds && nsfw,
+  // });
+  const exoclickReady = true;
 
   const readyRef = useRef(false);
   useEffect(() => {
@@ -74,6 +75,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         username: currentUser?.username,
         ascendeumReady,
         exoclickReady,
+        // adSenseReady,
         isMember,
         enabled,
       }}
