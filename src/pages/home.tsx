@@ -104,7 +104,7 @@ export default function Home() {
           })}
         >
           {homeBlocks.map((homeBlock, i) => {
-            const showAds = i % 2 === 0;
+            const showAds = i % 2 === 0 && i > 0;
             switch (homeBlock.type) {
               case HomeBlockType.Collection:
                 return (
