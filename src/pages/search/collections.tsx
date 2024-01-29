@@ -1,24 +1,23 @@
 import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/core';
-import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
+import { useInstantSearch } from 'react-instantsearch';
 
 import {
   ChipRefinementList,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { applyUserPreferencesCollections } from '~/components/Search/search.utils';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
 import { CollectionCard } from '~/components/Cards/CollectionCard';
-import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { NoContent } from '~/components/NoContent/NoContent';
 
 export default function CollectionSearch() {
   return (
@@ -53,28 +52,14 @@ const RenderFilters = () => {
 };
 
 export function CollectionHitList() {
-  const { hits, showMore, isLastPage } = useInfiniteHits<CollectionSearchIndexRecord>();
+  const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'collections'>();
   const { status } = useInstantSearch();
   const { classes, cx } = useSearchLayoutStyles();
-  const currentUser = useCurrentUser();
-  const {
-    users: hiddenUsers,
-    images: hiddenImages,
-    tags: hiddenTags,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
 
-  const collections = useMemo(() => {
-    return applyUserPreferencesCollections<CollectionSearchIndexRecord>({
-      items: hits,
-      hiddenUsers,
-      hiddenImages,
-      hiddenTags,
-      currentUserId: currentUser?.id,
-    });
-  }, [hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
-
-  const hiddenItems = hits.length - collections.length;
+  const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
+    type: 'collections',
+    data: hits,
+  });
 
   if (loadingPreferences) {
     return (
@@ -91,9 +76,9 @@ export function CollectionHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems} collections have been hidden due to your settings.
+                {hiddenCount} collections have been hidden due to your settings.
               </Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
@@ -135,17 +120,17 @@ export function CollectionHitList() {
 
   return (
     <Stack>
-      {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} collections have been hidden due to your settings.</Text>
+      {hiddenCount > 0 && (
+        <Text color="dimmed">{hiddenCount} collections have been hidden due to your settings.</Text>
       )}
       <Box
         className={cx(classes.grid)}
         style={{
           // Overwrite default sizing here.
-          gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
+          gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
         }}
       >
-        {collections.map((hit) => {
+        {items.map((hit) => {
           return (
             <CollectionCard
               key={hit.id}
@@ -165,6 +150,7 @@ export function CollectionHitList() {
           );
         })}
       </Box>
+      {/* <MasonryGrid data={items} render={ArticleCard} itemId={(x) => x.id} empty={<NoContent />} /> */}
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

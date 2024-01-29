@@ -15,7 +15,6 @@ import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';

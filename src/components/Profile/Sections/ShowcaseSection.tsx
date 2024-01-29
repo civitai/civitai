@@ -10,10 +10,8 @@ import React, { useMemo } from 'react';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesImages } from '~/components/Search/search.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const { ref, inView } = useInView({
@@ -21,7 +19,6 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     triggerOnce: true,
   });
   const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
-  const currentUser = useCurrentUser();
   const {
     data: _coverImages = [],
     isLoading,
@@ -36,26 +33,20 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
       trpc: { context: { skipBatch: true } },
     }
   );
-  const {
-    users: hiddenUsers,
-    images: hiddenImages,
-    tags: hiddenTags,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
 
-  const coverImages: typeof _coverImages = useMemo(() => {
-    if (loadingPreferences) {
-      return [];
-    }
+  const transformed = useMemo(
+    () =>
+      _coverImages.map((image) => ({
+        ...image,
+        tagIds: image.tags?.map((x) => x.id),
+      })),
+    [_coverImages]
+  );
 
-    return applyUserPreferencesImages<(typeof _coverImages)[number]>({
-      items: _coverImages,
-      currentUserId: currentUser?.id,
-      hiddenUsers,
-      hiddenImages,
-      hiddenTags,
-    });
-  }, [_coverImages]);
+  const { items: coverImages } = useApplyHiddenPreferences({
+    type: 'images',
+    data: transformed,
+  });
 
   const { classes, cx } = useProfileSectionStyles({
     // count: coverImages.length,

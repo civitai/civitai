@@ -1,54 +1,22 @@
-import {
-  ActionIcon,
-  Alert,
-  AspectRatio,
-  Button,
-  createStyles,
-  Divider,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
-import {
-  IconAlertCircle,
-  IconBellFilled,
-  IconMapPin,
-  IconPencilMinus,
-  IconRss,
-} from '@tabler/icons-react';
+import { Alert, createStyles, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { IconBellFilled } from '@tabler/icons-react';
 
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { UserStats } from '~/components/Profile/UserStats';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { formatDate } from '~/utils/date-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
-import React, { useMemo, useState } from 'react';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { CosmeticType } from '@prisma/client';
+import React, { useMemo } from 'react';
+
 import { constants } from '~/server/common/constants';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ReactMarkdown from 'react-markdown';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { isDefined } from '~/utils/type-guards';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -132,25 +100,20 @@ export function ProfileHeader({ username }: { username: string }) {
   });
   const isMobile = useContainerSmallerThan('sm');
   const { classes, cx } = useStyles();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    isLoading: isLoadingHidden,
-  } = useHiddenPreferencesContext();
-  const currentUser = useCurrentUser();
 
-  const coverImage = useMemo(() => {
-    if (isLoadingHidden || !user?.profile?.coverImage) return null;
-    const coverImage = user.profile.coverImage;
-
-    if (user.id === currentUser?.id) return coverImage;
-
-    if (hiddenImages.get(coverImage.id)) return null;
-    for (const tag of coverImage.tags ?? []) {
-      if (hiddenTags.get(tag.id)) return null;
-    }
-    return coverImage;
-  }, [user, hiddenImages, hiddenTags, isLoadingHidden]);
+  const cover = user?.profile?.coverImage;
+  const images = useMemo(
+    () =>
+      cover
+        ? [cover].map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) }))
+        : undefined,
+    [cover]
+  );
+  const { items } = useApplyHiddenPreferences({
+    type: 'images',
+    data: images,
+  });
+  const coverImage = items[0];
 
   if (!user) {
     return null;

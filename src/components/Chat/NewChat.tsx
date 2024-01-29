@@ -87,7 +87,6 @@ export function NewChat() {
           showIndexSelect={false}
           startingIndex="users"
           placeholder="Select users"
-          hideBlankQuery={true}
           filters={[{ id: currentUser?.id }, ...state.selectedUsers]
             .map((x) => `AND NOT id=${x.id}`)
             .join(' ')
