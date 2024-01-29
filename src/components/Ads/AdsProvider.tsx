@@ -61,7 +61,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (!readyRef.current && showAds) {
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
-        setAdsBlocked(blocked);
+        setAdsBlocked(!isProd ? true : blocked);
       });
     }
   }, [showAds]);
