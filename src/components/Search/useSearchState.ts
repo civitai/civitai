@@ -36,6 +36,7 @@ import {
   bountiesInstantSearchRoutingParser,
   BountySearchParams,
 } from '~/components/Search/parsers/bounties.parser';
+import { searchIndexMap } from '~/components/Search/search.types';
 
 type StoreState = {
   models: ModelSearchParams;
@@ -52,15 +53,6 @@ type StoreState = {
   setCollectionSearchParams: (filters: Partial<CollectionSearchParams>) => void;
   setBountiesSearchParams: (filters: Partial<BountySearchParams>) => void;
 };
-
-export const SearchPathToIndexMap = {
-  ['models']: MODELS_SEARCH_INDEX,
-  ['images']: IMAGES_SEARCH_INDEX,
-  ['articles']: ARTICLES_SEARCH_INDEX,
-  ['users']: USERS_SEARCH_INDEX,
-  ['collections']: COLLECTIONS_SEARCH_INDEX,
-  ['bounties']: BOUNTIES_SEARCH_INDEX,
-} as const;
 
 export const IndexToLabel = {
   [MODELS_SEARCH_INDEX]: 'Models',
@@ -218,10 +210,10 @@ export const routing: InstantSearchProps['routing'] = {
         const match = location.pathname.match(pattern);
 
         if (match) {
-          const key = match[1] as keyof typeof SearchPathToIndexMap;
+          const key = match[1] as keyof typeof searchIndexMap;
 
-          if (SearchPathToIndexMap.hasOwnProperty(key)) {
-            const index = SearchPathToIndexMap[key] as SearchIndex;
+          if (searchIndexMap.hasOwnProperty(key)) {
+            const index = searchIndexMap[key] as SearchIndex;
 
             return getRoutingForIndex(index).parseURL({ location });
           }

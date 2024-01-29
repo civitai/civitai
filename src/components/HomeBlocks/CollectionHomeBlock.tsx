@@ -40,6 +40,7 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { isDefined } from '~/utils/type-guards';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const useStyles = createStyles<string, { count: number; rows: number }>(
   (theme, { count, rows }) => {
@@ -134,87 +135,24 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   });
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
-  const {
-    models: hiddenModels,
-    images: hiddenImages,
-    users: hiddenUsers,
-    tags: hiddenTags,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
 
   const { collection } = homeBlock ?? {};
 
   const shuffled = useMemo(() => {
-    if (loadingPreferences || !collection?.items) return [];
+    if (!collection?.items) return [];
     return shuffle(collection.items);
-  }, [collection?.items, loadingPreferences]);
+  }, [collection?.items]);
 
+  // TODO - find a different way to return collections so that the type isn't set on the individual item
+  const type = shuffled[0]?.type ?? 'model';
+  const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
+    type: `${type}s`,
+    data: shuffled.map((x) => x.data),
+  });
   const items = useMemo(() => {
     const itemsToShow = ITEMS_PER_ROW * rows;
-    const usersShown = new Set();
-
-    if (shuffled.length === 0) return [];
-
-    const type = shuffled[0].type;
-
-    // TODO - find a different way to return collections so that the type isn't set on the individual item
-    switch (type) {
-      case 'model':
-        return shuffled
-          .filter((x) => {
-            if (x.data.user.id === currentUser?.id) return true;
-            if (hiddenUsers.get(x.data.user.id)) return false;
-            if (hiddenModels.get(x.data.id)) return false;
-            // @ts-ignore: We know it has tags in it
-            for (const tag of x.data.tags) {
-              if (hiddenTags.get(tag)) return false;
-            }
-            return true;
-          })
-          .map((x) => {
-            // @ts-ignore: We know it has images in it
-            const { images } = x.data;
-            // @ts-ignore: We know it has images in it
-            const filteredImages = images?.filter((i) => {
-              if (hiddenImages.get(i.id)) return false;
-              for (const tag of i.tags ?? []) {
-                if (hiddenTags.get(tag)) return false;
-              }
-              return true;
-            });
-
-            if (!filteredImages?.length) return null;
-
-            // const item = {...x, data: {...x.data, image: filteredImages[0],}}
-
-            return { ...x, data: { ...x.data, image: filteredImages[0] } };
-          })
-          .filter(isDefined)
-          .slice(0, itemsToShow);
-      case 'image':
-        return shuffled
-          .filter((x) => {
-            if (usersShown.has(x.data.user.id)) return false;
-            usersShown.add(x.data.user.id);
-            if (x.data.user.id === currentUser?.id) return true;
-            // @ts-ignore: We know it has ingestion in it
-            if (x.data.ingestion !== ImageIngestionStatus.Scanned) return false;
-            if (hiddenImages.get(x.data.id)) return false;
-            if (hiddenUsers.get(x.data.user.id)) return false;
-            // @ts-ignore: We know it has tagIds in it
-            for (const tag of x.data.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-            return true;
-          })
-          .slice(0, itemsToShow);
-      default: {
-        return shuffled
-          .filter((x) => {
-            return !hiddenUsers.get(x.data.user.id);
-          })
-          .slice(0, itemsToShow);
-      }
-    }
-  }, [shuffled, hiddenModels, hiddenImages, hiddenUsers, rows, hiddenTags, currentUser?.id]);
+    return filtered.slice(0, itemsToShow);
+  }, [filtered, rows]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
@@ -350,12 +288,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         <ImagesProvider
           hideReactionCount={collection?.mode === CollectionMode.Contest}
           images={
-            items
-              .map((x) => {
-                if (x.type === 'image') return x.data;
-                return null;
-              })
-              .filter(isDefined) as any
+            // items
+            //   .map((x) => {
+            //     if (x.type === 'image') return x.data;
+            //     return null;
+            //   })
+            //   .filter(isDefined) as any
+            type === 'image' ? (items as any) : undefined
           }
         >
           <ReactionSettingsProvider
@@ -370,15 +309,10 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                 ))
               : items.map((item) => (
                   <Fragment key={item.id}>
-                    {item.type === 'model' && (
-                      <ModelCard
-                        data={{ ...item.data, image: (item.data as any).images[0] } as any}
-                        forceInView
-                      />
-                    )}
-                    {item.type === 'image' && <ImageCard data={item.data as any} />}
-                    {item.type === 'post' && <PostCard data={item.data as any} />}
-                    {item.type === 'article' && <ArticleCard data={item.data as any} />}
+                    {type === 'model' && <ModelCard data={item as any} forceInView />}
+                    {type === 'image' && <ImageCard data={item as any} />}
+                    {type === 'post' && <PostCard data={item as any} />}
+                    {type === 'article' && <ArticleCard data={item as any} />}
                   </Fragment>
                 ))}
           </ReactionSettingsProvider>

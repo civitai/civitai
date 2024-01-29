@@ -1,14 +1,13 @@
 import { ImageIngestionStatus } from '@prisma/client';
 import { useMemo } from 'react';
-import { useHiddenPreferencesContext } from '~/hooks/hidden-preferences';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
-import { isDefined } from '~/utils/type-guards';
+import { isDefined, paired } from '~/utils/type-guards';
 
 export function useApplyHiddenPreferences<
-  T extends keyof DataTypeMap,
-  TData extends DataTypeMap[T]
+  T extends keyof BaseDataTypeMap,
+  TData extends BaseDataTypeMap[T]
 >({
   type,
   data,
@@ -21,19 +20,20 @@ export function useApplyHiddenPreferences<
   disabled?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+
   const {
     models: hiddenModels,
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
     isLoading: loadingPreferences,
+    browsingMode,
   } = useHiddenPreferencesContext();
 
   const items = useMemo(() => {
     if (disabled) return data ?? [];
     if (loadingPreferences || !data) return [];
-    const { key, value } = paired<DataTypeMap>(type, data);
+    const { key, value } = paired<BaseDataTypeMap>(type, data);
 
     switch (key) {
       case 'models':
@@ -86,6 +86,7 @@ export function useApplyHiddenPreferences<
           .filter((collection) => {
             if (collection.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
               return true;
+            if (hiddenUsers.get(collection.user.id)) return false;
             if (collection.image) {
               if (hiddenImages.get(collection.image.id)) return false;
               for (const tag of collection.image.tagIds ?? [])
@@ -112,6 +113,7 @@ export function useApplyHiddenPreferences<
           .filter((bounty) => {
             if (bounty.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
               return true;
+            if (hiddenUsers.get(bounty.user.id)) return false;
             for (const image of bounty.images ?? []) if (hiddenImages.get(image.id)) return false;
             for (const tag of bounty.tags ?? []) if (hiddenTags.get(tag)) return false;
             return true;
@@ -130,6 +132,14 @@ export function useApplyHiddenPreferences<
               : null;
           })
           .filter(isDefined);
+      case 'posts':
+        return value.filter((post) => {
+          if (post.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
+          if (hiddenUsers.get(post.user.id)) return false;
+          if (hiddenImages.get(post.image.id)) return false;
+          for (const tag of post.image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+          return true;
+        });
       default:
         throw new Error('unhandled hidden user preferences filter type');
     }
@@ -170,9 +180,7 @@ type BaseModel = {
 
 type BaseArticle = {
   id: number;
-  user: {
-    id: number;
-  };
+  user: { id: number };
   tags?: {
     id: number;
   }[];
@@ -184,9 +192,7 @@ type BaseUser = {
 
 type BaseCollection = {
   id: number;
-  user: {
-    id: number;
-  };
+  user: { id: number };
   image: {
     id: number;
     tagIds?: number[];
@@ -199,9 +205,7 @@ type BaseCollection = {
 
 type BaseBounty = {
   id: number;
-  user: {
-    id: number;
-  };
+  user: { id: number };
   tags?: number[];
   images: {
     id: number;
@@ -209,16 +213,21 @@ type BaseBounty = {
   }[];
 };
 
-type DataTypeMap = {
+type BasePost = {
+  id: number;
+  user: { id: number };
+  image: {
+    id: number;
+    tagIds?: number[];
+  };
+};
+
+export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
   articles: BaseArticle[];
   users: BaseUser[];
   collections: BaseCollection[];
   bounties: BaseBounty[];
+  posts: BasePost[];
 };
-
-type Boxed<Mapping> = { [K in keyof Mapping]: { key: K; value: Mapping[K] } }[keyof Mapping];
-function paired<Mapping>(key: keyof Mapping, value: Mapping[keyof Mapping]) {
-  return { key, value } as Boxed<Mapping>;
-}

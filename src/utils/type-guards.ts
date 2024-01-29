@@ -18,3 +18,13 @@ export function isValidURL(value: unknown): value is string {
     return false;
   }
 }
+
+type Boxed<Mapping> = { [K in keyof Mapping]: { key: K; value: Mapping[K] } }[keyof Mapping];
+export function paired<Mapping>(key: keyof Mapping, value: Mapping[keyof Mapping]) {
+  return { key, value } as Boxed<Mapping>;
+}
+
+// type Boxed<Mapping> = { [K in keyof Mapping]: [key: K, value: Mapping[K]] }[keyof Mapping];
+// export function paired<Mapping>(key: keyof Mapping, value: Mapping[keyof Mapping]) {
+//   return [key, value] as Boxed<Mapping>;
+// }

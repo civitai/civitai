@@ -27,12 +27,7 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
-import {
-  BaseModel,
-  MODELS_SEARCH_INDEX,
-  baseModelSets,
-  constants,
-} from '~/server/common/constants';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
@@ -69,6 +64,7 @@ import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/gen
 import { ModelType } from '@prisma/client';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { truncate } from 'lodash-es';
+import { searchIndexMap } from '~/components/Search/search.types';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -147,7 +143,7 @@ export default function ResourceSelectModal({
     <ResourceSelectContext.Provider
       value={{ onSelect: handleSelect, canGenerate, resources: _resources }}
     >
-      <InstantSearch searchClient={searchClient} indexName={MODELS_SEARCH_INDEX}>
+      <InstantSearch searchClient={searchClient} indexName={searchIndexMap.models}>
         <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
         <Stack>
           <CustomSearchBox isMobile={isMobile} autoFocus />

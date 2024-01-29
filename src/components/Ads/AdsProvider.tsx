@@ -5,6 +5,7 @@ import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { useScript } from '~/hooks/useScript';
+import { isProd } from '~/env/other';
 
 enum Test {
   Member,
@@ -32,7 +33,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.subscriptionId;
-  const enabled = env.NEXT_PUBLIC_ADS;
+  const enabled = env.NEXT_PUBLIC_ADS && isProd;
   const showAds = enabled && !isMember;
 
   // keep track of generation panel views that are considered nsfw

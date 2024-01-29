@@ -1,8 +1,4 @@
-import {
-  IndexToLabel,
-  SearchPathToIndexMap,
-  useSearchStore,
-} from '~/components/Search/useSearchState';
+import { IndexToLabel, useSearchStore } from '~/components/Search/useSearchState';
 import { useInstantSearch, usePagination, useSearchBox } from 'react-instantsearch';
 import {
   Box,
@@ -41,6 +37,7 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { searchIndexMap } from '~/components/Search/search.types';
 
 const useStyles = createStyles((theme) => ({
   wrapper: {
@@ -102,8 +99,8 @@ export const SearchHeader = () => {
 
   const onChangeIndex = (value: string) => {
     setSearchParamsByUiState(uiState);
-    const keyPath = Object.keys(SearchPathToIndexMap).find(
-      (key) => SearchPathToIndexMap[key as keyof typeof SearchPathToIndexMap] === value
+    const keyPath = Object.keys(searchIndexMap).find(
+      (key) => searchIndexMap[key as keyof typeof searchIndexMap] === value
     );
 
     if (keyPath && states.hasOwnProperty(keyPath)) {

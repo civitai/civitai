@@ -1,4 +1,4 @@
-import type { Hit, TransformItems, TransformItemsMetadata } from 'instantsearch.js';
+import type { Hit, TransformItemsMetadata } from 'instantsearch.js';
 import { useHits, useInfiniteHits } from 'react-instantsearch';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
@@ -6,36 +6,9 @@ import { CollectionSearchIndexRecord } from '~/server/search-index/collections.s
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
-import {
-  ARTICLES_SEARCH_INDEX,
-  BOUNTIES_SEARCH_INDEX,
-  COLLECTIONS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
-  MODELS_SEARCH_INDEX,
-  USERS_SEARCH_INDEX,
-} from '~/server/common/constants';
+
 import { ImageIngestionStatus } from '@prisma/client';
-import type { InfiniteHitsRenderState } from 'instantsearch.js/es/connectors/infinite-hits/connectInfiniteHits';
-
-type DataKey = keyof DataIndex;
-type DataIndex = {
-  models: ModelSearchIndexRecord[];
-  images: ImageSearchIndexRecord[];
-  articles: ArticleSearchIndexRecord[];
-  users: UserSearchIndexRecord[];
-  collections: CollectionSearchIndexRecord[];
-  bounties: BountySearchIndexRecord[];
-};
-
-type SearchIndexKey = keyof typeof SearchIndexMap;
-const SearchIndexMap = {
-  [MODELS_SEARCH_INDEX]: 'models',
-  [IMAGES_SEARCH_INDEX]: 'images',
-  [ARTICLES_SEARCH_INDEX]: 'articles',
-  [USERS_SEARCH_INDEX]: 'users',
-  [COLLECTIONS_SEARCH_INDEX]: 'collections',
-  [BOUNTIES_SEARCH_INDEX]: 'bounties',
-} as const;
+import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
 
 // #region [transformers]
 type ModelsTransformed = ReturnType<typeof modelsTransform>;
@@ -95,8 +68,8 @@ function usersTransform(items: Hit<UserSearchIndexRecord>[]) {
   return items;
 }
 
-type IndexName = keyof TransformationMap;
-type TransformationMap = {
+type IndexName = keyof SearchIndexDataMap;
+export type SearchIndexDataMap = {
   models: ModelsTransformed;
   images: ImagesTransformed;
   articles: ArticlesTransformed;
@@ -104,38 +77,37 @@ type TransformationMap = {
   collections: CollectionsTransformed;
   bounties: BountiesTransformed;
 };
+// type IndexName = keyof typeof searchIndexTransformMap;
+// export type SearchIndexDataTransformType<T extends IndexName> = ReturnType<
+//   (typeof searchIndexTransformMap)[T]
+// >[number];
+const searchIndexTransformMap = {
+  models: modelsTransform,
+  images: imagesTransform,
+  articles: articlesTransform,
+  users: usersTransform,
+  collections: collectionsTransform,
+  bounties: bountiesTransform,
+};
 // #endregion
 
 const transformItems = (items: any[], metadata: TransformItemsMetadata) => {
-  if (!metadata.results) return [];
-  const index = metadata.results.index as SearchIndexKey;
-  const type = SearchIndexMap[index];
-  switch (type) {
-    case 'models':
-      return modelsTransform(items);
-    case 'images':
-      return imagesTransform(items);
-    case 'articles':
-      return articlesTransform(items);
-    case 'bounties':
-      return bountiesTransform(items);
-    case 'collections':
-      return collectionsTransform(items);
-    case 'users':
-      return usersTransform(items);
-    default:
-      throw new Error('searchIndex transformItems not mapped');
-  }
+  if (!metadata.results?.nbHits) return [];
+  const index = metadata.results.index as ReverseSearchIndexKey;
+  const type = reverseSearchIndexMap[index];
+  const transformFn = searchIndexTransformMap[type];
+  if (!type) throw new Error(`type does not exist on searchIndexTransformMap: ${type}`);
+  return transformFn(items);
 };
 
 export function useHitsTransformed<T extends IndexName>() {
-  return useHits<TransformationMap[T][number]>({
+  return useHits<SearchIndexDataMap[T][number]>({
     transformItems,
   });
 }
 
 export function useInfiniteHitsTransformed<T extends IndexName>() {
-  return useInfiniteHits<TransformationMap[T][number]>({
+  return useInfiniteHits<SearchIndexDataMap[T][number]>({
     transformItems,
   });
 }
