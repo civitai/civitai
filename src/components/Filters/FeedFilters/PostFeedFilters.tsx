@@ -18,7 +18,7 @@ export function PostFeedFilters({ ...groupProps }: GroupProps) {
           className: classes.subnavDropdown,
         }}
       />
-      <PostFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
+      <PostFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="posts"

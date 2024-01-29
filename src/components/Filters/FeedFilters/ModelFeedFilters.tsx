@@ -41,7 +41,7 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
           className: classes.subnavDropdown,
         }}
       />
-      <ModelFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
+      <ModelFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="models"

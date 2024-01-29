@@ -15,7 +15,7 @@ export function BountyFeedFilters({ ...groupProps }: GroupProps) {
           className: classes.subnavDropdown,
         }}
       />
-      <BountyFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
+      <BountyFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
     </Group>
   );
 }

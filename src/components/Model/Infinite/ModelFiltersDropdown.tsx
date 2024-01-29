@@ -352,15 +352,16 @@ export function DumbModelFiltersDropdown({
         <Drawer
           opened={opened}
           onClose={() => setOpened(false)}
-          withCloseButton={false}
           size="90%"
           position="bottom"
           styles={{
-            body: { padding: 16, overflowY: 'auto' },
             drawer: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
             },
+            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            header: { padding: '4px 8px' },
+            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
