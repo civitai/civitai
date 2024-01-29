@@ -56,7 +56,7 @@ export function CsamImageSelection() {
       columnWidth={300}
       maxColumnCount={7}
       maxSingleColumnWidth={450}
-      style={{ height: '100%', width: '100%' }}
+      style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
     >
       <ScrollArea>
         <Title align="center" mb="md">
