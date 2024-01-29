@@ -66,9 +66,10 @@ export const getInfiniteBountiesHandler = async ({
         user: { select: userWithCosmeticsSelect },
         tags: {
           select: {
-            tag: {
-              select: { id: true, name: true },
-            },
+            tagId: true,
+            // tag: {
+            //   select: { id: true, name: true },
+            // },
           },
         },
         stats: {
@@ -103,13 +104,16 @@ export const getInfiniteBountiesHandler = async ({
         .map((item) => {
           const itemImages = images[item.id];
           const tags = item.tags;
+          const user = item.user;
           // if there are no images, we don't want to show the bounty
-          if (!itemImages?.length) return null;
+          if (!itemImages?.length || !user) return null;
 
           return {
             ...item,
-            images: itemImages,
-            tags: tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+            user,
+            images: itemImages.map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) })),
+            // tags: tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+            tags: tags.map(({ tagId }) => tagId),
           };
         })
         .filter(isDefined),

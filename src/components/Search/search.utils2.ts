@@ -50,6 +50,7 @@ type CollectionsTransformed = ReturnType<typeof collectionsTransform>;
 function collectionsTransform(items: Hit<CollectionSearchIndexRecord>[]) {
   return items.map((collection) => ({
     ...collection,
+    userId: collection.user.id,
     image: collection.image
       ? {
           ...collection.image,

@@ -1,5 +1,5 @@
 import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
-import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
+import { useInstantSearch } from 'react-instantsearch';
 
 import {
   ChipRefinementList,
@@ -8,18 +8,14 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import trieMemoize from 'trie-memoize';
 import OneKeyMap from '@essentials/one-key-map';
-import { applyUserPreferencesModels } from '~/components/Search/search.utils';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';

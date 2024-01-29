@@ -103,6 +103,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { ScrollArea as ScrollAreaMain } from '~/components/ScrollArea/ScrollArea';
 import { SubNav } from '~/components/AppLayout/SubNav';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -948,6 +949,8 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         : [],
     [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers, loadingHiddenPreferences]
   );
+
+  // const test = useApplyHiddenPreferences({ type: 'bounties', data: entries });
 
   const hiddenItems = entries.length - filteredEntries.length;
 

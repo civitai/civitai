@@ -27,14 +27,7 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IndexToLabel } from '~/components/Search/useSearchState';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  ARTICLES_SEARCH_INDEX,
-  BOUNTIES_SEARCH_INDEX,
-  COLLECTIONS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
-  MODELS_SEARCH_INDEX,
-  USERS_SEARCH_INDEX,
-} from '~/server/common/constants';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
@@ -128,7 +121,7 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   onItemSelected: (
     item: ShowcaseItemSchema,
     data:
-      | ModelSearchIndexRecord
+      | ModelSearchIndexRecord // TODO - update types
       | ArticleSearchIndexRecord
       | ImageSearchIndexRecord
       | UserSearchIndexRecord
@@ -141,7 +134,6 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   startingIndex?: SearchIndexKey;
   showIndexSelect?: boolean;
   placeholder?: string;
-  hideBlankQuery?: boolean;
   disableInitialSearch?: boolean;
 };
 
@@ -174,26 +166,6 @@ export const QuickSearchDropdown = ({
   );
 };
 
-// type TargetIndex = keyof DataIndex;
-// type DataIndex = {
-//   models: ModelSearchIndexRecord[];
-//   images: ImageSearchIndexRecord[];
-//   articles: ArticleSearchIndexRecord[];
-//   users: UserSearchIndexRecord[];
-//   collections: CollectionSearchIndexRecord[];
-//   bounties: BountySearchIndexRecord[];
-// };
-// type Boxed<Mapping> = { [K in keyof Mapping]: { key: K; value: Mapping[K] } }[keyof Mapping];
-// /**
-//  * boxes a key and corresponding value from a mapping and returns {key: , value: } structure
-//  * the type of return value is setup so that a switch over the key field will guard type of value
-//  * It is intentionally not checked that key and value actually correspond to each other so that
-//  * this can return a union of possible pairings, intended to be put in a switch statement over the key field.
-//  */
-// function paired<Mapping>(key: keyof Mapping, value: Mapping[keyof Mapping]) {
-//   return { key, value } as Boxed<Mapping>;
-// }
-
 function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   indexName,
   onIndexNameChange,
@@ -203,7 +175,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   dropdownItemLimit = 5,
   showIndexSelect = true,
   placeholder,
-  hideBlankQuery = false,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
@@ -218,12 +189,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const availableIndexes = supportedIndexes ?? [];
 
-  // const availableIndexes = useMemo(() => {
-  //   if (!supportedIndexes) return SUPPORTED_USERNAME_INDEXES;
-
-  //   return SUPPORTED_USERNAME_INDEXES.filter((index) => supportedIndexes.includes(index.value));
-  // }, [supportedIndexes]);
-
   const { key, value } = paired<SearchIndexDataMap>(indexName, hits as SearchIndexDataMap[TIndex]);
   const { items: filtered } = useApplyHiddenPreferences({
     type: key,
@@ -234,73 +199,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
     const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
     return items;
   }, [filtered]);
-
-  // const {
-  //   models: hiddenModels,
-  //   images: hiddenImages,
-  //   tags: hiddenTags,
-  //   users: hiddenUsers,
-  //   isLoading: loadingPreferences,
-  // } = useHiddenPreferencesContext();
-
-  // const items = useMemo(() => {
-  //   if (!results || !results.nbHits) return [];
-  //   if (hideBlankQuery && !query) return [];
-
-  //   const getFilteredResults = () => {
-  //     const opts = {
-  //       currentUserId: currentUser?.id,
-  //       hiddenImages: hiddenImages,
-  //       hiddenTags: hiddenTags,
-  //       hiddenUsers: hiddenUsers,
-  //       hiddenModels,
-  //     };
-
-  //     const pair = paired<DataIndex>(indexName, hits);
-  //     switch (pair.key) {
-  //       case 'models':
-  //         return applyUserPreferencesModels({ ...opts, items: pair.value });
-  //       case 'images':
-  //         return applyUserPreferencesImages({ ...opts, items: pair.value });
-  //       case 'articles':
-  //         return applyUserPreferencesArticles({ ...opts, items: pair.value });
-  //       case 'bounties':
-  //         return applyUserPreferencesBounties({ ...opts, items: pair.value });
-  //       case 'collections':
-  //         return applyUserPreferencesCollections({ ...opts, items: pair.value });
-  //       case 'users':
-  //         return applyUserPreferencesUsers({ ...opts, items: pair.value });
-  //       default:
-  //         return [];
-  //     }
-  //   };
-
-  //   const filteredResults = getFilteredResults();
-
-  //   type Item = AutocompleteItem & { hit: any | null };
-  //   const items: Item[] = filteredResults.map((hit) => {
-  //     const anyHit = hit as any;
-
-  //     return {
-  //       // Value isn't really used, but better safe than sorry:
-  //       value: anyHit?.name || anyHit?.title || anyHit?.username || anyHit?.id,
-  //       hit,
-  //     };
-  //   });
-  //   // If there are more results than the default limit,
-  //   // then we add a "view more" option
-
-  //   return items;
-  // }, [
-  //   hits,
-  //   results,
-  //   hiddenModels,
-  //   hiddenImages,
-  //   hiddenTags,
-  //   hiddenUsers,
-  //   indexName,
-  //   currentUser?.id,
-  // ]);
 
   useEffect(() => {
     // Only set the query when the debounced search changes
@@ -368,7 +266,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             setSearch('');
           }
         }}
-        itemComponent={IndexRenderItem[searchIndexMap[indexName]] ?? ModelSearchItem}
+        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
         // prevent default filtering behavior
         filter={() => true}
         clearable={query.length > 0}
@@ -378,11 +276,11 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   );
 }
 
-const IndexRenderItem: Record<string, React.FC> = {
-  [MODELS_SEARCH_INDEX]: ModelSearchItem,
-  [ARTICLES_SEARCH_INDEX]: ArticlesSearchItem,
-  [USERS_SEARCH_INDEX]: UserSearchItem,
-  [IMAGES_SEARCH_INDEX]: ImagesSearchItem,
-  [COLLECTIONS_SEARCH_INDEX]: CollectionsSearchItem,
-  [BOUNTIES_SEARCH_INDEX]: BountiesSearchItem,
+const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
+  models: ModelSearchItem,
+  articles: ArticlesSearchItem,
+  users: UserSearchItem,
+  images: ImagesSearchItem,
+  collections: CollectionsSearchItem,
+  bounties: BountiesSearchItem,
 };

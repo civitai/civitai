@@ -1,12 +1,10 @@
 import { MetricTimeframe } from '@prisma/client';
-import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { PostSort } from '~/server/common/enums';
 import { GetPostsByCategoryInput, PostsQueryInput } from '~/server/schema/post.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -42,7 +40,7 @@ export const useQueryPosts = (
 ) => {
   filters ??= {};
   const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const { data, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
+  const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
     { ...filters, browsingMode, include: [] },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -52,33 +50,12 @@ export const useQueryPosts = (
     }
   );
 
-  const currentUser = useCurrentUser();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingHidden,
-  } = useHiddenPreferencesContext();
-
-  // TODO - abstract to `useApplyHiddenPreferences
-  const posts = useMemo(() => {
-    if (loadingHidden) return [];
-
-    const arr = data?.pages.flatMap((x) => x.items) ?? [];
-    const filtered = arr.filter((x) => {
-      if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-      if (hiddenUsers.get(x.user.id)) return false;
-
-      const { image } = x;
-      if (hiddenImages.get(image?.id)) return false;
-      for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-
-      return true;
-    });
-    return filtered;
-  }, [data, currentUser, hiddenImages, hiddenTags, hiddenUsers, loadingHidden]);
-
-  return { data, posts, ...rest };
+  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const { items: posts, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'posts',
+    data: flatData,
+  });
+  return { data, posts, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
 export const useQueryPostCategories = (

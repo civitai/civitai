@@ -22,11 +22,10 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import Link from 'next/link';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useEffect, useMemo } from 'react';
-import { applyUserPreferencesImages } from '../Search/search.utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -125,26 +124,20 @@ export function ImageCarousel({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingHiddenPreferences,
-  } = useHiddenPreferencesContext();
 
-  const filteredImages = useMemo(
+  const transformed = useMemo(
     () =>
-      !loadingHiddenPreferences
-        ? applyUserPreferencesImages<(typeof images)[number]>({
-            items: images,
-            hiddenImages,
-            hiddenTags,
-            hiddenUsers,
-            currentUserId: currentUser?.id,
-          })
-        : [],
-    [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images, loadingHiddenPreferences]
+      images.map((image) => ({
+        ...image,
+        tagIds: image.tags?.map((x) => x.id),
+      })),
+    [images]
   );
+
+  const { items: filteredImages } = useApplyHiddenPreferences({
+    type: 'images',
+    data: transformed,
+  });
 
   useEffect(() => {
     if (filteredImages.length > 0) {

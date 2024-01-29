@@ -7,18 +7,18 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { constants } from '~/server/common/constants';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
+// import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ features }) => {
-    if (!features?.bounties) return { notFound: true };
-  },
-});
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ features }) => {
+//     if (!features?.bounties) return { notFound: true };
+//   },
+// });
 
 const useStyles = createStyles((theme) => ({
   label: {

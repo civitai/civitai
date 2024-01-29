@@ -61,9 +61,10 @@ export function useApplyHiddenPreferences<
           .filter(isDefined);
       case 'images':
         return value.filter((image) => {
-          if (image.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
+          const userId = image.userId ?? image.user?.id;
+          if (userId === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
           if (image.ingestion !== ImageIngestionStatus.Scanned) return false;
-          if (hiddenUsers.get(image.user.id)) return false;
+          if (userId && hiddenUsers.get(userId)) return false;
           if (hiddenImages.get(image.id) && !showHidden) return false;
           for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
           return true;
@@ -84,9 +85,9 @@ export function useApplyHiddenPreferences<
       case 'collections':
         return value
           .filter((collection) => {
-            if (collection.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
-              return true;
-            if (hiddenUsers.get(collection.user.id)) return false;
+            const userId = collection.userId ?? collection.user?.id;
+            if (userId === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
+            if (userId && hiddenUsers.get(userId)) return false;
             if (collection.image) {
               if (hiddenImages.get(collection.image.id)) return false;
               for (const tag of collection.image.tagIds ?? [])
@@ -166,7 +167,8 @@ export function useApplyHiddenPreferences<
 
 type BaseImage = {
   id: number;
-  user: { id: number };
+  userId?: number | null;
+  user?: { id: number };
   tagIds?: number[];
   ingestion?: ImageIngestionStatus;
 };
@@ -192,7 +194,8 @@ type BaseUser = {
 
 type BaseCollection = {
   id: number;
-  user: { id: number };
+  userId?: number | null;
+  user?: { id: number };
   image: {
     id: number;
     tagIds?: number[];
