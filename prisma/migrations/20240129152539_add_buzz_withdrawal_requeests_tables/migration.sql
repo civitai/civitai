@@ -52,6 +52,6 @@ END;
 $$ LANGUAGE plpgsql;
 ---
 CREATE OR REPLACE TRIGGER trigger_update_buzz_withdrawal_request_status
-AFTER INSERT ON "UserBuzzWithdrawalRequestHistory"
+AFTER INSERT ON "BuzzWithdrawalRequestHistory"
 FOR EACH ROW
 EXECUTE FUNCTION update_buzz_withdrawal_request_status();
