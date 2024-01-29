@@ -25,7 +25,7 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
           className: classes.subnavDropdown,
         }}
       />
-      <ImageFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
+      <ImageFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="images"
