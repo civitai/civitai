@@ -118,7 +118,7 @@ export function ImageCarousel({
   nsfw,
   mobile = false,
   onClick,
-  isLoading,
+  isLoading: loading,
   onImageChange,
 }: Props) {
   const router = useRouter();
@@ -134,10 +134,11 @@ export function ImageCarousel({
     [images]
   );
 
-  const { items: filteredImages } = useApplyHiddenPreferences({
+  const { items: filteredImages, loadingPreferences } = useApplyHiddenPreferences({
     type: 'images',
     data: transformed,
   });
+  const isLoading = loading || loadingPreferences;
 
   useEffect(() => {
     if (filteredImages.length > 0) {
@@ -155,29 +156,38 @@ export function ImageCarousel({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          minHeight: mobile ? 300 : 500,
+          minHeight: mobile ? 300 : 400,
         }}
         withBorder
+        pos="relative"
       >
-        <Stack align="center" maw={380}>
-          <Stack spacing={4} align="center">
-            <ThemeIcon color="gray" size={64} radius={100}>
-              <IconPhotoOff size={32} />
-            </ThemeIcon>
-            <Text size="lg">No showcase images available</Text>
+        {isLoading ? (
+          <Box className={classes.loader}>
+            <Center>
+              <Loader />
+            </Center>
+          </Box>
+        ) : (
+          <Stack align="center" maw={380}>
+            <Stack spacing={4} align="center">
+              <ThemeIcon color="gray" size={64} radius={100}>
+                <IconPhotoOff size={32} />
+              </ThemeIcon>
+              <Text size="lg">No showcase images available</Text>
+            </Stack>
+            <Group grow w="100%">
+              {currentUser ? (
+                <Link href="/user/account#content-moderation">
+                  <Button variant="outline">Adjust Settings</Button>
+                </Link>
+              ) : (
+                <Link href={`/login?returnUrl=${router.asPath}`}>
+                  <Button variant="outline">Log In</Button>
+                </Link>
+              )}
+            </Group>
           </Stack>
-          <Group grow w="100%">
-            {currentUser ? (
-              <Link href="/user/account#content-moderation">
-                <Button variant="outline">Adjust Settings</Button>
-              </Link>
-            ) : (
-              <Link href={`/login?returnUrl=${router.asPath}`}>
-                <Button variant="outline">Log In</Button>
-              </Link>
-            )}
-          </Group>
-        </Stack>
+        )}
       </Paper>
     );
   }
@@ -288,14 +298,6 @@ export function ImageCarousel({
           }}
         />
       </Carousel>
-
-      {isLoading && (
-        <Box className={classes.loader}>
-          <Center>
-            <Loader />
-          </Center>
-        </Box>
-      )}
     </Box>
   );
 }

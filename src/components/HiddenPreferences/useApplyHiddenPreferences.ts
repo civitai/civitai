@@ -63,7 +63,7 @@ export function useApplyHiddenPreferences<
         return value.filter((image) => {
           const userId = image.userId ?? image.user?.id;
           if (userId === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-          if (image.ingestion !== ImageIngestionStatus.Scanned) return false;
+          if (image.ingestion && image.ingestion !== ImageIngestionStatus.Scanned) return false;
           if (userId && hiddenUsers.get(userId)) return false;
           if (hiddenImages.get(image.id) && !showHidden) return false;
           for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
@@ -134,13 +134,28 @@ export function useApplyHiddenPreferences<
           })
           .filter(isDefined);
       case 'posts':
-        return value.filter((post) => {
-          if (post.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-          if (hiddenUsers.get(post.user.id)) return false;
-          if (hiddenImages.get(post.image.id)) return false;
-          for (const tag of post.image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-          return true;
-        });
+        return value
+          .filter((post) => {
+            if (post.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
+            if (hiddenUsers.get(post.user.id)) return false;
+            if (post.image) {
+              if (hiddenImages.get(post.image.id)) return false;
+              for (const tag of post.image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            }
+            return true;
+          })
+          .map((post) => {
+            const images = post.images;
+            if (!images) return post;
+            const filteredImages = images.filter((image) => {
+              if (hiddenImages.get(image.id)) return false;
+              if (image.ingestion && image.ingestion !== ImageIngestionStatus.Scanned) return false;
+              for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+              return true;
+            });
+            return filteredImages.length ? { ...post, images: filteredImages } : null;
+          })
+          .filter(isDefined);
       default:
         throw new Error('unhandled hidden user preferences filter type');
     }
@@ -217,12 +232,17 @@ type BaseBounty = {
 };
 
 type BasePost = {
-  id: number;
+  // id: number;
   user: { id: number };
-  image: {
+  image?: {
     id: number;
     tagIds?: number[];
   };
+  images?: {
+    id: number;
+    tagIds?: number[];
+    ingestion?: ImageIngestionStatus;
+  }[];
 };
 
 export type BaseDataTypeMap = {

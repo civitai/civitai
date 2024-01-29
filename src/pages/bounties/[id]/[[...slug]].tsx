@@ -92,8 +92,6 @@ import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client.mjs';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
@@ -922,12 +920,6 @@ const useStyles = createStyles((theme) => ({
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const currentUser = useCurrentUser();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingHiddenPreferences,
-  } = useHiddenPreferencesContext();
 
   const { data: entries = [], isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
   const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
@@ -936,23 +928,10 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
       owned: true,
     });
 
-  const filteredEntries = useMemo(
-    () =>
-      !loadingHiddenPreferences
-        ? applyUserPreferencesBounties<(typeof entries)[number]>({
-            items: entries,
-            hiddenImages,
-            hiddenTags,
-            hiddenUsers,
-            currentUserId: currentUser?.id,
-          })
-        : [],
-    [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers, loadingHiddenPreferences]
-  );
-
-  // const test = useApplyHiddenPreferences({ type: 'bounties', data: entries });
-
-  const hiddenItems = entries.length - filteredEntries.length;
+  const { items: filteredEntries, hiddenCount } = useApplyHiddenPreferences({
+    type: 'bounties',
+    data: entries,
+  });
 
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
@@ -987,9 +966,9 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
             </Tooltip>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems.toLocaleString()} entries have been hidden due to your settings or due
+                {hiddenCount.toLocaleString()} entries have been hidden due to your settings or due
                 to lack of images
               </Text>
             )}

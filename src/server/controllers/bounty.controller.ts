@@ -223,35 +223,41 @@ export const getBountyEntriesHandler = async ({
       currency: Currency.BUZZ,
     });
 
-    return entries.map((entry) => {
-      const awardedUnitAmountTotal = Number(
-        awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
-      );
-      return {
-        ...entry,
-        images: images
-          .filter((i) => i.entityId === entry.id)
-          .map((i) => ({
-            ...i,
-            metadata: i.metadata as ImageMetaProps,
-          })),
-        // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
-        fileUnlockAmount: Math.max(
-          0,
-          files.reduce(
-            (acc, curr) =>
-              Math.max(
-                acc,
-                curr.metadata ? (curr.metadata as BountyEntryFileMeta)?.unlockAmount ?? 0 : 0
-              ),
-            0
-          ) - awardedUnitAmountTotal
-        ),
-        fileCount: files.length,
+    return entries
+      .map((entry) => {
+        const user = entry.user;
+        const awardedUnitAmountTotal = Number(
+          awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
+        );
+        if (!user) return null;
+        return {
+          ...entry,
+          user,
+          images: images
+            .filter((i) => i.entityId === entry.id)
+            .map((i) => ({
+              ...i,
+              tagIds: i.tags?.map((x) => x.id),
+              metadata: i.metadata as ImageMetaProps,
+            })),
+          // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
+          fileUnlockAmount: Math.max(
+            0,
+            files.reduce(
+              (acc, curr) =>
+                Math.max(
+                  acc,
+                  curr.metadata ? (curr.metadata as BountyEntryFileMeta)?.unlockAmount ?? 0 : 0
+                ),
+              0
+            ) - awardedUnitAmountTotal
+          ),
+          fileCount: files.length,
 
-        awardedUnitAmountTotal,
-      };
-    });
+          awardedUnitAmountTotal,
+        };
+      })
+      .filter(isDefined);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

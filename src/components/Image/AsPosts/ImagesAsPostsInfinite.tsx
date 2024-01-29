@@ -41,17 +41,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
-import { ImageIngestionStatus } from '@prisma/client';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
-import { BrowsingMode } from '~/server/common/enums';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -121,12 +118,15 @@ export default function ImagesAsPostsInfinite({
       }
     );
 
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: isLoadingHidden,
-  } = useHiddenPreferencesContext();
+  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const { items } = useApplyHiddenPreferences({ type: 'posts', data: flatData, showHidden });
+
+  // const {
+  //   images: hiddenImages,
+  //   tags: hiddenTags,
+  //   users: hiddenUsers,
+  //   isLoading: isLoadingHidden,
+  // } = useHiddenPreferencesContext();
 
   const {
     hiddenImages: galleryHiddenImages,
@@ -135,52 +135,52 @@ export default function ImagesAsPostsInfinite({
     isLoading: loadingGallerySettings,
   } = useModelGallerySettings({ modelId: model.id });
 
-  const items = useMemo(() => {
-    // TODO - fetch user reactions for images separately
-    if (isLoadingHidden || loadingGallerySettings) return [];
-    const arr = data?.pages.flatMap((x) => x.items) ?? [];
-    const filtered = arr
-      .filter((x) => {
-        if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-        if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
-          return false;
-        return true;
-      })
-      .map(({ images, ...x }) => {
-        const filteredImages = images?.filter((i) => {
-          // show hidden images only
-          if (showHidden) return galleryHiddenImages.get(i.id);
+  // const items = useMemo(() => {
+  //   // TODO - fetch user reactions for images separately
+  //   if (isLoadingHidden || loadingGallerySettings) return [];
+  //   const arr = data?.pages.flatMap((x) => x.items) ?? [];
+  //   const filtered = arr
+  //     .filter((x) => {
+  //       if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
+  //       if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
+  //         return false;
+  //       return true;
+  //     })
+  //     .map(({ images, ...x }) => {
+  //       const filteredImages = images?.filter((i) => {
+  //         // show hidden images only
+  //         if (showHidden) return galleryHiddenImages.get(i.id);
 
-          if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
-          if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
-          for (const tag of i.tagIds ?? []) {
-            if (hiddenTags.get(tag) || galleryHiddenTags.get(tag)) return false;
-          }
-          return true;
-        });
+  //         if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
+  //         if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
+  //         for (const tag of i.tagIds ?? []) {
+  //           if (hiddenTags.get(tag) || galleryHiddenTags.get(tag)) return false;
+  //         }
+  //         return true;
+  //       });
 
-        if (!filteredImages?.length) return null;
+  //       if (!filteredImages?.length) return null;
 
-        return {
-          ...x,
-          images: filteredImages,
-        };
-      })
-      .filter(isDefined);
-    return filtered;
-  }, [
-    data,
-    currentUser,
-    hiddenImages,
-    hiddenTags,
-    hiddenUsers,
-    isLoadingHidden,
-    galleryHiddenImages,
-    galleryHiddenTags,
-    galleryHiddenUsers,
-    loadingGallerySettings,
-    showHidden,
-  ]);
+  //       return {
+  //         ...x,
+  //         images: filteredImages,
+  //       };
+  //     })
+  //     .filter(isDefined);
+  //   return filtered;
+  // }, [
+  //   data,
+  //   currentUser,
+  //   hiddenImages,
+  //   hiddenTags,
+  //   hiddenUsers,
+  //   isLoadingHidden,
+  //   galleryHiddenImages,
+  //   galleryHiddenTags,
+  //   galleryHiddenUsers,
+  //   loadingGallerySettings,
+  //   showHidden,
+  // ]);
 
   useEffect(() => {
     if (galleryHiddenImages.size === 0) setShowHidden(false);

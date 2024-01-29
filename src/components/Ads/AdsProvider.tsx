@@ -30,10 +30,10 @@ export function useAdsContext() {
   return context;
 }
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState(false);
+  const [adsBlocked, setAdsBlocked] = useState(!isProd);
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.subscriptionId;
-  const enabled = env.NEXT_PUBLIC_ADS && isProd;
+  const enabled = env.NEXT_PUBLIC_ADS;
   const showAds = enabled && !isMember;
 
   // keep track of generation panel views that are considered nsfw
