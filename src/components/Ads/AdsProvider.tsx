@@ -25,7 +25,7 @@ export function useAdsContext() {
   return context;
 }
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState(!isProd);
+  const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.subscriptionId;
   const enabled = env.NEXT_PUBLIC_ADS;
@@ -43,7 +43,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   );
 
   const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
-    canLoad: showAds && !nsfw,
+    canLoad: showAds,
   });
   // const adSenseReady = useScript(
   //   'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
