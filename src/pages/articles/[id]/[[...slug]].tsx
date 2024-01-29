@@ -11,7 +11,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { ArticleEngagementType } from '@prisma/client';
+import { ArticleEngagementType, Availability } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -103,7 +103,11 @@ export default function ArticleDetailsPage({
             ]
           : undefined
       }
-      deIndex={!article?.publishedAt ? 'noindex' : undefined}
+      deIndex={
+        !article?.publishedAt || article?.availability === Availability.Unsearchable
+          ? 'noindex'
+          : undefined
+      }
     />
   );
 

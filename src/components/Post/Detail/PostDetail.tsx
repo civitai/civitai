@@ -12,7 +12,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { CollectionType } from '@prisma/client';
+import { Availability, CollectionType } from '@prisma/client';
 import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
@@ -71,6 +71,7 @@ export function PostDetail({ postId }: { postId: number }) {
           : getEdgeUrl(images[0].url, { width: 1200 })
       }
       links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
+      deIndex={post?.availability === Availability.Unsearchable ? 'noindex, nofollow' : undefined}
     />
   );
 

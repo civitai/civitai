@@ -20,7 +20,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBan,
   IconClock,
@@ -491,7 +491,11 @@ export default function ModelDetailsV2({
         },
       ]}
       schema={metaSchema}
-      deIndex={model.status !== ModelStatus.Published ? 'noindex' : undefined}
+      deIndex={
+        model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
+          ? 'noindex'
+          : undefined
+      }
     />
   );
 

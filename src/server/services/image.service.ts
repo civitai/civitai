@@ -469,6 +469,7 @@ type GetAllImagesRaw = {
   type: MediaType;
   metadata: Prisma.JsonValue;
   baseModel?: string;
+  availability: Availability;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -795,12 +796,12 @@ export const getAllImages = async ({
       i."postId",
       p."title" "postTitle",
       i."index",
-      i."availability",
       p."publishedAt",
       p."modelVersionId",
       u.username,
       u.image "userImage",
       u."deletedAt",
+      p."availability",
       ${Prisma.raw(
         includeBaseModel
           ? `(
@@ -915,6 +916,7 @@ export const getAllImages = async ({
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       baseModel?: string | null;
+      availability?: Availability;
     }
   > = rawImages
     .filter((x) => {
@@ -1079,6 +1081,11 @@ export const getImage = async ({
       u.image "userImage",
       u."deletedAt",
       u."profilePictureId",
+      ${
+        !withoutPost
+          ? Prisma.sql`p."availability" "availability",`
+          : Prisma.sql`'Public' "availability",`
+      }
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -1282,8 +1289,8 @@ export const getImagesForModelVersion = async ({
       i.hash,
       i.type,
       i.metadata,
-      t."modelVersionId", 
-      p."availability",
+      t."modelVersionId",
+      p."availability"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id

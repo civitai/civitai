@@ -17,6 +17,7 @@ import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
@@ -115,6 +116,13 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             }
           />
         )}
+        {
+          <ToggleSearchableMenuItem
+            entityType="Article"
+            entityId={article.id}
+            key="toggle-searchable-menu-item"
+          />
+        }
         {currentUser && (isOwner || isModerator) && (
           <>
             <Menu.Item
