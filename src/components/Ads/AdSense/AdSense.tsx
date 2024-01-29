@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { isProd } from '~/env/other';
 import { createDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
 
@@ -18,14 +19,14 @@ emitter.on('serve', () =>
 );
 
 export function AdSenseAd() {
-  // const { adSenseReady } = useAdsContext();
-  // const hasRunRef = useRef(false);
-  // useEffect(() => {
-  //   if (adSenseReady && !hasRunRef.current) {
-  //     hasRunRef.current = true;
-  //     emitter.emit('serve', undefined);
-  //   }
-  // }, [adSenseReady]);
+  const { adSenseReady } = useAdsContext();
+  const hasRunRef = useRef(false);
+  useEffect(() => {
+    if (adSenseReady && !hasRunRef.current) {
+      hasRunRef.current = true;
+      emitter.emit('serve', undefined);
+    }
+  }, [adSenseReady]);
 
   return (
     <ins
@@ -35,7 +36,7 @@ export function AdSenseAd() {
       data-ad-slot="2186801716"
       data-ad-format="auto"
       data-full-width-responsive="true"
-      data-adtest="on"
+      data-adtest={!isProd ? 'on' : 'off'}
     ></ins>
   );
 }

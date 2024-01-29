@@ -15,7 +15,7 @@ const AscendeumAdsContext = createContext<{
   isMember: boolean;
   enabled: boolean;
   ascendeumReady: boolean;
-  // adSenseReady: boolean;
+  adSenseReady: boolean;
   exoclickReady: boolean;
 } | null>(null);
 
@@ -45,12 +45,12 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
     canLoad: showAds,
   });
-  // const adSenseReady = useScript(
-  //   'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
-  //   {
-  //     canLoad: showAds && !nsfw,
-  //   }
-  // );
+  const adSenseReady = useScript(
+    'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
+    {
+      canLoad: showAds,
+    }
+  );
   // const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
   //   canLoad: showAds && nsfw,
   // });
@@ -75,7 +75,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         username: currentUser?.username,
         ascendeumReady,
         exoclickReady,
-        // adSenseReady,
+        adSenseReady,
         isMember,
         enabled,
       }}

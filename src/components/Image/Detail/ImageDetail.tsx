@@ -24,6 +24,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { AdSenseAd } from '~/components/Ads/AdSense/AdSense';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -48,6 +49,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useScript } from '~/hooks/useScript';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -313,14 +315,18 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
-                <AscendeumAd
-                  adunit="Sidebar_A"
-                  m="0 auto"
-                  nsfw={nsfw}
-                  sizes={{ [0]: '300x250' }}
-                  showFeedback
-                  showRemoveAds
-                />
+                {nsfw ? (
+                  <AscendeumAd
+                    adunit="Sidebar_A"
+                    m="0 auto"
+                    nsfw={nsfw}
+                    sizes={{ [0]: '300x250' }}
+                    showFeedback
+                    showRemoveAds
+                  />
+                ) : (
+                  <AdSenseAd />
+                )}
                 {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
