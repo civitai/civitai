@@ -43,9 +43,9 @@ export const AnnouncementHomeBlock = ({ homeBlockId, showAds }: Props) => {
     return !dismissible || !dismissed.includes(announcement.id);
   });
 
-  // if (announcements.length === 0) {
-  //   return null;
-  // }
+  if (announcements.length === 0) {
+    return null;
+  }
 
   /**
    * Guarantees 2 announcements per row respecting their sizes.
