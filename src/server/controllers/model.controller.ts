@@ -657,7 +657,7 @@ export const getDownloadCommandHandler = async ({
       await dbWrite.$executeRaw`
         -- Update user history
         INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
-        VALUES (${userId}, ${modelVersionId}, ${now}, false)
+        VALUES (${userId}, ${modelVersion.id}, ${now}, false)
         ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
       `;
     }
