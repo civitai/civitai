@@ -8,7 +8,11 @@ import produce from 'immer';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { IconLock } from '@tabler/icons-react';
-import { useCommentsContext, useNewCommentStore } from '~/components/CommentsV2/CommentsProvider';
+import {
+  useCommentsContext,
+  useNewCommentStore,
+  useRootThreadContext,
+} from '~/components/CommentsV2/CommentsProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 
 /*
@@ -25,14 +29,27 @@ export const CommentForm = ({
   onCancel,
   autoFocus,
   replyTo,
+  replyToCommentId,
 }: {
   comment?: { id: number; content: string };
   onCancel?: () => void;
   autoFocus?: boolean;
   replyTo?: SimpleUser;
+  replyToCommentId?: number;
 }) => {
   const { classes } = useStyles();
-  const { entityId, entityType, isMuted, data } = useCommentsContext();
+  const { expanded, toggleExpanded } = useRootThreadContext();
+  const {
+    entityId: contextEntityId,
+    entityType: contextEntityType,
+    isMuted,
+    data,
+    parentThreadId,
+  } = useCommentsContext();
+
+  const entityId = replyToCommentId ? replyToCommentId : contextEntityId;
+  const entityType = replyToCommentId ? 'comment' : contextEntityType;
+
   const editorRef = useRef<EditorCommandsRef | null>(null);
   const [focused, setFocused] = useState(autoFocus);
   const defaultValues = { ...comment, entityId, entityType };
@@ -62,10 +79,14 @@ export const CommentForm = ({
     async onSuccess(response, request) {
       // if it has an id, just set the data with state
       if (request.id) {
+        // Response is minimally different but key components remain the same so any is used.
+        queryUtils.commentv2.getSingle.setData({ id: request.id }, response as any);
         queryUtils.commentv2.getThreadDetails.setData(
           { entityType, entityId },
           produce((old) => {
-            if (!old) return;
+            if (!old) {
+              return;
+            }
             const item = old.comments.find((x) => x.id === request.id);
             if (!item) {
               store.editComment(entityType, entityId, response);
@@ -75,8 +96,26 @@ export const CommentForm = ({
           })
         );
       } else {
+        const hasThreadData = queryUtils.commentv2.getThreadDetails.getData({
+          entityType,
+          entityId,
+        });
+
+        // If we don't have thread data, child comments will not get a proper parent
+        // and convos will be lost.
+        if (!hasThreadData) {
+          await queryUtils.commentv2.getThreadDetails.invalidate({
+            entityType,
+            entityId,
+          });
+        }
+
         queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
         store.addComment(entityType, entityId, response);
+      }
+
+      if (replyToCommentId && !expanded.includes(replyToCommentId)) {
+        toggleExpanded(replyToCommentId);
       }
       // update comment count
       handleCancel();
@@ -96,7 +135,13 @@ export const CommentForm = ({
   };
 
   const handleSubmit = (data: UpsertCommentV2Input) => {
-    mutate({ ...comment, ...data, entityId, entityType });
+    mutate({
+      ...comment,
+      ...data,
+      entityId,
+      entityType,
+      parentThreadId: replyToCommentId ? parentThreadId : undefined,
+    });
   };
 
   if (isMuted)

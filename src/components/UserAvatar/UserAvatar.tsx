@@ -109,6 +109,8 @@ export function UserAvatar({
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
   const isSelf = !!currentUser && currentUser.id === avatarUser.id;
   const blockedProfilePicture = avatarUser.profilePicture?.ingestion === 'Blocked';
+  const avatarBgColor =
+    theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   return (
     <Group align="center" spacing={spacing} noWrap>
@@ -132,7 +134,7 @@ export function UserAvatar({
                 style={{
                   overflow: 'hidden',
                   position: 'relative',
-                  backgroundColor: 'rgba(0,0,0,0.31)',
+                  backgroundColor: avatarBgColor,
                   borderRadius: imageRadius,
                 }}
               >
@@ -206,7 +208,7 @@ export function UserAvatar({
                 radius={radius || 'xl'}
                 size={avatarSize ?? size}
                 imageProps={{ loading: 'lazy' }}
-                sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
+                sx={{ backgroundColor: avatarBgColor }}
                 {...avatarProps}
               >
                 {avatarUser.username && !userDeleted ? getInitials(avatarUser.username) : null}

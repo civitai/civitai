@@ -1679,8 +1679,12 @@ model CommentV2 {
 }
 
 model Thread {
-  id     Int     @id @default(autoincrement())
-  locked Boolean @default(false)
+  id             Int     @id @default(autoincrement())
+  locked         Boolean @default(false)
+  parentThreadId Int?
+  parentThread   Thread? @relation("childThread", fields: [parentThreadId], references: [id], onDelete: Cascade)
+  rootThreadId   Int?
+  rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
 
   questionId    Int?            @unique
   question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
@@ -1707,7 +1711,9 @@ model Thread {
 
   metadata Json @default("{}")
 
-  comments CommentV2[] @relation("thread")
+  comments       CommentV2[] @relation("thread")
+  directChildren Thread[]    @relation("childThread")
+  children       Thread[]    @relation("root")
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
