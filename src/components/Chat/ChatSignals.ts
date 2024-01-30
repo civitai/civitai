@@ -12,7 +12,7 @@ const messageSound = '/sounds/message2.mp3'; // message
 export const useChatNewMessageSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const [play] = useSound(messageSound);
+  const [play] = useSound(messageSound, { volume: 0.5 });
 
   const onUpdate = useCallback(
     (updated: ChatAllMessages[number]) => {
@@ -36,7 +36,7 @@ export const useChatNewMessageSignal = () => {
 
           const thisChat = old.find((o) => o.id === updated.chatId);
           if (!thisChat) return old;
-          thisChat.messages = [{ content: updated.content, contentType: updated.contentType }];
+          thisChat.messages = [{ content: updated.content }]; //, contentType: updated.contentType
         })
       );
 
@@ -71,16 +71,32 @@ export const useChatNewMessageSignal = () => {
 
 export const useChatNewRoomSignal = () => {
   const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+  const [play] = useSound(messageSound, { volume: 0.5 });
 
   const onUpdate = useCallback(
     (updated: ChatCreateChat) => {
       queryUtils.chat.getAllByUser.setData(undefined, (old) => {
-        // proper typing would be nice but typescript is being cranky
-        if (!old) return [updated] as any;
+        if (!old) return [updated];
         return [updated, ...old];
       });
+
+      if (updated.ownerId !== currentUser?.id) {
+        queryUtils.chat.getUnreadCount.setData(
+          undefined,
+          produce((old) => {
+            if (!old) return old;
+            old.push({ chatId: updated.id, cnt: 1 });
+          })
+        );
+
+        const userSettings = queryUtils.chat.getUserSettings.getData();
+        if (userSettings?.muteSounds !== true) {
+          play();
+        }
+      }
     },
-    [queryUtils]
+    [queryUtils, play]
   );
 
   useSignalConnection(SignalMessages.ChatNewRoom, onUpdate);

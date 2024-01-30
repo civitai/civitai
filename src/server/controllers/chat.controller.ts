@@ -1,4 +1,4 @@
-import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { uniq } from 'lodash-es';
@@ -6,7 +6,6 @@ import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   AddUsersInput,
   CreateChatInput,
@@ -36,7 +35,7 @@ const singleChatSelect = {
   hash: true,
   ownerId: true,
   chatMembers: {
-    where: { status: { in: [ChatMemberStatus.Joined, ChatMemberStatus.Invited] } },
+    // where: { status: { in: [ChatMemberStatus.Joined, ChatMemberStatus.Invited] } },
     select: {
       id: true,
       userId: true,
@@ -45,7 +44,8 @@ const singleChatSelect = {
       status: true,
       lastViewedMessageId: true,
       createdAt: true,
-      joinedAt: true,
+      // TODO do we need these datetimes in the frontend?
+      // joinedAt: true,
       // leftAt: true,
       // kickedAt: true,
       // unkickedAt: true,
@@ -54,12 +54,21 @@ const singleChatSelect = {
           id: true,
           username: true,
           isModerator: true,
-          // image: true, // is this right? or profilePicture?
         },
       },
     },
   },
-  // messages: {}
+};
+
+const latestChat = {
+  messages: {
+    orderBy: { createdAt: Prisma.SortOrder.desc },
+    take: 1,
+    select: {
+      content: true,
+      // contentType: true,
+    },
+  },
 };
 
 /**
@@ -91,44 +100,9 @@ export const setUserSettingsHandler = async ({
     const { chat = {} } = await getUserSettings(userId);
     const newChat = { ...chat, ...input };
 
-    // TODO make sure this is not resetting undefined values
     await setUserSetting(userId, { chat: newChat });
 
     return newChat;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
-// TODO are we using this?
-
-/**
- * Get a single chat
- */
-export const getChatHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-
-    const chat = await dbWrite.chat.findFirst({
-      where: {
-        id: input.id,
-        // chatMembers: { some: { userId } } // TODO if enabling, remove "includes" check below
-      },
-      select: singleChatSelect,
-    });
-
-    if (!chat || !chat.chatMembers.map((cm) => cm.userId).includes(userId)) {
-      throw throwNotFoundError(`No chat found for ID (${input.id})`);
-    }
-
-    return chat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -145,27 +119,13 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     return await dbWrite.chat.findMany({
       where: {
         chatMembers: {
-          some: { userId, status: { in: [ChatMemberStatus.Joined, ChatMemberStatus.Invited] } },
+          some: { userId },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: Prisma.SortOrder.desc },
       select: {
         ...singleChatSelect,
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            content: true,
-            contentType: true,
-            // TODO is below necessary?
-            // user: {
-            //   select: {
-            //     id: true,
-            //     username: true,
-            //   },
-            // },
-          },
-        },
+        ...latestChat,
       },
     });
   } catch (error) {
@@ -187,8 +147,9 @@ export const getUnreadMessagesForUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    return await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId" as "chatId", count(msg.id)::integer as "cnt"
+    const unread = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+      select memb."chatId"          as "chatId",
+             count(msg.id)::integer as "cnt"
       from "ChatMember" memb
              left join "ChatMessage" msg
                        on msg."chatId" = memb."chatId" and
@@ -196,11 +157,23 @@ export const getUnreadMessagesForUserHandler = async ({
                            memb."lastViewedMessageId" is null
                             )
       where memb."userId" = ${userId}
-      and memb.status in ('Invited', 'Joined')
-      and memb."isMuted" is false
-      and msg."userId" != ${userId}
+        and memb.status = 'Joined'
+        and memb."isMuted" is false
+        and msg."userId" != ${userId}
       group by memb."chatId"
     `;
+
+    const pending = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+      select memb."chatId" as "chatId",
+             1             as "cnt"
+      from "ChatMember" memb
+      where memb."userId" = ${userId}
+        and memb.status = 'Invited'
+        and memb."isMuted" is false
+      group by memb."chatId"
+    `;
+
+    return [...unread, ...pending];
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -236,21 +209,14 @@ export const createChatHandler = async ({
 
     const existing = await dbWrite.chat.findFirst({
       where: { hash },
-      // select: {
-      //   ...singleChatSelect,
-      //   messages: {
-      //     orderBy: { createdAt: 'desc' },
-      //     take: 1,
-      //     select: {
-      //       content: true,
-      //       contentType: true,
-      //     },
-      //   },
-      // },
-      select: { id: true },
+      select: {
+        ...singleChatSelect,
+        ...latestChat,
+      },
+      // select: { id: true },
     });
 
-    if (existing) {
+    if (!!existing) {
       return existing;
     }
 
@@ -268,8 +234,6 @@ export const createChatHandler = async ({
     const totalForUser = await dbWrite.chat.count({
       where: { ownerId: userId },
     });
-
-    // TODO need a way to archive/delete chats that will still let the users see messages
 
     if (totalForUser >= maxChats && !canBypassLimits) {
       throw throwBadRequestError(`Cannot have more than ${maxChats} chats`);
@@ -329,16 +293,12 @@ export const createChatHandler = async ({
       },
       select: {
         ...singleChatSelect,
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            content: true,
-            contentType: true,
-          },
-        },
+        ...latestChat,
       },
     });
+    if (!insertedChat) {
+      throw throwBadRequestError('Chat creation failed.');
+    }
 
     // - sending new chat room signal without being part of the group
     for (const cmId of dedupedUserIds) {
@@ -425,14 +385,7 @@ export const addUsersHandler = async ({
         data: { hash },
         select: {
           ...singleChatSelect,
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: {
-              content: true,
-              contentType: true,
-            },
-          },
+          ...latestChat,
         },
       });
     });
@@ -502,7 +455,7 @@ export const modifyUserHandler = async ({
     }
 
     if (status === ChatMemberStatus.Kicked) {
-      // i guess owners can kick themselves out :/
+      // I guess owners can kick themselves out :/
       if (existing.chat.ownerId !== userId) {
         throw throwBadRequestError(`Cannot modify users for a chat you are not the owner of`);
       }
@@ -518,8 +471,6 @@ export const modifyUserHandler = async ({
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
       kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
     };
-
-    // TODO should we adjust the hash on leave/kicked?
 
     const resp = await dbWrite.chatMember.update({
       where: { id: chatMemberId },
@@ -578,6 +529,9 @@ export const getInfiniteMessagesHandler = async ({
         chatMembers: {
           select: {
             userId: true,
+            status: true,
+            leftAt: true,
+            kickedAt: true,
           },
         },
       },
@@ -587,8 +541,21 @@ export const getInfiniteMessagesHandler = async ({
       throw throwNotFoundError(`No chat found for ID (${input.chatId})`);
     }
 
+    const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
+    const dateLimit: { createdAt?: { lt: Date } } = {};
+    if (!thisMember) {
+      dateLimit.createdAt = { lt: new Date(1970) };
+    } else if (thisMember.status === ChatMemberStatus.Left) {
+      dateLimit.createdAt = { lt: thisMember.leftAt ?? new Date(1970) };
+    } else if (thisMember.status === ChatMemberStatus.Kicked) {
+      dateLimit.createdAt = { lt: thisMember.kickedAt ?? new Date(1970) };
+    } else if (thisMember.status === ChatMemberStatus.Ignored) {
+      // TODO do we need ignoredAt?
+      dateLimit.createdAt = { lt: new Date(1970) };
+    }
+
     const items = await dbWrite.chatMessage.findMany({
-      where: { chatId: input.chatId },
+      where: { chatId: input.chatId, ...dateLimit },
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
       orderBy: [{ id: input.direction }],

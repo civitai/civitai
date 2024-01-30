@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Box,
   Center,
   createPolymorphicComponent,
@@ -10,6 +11,7 @@ import {
   Indicator,
   Input,
   Loader,
+  SegmentedControl,
   Stack,
   Text,
   ThemeIcon,
@@ -19,18 +21,18 @@ import { ChatMemberStatus } from '@prisma/client';
 import {
   IconCirclePlus,
   IconCloudOff,
-  IconMail,
   IconSearch,
   IconUsers,
   IconUserX,
   IconX,
 } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ChatListMessage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
@@ -49,16 +51,17 @@ const useStyles = createStyles((theme) => ({
   selectedChat: {
     backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
   },
-  modChat: {
-    backgroundColor: theme.fn.rgba(theme.colors.red[theme.fn.primaryShade()], 0.05),
-    '&:hover': {
-      backgroundColor: theme.fn.rgba(theme.colors.red[theme.fn.primaryShade()], 0.2),
-    },
-  },
-  modSelectedChat: {
-    backgroundColor: `${theme.fn.rgba(theme.colors.red[theme.fn.primaryShade()], 0.4)} !important`,
-  },
 }));
+
+const statusMap = {
+  [ChatMemberStatus.Invited]: 'Pending',
+  [ChatMemberStatus.Ignored]: 'Archived',
+  [ChatMemberStatus.Left]: 'Archived',
+  [ChatMemberStatus.Kicked]: 'Archived',
+  [ChatMemberStatus.Joined]: 'Active',
+};
+type StatusKeys = keyof typeof statusMap;
+type StatusValues = (typeof statusMap)[StatusKeys];
 
 export function ChatList() {
   const { state, setState } = useChatContext();
@@ -66,23 +69,55 @@ export function ChatList() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<StatusValues>('Active');
+  const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
 
-  // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats
-  //      or at least a new endpoint for searching
-  const filteredData =
-    searchInput.length > 0 && !!data
-      ? data.filter((d) => {
-          if (
-            d.chatMembers
-              .filter((cm) => cm.userId !== currentUser?.id)
-              .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
-          )
-            return d;
-        })
-      : data;
+  const pendingCount = !!data
+    ? data.filter(
+        (d) =>
+          d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status ===
+          ChatMemberStatus.Invited
+      ).length
+    : 0;
+
+  useEffect(() => {
+    if (!data) return;
+    const activeStatus = data
+      .find((d) => d.id === state.existingChatId)
+      ?.chatMembers?.find((cm) => cm.userId === currentUser?.id)?.status;
+    if (!activeStatus) return;
+    const defaultActiveTab = statusMap[activeStatus];
+    setActiveTab(defaultActiveTab);
+  }, [currentUser?.id, data, state.existingChatId]);
+
+  useEffect(() => {
+    if (!data) return;
+
+    const tabData = data.filter((d) => {
+      const tStatus = d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status;
+      if (!tStatus) return;
+      if (statusMap[tStatus] === activeTab) return d;
+    });
+
+    // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats
+    //      or at least a new endpoint for searching
+    const tabFiltered =
+      searchInput.length > 0
+        ? tabData.filter((d) => {
+            if (
+              d.chatMembers
+                .filter((cm) => cm.userId !== currentUser?.id)
+                .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
+            )
+              return d;
+          })
+        : tabData;
+
+    setFilteredData(tabFiltered);
+  }, [currentUser?.id, data, searchInput, activeTab]);
 
   return (
     <Stack spacing={0} h="100%">
@@ -107,6 +142,7 @@ export function ChatList() {
               onClick={() => {
                 setSearchInput('');
               }}
+              disabled={!searchInput.length}
             >
               <IconX size={16} />
             </ActionIcon>
@@ -114,6 +150,30 @@ export function ChatList() {
         />
       </Box>
       <Divider />
+      <Box>
+        <SegmentedControl
+          value={activeTab}
+          onChange={setActiveTab}
+          fullWidth
+          data={[
+            { value: 'Active', label: 'Active' },
+            {
+              value: 'Pending',
+              label: (
+                <Center>
+                  {pendingCount > 0 && (
+                    <Badge p={5} color="red" variant="filled">
+                      {pendingCount > 9 ? '9+' : pendingCount}
+                    </Badge>
+                  )}
+                  <Box ml={6}>Pending</Box>
+                </Center>
+              ),
+            },
+            { value: 'Archived', label: 'Archived' },
+          ]}
+        />
+      </Box>
       <Box h="100%" sx={{ overflowY: 'auto' }}>
         {isLoading ? (
           <Center h="100%">
@@ -121,16 +181,19 @@ export function ChatList() {
           </Center>
         ) : !filteredData || filteredData.length === 0 ? (
           <Stack p="sm" align="center">
-            <Text>No chats yet.</Text>
+            <Text>No chats.</Text>
             <IconCloudOff size={36} />
           </Stack>
         ) : (
           <Stack p="xs" spacing={4}>
             <AnimatePresence initial={false} mode="sync">
               {filteredData.map((d) => {
-                const unreadCount = chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
+                const unreadCount =
+                  myMember?.status === ChatMemberStatus.Invited
+                    ? 0
+                    : chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
                 const isModSender = !!otherMembers.find(
                   (om) => om.isOwner === true && om.user.isModerator === true
                 );
@@ -142,9 +205,7 @@ export function ChatList() {
                     component={motion.div}
                     noWrap
                     className={cx(classes.selectChat, {
-                      // [classes.modChat]: isModSender,
-                      [classes.selectedChat]: !isModSender && d.id === state.existingChatId,
-                      // [classes.modSelectedChat]: isModSender && d.id === state.existingChatId,
+                      [classes.selectedChat]: d.id === state.existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -185,7 +246,8 @@ export function ChatList() {
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
                       </Text>
-                      {!!d.messages[0]?.content && (
+                      {/* TODO this is kind of a hack, we should be returning only valid latest message */}
+                      {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text
                           size="xs"
                           sx={{
@@ -200,17 +262,6 @@ export function ChatList() {
                       )}
                     </Stack>
                     <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
-                      {myMember?.status === ChatMemberStatus.Invited && (
-                        <Tooltip
-                          withArrow={false}
-                          label="Pending request"
-                          sx={{ border: '1px solid gray' }}
-                        >
-                          <ThemeIcon size="xs" color="green" variant="filled">
-                            <IconMail />
-                          </ThemeIcon>
-                        </Tooltip>
-                      )}
                       {isModSender && (
                         <Tooltip
                           withArrow={false}

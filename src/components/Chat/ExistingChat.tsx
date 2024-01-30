@@ -152,22 +152,36 @@ export function ExistingChat() {
         produce((old) => {
           if (!old) return old;
 
-          if (data.status !== ChatMemberStatus.Joined) {
-            return old.filter((c) => c.id !== state.existingChatId);
-          }
-
           const tChat = old.find((c) => c.id === state.existingChatId);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === data.userId);
           if (!tMember) return old;
 
           tMember.status = data.status;
-          tMember.joinedAt = data.joinedAt;
+
+          // don't think we need this on the FE
+          // if (data.status === ChatMemberStatus.Joined) tMember.joinedAt = data.joinedAt;
+          // ...etc
         })
       );
-      setIsJoining(false);
-      if (data.status !== ChatMemberStatus.Joined) {
-        setState((prev) => ({ ...prev, existingChatId: undefined }));
+
+      if (data.status === ChatMemberStatus.Ignored) {
+        queryUtils.chat.getUnreadCount.setData(
+          undefined,
+          produce((old) => {
+            if (!old) return old;
+
+            const tChat = old.find((c) => c.chatId === data.chatId);
+            if (!tChat) return old;
+
+            tChat.cnt = 0;
+          })
+        );
       }
+
+      setIsJoining(false);
+      // if (data.status !== ChatMemberStatus.Joined) {
+      //   setState((prev) => ({ ...prev, existingChatId: undefined }));
+      // }
     },
     onError(error) {
       setIsJoining(false);
@@ -364,9 +378,9 @@ export function ExistingChat() {
     if (!currentUser) return;
 
     // only send signal if they're not erasing the chat
-    // if (value.length) {
-    throttledTyping();
-    // }
+    if (value.length) {
+      throttledTyping();
+    }
   };
 
   // TODO handle replies (reference)
@@ -430,7 +444,9 @@ export function ExistingChat() {
         <Center h="100%">
           <Loader />
         </Center>
-      ) : myMember.status === ChatMemberStatus.Joined ? (
+      ) : myMember.status === ChatMemberStatus.Joined ||
+        myMember.status === ChatMemberStatus.Left ||
+        myMember.status === ChatMemberStatus.Kicked ? (
         <>
           <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
@@ -461,42 +477,57 @@ export function ExistingChat() {
             )}
           </Box>
           <Divider />
-          <Group spacing={0}>
-            <Textarea
-              sx={{ flexGrow: 1 }}
-              placeholder="Send message"
-              autosize
-              minRows={1}
-              maxRows={4}
-              value={chatMsg}
-              onChange={(event) => handleChatTyping(event.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  if (!e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
+          {myMember.status === ChatMemberStatus.Joined ? (
+            <Group spacing={0}>
+              <Textarea
+                sx={{ flexGrow: 1 }}
+                placeholder="Send message"
+                autosize
+                minRows={1}
+                maxRows={4}
+                value={chatMsg}
+                onChange={(event) => handleChatTyping(event.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (!e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
                   }
-                }
-              }}
-              classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-            />
-            <ActionIcon
-              h="100%"
-              w={60}
-              onClick={sendMessage}
-              disabled={isSending || !chatMsg.length || currentUser?.muted}
-              sx={{ borderRadius: 0 }}
-            >
-              {isSending ? <Loader /> : <IconSend />}
-            </ActionIcon>
-          </Group>
+                }}
+                classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
+              />
+              <ActionIcon
+                h="100%"
+                w={60}
+                onClick={sendMessage}
+                disabled={isSending || !chatMsg.length || currentUser?.muted}
+                sx={{ borderRadius: 0 }}
+              >
+                {isSending ? <Loader /> : <IconSend />}
+              </ActionIcon>
+            </Group>
+          ) : (
+            <Center p="sm">
+              <Text>
+                You {myMember.status === ChatMemberStatus.Left ? 'left' : 'were kicked from'} this
+                chat.
+              </Text>
+            </Center>
+          )}
         </>
-      ) : myMember.status === ChatMemberStatus.Invited ? (
+      ) : myMember.status === ChatMemberStatus.Invited ||
+        myMember.status === ChatMemberStatus.Ignored ? (
         <Center h="100%">
           <Stack>
             <Text align="center">Join the chat?</Text>
             <Group p="sm" position="center">
-              <Button disabled={isJoining} variant="light" color="gray" onClick={handleIgnoreChat}>
+              <Button
+                disabled={isJoining || myMember.status === ChatMemberStatus.Ignored}
+                variant="light"
+                color="gray"
+                onClick={handleIgnoreChat}
+              >
                 Ignore
               </Button>
               <Button disabled={isJoining} onClick={handleJoinChat}>
