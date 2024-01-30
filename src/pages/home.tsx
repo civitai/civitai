@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Center,
@@ -8,17 +7,16 @@ import {
   Popover,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
-import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType, MetricTimeframe } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
-import { IconArrowRight, IconInfoCircle, IconSettings } from '@tabler/icons-react';
+import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
@@ -26,7 +24,6 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { BrowsingMode, ImageSort, ModelSort } from '~/server/common/enums';
-import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -36,6 +33,8 @@ import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
+import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -45,6 +44,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function Home() {
+  const theme = useMantineTheme();
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
@@ -64,7 +64,7 @@ export default function Home() {
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
   return (
-    <>
+    <HiddenPreferencesProvider browsingMode={BrowsingMode.SFW}>
       <Meta
         title="Civitai: The Home of Open-Source Generative AI"
         description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"
@@ -75,20 +75,16 @@ export default function Home() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid sx={{ overflow: 'hidden' }}>
-          <Group position="apart" noWrap>
-            <FullHomeContentToggle />
-            {user && (
-              <ActionIcon
-                size="sm"
-                variant="light"
-                color="dark"
-                onClick={() => openContext('manageHomeBlocks', {})}
-              >
-                <IconSettings />
-              </ActionIcon>
-            )}
-          </Group>
+        <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
+          <AscendeumAd
+            adunit="Leaderboard_A"
+            style={{ margin: `${theme.spacing.md}px auto ${theme.spacing.xs}px` }}
+            sizes={{
+              [0]: '300x100',
+              [theme.breakpoints.md]: '728x90',
+              [theme.breakpoints.lg]: ['970x90', '728x90'],
+            }}
+          />
         </MasonryContainer>
 
         {isLoading && (
@@ -107,7 +103,8 @@ export default function Home() {
             },
           })}
         >
-          {homeBlocks.map((homeBlock) => {
+          {homeBlocks.map((homeBlock, i) => {
+            const showAds = i % 2 === 0 && i > 0;
             switch (homeBlock.type) {
               case HomeBlockType.Collection:
                 return (
@@ -115,28 +112,48 @@ export default function Home() {
                     key={homeBlock.id}
                     homeBlockId={homeBlock.id}
                     metadata={homeBlock.metadata}
+                    showAds={showAds}
                   />
                 );
               case HomeBlockType.Announcement:
-                return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+                return (
+                  <AnnouncementHomeBlock
+                    key={homeBlock.id}
+                    homeBlockId={homeBlock.id}
+                    showAds={showAds}
+                  />
+                );
               case HomeBlockType.Leaderboard:
                 return (
                   <LeaderboardsHomeBlock
                     key={homeBlock.id}
                     homeBlockId={homeBlock.id}
                     metadata={homeBlock.metadata}
+                    showAds={showAds}
                   />
                 );
               case HomeBlockType.Social:
-                return <SocialHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+                return (
+                  <SocialHomeBlock
+                    key={homeBlock.id}
+                    metadata={homeBlock.metadata}
+                    showAds={showAds}
+                  />
+                );
               case HomeBlockType.Event:
-                return <EventHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
+                return (
+                  <EventHomeBlock
+                    key={homeBlock.id}
+                    metadata={homeBlock.metadata}
+                    showAds={showAds}
+                  />
+                );
             }
           })}
 
           {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
             <Box ref={ref}>
-              <HomeBlockWrapper py={32}>
+              <MasonryContainer py={32}>
                 {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
                   <IsClient>
                     <Group mb="md" position="apart">
@@ -184,11 +201,11 @@ export default function Home() {
                     </Group>
 
                     <ImagesInfinite
+                      showAds
                       filters={{
                         // Required to override localStorage filters
                         period: MetricTimeframe.Week,
                         sort: ImageSort.MostReactions,
-                        browsingMode: BrowsingMode.SFW,
                         types: undefined,
                         followed: false,
                         withMeta: true,
@@ -197,11 +214,11 @@ export default function Home() {
                     />
                   </IsClient>
                 )}
-              </HomeBlockWrapper>
+              </MasonryContainer>
             </Box>
           ) : (
             <Box ref={ref}>
-              <HomeBlockWrapper py={32}>
+              <MasonryContainer py={32}>
                 {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
                   <IsClient>
                     <Group mb="md" position="apart">
@@ -249,6 +266,7 @@ export default function Home() {
                     </Group>
 
                     <ModelsInfinite
+                      showAds
                       filters={{
                         excludedImageTagIds: [
                           ...homeExcludedTags.map((tag) => tag.id),
@@ -256,9 +274,8 @@ export default function Home() {
                         ],
                         excludedTagIds: homeExcludedTags.map((tag) => tag.id),
                         // Required to override localStorage filters
-                        period: MetricTimeframe.Week,
+                        period: MetricTimeframe.AllTime,
                         sort: ModelSort.HighestRated,
-                        browsingMode: BrowsingMode.SFW,
                         types: undefined,
                         collectionId: undefined,
                         earlyAccess: false,
@@ -269,11 +286,11 @@ export default function Home() {
                     />
                   </IsClient>
                 )}
-              </HomeBlockWrapper>
+              </MasonryContainer>
             </Box>
           )}
         </Box>
       </MasonryProvider>
-    </>
+    </HiddenPreferencesProvider>
   );
 }

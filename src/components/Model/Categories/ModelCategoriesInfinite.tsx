@@ -5,7 +5,6 @@ import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { useModelFilters, useQueryModelCategories } from '~/components/Model/model.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ModelCategoryCard } from './ModelCategoryCard';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ModelCategoriesState = {
   username?: string;
@@ -20,7 +19,6 @@ export function ModelCategoriesInfinite({
   filters?: ModelCategoriesState;
   limit?: number;
 }) {
-  const features = useFeatureFlags();
   const globalFilters = useModelFilters();
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
@@ -41,9 +39,7 @@ export function ModelCategoriesInfinite({
       actions={(category) => [
         {
           label: 'View more',
-          href: `${features.alternateHome ? '/models' : '/'}?tag=${encodeURIComponent(
-            category.name
-          )}&view=feed`,
+          href: `/models?tag=${encodeURIComponent(category.name)}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,

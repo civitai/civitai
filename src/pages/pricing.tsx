@@ -17,7 +17,7 @@ import {
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { PlanDetails } from '~/components/Stripe/PlanDetails';
+import { PlanCard } from '~/components/Stripe/PlanCard';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import {
   IconCalendarDue,
@@ -99,22 +99,7 @@ export default function Pricing() {
                 <ContainerGrid justify="center">
                   {products.map((product) => (
                     <ContainerGrid.Col key={product.id} md={4} sm={6} xs={12}>
-                      <Card withBorder style={{ height: '100%' }}>
-                        <Stack justify="space-between" style={{ height: '100%' }}>
-                          <PlanDetails
-                            name={product.name}
-                            description={product.description}
-                            unitAmount={product.price.unitAmount}
-                            currency={product.price.currency}
-                            interval={product.price.interval}
-                          />
-                          {showSubscribeButton && (
-                            <SubscribeButton priceId={product.price.id}>
-                              <Button>Subscribe</Button>
-                            </SubscribeButton>
-                          )}
-                        </Stack>
-                      </Card>
+                      <PlanCard product={product} subscription={subscription} />
                     </ContainerGrid.Col>
                   ))}
                 </ContainerGrid>

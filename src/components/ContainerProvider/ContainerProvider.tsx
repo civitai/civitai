@@ -1,6 +1,6 @@
 import { Box, BoxProps, createPolymorphicComponent, createStyles } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
-import { RefObject, createContext, forwardRef, useContext } from 'react';
+import { RefObject, createContext, forwardRef, useCallback, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 
@@ -23,11 +23,21 @@ type ContainerProviderProps = BoxProps & {
 
 const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
   ({ children, containerName, supportsContainerQuery = true, ...props }, ref) => {
-    const innerRef = useResizeObserver((entry) => {
-      useContainerProviderStore.setState(() => ({ [containerName]: entry.contentBoxSize[0] }));
+    const { classes, cx } = useStyles({ supportsContainerQuery });
+
+    const innerRef = useResizeObserver<HTMLDivElement>((entry) => {
+      useContainerProviderStore.setState(() => ({ [containerName]: entry.borderBoxSize[0] }));
     });
     const mergedRef = useMergedRef(innerRef, ref);
-    const { classes, cx } = useStyles({ supportsContainerQuery });
+
+    useEffect(() => {
+      const container = innerRef.current;
+      if (container) {
+        useContainerProviderStore.setState(() => ({
+          [containerName]: { inlineSize: container.clientWidth, blockSize: container.clientHeight },
+        }));
+      }
+    }, []);
 
     return (
       <ContainerContext.Provider value={{ nodeRef: innerRef, containerName }}>
@@ -67,3 +77,11 @@ const useStyles = createStyles<string, { supportsContainerQuery: boolean }>(
 );
 
 export const useContainerProviderStore = create<Record<string, ResizeObserverSize>>(() => ({}));
+
+export function useContainerWidth(containerNameOverride?: string) {
+  const { containerName } = useContainerContext();
+  const _containerName = containerNameOverride ?? containerName;
+  return useContainerProviderStore(
+    useCallback((state) => state[_containerName]?.inlineSize, [_containerName])
+  );
+}

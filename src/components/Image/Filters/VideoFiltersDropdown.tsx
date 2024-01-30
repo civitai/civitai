@@ -1,5 +1,6 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   createStyles,
@@ -48,9 +49,12 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function VideoFiltersDropdown({ query, onChange }: Props) {
+export function VideoFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -102,6 +106,7 @@ export function VideoFiltersDropdown({ query, onChange }: Props) {
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -109,8 +114,10 @@ export function VideoFiltersDropdown({ query, onChange }: Props) {
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />
@@ -189,16 +196,17 @@ export function VideoFiltersDropdown({ query, onChange }: Props) {
         <Drawer
           opened={opened}
           onClose={() => setOpened(false)}
-          withCloseButton={false}
           size="90%"
           position="bottom"
           styles={{
-            body: { padding: 16 },
             drawer: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
               overflowY: 'auto',
             },
+            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            header: { padding: '4px 8px' },
+            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -223,7 +231,7 @@ export function VideoFiltersDropdown({ query, onChange }: Props) {
   );
 }
 
-type Props = {
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesInput>;
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
 };

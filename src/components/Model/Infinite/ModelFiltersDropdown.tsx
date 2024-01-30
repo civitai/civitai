@@ -11,6 +11,7 @@ import {
   Drawer,
   PopoverProps,
   ScrollArea,
+  ButtonProps,
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
@@ -106,6 +107,7 @@ export function DumbModelFiltersDropdown({
   setFilters,
   filterMode = 'local',
   position = 'bottom-end',
+  ...buttonProps
 }: Props & {
   filters: Partial<ModelFilterSchema>;
   setFilters: (filters: Partial<ModelFilterSchema>) => void;
@@ -165,10 +167,11 @@ export function DumbModelFiltersDropdown({
     <Indicator
       offset={4}
       label={filterLength ? filterLength : undefined}
-      size={16}
+      size={14}
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -176,8 +179,10 @@ export function DumbModelFiltersDropdown({
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />
@@ -347,15 +352,16 @@ export function DumbModelFiltersDropdown({
         <Drawer
           opened={opened}
           onClose={() => setOpened(false)}
-          withCloseButton={false}
           size="90%"
           position="bottom"
           styles={{
-            body: { padding: 16, overflowY: 'auto' },
             drawer: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
             },
+            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            header: { padding: '4px 8px' },
+            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -383,7 +389,10 @@ export function DumbModelFiltersDropdown({
   );
 }
 
-type Props = { filterMode?: 'local' | 'query'; position?: PopoverProps['position'] };
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
+  filterMode?: 'local' | 'query';
+  position?: PopoverProps['position'];
+};
 
 const useStyles = createStyles((theme, _params, getRef) => ({
   label: {
@@ -415,4 +424,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));

@@ -35,13 +35,7 @@ const featureFlags = createFeatureFlags({
     description: `We're improving our search experience! This is a beta feature, so please report any issues you find!`,
     availability: ['public'],
   },
-  alternateHome: {
-    toggleable: true,
-    default: true,
-    displayName: 'New Home Page',
-    description: `A new home page with a more modern design and more features. This is a beta feature, so please report any issues you find!`,
-    availability: ['public'],
-  },
+  alternateHome: ['public'],
   collections: ['public'],
   air: {
     toggleable: true,
@@ -55,7 +49,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Model Card V2',
     description: `A fresh style for model cards with more information and a better layout.`,
-    availability: ['user'],
+    availability: ['public'],
   },
   profileCollections: ['public'],
   imageSearch: ['dev'],
@@ -82,6 +76,7 @@ const featureFlags = createFeatureFlags({
   clubs: ['public'],
   createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
+  chat: ['user'],
   creatorsProgram: ['mod', 'granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

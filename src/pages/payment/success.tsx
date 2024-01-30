@@ -17,11 +17,9 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { enterFall, jelloVertical } from '~/libs/animations';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PaymentSuccess() {
   const router = useRouter();
-  const features = useFeatureFlags();
   const { cid } = router.query as { cid: string };
   const { customerId, refresh } = useCurrentUser() ?? {};
 
@@ -69,7 +67,7 @@ export default function PaymentSuccess() {
           <Group grow>
             <Button
               component={NextLink}
-              href={features.alternateHome ? '/models' : '/'}
+              href="/models"
               size="md"
               leftIcon={<IconLayoutDashboard />}
             >

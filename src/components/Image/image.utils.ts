@@ -1,9 +1,9 @@
-import { ImageIngestionStatus, MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -11,11 +11,10 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 import { isEqual } from 'lodash-es';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { closeModal, openConfirmModal } from '@mantine/modals';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -72,8 +71,7 @@ export const useQueryImages = (
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
+  const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -82,52 +80,22 @@ export const useQueryImages = (
     }
   );
 
-  const currentUser = useCurrentUser();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingHidden,
-  } = useHiddenPreferencesContext();
+  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: flatData,
+    showHidden: !!filters.hidden,
+    disabled: !applyHiddenPreferences,
+  });
 
-  const { images, fetchedImages, removedImages } = useMemo(() => {
-    // TODO - fetch user reactions for images separately
-    if (loadingHidden)
-      return {
-        images: [],
-        fetchedImages: 0,
-        removedImages: 0,
-      };
-
-    const arr = data?.pages.flatMap((x) => x.items) ?? [];
-    const filtered = applyHiddenPreferences
-      ? arr.filter((x) => {
-          if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-          if (x.ingestion !== ImageIngestionStatus.Scanned) return false;
-          if (hiddenImages.get(x.id) && !filters?.hidden) return false;
-          if (hiddenUsers.get(x.user.id)) return false;
-          for (const tag of x.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-          return true;
-        })
-      : arr;
-
-    return {
-      images: filtered,
-      fetchedImages: arr.length,
-      removedImages: arr.length - filtered.length,
-    };
-  }, [
+  return {
     data,
-    currentUser,
-    hiddenImages,
-    hiddenTags,
-    hiddenUsers,
-    loadingHidden,
-    filters?.hidden,
-    applyHiddenPreferences,
-  ]);
-
-  return { data, images, removedImages, fetchedImages, ...rest };
+    images: items,
+    removedImages: hiddenCount,
+    fetchedImages: flatData?.length,
+    isLoading: isLoading || loadingPreferences,
+    ...rest,
+  };
 };
 
 export const useQueryImageCategories = (

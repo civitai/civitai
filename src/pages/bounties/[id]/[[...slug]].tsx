@@ -17,7 +17,6 @@ import {
   ThemeIcon,
   Alert,
   ScrollArea,
-  Textarea,
   Modal,
   NumberInput,
   Menu,
@@ -93,8 +92,6 @@ import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client.mjs';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
@@ -103,6 +100,8 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { ScrollArea as ScrollAreaMain } from '~/components/ScrollArea/ScrollArea';
+import { SubNav } from '~/components/AppLayout/SubNav';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -129,7 +128,7 @@ export default function BountyDetailsPage({
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
@@ -921,12 +920,6 @@ const useStyles = createStyles((theme) => ({
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const currentUser = useCurrentUser();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingHiddenPreferences,
-  } = useHiddenPreferencesContext();
 
   const { data: entries = [], isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
   const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
@@ -935,21 +928,10 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
       owned: true,
     });
 
-  const filteredEntries = useMemo(
-    () =>
-      !loadingHiddenPreferences
-        ? applyUserPreferencesBounties<(typeof entries)[number]>({
-            items: entries,
-            hiddenImages,
-            hiddenTags,
-            hiddenUsers,
-            currentUserId: currentUser?.id,
-          })
-        : [],
-    [currentUser?.id, entries, hiddenImages, hiddenTags, hiddenUsers, loadingHiddenPreferences]
-  );
-
-  const hiddenItems = entries.length - filteredEntries.length;
+  const { items: filteredEntries, hiddenCount } = useApplyHiddenPreferences({
+    type: 'bounties',
+    data: entries,
+  });
 
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
@@ -984,9 +966,9 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
             </Tooltip>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems.toLocaleString()} entries have been hidden due to your settings or due
+                {hiddenCount.toLocaleString()} entries have been hidden due to your settings or due
                 to lack of images
               </Text>
             )}
@@ -1085,9 +1067,12 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 };
 
 setPageOptions(BountyDetailsPage, {
-  innerLayout: (page) => (
+  innerLayout: ({ children }: { children: React.ReactNode }) => (
     <ImageViewer>
-      <ScrollAreaMain>{page}</ScrollAreaMain>
+      <ScrollAreaMain style={{ paddingTop: 0 }}>
+        <SubNav />
+        {children}
+      </ScrollAreaMain>
     </ImageViewer>
   ),
 });

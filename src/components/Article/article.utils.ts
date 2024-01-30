@@ -1,5 +1,4 @@
 import { MetricTimeframe } from '@prisma/client';
-import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';

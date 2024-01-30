@@ -1,10 +1,3 @@
-import { updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
-import { EnqueuedTask } from 'meilisearch';
-import {
-  createSearchIndexUpdateProcessor,
-  SearchIndexRunContext,
-} from '~/server/search-index/base.search-index';
 import {
   CosmeticSource,
   CosmeticType,
@@ -12,13 +5,16 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
+import { EnqueuedTask } from 'meilisearch';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { isDefined } from '~/utils/type-guards';
+import { updateDocs } from '~/server/meilisearch/client';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import {
-  ImageModelWithIngestion,
-  imageSelect,
-  profileImageSelect,
-} from '~/server/selectors/image.selector';
+  createSearchIndexUpdateProcessor,
+  SearchIndexRunContext,
+} from '~/server/search-index/base.search-index';
+import { ImageModelWithIngestion, profileImageSelect } from '~/server/selectors/image.selector';
+import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -72,22 +68,21 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  // Uncomment & Add if we want to filter by some attribute at some point.
-  // const filterableAttributes = [];
-  //
-  // if (
-  //   // Meilisearch stores sorted.
-  //   JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
-  // ) {
-  //   const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-  //     filterableAttributes
-  //   );
-  //
-  //   console.log(
-  //     'onIndexSetup :: updateFilterableAttributesTask created',
-  //     updateFilterableAttributesTask
-  //   );
-  // }
+  const filterableAttributes = ['id', 'username'];
+
+  if (
+    // Meilisearch stores sorted.
+    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  ) {
+    const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+      filterableAttributes
+    );
+
+    console.log(
+      'onIndexSetup :: updateFilterableAttributesTask created',
+      updateFilterableAttributesTask
+    );
+  }
 
   console.log('onIndexSetup :: all tasks completed');
 };

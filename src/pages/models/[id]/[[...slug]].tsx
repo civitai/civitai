@@ -84,7 +84,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -92,7 +91,6 @@ import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { parseBrowsingMode } from '~/server/createContext';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -110,6 +108,7 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -140,7 +139,7 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+          // browsingMode: parseBrowsingMode(ctx.req.cookies, session),
         });
 
       if (modelVersionIdParsed) {
@@ -171,7 +170,7 @@ export default function ModelDetailsV2({
 
   const router = useRouter();
   const { classes, theme } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
 
@@ -240,8 +239,7 @@ export default function ModelDetailsV2({
     async onSuccess(_, { permanently }) {
       await queryUtils.model.getAll.invalidate();
       if (!permanently) await queryUtils.model.getById.invalidate({ id });
-      if (!isModerator || permanently)
-        await router.replace(features.alternateHome ? '/models' : '/');
+      if (!isModerator || permanently) await router.replace('/models');
 
       showSuccessNotification({
         title: 'Successfully deleted the model',
@@ -430,7 +428,7 @@ export default function ModelDetailsV2({
         shallow: true,
       });
     }
-  }, [publishedVersions, selectedVersion, modelVersionId]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId]);
 
   if (loadingModel) return <PageLoader />;
 
@@ -975,6 +973,17 @@ export default function ModelDetailsV2({
         (!model.locked ? (
           <Container size="xl" my="xl">
             <Stack spacing="md">
+              {model.hasSuggestedResources && (
+                <AscendeumAd
+                  adunit="Leaderboard_B"
+                  style={{ margin: '0 auto' }}
+                  sizes={{
+                    [0]: '300x100',
+                    [theme.breakpoints.md]: '728x90',
+                    [theme.breakpoints.lg]: '970x90',
+                  }}
+                />
+              )}
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                 <Group spacing="xs">
                   <Title order={2}>Discussion</Title>

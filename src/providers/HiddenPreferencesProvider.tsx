@@ -1,5 +1,7 @@
-import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
-import { useHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useDidUpdate } from '@mantine/hooks';
+import { useContext, createContext, ReactNode } from 'react';
+import { create } from 'zustand';
+import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { HiddenPreferenceBase } from '~/server/services/user-preferences.service';
@@ -10,6 +12,7 @@ type HiddenPreferencesState = {
   models: Map<number, boolean>;
   images: Map<number, boolean>;
   isLoading: boolean;
+  browsingMode: BrowsingMode;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -20,35 +23,59 @@ export const useHiddenPreferencesContext = () => {
   return context;
 };
 
-export const HiddenPreferencesProvider = ({ children }: { children: ReactNode }) => {
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const { data, isLoading } = useHiddenPreferences();
-
-  const users = useMemo(() => new Map(data.user.map((user) => [user.id, true])), [data.user]);
-  const images = useMemo(
-    () => getMapped({ data: data.image, browsingMode }),
-    [data.image, browsingMode]
-  );
-  const models = useMemo(
-    () => getMapped({ data: data.model, browsingMode }),
-    [data.model, browsingMode]
-  );
-  const tags = useMemo(() => getMapped({ data: data.tag, browsingMode }), [data.tag, browsingMode]);
+export const HiddenPreferencesProvider = ({
+  children,
+  browsingMode: browsingModeOverride,
+}: {
+  children: ReactNode;
+  browsingMode?: BrowsingMode;
+}) => {
+  const browsingMode = useFiltersContext((state) => browsingModeOverride ?? state.browsingMode);
+  const value = useHiddenPreferences(browsingMode);
 
   return (
-    <HiddenPreferencesContext.Provider
-      value={{
-        users: users,
-        images: images,
-        models: models,
-        tags: tags,
-        isLoading,
-      }}
-    >
+    <HiddenPreferencesContext.Provider value={{ ...value, browsingMode }}>
       {children}
     </HiddenPreferencesContext.Provider>
   );
 };
+
+type StoreState = Record<BrowsingMode, HiddenPreferencesState>;
+const useStore = create<Partial<StoreState>>(() => ({}));
+
+function useHiddenPreferences(browsingMode: BrowsingMode) {
+  const { data, isLoading } = useQueryHiddenPreferences();
+
+  function mapPreferences() {
+    return {
+      users: new Map(data.user.map((user) => [user.id, true])),
+      images: getMapped({ data: data.image, browsingMode }),
+      models: getMapped({ data: data.model, browsingMode }),
+      tags: getMapped({ data: data.tag, browsingMode }),
+      isLoading,
+    };
+  }
+
+  useDidUpdate(() => {
+    useStore.setState({ [browsingMode]: mapPreferences() });
+  }, [data]);
+
+  useDidUpdate(() => {
+    if (!useStore.getState()[browsingMode]) {
+      useStore.setState({ [browsingMode]: mapPreferences() });
+    }
+  }, [browsingMode]);
+
+  const storedPreferences = useStore((state) => state[browsingMode]);
+
+  if (!storedPreferences) {
+    const preferences = mapPreferences();
+    useStore.setState({ [browsingMode]: preferences });
+    return preferences;
+  }
+
+  return storedPreferences;
+}
 
 const getMapped = ({
   data,

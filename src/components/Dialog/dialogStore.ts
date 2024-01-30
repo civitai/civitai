@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -55,6 +55,40 @@ export const useDialogStore = create<DialogStore>()(
       }),
   }))
 );
+
+// used to track the modal stacking context (page modals).
+const useStackingContextStore = create<{
+  stackingContext: number[];
+}>(() => ({
+  stackingContext: [],
+}));
+export function useStackingContext() {
+  const stackingContextRef = useRef(useStackingContextStore.getState().stackingContext.length);
+  const isCurrentStack = useStackingContextStore(
+    (state) => state.stackingContext.length === stackingContextRef.current
+  );
+
+  const increase = () => {
+    const stackingContext = stackingContextRef.current;
+    useStackingContextStore.setState((state) => ({
+      stackingContext: [...state.stackingContext, stackingContext],
+    }));
+  };
+
+  const decrease = () => {
+    const stackingContext = stackingContextRef.current;
+    useStackingContextStore.setState((state) => ({
+      stackingContext: [...state.stackingContext.filter((x) => x !== stackingContext)],
+    }));
+  };
+
+  return {
+    stack: stackingContextRef.current,
+    isCurrentStack,
+    increase,
+    decrease,
+  };
+}
 
 const { dialogs, ...dialogStore } = useDialogStore.getState();
 

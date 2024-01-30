@@ -16,11 +16,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import dayjs from 'dayjs';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { TRPCClientError } from '@trpc/client';
 import produce from 'immer';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
-import { BountyGetAll } from '~/types/router';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -84,31 +81,19 @@ export const useQueryBounties = (
   filters: Partial<GetInfiniteBountySchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  const { data, ...rest } = trpc.bounty.getInfinite.useInfiniteQuery(filters, {
+  const { data, isLoading, ...rest } = trpc.bounty.getInfinite.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     ...options,
+    trpc: { context: { skipBatch: true } },
   });
-  const currentUser = useCurrentUser();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: isLoadingHidden,
-  } = useHiddenPreferencesContext();
 
-  const bounties = useMemo(() => {
-    if (isLoadingHidden) return [];
-    const items = data?.pages.flatMap((x) => x.items) ?? [];
-    return applyUserPreferencesBounties<BountyGetAll[number]>({
-      items,
-      currentUserId: currentUser?.id,
-      hiddenImages,
-      hiddenTags,
-      hiddenUsers,
-    });
-  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
+  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const { items: bounties, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'bounties',
+    data: flatData,
+  });
 
-  return { data, bounties, ...rest };
+  return { data, bounties, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
 export const getMainBountyAmount = (bounty?: {

@@ -10,6 +10,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createLimiter, RateLimitedEndpoint } from '~/server/utils/rate-limiting';
+import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -45,10 +46,11 @@ const downloadLimiter = createLimiter({
 
 export default RateLimitedEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+    const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
       res.status(status);
-      if (req.headers['content-type'] === 'application/json') return res.json({ error: message });
-      else return res.send(message);
+      if (isBrowser) return res.send(message);
+      return res.json({ error: message });
     }
 
     // Get ip so that we can block exploits we catch
@@ -91,7 +93,6 @@ export default RateLimitedEndpoint(
     const input = queryResults.data;
     const modelVersionId = input.modelVersionId;
     if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
-    const isJsonRequest = req.headers['content-type'] === 'application/json';
 
     // Get file
     const fileResult = await getFileForModelVersion({
@@ -103,17 +104,23 @@ export default RateLimitedEndpoint(
     if (fileResult.status === 'archived')
       return errorResponse(410, 'Model archived, not available for download');
     if (fileResult.status === 'early-access') {
-      if (isJsonRequest)
-        return res
-          .status(403)
-          .json({ error: 'Early Access', deadline: fileResult.details.deadline });
+      if (!isBrowser)
+        return res.status(403).json({
+          error: 'Early Access',
+          deadline: fileResult.details.deadline,
+          message: 'This asset is in Early Access and you need to be a member to download it',
+        });
       else
         return res.redirect(
           getJoinLink({ reason: 'early-access', returnUrl: `/model-versions/${modelVersionId}` })
         );
     }
     if (fileResult.status === 'unauthorized') {
-      if (isJsonRequest) return res.status(401).json({ error: 'Unauthorized' });
+      if (!isBrowser)
+        return res.status(401).json({
+          error: 'Unauthorized',
+          message: 'The creator of this asset requires you to be logged in to download it',
+        });
       else
         return res.redirect(
           getLoginLink({ reason: 'download-auth', returnUrl: `/model-versions/${modelVersionId}` })

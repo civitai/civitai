@@ -14,8 +14,6 @@ import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { Hit } from 'instantsearch.js';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import {
   useSearchItemStyles,
   ViewMoreItem,
@@ -24,17 +22,19 @@ import { StarRating } from '~/components/StartRating/StarRating';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<ModelSearchIndexRecord & { image: any }> }
+  AutocompleteItem & { hit: SearchIndexDataMap['models'][number] }
 >(({ value, hit, ...props }, ref) => {
   const features = useFeatureFlags();
   const { classes, theme } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { image: coverImage, user, nsfw, type, category, metrics, version } = hit;
+  const { images, user, nsfw, type, category, metrics, version } = hit;
+  const coverImage = images[0];
   const alt = truncate((coverImage.meta as ImageMetaProps)?.prompt, {
     length: constants.altTruncateLength,
   });

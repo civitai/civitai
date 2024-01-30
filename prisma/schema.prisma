@@ -241,6 +241,9 @@ model User {
   clubPostReactions          ClubPostReaction[]
   withdrawalRequests         BuzzWithdrawalRequest[]
   actionedWithdrawalRequests BuzzWithdrawalRequestHistory[]
+  chatMembers                ChatMember[]
+  chatMessages               ChatMessage[]
+  chatOwners                 Chat[]
 }
 
 enum OnboardingStep {
@@ -877,6 +880,7 @@ model Report {
   collection     CollectionReport?
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
+  chat           ChatReport?
 }
 
 model ResourceReviewReport {
@@ -987,6 +991,16 @@ model BountyEntryReport {
 
   @@id([reportId, bountyEntryId])
   @@index([bountyEntryId], type: Hash)
+}
+
+model ChatReport {
+  chatId   Int
+  chat     Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, chatId])
+  @@index([chatId], type: Hash)
 }
 
 model ResourceReview {
@@ -2613,6 +2627,71 @@ model ClubMetric {
   resourceCount Int             @default(0)
 
   @@id([clubId, timeframe])
+}
+
+model Chat {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  hash      String   @unique // hash of asc-sorted userIds
+  ownerId   Int
+
+  owner User @relation(fields: [ownerId], references: [id])
+
+  chatMembers ChatMember[]
+  messages    ChatMessage[]
+  reports     ChatReport[]
+}
+
+enum ChatMemberStatus {
+  Invited
+  Joined
+  Ignored
+  Left
+  Kicked
+}
+
+model ChatMember {
+  id                  Int              @id @default(autoincrement())
+  createdAt           DateTime         @default(now()) // doubles as invited_at
+  userId              Int
+  chatId              Int
+  isOwner             Boolean          @default(false)
+  isMuted             Boolean          @default(false)
+  status              ChatMemberStatus
+  lastViewedMessageId Int?
+  joinedAt            DateTime?
+  ignoredAt           DateTime?
+  leftAt              DateTime? // do we need a rejoin option?
+  kickedAt            DateTime?
+  unkickedAt          DateTime? // TODO maybe remove
+
+  user              User         @relation(fields: [userId], references: [id])
+  chat              Chat         @relation(fields: [chatId], references: [id])
+  lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
+}
+
+enum ChatMessageType {
+  Markdown
+}
+
+model ChatMessage {
+  id                 Int             @id @default(autoincrement())
+  createdAt          DateTime        @default(now())
+  userId             Int // if -1, isSystemMessage
+  chatId             Int
+  content            String
+  contentType        ChatMessageType @default(Markdown)
+  // isSystemMessage Boolean @default(false)
+  referenceMessageId Int?
+  editedAt           DateTime?
+  // TODO deletedAt DateTime
+
+  user             User         @relation(fields: [userId], references: [id])
+  chat             Chat         @relation(fields: [chatId], references: [id])
+  referenceMessage ChatMessage? @relation(name: "referenceMessage", fields: [referenceMessageId], references: [id])
+
+  referenceMessages  ChatMessage[] @relation("referenceMessage")
+  lastViewedMessages ChatMember[]
 }
 
 /// @view

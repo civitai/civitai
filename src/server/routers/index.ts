@@ -1,3 +1,12 @@
+import { clubRouter } from '~/server/routers/club.router';
+import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
+import { clubPostRouter } from '~/server/routers/clubPost.router';
+import { commonRouter } from '~/server/routers/common.router';
+import { cosmeticRouter } from '~/server/routers/cosmetic.router';
+import { csamRouter } from '~/server/routers/csam.router';
+import { eventRouter } from '~/server/routers/event.router';
+import { userProfileRouter } from '~/server/routers/user-profile.router';
+import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { router } from '~/server/trpc';
 
 import { accountRouter } from './account.router';
@@ -9,6 +18,8 @@ import { authRouter } from './auth.router';
 import { bountyRouter } from './bounty.router';
 import { bountyEntryRouter } from './bountyEntry.router';
 import { buzzRouter } from './buzz.router';
+import { chatRouter } from './chat.router';
+import { clubAdminRouter } from './clubAdmin.router';
 import { collectionRouter } from './collection.router';
 import { commentRouter } from './comment.router';
 import { commentv2Router } from './commentv2.router';
@@ -38,16 +49,6 @@ import { trackRouter } from './track.router';
 import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
-import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
-import { userProfileRouter } from '~/server/routers/user-profile.router';
-import { cosmeticRouter } from '~/server/routers/cosmetic.router';
-import { clubRouter } from '~/server/routers/club.router';
-import { commonRouter } from '~/server/routers/common.router';
-import { clubPostRouter } from '~/server/routers/clubPost.router';
-import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
-import { eventRouter } from '~/server/routers/event.router';
-import { csamRouter } from '~/server/routers/csam.router';
-import { clubAdminRouter } from './clubAdmin.router';
 import { userStripeConnectRouter } from './user-stripe-connect.router';
 
 export const appRouter = router({
@@ -60,6 +61,7 @@ export const appRouter = router({
   bounty: bountyRouter,
   bountyEntry: bountyEntryRouter,
   buzz: buzzRouter,
+  chat: chatRouter,
   club: clubRouter,
   clubPost: clubPostRouter,
   clubMembership: clubMembershipRouter,
