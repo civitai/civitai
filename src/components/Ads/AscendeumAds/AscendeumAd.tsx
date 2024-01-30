@@ -94,7 +94,7 @@ export function AscendeumAd<T extends AdUnitType>({
       {isCurrentStack && inView && (
         <>
           {adsBlocked ? (
-            <NextLink href="/pricing">
+            <NextLink href="/pricing" style={{ display: 'flex' }}>
               <Image
                 src={`/images/support-us/${width}x${height}.jpg`}
                 alt="Please support civitai and creators by disabling adblock"
@@ -106,7 +106,7 @@ export function AscendeumAd<T extends AdUnitType>({
             <>
               {showAscendeumAd && <AscendeumAdContent adunit={adunit} bidSizes={bidSizes} />}
               {showAlternateAd && (
-                <NextLink href="/pricing">
+                <NextLink href="/pricing" style={{ display: 'flex' }}>
                   <Image
                     src={`/images/become-a-member/${width}x${height}.jpg`}
                     alt="Please become a member to support creators today"

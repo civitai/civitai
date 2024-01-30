@@ -58,4 +58,5 @@ export type isTypingOutput = IsTypingInput & { username: string };
 export type UserSettingsChat = z.infer<typeof userSettingsChat>;
 export const userSettingsChat = z.object({
   muteSounds: z.boolean().optional(),
+  acknowledged: z.boolean().optional(),
 });

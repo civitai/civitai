@@ -5,7 +5,7 @@ import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Availability, Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 
@@ -116,6 +116,9 @@ const onFetchItemsToIndex = async ({
         not: null,
       },
       tosViolation: false,
+      availability: {
+        not: Availability.Unsearchable,
+      },
       // if lastUpdatedAt is not provided,
       // this should generate the entirety of the index.
       OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,

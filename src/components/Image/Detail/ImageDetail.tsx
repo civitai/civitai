@@ -13,7 +13,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { CollectionType, NsfwLevel } from '@prisma/client';
+import { Availability, CollectionType, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBrush,
@@ -78,7 +78,11 @@ export function ImageDetail() {
         }
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={
-          image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
+          image.nsfw !== NsfwLevel.None ||
+          !!image.needsReview ||
+          image.availability === Availability.Unsearchable
+            ? 'noindex, nofollow'
+            : undefined
         }
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />

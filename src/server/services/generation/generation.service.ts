@@ -391,7 +391,7 @@ async function checkResourcesAccess(
   userId: number
 ) {
   const data = await getResourceData(resources.map((x) => x.id));
-  const hasPrivateResources = data.some((x) => x.availability === Availability.Public);
+  const hasPrivateResources = data.some((x) => x.availability === Availability.Private);
 
   if (hasPrivateResources) {
     // Check for permission:

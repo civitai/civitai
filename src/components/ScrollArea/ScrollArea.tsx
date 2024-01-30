@@ -124,7 +124,7 @@ export const ScrollArea = forwardRef<HTMLElement, ScrollAreaProps>(
 
     return (
       <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
-        <Box ref={mergedRef as any} className={cx(classes.root, className)} py="md" {...props}>
+        <Box ref={mergedRef as any} className={cx(classes.root, className)} {...props}>
           {mobile && (
             <ThemeIcon
               ref={loaderRef}

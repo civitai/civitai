@@ -13,6 +13,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 
 export function CollectionContextMenu({
   collectionId,
@@ -169,6 +170,11 @@ export function CollectionContextMenu({
             }
           />
         )}
+        <ToggleSearchableMenuItem
+          entityType="Collection"
+          entityId={collectionId}
+          key="toggle-searchable-menu-item"
+        />
       </Menu.Dropdown>
     </Menu>
   );

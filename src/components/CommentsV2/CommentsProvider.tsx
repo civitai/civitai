@@ -1,6 +1,6 @@
 import { MantineColor } from '@mantine/core';
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
@@ -10,6 +10,7 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
+import { isDefined } from '../../utils/type-guards';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -24,6 +25,7 @@ type Props = CommentConnectorInput & {
   hidden?: boolean;
   children: (args: ChildProps) => React.ReactNode;
   forceLocked?: boolean;
+  level?: number;
 };
 
 type ChildProps = {
@@ -42,21 +44,138 @@ type ChildProps = {
   forceLocked?: boolean;
   sort: ThreadSort;
   setSort: (sort: ThreadSort) => void;
+  activeComment?: CommentV2Model;
 };
 
-type CommentsContext = CommentConnectorInput & ChildProps;
+type RootThreadContext = {
+  sort: ThreadSort;
+  setSort: (sort: ThreadSort) => void;
+  isInitialThread: boolean;
+  setInitialThread: () => void;
+  setRootThread: (entityType: CommentConnectorInput['entityType'], entityId: number) => void;
+  expanded: number[];
+  toggleExpanded: (commentId: number) => void;
+  activeComment?: CommentV2Model;
+};
+
+const RootThreadCtx = createContext<RootThreadContext>({} as any);
+export const useRootThreadContext = () => {
+  const context = useContext(RootThreadCtx);
+  if (!context) throw new Error('useRootThreadContext can only be used inside RootThreadProvider');
+  return context;
+};
+
+export function RootThreadProvider({
+  entityType: initialEntityType,
+  entityId: initialEntityId,
+  hidden,
+  ...props
+}: Props) {
+  const router = useRouter();
+  const [entity, setEntity] = useState({
+    entityType: initialEntityType,
+    entityId: initialEntityId,
+  });
+  const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
+  const expanded = useNewCommentStore((state) => state.expandedComments);
+  const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
+  const setExpanded = useNewCommentStore((state) => state.setExpanded);
+  const utils = trpc.useContext();
+  const isInitialThread =
+    entity.entityId === initialEntityId && entity.entityType === initialEntityType;
+  const queryType = router.query.commentParentType as CommentConnectorInput['entityType'];
+  const queryId = parseNumericString(router.query.commentParentId);
+
+  const { data: activeComment, isLoading } = trpc.commentv2.getSingle.useQuery(
+    {
+      id: entity.entityId,
+    },
+    {
+      enabled: !isInitialThread,
+    }
+  );
+
+  const setRootThread = useCallback(
+    (entityType: CommentConnectorInput['entityType'], entityId: number) => {
+      setEntity({
+        entityType,
+        entityId,
+      });
+    },
+    []
+  );
+
+  const setInitialThread = useCallback(() => {
+    setEntity({
+      entityType: initialEntityType,
+      entityId: initialEntityId,
+    });
+  }, []);
+
+  // Load this main thread first, so we can fill our child threads. It will be loaded anyway by the provider, so no harm really.
+  const { data: thread } = trpc.commentv2.getThreadDetails.useQuery(
+    { entityId: entity.entityId, entityType: entity.entityType, hidden },
+    {
+      onSuccess: (data) => {
+        if ('children' in data) {
+          (data?.children ?? []).forEach((child) => {
+            utils.commentv2.getThreadDetails.setData(
+              {
+                entityId: child.commentId as number,
+                entityType: 'comment',
+                hidden,
+              },
+              child
+            );
+          });
+
+          const expandedCommentIds = data.children.map((c) => c.commentId).filter(isDefined);
+          setExpanded(expandedCommentIds);
+        }
+      },
+    }
+  );
+
+  useEffect(() => {
+    if (queryType && queryId) {
+      setRootThread(queryType, queryId);
+    }
+  }, [queryType, queryId]);
+
+  return (
+    <RootThreadCtx.Provider
+      value={{
+        sort,
+        setSort,
+        expanded,
+        setRootThread,
+        setInitialThread,
+        isInitialThread,
+        toggleExpanded,
+        activeComment,
+      }}
+    >
+      <CommentsProvider
+        entityType={entity.entityType}
+        entityId={entity.entityId}
+        hidden={hidden}
+        level={1}
+        {...props}
+      />
+    </RootThreadCtx.Provider>
+  );
+}
+
+type CommentsContext = CommentConnectorInput &
+  ChildProps & {
+    level?: number;
+  };
 
 const CommentsCtx = createContext<CommentsContext>({} as any);
 export const useCommentsContext = () => {
   const context = useContext(CommentsCtx);
   if (!context) throw new Error('useCommentsContext can only be used inside CommentsProvider');
   return context;
-};
-
-const entityAccessEntityTypeMap = {
-  post: 'Post',
-  article: 'Article',
-  clubPost: 'ClubPost',
 };
 
 export function CommentsProvider({
@@ -68,10 +187,11 @@ export function CommentsProvider({
   badges,
   hidden,
   forceLocked,
+  level = 1,
 }: Props) {
   const router = useRouter();
-
   const currentUser = useCurrentUser();
+  const { sort, setSort, activeComment } = useRootThreadContext();
   const storeKey = getKey(entityType, entityId);
   const created = useNewCommentStore(
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
@@ -79,7 +199,6 @@ export function CommentsProvider({
 
   const [showMore, setShowMore] = useState(false);
   const toggleShowMore = () => setShowMore((b) => !b);
-  const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
 
   const { data: thread, isInitialLoading: isLoading } = trpc.commentv2.getThreadDetails.useQuery(
     { entityId, entityType, hidden },
@@ -152,6 +271,8 @@ export function CommentsProvider({
         forceLocked,
         sort,
         setSort,
+        parentThreadId: thread?.id,
+        level,
       }}
     >
       {children({
@@ -170,6 +291,7 @@ export function CommentsProvider({
         forceLocked,
         sort,
         setSort,
+        activeComment,
       })}
     </CommentsCtx.Provider>
   );
@@ -189,6 +311,9 @@ export function CommentsProvider({
 type StoreProps = {
   /** dictionary of [entityType_entityId]: [...comments] */
   comments: Record<string, CommentV2Model[]>;
+  expandedComments: number[];
+  setExpanded: (commentIds: number[]) => void;
+  toggleExpanded: (commentId: number) => void;
   addComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   editComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   deleteComment: (entityType: string, entityId: number, commentId: number) => void;
@@ -200,6 +325,19 @@ export const useNewCommentStore = create<StoreProps>()(
   immer((set, get) => {
     return {
       comments: {},
+      expandedComments: [],
+      setExpanded: (commentIds: number[]) =>
+        set((state) => {
+          state.expandedComments = [...new Set([...state.expandedComments, ...commentIds])];
+        }),
+      toggleExpanded: (commentId: number) =>
+        set((state) => {
+          if (state.expandedComments.includes(commentId)) {
+            state.expandedComments = state.expandedComments.filter((x) => x !== commentId);
+          } else {
+            state.expandedComments.push(commentId);
+          }
+        }),
       addComment: (entityType, entityId, comment) =>
         set((state) => {
           const key = getKey(entityType, entityId);
@@ -209,12 +347,19 @@ export const useNewCommentStore = create<StoreProps>()(
       editComment: (entityType, entityId, comment) =>
         set((state) => {
           const key = getKey(entityType, entityId);
+          if (!state.comments[key]) {
+            return;
+          }
           const index = state.comments[key].findIndex((x) => x.id === comment.id);
           if (index > -1) state.comments[key][index].content = comment.content;
         }),
       deleteComment: (entityType, entityId, commentId) =>
         set((state) => {
           const key = getKey(entityType, entityId);
+          if (!state.comments[key]) {
+            return;
+          }
+
           state.comments[key] = state.comments[key].filter((x) => x.id !== commentId);
         }),
     };
