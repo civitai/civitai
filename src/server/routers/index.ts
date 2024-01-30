@@ -50,6 +50,7 @@ import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
 import { userStripeConnectRouter } from './user-stripe-connect.router';
+import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -102,6 +103,7 @@ export const appRouter = router({
   event: eventRouter,
   csam: csamRouter,
   userStripeConnect: userStripeConnectRouter,
+  buzzWithdrawalRequest: buzzWithdrawalRequestRouter,
 });
 
 // export type definition of API

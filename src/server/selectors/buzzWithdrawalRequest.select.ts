@@ -9,6 +9,7 @@ export const buzzWithdrawalRequestDetails = Prisma.validator<Prisma.BuzzWithdraw
   createdAt: true,
   metadata: true,
   platformFeeRate: true,
+  requestedBuzzAmount: true,
   user: { select: userWithCosmeticsSelect },
 });
 
