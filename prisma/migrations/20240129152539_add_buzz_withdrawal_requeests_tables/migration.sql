@@ -55,3 +55,19 @@ CREATE OR REPLACE TRIGGER trigger_update_buzz_withdrawal_request_status
 AFTER INSERT ON "BuzzWithdrawalRequestHistory"
 FOR EACH ROW
 EXECUTE FUNCTION update_buzz_withdrawal_request_status();
+
+-- Add trigger to automatically create a history record when a request is created
+CREATE OR REPLACE FUNCTION create_buzz_withdrawal_request_history_on_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Update status to be the latest
+    INSERT INTO "BuzzWithdrawalRequestHistory" ("requestId", "updatedById", "status", "note", "createdAt", "metadata")
+    VALUES (NEW."id", NEW."userId", NEW."status", NEW."note", NEW."createdAt", NEW."metadata");
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+---
+CREATE OR REPLACE TRIGGER trigger_create_buzz_withdrawal_request_history_on_insert
+AFTER INSERT ON "BuzzWithdrawalRequest"
+FOR EACH ROW
+EXECUTE FUNCTION create_buzz_withdrawal_request_history_on_insert();

@@ -235,7 +235,7 @@ const ExclusivePerksSection = () => {
                 <Text>
                   At the time of withdrawal Civitai will{' '}
                   <Text component="span" className={classes.highlightColor} underline>
-                    take a {constants.buzz.platformFee * 100}% platform fee.
+                    take a {constants.buzz.platformFeeRate / 100}% platform fee.
                   </Text>
                 </Text>
               </Stack>
