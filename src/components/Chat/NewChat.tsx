@@ -1,4 +1,5 @@
 import { ActionIcon, Alert, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
@@ -16,9 +17,14 @@ export function NewChat() {
   const [acking, setAcking] = useState(false);
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const [reviewed, setReviewed] = useLocalStorage({
+    key: 'review-chat-terms',
+    defaultValue: window?.localStorage?.getItem('review-chat-terms') === 'true',
+  });
 
   const userSettings = queryUtils.chat.getUserSettings.getData();
-  const acked = userSettings?.acknowledged ?? false;
+  // TODO this is not perfect, it won't set local storage on another device if you've already accepted
+  const acked = reviewed || (userSettings?.acknowledged ?? false);
 
   const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
     onSuccess(data) {
@@ -70,6 +76,7 @@ export function NewChat() {
 
   const handleAck = () => {
     setAcking(true);
+    setReviewed(true);
     modifySettings({
       acknowledged: true,
     });

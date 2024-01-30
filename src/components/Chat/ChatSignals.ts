@@ -36,6 +36,7 @@ export const useChatNewMessageSignal = () => {
 
           const thisChat = old.find((o) => o.id === updated.chatId);
           if (!thisChat) return old;
+          // TODO I don't really know why, but updating the data like this does not cast dates automatically
           thisChat.messages = [
             {
               content: updated.content,

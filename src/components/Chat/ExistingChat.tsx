@@ -98,6 +98,7 @@ export function ExistingChat() {
   const [isJoining, setIsJoining] = useState(false);
   // const oldPagesLength = useRef(1);
 
+  // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
       {
