@@ -16,7 +16,7 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
-  civitaiLink: ['mod', 'founder'],
+  civitaiLink: ['mod', 'founder', 'public'],
   stripe: ['mod'],
   imageTraining: ['dev', 'mod', 'founder'],
   imageTrainingResults: ['user'],
