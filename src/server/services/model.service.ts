@@ -1235,6 +1235,7 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       where: { id },
       data: {
         ...data,
+        meta,
         tagsOnModels: tagsOnModels
           ? {
               deleteMany: {
