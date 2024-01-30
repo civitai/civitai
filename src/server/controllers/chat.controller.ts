@@ -65,6 +65,7 @@ const latestChat = {
     orderBy: { createdAt: Prisma.SortOrder.desc },
     take: 1,
     select: {
+      createdAt: true,
       content: true,
       // contentType: true,
     },

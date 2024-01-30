@@ -12,6 +12,7 @@ import {
   StackProps,
   Text,
   Textarea,
+  useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
@@ -86,6 +87,7 @@ export function ExistingChat() {
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
   const mobile = useIsMobile();
+  const theme = useMantineTheme();
 
   const lastReadRef = useRef<HTMLDivElement>(null);
   const [chatMsg, setChatMsg] = useState<string>('');
@@ -509,10 +511,22 @@ export function ExistingChat() {
             </Group>
           ) : (
             <Center p="sm">
-              <Text>
-                You {myMember.status === ChatMemberStatus.Left ? 'left' : 'were kicked from'} this
-                chat.
-              </Text>
+              <Group>
+                <Text>
+                  You {myMember.status === ChatMemberStatus.Left ? 'left' : 'were kicked from'} this
+                  chat.
+                </Text>
+                {myMember.status === ChatMemberStatus.Left && (
+                  <Button
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    compact
+                    disabled={isJoining}
+                    onClick={handleJoinChat}
+                  >
+                    Rejoin?
+                  </Button>
+                )}
+              </Group>
             </Center>
           )}
         </>

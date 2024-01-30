@@ -36,7 +36,12 @@ export const useChatNewMessageSignal = () => {
 
           const thisChat = old.find((o) => o.id === updated.chatId);
           if (!thisChat) return old;
-          thisChat.messages = [{ content: updated.content }]; //, contentType: updated.contentType
+          thisChat.messages = [
+            {
+              content: updated.content,
+              createdAt: new Date(updated.createdAt),
+            },
+          ]; //, contentType: updated.contentType
         })
       );
 
@@ -78,7 +83,7 @@ export const useChatNewRoomSignal = () => {
     (updated: ChatCreateChat) => {
       queryUtils.chat.getAllByUser.setData(undefined, (old) => {
         if (!old) return [updated];
-        return [updated, ...old];
+        return [{ ...updated, createdAt: new Date(updated.createdAt) }, ...old];
       });
 
       if (updated.ownerId !== currentUser?.id) {

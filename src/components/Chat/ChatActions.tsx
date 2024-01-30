@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Menu } from '@mantine/core';
+import { ActionIcon, Group, Menu, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ChatMemberStatus } from '@prisma/client';
 import {
@@ -123,6 +123,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const leaveModal = () =>
     openConfirmModal({
       title: 'Really leave this chat?',
+      children: <Text size="sm">You can rejoin at any time from the Archived tab.</Text>,
       centered: true,
       labels: { confirm: 'Confirm', cancel: 'Cancel' },
       onConfirm: () => adjustChat(ChatMemberStatus.Left),

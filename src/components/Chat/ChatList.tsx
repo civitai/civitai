@@ -116,6 +116,12 @@ export function ChatList() {
           })
         : tabData;
 
+    tabFiltered.sort((a, b) => {
+      const aDate = a.messages[0]?.createdAt ?? a.createdAt;
+      const bDate = b.messages[0]?.createdAt ?? b.createdAt;
+      return aDate < bDate ? 1 : -1;
+    });
+
     setFilteredData(tabFiltered);
   }, [currentUser?.id, data, searchInput, activeTab]);
 
