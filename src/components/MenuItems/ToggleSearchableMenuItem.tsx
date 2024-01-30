@@ -45,8 +45,6 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
     return null;
   }
 
-  console.log({ entity });
-
   const isSearchable = entity.availability === Availability.Public;
 
   if (isLoadingAccess) {

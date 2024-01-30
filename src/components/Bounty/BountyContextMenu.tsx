@@ -58,13 +58,11 @@ export function BountyContextMenu({
         Delete
       </Menu.Item>
     ) : null,
-    isModerator ? (
-      <ToggleSearchableMenuItem
-        entityType="Bounty"
-        entityId={bounty.id}
-        key="toggle-searchable-menu-item"
-      />
-    ) : null,
+    <ToggleSearchableMenuItem
+      entityType="Bounty"
+      entityId={bounty.id}
+      key="toggle-searchable-menu-item"
+    />,
     isModerator || (!expired && isOwner) ? (
       <Link key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
         <Menu.Item component="a" icon={<IconEdit size={14} stroke={1.5} />}>
