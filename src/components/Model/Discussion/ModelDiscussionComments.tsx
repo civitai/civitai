@@ -1,6 +1,6 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import {
-  CommentsProvider,
+  RootThreadProvider,
   CreateComment,
   Comment,
   CommentV2BadgeProps,
@@ -16,7 +16,7 @@ export function ModelDiscussionComments({
   const badges: CommentV2BadgeProps[] = [];
   if (userId) badges.push({ userId, label: 'op', color: 'violet' });
   return (
-    <CommentsProvider entityType="comment" entityId={commentId} limit={5} badges={badges}>
+    <RootThreadProvider entityType="comment" entityId={commentId} limit={5} badges={badges}>
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center>
@@ -47,6 +47,6 @@ export function ModelDiscussionComments({
           </Stack>
         )
       }
-    </CommentsProvider>
+    </RootThreadProvider>
   );
 }

@@ -80,6 +80,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
+import { Availability } from '@prisma/client';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -229,6 +230,7 @@ export default function BountyEntryDetailsPage({
           rel: 'canonical',
         },
       ]}
+      deIndex={bounty?.availability === Availability.Unsearchable ? 'noindex, nofollow' : undefined}
     />
   );
 
