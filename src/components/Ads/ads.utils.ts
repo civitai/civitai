@@ -93,7 +93,8 @@ export const exoclickSizes: Record<string, string> = {
 export const ascendeumExoclickSizeMap: Record<string, string | null | undefined> = {
   '728x90': '728x90',
   '970x90': '728x90',
-  '970x250': '900x250',
+  // '970x250': '900x250',
+  '970x250': null,
   '300x250': '300x250',
   '300x100': '300x100',
   '320x50': '300x100',

@@ -24,7 +24,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
   const nsfw = router.pathname.includes('articles') ? true : undefined;
 
   return (
-    <ScrollArea py={0}>
+    <ScrollArea>
       <SubNav />
       <IsClient>
         {/* <AscendeumAd
