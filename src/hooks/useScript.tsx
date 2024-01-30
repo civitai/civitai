@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 
 /** Returns boolean value representing load state of script */
-export function useScript(src: string, options?: { canLoad?: boolean }) {
+export function useScript({
+  src,
+  content,
+  canLoad = true,
+  onLoad,
+}: {
+  src?: string;
+  content?: string;
+  canLoad?: boolean;
+  onLoad?: () => void;
+}) {
   const readyRef = useRef(false);
   const [ready, setReady] = useState(false);
-  const { canLoad = true } = options ?? {};
 
   useEffect(() => {
     if (!readyRef.current && canLoad) {
@@ -12,13 +21,20 @@ export function useScript(src: string, options?: { canLoad?: boolean }) {
 
       const script = document.createElement('script');
       script.type = 'text/javascript';
-      script.src = src;
-      script.onload = () => {
+      if (src) {
+        script.src = src;
+        script.onload = () => {
+          setReady(true);
+          onLoad?.();
+        };
+      }
+      if (content) {
+        script.innerText = content;
         setReady(true);
-      };
+      }
       document.body.appendChild(script);
     }
-  }, [src, canLoad]);
+  }, [src, content, canLoad]);
 
   return ready;
 }

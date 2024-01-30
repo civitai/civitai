@@ -4,18 +4,23 @@ import { BrowsingMode } from '~/server/common/enums';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
-import { useScript } from '~/hooks/useScript';
 import { isProd } from '~/env/other';
+import { useCmpListener } from '~/components/Ads/AscendeumAds/cmp.utils';
+import { useScript } from '~/hooks/useScript';
 
+type AdProvider = 'ascendeum' | 'exoclick';
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
-  showAds: boolean;
+  nsfwOverride?: boolean;
+  adsEnabled: boolean;
   username?: string;
   isMember: boolean;
   enabled: boolean;
   ascendeumReady: boolean;
+  cmpDeclined: boolean;
   adSenseReady: boolean;
+  available: AdProvider[];
   exoclickReady: boolean;
 } | null>(null);
 
@@ -26,10 +31,17 @@ export function useAdsContext() {
 }
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
+  const [available, setAvailable] = useState<AdProvider[]>(['exoclick']);
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.subscriptionId;
   const enabled = env.NEXT_PUBLIC_ADS;
-  const showAds = enabled && !isMember;
+  const adsEnabled = enabled && !isMember;
+  const cmpDeclined = useCmpListener();
+  const ascendeumReady = useScript({
+    src: 'https://ads.civitai.com/asc.civitai.js',
+    canLoad: adsEnabled,
+    onLoad: () => setAvailable((ready) => [...new Set<AdProvider>([...ready, 'ascendeum'])]),
+  });
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {
@@ -42,15 +54,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
   );
 
-  const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
-    canLoad: showAds,
+  const adSenseReady = useScript({
+    src: 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
+    canLoad: adsEnabled,
   });
-  const adSenseReady = useScript(
-    'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
-    {
-      canLoad: showAds,
-    }
-  );
   // const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
   //   canLoad: showAds && nsfw,
   // });
@@ -58,26 +65,30 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   const readyRef = useRef(false);
   useEffect(() => {
-    if (!readyRef.current && showAds) {
+    if (!readyRef.current && adsEnabled) {
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
+        // setAdsBlocked(blocked);
         setAdsBlocked(!isProd ? true : blocked);
       });
     }
-  }, [showAds]);
+  }, [adsEnabled]);
 
   return (
     <AscendeumAdsContext.Provider
       value={{
         adsBlocked,
         nsfw,
-        showAds,
+        adsEnabled: adsEnabled,
         username: currentUser?.username,
         ascendeumReady,
         exoclickReady,
+        cmpDeclined,
+        nsfwOverride,
         adSenseReady,
         isMember,
         enabled,
+        available,
       }}
     >
       {children}
