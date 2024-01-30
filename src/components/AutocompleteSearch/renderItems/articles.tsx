@@ -5,17 +5,16 @@ import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@table
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { Hit } from 'instantsearch.js';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import {
   ActionIconBadge,
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const ArticlesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<ArticleSearchIndexRecord> }
+  AutocompleteItem & { hit: SearchIndexDataMap['articles'][number] }
 >(({ value, hit, ...props }, ref) => {
   const { classes } = useSearchItemStyles();
 

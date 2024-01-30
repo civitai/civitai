@@ -56,7 +56,7 @@ export function AppLayout({
   const content = InnerLayout ? (
     <InnerLayout>{children}</InnerLayout>
   ) : withScrollArea ? (
-    <ScrollArea style={{ paddingTop: 0 }}>
+    <ScrollArea>
       <SubNav />
       {children}
     </ScrollArea>

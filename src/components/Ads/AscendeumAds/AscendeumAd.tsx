@@ -1,4 +1,4 @@
-import { BoxProps, Center, Group, Paper, Stack, Text } from '@mantine/core';
+import { Box, BoxProps, Center, Group, Paper, Stack, Text } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
@@ -17,6 +17,8 @@ import { useStackingContext } from '~/components/Dialog/dialogStore';
 import { v4 as uuidv4 } from 'uuid';
 import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { BrowsingMode } from '~/server/common/enums';
 
 type AdProps<T extends AdUnitType> = {
   adunit: T;
@@ -37,6 +39,7 @@ export function AscendeumAd<T extends AdUnitType>({
 }: AdProps<T>) {
   const [ref, inView] = useInView({ rootMargin: '200%' });
   const { isCurrentStack } = useStackingContext();
+  const { browsingMode } = useHiddenPreferencesContext();
   const {
     adsBlocked,
     nsfw: globalNsfw,
@@ -47,7 +50,7 @@ export function AscendeumAd<T extends AdUnitType>({
   } = useAdsContext();
   const containerWidth = useContainerWidth();
 
-  const nsfw = nsfwOverride ?? globalNsfw;
+  const nsfw = browsingMode === BrowsingMode.SFW ? false : nsfwOverride ?? globalNsfw;
   const showAscendeumAd = ascendeumReady && !nsfw;
   const showAlternateAd = exoclickReady && nsfw;
 
@@ -87,11 +90,11 @@ export function AscendeumAd<T extends AdUnitType>({
   const zoneId = exoclickSizes[size];
 
   const content = (
-    <Paper ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
+    <Box ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
       {isCurrentStack && inView && (
         <>
           {adsBlocked ? (
-            <NextLink href="/pricing">
+            <NextLink href="/pricing" style={{ display: 'flex' }}>
               <Image
                 src={`/images/support-us/${width}x${height}.jpg`}
                 alt="Please support civitai and creators by disabling adblock"
@@ -103,7 +106,7 @@ export function AscendeumAd<T extends AdUnitType>({
             <>
               {showAscendeumAd && <AscendeumAdContent adunit={adunit} bidSizes={bidSizes} />}
               {showAlternateAd && (
-                <NextLink href="/pricing">
+                <NextLink href="/pricing" style={{ display: 'flex' }}>
                   <Image
                     src={`/images/become-a-member/${width}x${height}.jpg`}
                     alt="Please become a member to support creators today"
@@ -129,7 +132,7 @@ export function AscendeumAd<T extends AdUnitType>({
           )}
         </>
       )}
-    </Paper>
+    </Box>
   );
 
   return includeWrapper ? (

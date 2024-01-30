@@ -1,4 +1,4 @@
-import type { TransformItemsMetadata } from 'instantsearch.js';
+import type { Hit, TransformItemsMetadata } from 'instantsearch.js';
 import { useHits, useInfiniteHits } from 'react-instantsearch';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
@@ -6,115 +6,109 @@ import { CollectionSearchIndexRecord } from '~/server/search-index/collections.s
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
-import {
-  ARTICLES_SEARCH_INDEX,
-  BOUNTIES_SEARCH_INDEX,
-  COLLECTIONS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
-  MODELS_SEARCH_INDEX,
-  USERS_SEARCH_INDEX,
-} from '~/server/common/constants';
 
-type DataKey = keyof DataIndex;
-type DataIndex = {
-  models: ModelSearchIndexRecord[];
-  images: ImageSearchIndexRecord[];
-  articles: ArticleSearchIndexRecord[];
-  users: UserSearchIndexRecord[];
-  collections: CollectionSearchIndexRecord[];
-  bounties: BountySearchIndexRecord[];
+import { ImageIngestionStatus } from '@prisma/client';
+import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
+
+// #region [transformers]
+type ModelsTransformed = ReturnType<typeof modelsTransform>;
+function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
+  return items.map((item) => ({
+    ...item,
+    tags: item.tags.map((t) => t.id),
+    images: item.images.map((image) => ({
+      ...image,
+      tags: image.tags?.map((t) => t.id),
+    })),
+  }));
+}
+
+type ImagesTransformed = ReturnType<typeof imagesTransform>;
+function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
+  return items.map((item) => ({
+    ...item,
+    tagIds: item.tags?.map((t) => t.id),
+    ingestion: ImageIngestionStatus.Scanned,
+  }));
+}
+
+type ArticlesTransformed = ReturnType<typeof articlesTransform>;
+function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
+  return items.map((article) => ({ ...article }));
+}
+
+type BountiesTransformed = ReturnType<typeof bountiesTransform>;
+function bountiesTransform(items: Hit<BountySearchIndexRecord>[]) {
+  return items.map((bounty) => ({
+    ...bounty,
+    tags: bounty.tags.map((x) => x.id),
+    images: bounty.images.map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) })),
+  }));
+}
+
+type CollectionsTransformed = ReturnType<typeof collectionsTransform>;
+function collectionsTransform(items: Hit<CollectionSearchIndexRecord>[]) {
+  return items.map((collection) => ({
+    ...collection,
+    userId: collection.user.id,
+    image: collection.image
+      ? {
+          ...collection.image,
+          tagIds: collection.image?.tags.map((x) => x.id),
+        }
+      : null,
+    images: collection.images.map((image) => ({
+      ...image,
+      tagIds: image.tags.map((x) => x.id),
+    })),
+  }));
+}
+
+type UsersTransformed = ReturnType<typeof usersTransform>;
+function usersTransform(items: Hit<UserSearchIndexRecord>[]) {
+  return items;
+}
+
+type IndexName = keyof SearchIndexDataMap;
+export type SearchIndexDataMap = {
+  models: ModelsTransformed;
+  images: ImagesTransformed;
+  articles: ArticlesTransformed;
+  users: UsersTransformed;
+  collections: CollectionsTransformed;
+  bounties: BountiesTransformed;
+};
+// type IndexName = keyof typeof searchIndexTransformMap;
+// export type SearchIndexDataTransformType<T extends IndexName> = ReturnType<
+//   (typeof searchIndexTransformMap)[T]
+// >[number];
+const searchIndexTransformMap = {
+  models: modelsTransform,
+  images: imagesTransform,
+  articles: articlesTransform,
+  users: usersTransform,
+  collections: collectionsTransform,
+  bounties: bountiesTransform,
+};
+// #endregion
+
+const transformItems = (items: any[], metadata: TransformItemsMetadata) => {
+  if (!metadata.results?.nbHits) return [];
+  const index = metadata.results.index as ReverseSearchIndexKey;
+  const type = reverseSearchIndexMap[index];
+  const transformFn = searchIndexTransformMap[type];
+  if (!type) throw new Error(`type does not exist on searchIndexTransformMap: ${type}`);
+  return transformFn(items);
 };
 
-type SearchIndexKey = keyof typeof SearchIndexMap;
-const SearchIndexMap = {
-  [MODELS_SEARCH_INDEX]: 'models',
-  [IMAGES_SEARCH_INDEX]: 'images',
-  [ARTICLES_SEARCH_INDEX]: 'articles',
-  [USERS_SEARCH_INDEX]: 'users',
-  [COLLECTIONS_SEARCH_INDEX]: 'collections',
-  [BOUNTIES_SEARCH_INDEX]: 'bounties',
-} as const;
-
-function transformItems(items: any[], metadata: TransformItemsMetadata) {
-  if (!metadata.results) return items;
-  const index = metadata.results.index as SearchIndexKey;
-  const type = SearchIndexMap[index];
-  switch (type) {
-    case 'models':
-      return (items as ModelSearchIndexRecord[]).map((item) => ({
-        ...item,
-        tags: item.tags.map((t) => t.id),
-        images: item.images.map((image) => ({
-          ...image,
-          tags: image.tags?.map((t) => t.id),
-        })),
-      }));
-    case 'images':
-      return (items as ImageSearchIndexRecord[]).map((item) => ({
-        ...item,
-        tags: item.tags?.map((t) => t.id),
-      }));
-    case 'articles':
-      return items as ArticleSearchIndexRecord[];
-    case 'bounties':
-      return items as BountySearchIndexRecord[];
-    case 'collections':
-      return items as CollectionSearchIndexRecord[];
-    case 'users':
-      return items as UserSearchIndexRecord[];
-    default:
-      throw new Error('searchIndex transformItems not mapped');
-  }
+export function useHitsTransformed<T extends IndexName>() {
+  return useHits<SearchIndexDataMap[T][number]>({
+    transformItems,
+  });
 }
 
-export function useTransformedHits() {
-  return useHits({ transformItems });
+export function useInfiniteHitsTransformed<T extends IndexName>() {
+  return useInfiniteHits<SearchIndexDataMap[T][number]>({
+    transformItems,
+  });
 }
-
-export function useTransformedInfiniteHits() {
-  return useInfiniteHits({ transformItems });
-}
-
-// export function useApplyHiddenPreferences<T>({
-//   type,
-//   data,
-// }: {
-//   type: FilterableDataType;
-//   data: T[];
-// }): T[] {
-//   const currentUser = useCurrentUser();
-//   const {
-//     models: hiddenModels,
-//     images: hiddenImages,
-//     tags: hiddenTags,
-//     users: hiddenUsers,
-//     isLoading: loadingPreferences,
-//   } = useHiddenPreferencesContext();
-
-//   return useMemo(() => {
-//     if (loadingPreferences) return [];
-//     const opts = {
-//       currentUserId: currentUser?.id,
-//       hiddenImages,
-//       hiddenTags,
-//       hiddenUsers,
-//       hiddenModels,
-//     };
-//     switch (type) {
-//       case 'models':
-//         return applyUserPreferencesModels({ ...opts, items: data });
-//       case 'images':
-//         return applyUserPreferencesImages({ ...opts, items: data });
-//       case 'articles':
-//         return applyUserPreferencesArticles({ ...opts, items: data });
-//       case 'bounties':
-//         return applyUserPreferencesBounties({ ...opts, items: data });
-//       case 'collections':
-//         return applyUserPreferencesCollections({ ...opts, items: data });
-//       case 'users':
-//         return applyUserPreferencesUsers({ ...opts, items: data });
-//       default:
-//         return [];
-//     }
-//   }, [type, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, data, loadingPreferences]);
-// }

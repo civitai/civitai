@@ -134,8 +134,13 @@ export function SelectMenuV2<T extends string | number>({
           position="bottom"
           opened={opened}
           onClose={() => setOpened(false)}
-          styles={{ body: { padding: 16, overflow: 'auto' }, drawer: { height: 'auto' } }}
-          withCloseButton={false}
+          styles={{
+            body: { padding: 16, paddingTop: 0, overflow: 'auto' },
+            drawer: { height: 'auto' },
+            header: { padding: '4px 8px' },
+            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          }}
+          closeButtonLabel="Close sort menu"
         >
           <Stack spacing={8}>
             {options.map((option) => {

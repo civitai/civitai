@@ -1,5 +1,5 @@
 import { useDidUpdate } from '@mantine/hooks';
-import { useContext, createContext, ReactNode, useMemo, useDeferredValue, useEffect } from 'react';
+import { useContext, createContext, ReactNode } from 'react';
 import { create } from 'zustand';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -12,6 +12,7 @@ type HiddenPreferencesState = {
   models: Map<number, boolean>;
   images: Map<number, boolean>;
   isLoading: boolean;
+  browsingMode: BrowsingMode;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -24,23 +25,25 @@ export const useHiddenPreferencesContext = () => {
 
 export const HiddenPreferencesProvider = ({
   children,
-  browsingMode,
+  browsingMode: browsingModeOverride,
 }: {
   children: ReactNode;
   browsingMode?: BrowsingMode;
 }) => {
+  const browsingMode = useFiltersContext((state) => browsingModeOverride ?? state.browsingMode);
   const value = useHiddenPreferences(browsingMode);
 
   return (
-    <HiddenPreferencesContext.Provider value={value}>{children}</HiddenPreferencesContext.Provider>
+    <HiddenPreferencesContext.Provider value={{ ...value, browsingMode }}>
+      {children}
+    </HiddenPreferencesContext.Provider>
   );
 };
 
 type StoreState = Record<BrowsingMode, HiddenPreferencesState>;
 const useStore = create<Partial<StoreState>>(() => ({}));
 
-function useHiddenPreferences(browsingModeOverride?: BrowsingMode) {
-  const browsingMode = useFiltersContext((state) => browsingModeOverride ?? state.browsingMode);
+function useHiddenPreferences(browsingMode: BrowsingMode) {
   const { data, isLoading } = useQueryHiddenPreferences();
 
   function mapPreferences() {
