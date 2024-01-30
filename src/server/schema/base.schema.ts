@@ -1,3 +1,4 @@
+import { Availability } from '@prisma/client';
 import { z } from 'zod';
 import { BrowsingMode } from '~/server/common/enums';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -62,3 +63,22 @@ export const resourceInput = z.object({
 });
 
 export type ResourceInput = z.infer<typeof resourceInput>;
+
+export const supportedAvailabilityResources = [
+  'ModelVersion',
+  'Article',
+  'Post',
+  'Model',
+  'Collection',
+  'Bounty',
+] as const;
+
+export type SupportedAvailabilityResources = (typeof supportedAvailabilityResources)[number];
+
+export const availabilitySchema = z.object({
+  entityType: z.enum(supportedAvailabilityResources),
+  entityId: z.number(),
+  availability: z.nativeEnum(Availability),
+});
+
+export type AvailabilityInput = z.infer<typeof availabilitySchema>;

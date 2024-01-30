@@ -65,6 +65,7 @@ import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 
 const mantineColors: DefaultMantineColor[] = [
   'blue',
@@ -347,6 +348,13 @@ export function AmbientModelCard({ data, height }: Props) {
       />,
     ]);
   }
+  contextMenuItems = contextMenuItems.concat([
+    <ToggleSearchableMenuItem
+      entityType="Model"
+      entityId={data.id}
+      key="toggle-searchable-menu-item"
+    />,
+  ]);
 
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([

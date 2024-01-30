@@ -59,6 +59,7 @@ import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -150,6 +151,14 @@ export function ModelCard({ data, forceInView }: Props) {
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
     ]);
   }
+
+  contextMenuItems = contextMenuItems.concat([
+    <ToggleSearchableMenuItem
+      entityType="Model"
+      entityId={data.id}
+      key="toggle-searchable-menu-item"
+    />,
+  ]);
 
   if (currentUser?.id !== data.user.id)
     contextMenuItems = contextMenuItems.concat([

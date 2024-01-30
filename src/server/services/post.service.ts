@@ -440,6 +440,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       modelVersionId: true,
       user: { select: userWithCosmeticsSelect },
       publishedAt: true,
+      availability: true,
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
   });

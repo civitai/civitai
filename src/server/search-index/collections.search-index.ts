@@ -183,6 +183,7 @@ const onFetchItemsToIndex = async ({
     Prisma.sql`c.read = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"`,
     // Don't index empty collections:
     Prisma.sql`EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = c.id)`,
+    Prisma.sql`c."availability" != 'Unsearchable'::"Availability"`,
   ];
 
   if (whereOr) {

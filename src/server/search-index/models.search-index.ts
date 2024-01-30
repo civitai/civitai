@@ -2,6 +2,7 @@ import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import {
+  Availability,
   MetricTimeframe,
   ModelHashType,
   ModelStatus,
@@ -191,6 +192,7 @@ const onFetchItemsToIndex = async ({
           earlyAccessDeadline: true,
           mode: true,
           checkpointType: true,
+          availability: true,
           // Joins:
           user: {
             select: userWithCosmeticsSelect,
@@ -200,6 +202,9 @@ const onFetchItemsToIndex = async ({
             select: getModelVersionsForSearchIndex,
             where: {
               status: ModelStatus.Published,
+              availability: {
+                not: Availability.Unsearchable,
+              },
             },
           },
           tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
@@ -237,6 +242,9 @@ const onFetchItemsToIndex = async ({
         },
         where: {
           status: ModelStatus.Published,
+          availability: {
+            not: Availability.Unsearchable,
+          },
           OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
         },
       });
@@ -382,7 +390,9 @@ const onFetchItemsToIndex = async ({
           }
 
           const modelImages = imagesWithTags.filter(
-            (image) => image.modelVersionId === modelVersion.id
+            (image) =>
+              image.modelVersionId === modelVersion.id &&
+              image.availability !== Availability.Unsearchable
           );
 
           return {

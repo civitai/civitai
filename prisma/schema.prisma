@@ -487,6 +487,7 @@ model Model {
   mode                ModelModifier?
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
+  availability        Availability    @default(Public)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -1736,8 +1737,12 @@ model CommentV2 {
 }
 
 model Thread {
-  id     Int     @id @default(autoincrement())
-  locked Boolean @default(false)
+  id             Int     @id @default(autoincrement())
+  locked         Boolean @default(false)
+  parentThreadId Int?
+  parentThread   Thread? @relation("childThread", fields: [parentThreadId], references: [id], onDelete: Cascade)
+  rootThreadId   Int?
+  rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
 
   questionId    Int?            @unique
   question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
@@ -1764,7 +1769,9 @@ model Thread {
 
   metadata Json @default("{}")
 
-  comments CommentV2[] @relation("thread")
+  comments       CommentV2[] @relation("thread")
+  directChildren Thread[]    @relation("childThread")
+  children       Thread[]    @relation("root")
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
@@ -2115,21 +2122,22 @@ enum CollectionMode {
 }
 
 model Collection {
-  id          Int                          @id @default(autoincrement())
-  createdAt   DateTime?                    @default(now())
-  updatedAt   DateTime?                    @updatedAt
-  name        String
-  description String?
-  nsfw        Boolean?                     @default(false)
-  userId      Int
-  user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  imageId     Int?
-  image       Image?                       @relation(fields: [imageId], references: [id], onDelete: SetNull)
-  write       CollectionWriteConfiguration @default(Private)
-  read        CollectionReadConfiguration  @default(Private)
-  type        CollectionType?
-  mode        CollectionMode?
-  metadata    Json                         @default("{}")
+  id           Int                          @id @default(autoincrement())
+  createdAt    DateTime?                    @default(now())
+  updatedAt    DateTime?                    @updatedAt
+  name         String
+  description  String?
+  nsfw         Boolean?                     @default(false)
+  userId       Int
+  user         User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId      Int?
+  image        Image?                       @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  write        CollectionWriteConfiguration @default(Private)
+  read         CollectionReadConfiguration  @default(Private)
+  type         CollectionType?
+  mode         CollectionMode?
+  metadata     Json                         @default("{}")
+  availability Availability                 @default(Public)
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -2292,6 +2300,7 @@ model Bounty {
   poi                     Boolean         @default(false)
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
+  availability            Availability    @default(Public)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -2440,6 +2449,7 @@ model Link {
 
 enum Availability {
   Public
+  Unsearchable // Ignored from search results.
   Private
 }
 
