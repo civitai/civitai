@@ -325,7 +325,7 @@ export function ImageDetail() {
                     showRemoveAds
                   />
                 ) : (
-                  <AdSenseAd />
+                  <AdSenseAd style={{ margin: '0 auto' }} />
                 )}
                 {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">
