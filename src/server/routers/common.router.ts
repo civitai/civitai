@@ -1,8 +1,9 @@
-import { publicProcedure, router } from '../trpc';
-import { getByEntitySchema } from '~/server/schema/base.schema';
+import { moderatorProcedure, publicProcedure, router } from '../trpc';
+import { availabilitySchema, getByEntitySchema } from '~/server/schema/base.schema';
 import {
   getEntityAccessHandler,
   getEntityClubRequirementHandler,
+  updateEntityAvailabilityHandler,
 } from '~/server/controllers/common.controller';
 
 export const commonRouter = router({
@@ -10,4 +11,7 @@ export const commonRouter = router({
   getEntityClubRequirement: publicProcedure
     .input(getByEntitySchema)
     .query(getEntityClubRequirementHandler),
+  updateAvailability: moderatorProcedure
+    .input(availabilitySchema)
+    .mutation(updateEntityAvailabilityHandler),
 });

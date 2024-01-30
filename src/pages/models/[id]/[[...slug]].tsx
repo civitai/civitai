@@ -20,7 +20,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBan,
   IconClock,
@@ -109,6 +109,7 @@ import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -491,7 +492,11 @@ export default function ModelDetailsV2({
         },
       ]}
       schema={metaSchema}
-      deIndex={model.status !== ModelStatus.Published ? 'noindex' : undefined}
+      deIndex={
+        model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
+          ? 'noindex'
+          : undefined
+      }
     />
   );
 
@@ -746,6 +751,11 @@ export default function ModelDetailsV2({
                         entityId={model.id}
                       />
                     )}
+                    <ToggleSearchableMenuItem
+                      entityType="Model"
+                      entityId={model.id}
+                      key="toggle-searchable-menu-item"
+                    />
                     {(!currentUser || !isOwner || isModerator) && (
                       <LoginRedirect reason="report-model">
                         <Menu.Item

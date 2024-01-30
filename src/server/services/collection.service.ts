@@ -322,6 +322,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       image: { select: imageSelect },
       mode: true,
       metadata: true,
+      availability: true,
     },
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);

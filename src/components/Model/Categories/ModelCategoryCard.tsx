@@ -55,6 +55,7 @@ import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -208,6 +209,14 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; hei
       />,
     ]);
   }
+
+  contextMenuItems = contextMenuItems.concat([
+    <ToggleSearchableMenuItem
+      entityType="Model"
+      entityId={data.id}
+      key="toggle-searchable-menu-item"
+    />,
+  ]);
 
   if (currentUser?.id === user.id) {
     contextMenuItems = contextMenuItems.concat([
