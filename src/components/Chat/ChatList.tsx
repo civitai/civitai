@@ -21,6 +21,7 @@ import { ChatMemberStatus } from '@prisma/client';
 import {
   IconCirclePlus,
   IconCloudOff,
+  IconPlugConnected,
   IconSearch,
   IconUsers,
   IconUserX,
@@ -30,6 +31,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatListMessage } from '~/types/router';
@@ -71,6 +73,7 @@ export function ChatList() {
   const [searchInput, setSearchInput] = useState<string>('');
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
+  const { connected } = useSignalContext();
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -128,7 +131,14 @@ export function ChatList() {
   return (
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart" align="center">
-        <Text>Chats</Text>
+        <Group>
+          <Text>Chats</Text>
+          {!connected && (
+            <Tooltip label="Not connected. May not receive live messages or alerts.">
+              <IconPlugConnected color="orangered" />
+            </Tooltip>
+          )}
+        </Group>
         <ActionIcon>
           <IconCirclePlus
             onClick={() => {
