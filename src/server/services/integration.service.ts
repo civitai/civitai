@@ -1,11 +1,7 @@
 import { env } from '~/env/server.mjs';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 
-export async function confirmAir({ email, userId }: { email: string; userId: number }) {
-  let { status } = await getAirStatus(userId);
-  if (status === 'connected') throw new Error('Account already connected');
-
-  // Call AiR Webhook
+export async function notifyAir(email: string) {
   if (env.AIR_WEBHOOK) {
     const res = await fetch(env.AIR_WEBHOOK, {
       method: 'POST',
@@ -18,6 +14,14 @@ export async function confirmAir({ email, userId }: { email: string; userId: num
   } else {
     console.warn('No AiR Webhook set');
   }
+}
+
+export async function confirmAir({ email, userId }: { email: string; userId: number }) {
+  let { status } = await getAirStatus(userId);
+  if (status === 'connected') throw new Error('Account already connected');
+
+  // Call AiR Webhook
+  await notifyAir(email);
 
   await setUserSetting(userId, { airEmail: email });
   status = 'connected';
