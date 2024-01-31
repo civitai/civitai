@@ -36,7 +36,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = !!currentUser?.subscriptionId;
   const enabled = env.NEXT_PUBLIC_ADS;
   const adsEnabled = enabled && !isMember;
-  const cmpDeclined = useCmpListener();
+  // const cmpDeclined = useCmpListener();
   const ascendeumReady = useScript({
     src: 'https://ads.civitai.com/asc.civitai.js',
     canLoad: adsEnabled,
@@ -68,8 +68,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (!readyRef.current && adsEnabled) {
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
-        // setAdsBlocked(blocked);
-        setAdsBlocked(!isProd ? true : blocked);
+        setAdsBlocked(blocked);
+        // setAdsBlocked(!isProd ? true : blocked);
       });
     }
   }, [adsEnabled]);
@@ -83,7 +83,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         username: currentUser?.username,
         ascendeumReady,
         exoclickReady,
-        cmpDeclined,
+        cmpDeclined: false,
         nsfwOverride,
         adSenseReady,
         isMember,
