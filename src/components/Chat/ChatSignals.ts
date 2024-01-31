@@ -18,6 +18,8 @@ export const useChatNewMessageSignal = () => {
     (updated: ChatAllMessages[number]) => {
       // queryUtils.chat.getInfiniteMessages.cancel();
 
+      if (!currentUser || updated.userId === currentUser.id) return;
+
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
         { chatId: updated.chatId },
         produce((old) => {
@@ -46,30 +48,28 @@ export const useChatNewMessageSignal = () => {
         })
       );
 
-      if (updated.userId !== currentUser?.id) {
-        queryUtils.chat.getUnreadCount.setData(
-          undefined,
-          produce((old) => {
-            if (!old) return old;
+      queryUtils.chat.getUnreadCount.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
 
-            const tChat = old.find((c) => c.chatId === updated.chatId);
-            if (!tChat) {
-              old.push({ chatId: updated.chatId, cnt: 1 });
-            } else {
-              tChat.cnt++;
-            }
-          })
-        );
-      }
+          const tChat = old.find((c) => c.chatId === updated.chatId);
+          if (!tChat) {
+            old.push({ chatId: updated.chatId, cnt: 1 });
+          } else {
+            tChat.cnt++;
+          }
+        })
+      );
 
       const userSettings = queryUtils.chat.getUserSettings.getData();
       // this will play if no key is present (default not muted)
-      if (userSettings?.muteSounds !== true && updated.userId !== currentUser?.id) {
+      if (userSettings?.muteSounds !== true) {
         // TODO maybe only play if window is open?
         play();
       }
     },
-    [queryUtils, play]
+    [queryUtils, play, currentUser]
   );
 
   useSignalConnection(SignalMessages.ChatNewMessage, onUpdate);
@@ -102,7 +102,7 @@ export const useChatNewRoomSignal = () => {
         }
       }
     },
-    [queryUtils, play]
+    [queryUtils, play, currentUser]
   );
 
   useSignalConnection(SignalMessages.ChatNewRoom, onUpdate);
