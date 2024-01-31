@@ -319,7 +319,15 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
-                {nsfw ? (
+                <AscendeumAd
+                  adunit="Sidebar_A"
+                  m="0 auto"
+                  nsfw={nsfw}
+                  sizes={{ [0]: '300x250' }}
+                  showFeedback
+                  showRemoveAds
+                />
+                {/* {nsfw ? (
                   <AscendeumAd
                     adunit="Sidebar_A"
                     m="0 auto"
@@ -330,7 +338,7 @@ export function ImageDetail() {
                   />
                 ) : (
                   <AdSenseAd style={{ margin: '0 auto' }} />
-                )}
+                )} */}
                 {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
