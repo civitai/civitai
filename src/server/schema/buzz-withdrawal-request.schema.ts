@@ -1,10 +1,14 @@
 import { z } from 'zod';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { paginationSchema } from './base.schema';
+import { constants } from '~/server/common/constants';
 
 export type CreateBuzzWithdrawalRequestSchema = z.infer<typeof createBuzzWithdrawalRequestSchema>;
 export const createBuzzWithdrawalRequestSchema = z.object({
-  amount: z.number().min(1),
+  amount: z
+    .number()
+    .min(constants.buzz.minBuzzWithdrawal)
+    .default(constants.buzz.minBuzzWithdrawal),
 });
 
 export type GetPaginatedBuzzWithdrawalRequestSchema = z.infer<

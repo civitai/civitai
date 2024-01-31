@@ -63,6 +63,13 @@ export const createBuzzWithdrawalRequest = async ({
   });
 
   try {
+    console.log({
+      userId,
+      connectedAccountId: userStripeConnect.connectedAccountId,
+      buzzWithdrawalTransactionId: transaction.transactionId,
+      requestedBuzzAmount: amount,
+      platformFeeRate: constants.buzz.platformFeeRate,
+    });
     // Create the withdrawal request:
     const request = await dbWrite.buzzWithdrawalRequest.create({
       data: {
@@ -86,6 +93,8 @@ export const createBuzzWithdrawalRequest = async ({
       description: 'There was an error while trying to create your withdrawal request.',
       externalTransactionId: transaction.transactionId,
     });
+
+    throw e;
   }
 };
 

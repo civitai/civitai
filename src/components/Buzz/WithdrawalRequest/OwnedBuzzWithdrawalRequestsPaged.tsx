@@ -1,4 +1,5 @@
 import {
+  Button,
   Center,
   Divider,
   Group,
@@ -15,14 +16,15 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { trpc } from '~/utils/trpc';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
-import { useQueryOwnedBuzzWithdrawalRequests } from '../buzzWithdrawalRequest.util';
+import { useQueryOwnedBuzzWithdrawalRequests } from '../WithdrawalRequest/buzzWithdrawalRequest.util';
 import { formatDate } from '../../../utils/date-helpers';
 import { numberWithCommas } from '../../../utils/number-helpers';
 import { useBuzzDashboardStyles } from '../buzz.styles';
 import { IconCloudOff } from '@tabler/icons-react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { classes } = useBuzzDashboardStyles();
@@ -46,8 +48,19 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
 
   return (
     <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
-      <Stack>
-        <Title order={2}>Withdrawal Requests</Title>
+      <Stack spacing="sm">
+        <Group position="apart">
+          <Title order={2}>Withdrawal Requests</Title>
+          <Button
+            onClick={() => {
+              dialogStore.trigger({
+                component: CreateWithdrawalRequest,
+              });
+            }}
+          >
+            Withdraw
+          </Button>
+        </Group>
         <Divider />
         {isLoading ? (
           <Center p="xl">

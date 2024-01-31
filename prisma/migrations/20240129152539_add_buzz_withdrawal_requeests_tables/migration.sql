@@ -42,6 +42,25 @@ ALTER TABLE "BuzzWithdrawalRequestHistory" ADD CONSTRAINT "BuzzWithdrawalRequest
 -- AddForeignKey
 ALTER TABLE "BuzzWithdrawalRequest" ADD CONSTRAINT "BuzzWithdrawalRequest_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+-- Add trigger to automatically create a history record when a request is created
+CREATE OR REPLACE FUNCTION create_buzz_withdrawal_request_history_on_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Update status to be the latest
+    INSERT INTO "BuzzWithdrawalRequestHistory" ("id", "requestId", "updatedById", "status", "createdAt", "metadata")
+    -- NOTE: cuid is something out of Postgres so it does not work here. Because of that, the we'll use the origina requestId as the id of the history record
+    	VALUES (NEW."id", NEW."id", NEW."userId", NEW."status", NEW."createdAt", NEW."metadata");
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+---
+CREATE OR REPLACE TRIGGER trigger_create_buzz_withdrawal_request_history_on_insert
+AFTER INSERT ON "BuzzWithdrawalRequest"
+FOR EACH ROW
+EXECUTE PROCEDURE create_buzz_withdrawal_request_history_on_insert();
+
+
+--- 
 CREATE OR REPLACE FUNCTION update_buzz_withdrawal_request_status()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -55,19 +74,3 @@ CREATE OR REPLACE TRIGGER trigger_update_buzz_withdrawal_request_status
 AFTER INSERT ON "BuzzWithdrawalRequestHistory"
 FOR EACH ROW
 EXECUTE FUNCTION update_buzz_withdrawal_request_status();
-
--- Add trigger to automatically create a history record when a request is created
-CREATE OR REPLACE FUNCTION create_buzz_withdrawal_request_history_on_insert()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Update status to be the latest
-    INSERT INTO "BuzzWithdrawalRequestHistory" ("requestId", "updatedById", "status", "note", "createdAt", "metadata")
-    VALUES (NEW."id", NEW."userId", NEW."status", NEW."note", NEW."createdAt", NEW."metadata");
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
----
-CREATE OR REPLACE TRIGGER trigger_create_buzz_withdrawal_request_history_on_insert
-AFTER INSERT ON "BuzzWithdrawalRequest"
-FOR EACH ROW
-EXECUTE FUNCTION create_buzz_withdrawal_request_history_on_insert();
