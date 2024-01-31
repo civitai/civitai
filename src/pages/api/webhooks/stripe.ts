@@ -109,8 +109,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const email =
                   checkoutSession.customer_details?.email || checkoutSession.customer_email;
 
-                console.log(email);
-
                 if (!email || isDev) {
                   return;
                 }
