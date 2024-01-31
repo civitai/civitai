@@ -2,7 +2,6 @@ import {
   addUsersHandler,
   createChatHandler,
   createMessageHandler,
-  getChatHandler,
   getChatsForUserHandler,
   getInfiniteMessagesHandler,
   getUnreadMessagesForUserHandler,
@@ -12,7 +11,6 @@ import {
   setUserSettingsHandler,
   updateMessageHandler,
 } from '~/server/controllers/chat.controller';
-import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addUsersInput,
   createChatInput,
@@ -30,7 +28,6 @@ import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
 export const chatRouter = router({
   getUserSettings: protectedProcedure.query(getUserSettingsHandler),
   setUserSettings: protectedProcedure.input(userSettingsChat).mutation(setUserSettingsHandler),
-  getById: protectedProcedure.input(getByIdSchema).query(getChatHandler),
   getAllByUser: protectedProcedure.query(getChatsForUserHandler),
   createChat: guardedProcedure.input(createChatInput).mutation(createChatHandler),
   addUser: guardedProcedure.input(addUsersInput).mutation(addUsersHandler),

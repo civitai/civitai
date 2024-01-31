@@ -127,6 +127,7 @@ export const serverSchema = z.object({
   })).optional(),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
+  AIR_WEBHOOK: z.string().url().optional(),
 });
 
 /**
