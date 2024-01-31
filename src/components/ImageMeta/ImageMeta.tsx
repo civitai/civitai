@@ -83,8 +83,10 @@ export function ImageMeta({
     }
 
     const onSite = 'civitaiResources' in meta;
+    const software =
+      meta.software?.toString() ?? (onSite ? 'Civitai Generator' : 'External Generator');
 
-    return { long, medium, short, hasControlNet, onSite };
+    return { long, medium, short, hasControlNet, onSite, software };
   }, [meta]);
 
   // TODO.optimize - can we get this data higher up?
@@ -113,15 +115,9 @@ export function ImageMeta({
 
             {label === 'Prompt' && (
               <>
-                {metas.onSite ? (
-                  <Badge size="xs" radius="sm">
-                    Civitai Generator
-                  </Badge>
-                ) : (
-                  <Badge size="xs" radius="sm">
-                    External Generator
-                  </Badge>
-                )}
+                <Badge size="xs" radius="sm">
+                  {metas.software}
+                </Badge>
                 <Badge size="xs" radius="sm">
                   {meta.comfy
                     ? 'Comfy'
