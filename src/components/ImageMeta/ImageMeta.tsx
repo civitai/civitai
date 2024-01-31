@@ -29,6 +29,7 @@ type Props = {
   imageId?: number;
   onCreateClick?: () => void;
   mainResourceId?: number;
+  hideSoftware?: boolean;
 };
 type MetaDisplay = {
   label: string;
@@ -54,6 +55,7 @@ export function ImageMeta({
   generationProcess = 'txt2img',
   mainResourceId,
   onCreateClick,
+  hideSoftware,
 }: Props) {
   const flags = useFeatureFlags();
 
@@ -115,9 +117,11 @@ export function ImageMeta({
 
             {label === 'Prompt' && (
               <>
-                <Badge size="xs" radius="sm">
-                  {metas.software}
-                </Badge>
+                {!hideSoftware && (
+                  <Badge size="xs" radius="sm">
+                    {metas.software}
+                  </Badge>
+                )}
                 <Badge size="xs" radius="sm">
                   {meta.comfy
                     ? 'Comfy'
@@ -267,6 +271,7 @@ export function ImageMetaPopover({
   children,
   imageId,
   mainResourceId,
+  hideSoftware = false,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   const [opened, setOpened] = useState(false);
@@ -297,6 +302,7 @@ export function ImageMetaPopover({
             generationProcess={generationProcess}
             imageId={imageId}
             mainResourceId={mainResourceId}
+            hideSoftware={hideSoftware}
             onCreateClick={() => setOpened(false)}
           />
         </Popover.Dropdown>
