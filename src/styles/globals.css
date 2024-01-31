@@ -237,6 +237,7 @@ iframe {
   }
 }
 
+/* Google Recapcha Hiding */
 .grecaptcha-badge {
   visibility: hidden;
 }
