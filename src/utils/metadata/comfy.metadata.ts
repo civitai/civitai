@@ -11,7 +11,7 @@ function cleanBadJson(str: string) {
 }
 
 export const comfyMetadataProcessor = createMetadataProcessor({
-  canParse: (exif) => exif.prompt && exif.workflow,
+  canParse: (exif) => exif.prompt || exif.workflow,
   parse: (exif) => {
     const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
     const samplerNodes: SamplerNode[] = [];
@@ -62,7 +62,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const initialSamplerNode =
       samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ?? samplerNodes[0];
 
-    const workflow = JSON.parse(exif.workflow as string) as any;
+    const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
     const versionIds: number[] = [];
     const modelIds: number[] = [];
     if (workflow?.extra) {
@@ -97,7 +97,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       versionIds,
       modelIds,
       // Converting to string to reduce bytes size
-      comfy: JSON.stringify({ prompt, workflow }),
+      comfy: workflow ? JSON.stringify({ prompt, workflow }) : undefined,
     };
 
     // Handle control net apply
