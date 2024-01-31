@@ -36,22 +36,20 @@ export const hasEntityAccess = async ({
     return [];
   }
 
-  console.log(entityIds);
-
   const query: Prisma.Sql =
     entityType === 'ModelVersion'
-      ? Prisma.sql` 
+      ? Prisma.sql`
      SELECT
        mv.id as "entityId",
        mmv."userId" as "userId",
        mv."availability" as "availability"
-     FROM "ModelVersion" mv 
+     FROM "ModelVersion" mv
      JOIN "Model" mmv ON mv."modelId" = mmv.id
      WHERE mv.id IN (${Prisma.join(entityIds, ',')})
   `
       : entityType === 'Article'
       ? Prisma.sql`
-    SELECT 
+    SELECT
       a."id" as "entityId",
       a."userId" as "userId",
       a."availability" as "availability"
@@ -69,7 +67,7 @@ export const hasEntityAccess = async ({
   `
       : entityType === 'Model'
       ? Prisma.sql`
-    SELECT 
+    SELECT
       m."id" as "entityId",
       m."userId" as "userId",
       m."availability" as "availability"
@@ -78,7 +76,7 @@ export const hasEntityAccess = async ({
   `
       : entityType === 'Collection'
       ? Prisma.sql`
-    SELECT 
+    SELECT
       c."id" as "entityId",
       c."userId" as "userId",
       c."availability" as "availability"
@@ -87,7 +85,7 @@ export const hasEntityAccess = async ({
   `
       : // Bounty
         Prisma.sql`
-    SELECT 
+    SELECT
       b."id" as "entityId",
       b."userId" as "userId",
       b."availability" as "availability"
@@ -136,7 +134,7 @@ export const hasEntityAccess = async ({
 
   // TODO: Add userId index to Club, ClubMemberhsip and ClubAdmin.
   const entityAccess = await dbRead.$queryRaw<EntityAccessRaw[]>`
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       true as "hasAccess"
     FROM "EntityAccess" ea
@@ -145,12 +143,12 @@ export const hasEntityAccess = async ({
       AND (
         -- ClubTier check
         (
-          ea."accessorType" = 'ClubTier' AND 
+          ea."accessorType" = 'ClubTier' AND
           (
             -- User is a member of the club tier
             ea."accessorId" IN (
               SELECT cm."clubTierId"
-              FROM "ClubMembership" cm 
+              FROM "ClubMembership" cm
               WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
             )
             -- User is a admin of the club tier
@@ -171,7 +169,7 @@ export const hasEntityAccess = async ({
         ) OR
         -- Club check
         (
-          ea."accessorType" = 'Club' AND 
+          ea."accessorType" = 'Club' AND
           (
             -- User is the owner of the club
             ea."accessorId" IN (
@@ -192,7 +190,7 @@ export const hasEntityAccess = async ({
               WHERE ca."userId" = ${userId}
             )
           )
-        ) OR 
+        ) OR
         -- User check
         (
           ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
@@ -276,7 +274,7 @@ export const entityRequiresClub = async ({
         SELECT
           mv.id as "entityId",
           mv."availability" as "availability"
-        FROM "ModelVersion" mv 
+        FROM "ModelVersion" mv
         WHERE mv.id IN (${Prisma.join(entityIds, ', ')})
         `;
 
@@ -356,12 +354,12 @@ export const entityRequiresClub = async ({
       clubTierId: number | null;
     }[]
   >`
-    SELECT 
-      ea."accessToId" "entityId", 
-      ea."accessToType" "entityType", 
+    SELECT
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
       COALESCE(c.id, ct."clubId") as "clubId",
       ct."id" as "clubTierId"
-    FROM "EntityAccess" ea 
+    FROM "EntityAccess" ea
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${getClubFilter(
       'c.id'
     )}
@@ -454,14 +452,14 @@ export const entityOwnership = async ({
         : entityType === 'Post'
         ? Prisma.raw(`
       p."id" as "entityId",
-      p."userId" = ${userId} as "isOwner" 
+      p."userId" = ${userId} as "isOwner"
     `)
         : ''
     }
     ${
       entityType === 'ModelVersion'
         ? Prisma.raw(`
-        FROM "ModelVersion" mv 
+        FROM "ModelVersion" mv
         JOIN "Model" mmv ON mv."modelId" = mmv.id
         WHERE mv.id IN (${entityIds.join(', ')})
     `)
@@ -499,7 +497,7 @@ export const entityAvailabilityUpdate = async ({
   }
 
   await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
-    UPDATE "${entityType}" t 
+    UPDATE "${entityType}" t
     SET "availability" = '${availability}'::"Availability"
     WHERE t.id IN (${entityIds.join(', ')})`);
 };
@@ -512,7 +510,7 @@ export type EntityAccessWithKey = {
 
 export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
   const entities = await dbRead.$queryRaw<EntityAccessWithKey[]>`
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -521,7 +519,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -531,7 +529,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -542,7 +540,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -553,7 +551,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -562,9 +560,9 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
     JOIN "ClubAdmin" ca ON ca."clubId" = c.id
     WHERE ca."userId" = ${userId}
 
-    UNION 
+    UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -572,9 +570,9 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
     JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'Club'
     WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
 
-    UNION 
+    UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"

@@ -49,6 +49,7 @@ import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { isDefined } from '~/utils/type-guards';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -119,7 +120,11 @@ export default function ImagesAsPostsInfinite({
     );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items } = useApplyHiddenPreferences({ type: 'posts', data: flatData, showHidden });
+  const { items: preferred } = useApplyHiddenPreferences({
+    type: 'posts',
+    data: flatData,
+    showHidden,
+  });
 
   // const {
   //   images: hiddenImages,
@@ -134,6 +139,28 @@ export default function ImagesAsPostsInfinite({
     hiddenUsers: galleryHiddenUsers,
     isLoading: loadingGallerySettings,
   } = useModelGallerySettings({ modelId: model.id });
+
+  const items = useMemo(() => {
+    if (loadingGallerySettings) return [];
+    return preferred
+      .filter((post) => {
+        if (!showHidden && galleryHiddenUsers.get(post.user.id)) return false;
+        return true;
+      })
+      .map(({ images, ...post }) => {
+        const filteredImages = images?.filter((i) => {
+          // show hidden images only
+          if (showHidden) return galleryHiddenImages.get(i.id);
+          if (galleryHiddenImages.get(i.id)) return false;
+          for (const tag of i.tagIds ?? []) {
+            if (galleryHiddenTags.get(tag)) return false;
+          }
+          return true;
+        });
+        return !!filteredImages?.length ? { ...post, images: filteredImages } : null;
+      })
+      .filter(isDefined);
+  }, [preferred, galleryHiddenUsers, galleryHiddenImages, loadingGallerySettings]);
 
   // const items = useMemo(() => {
   //   // TODO - fetch user reactions for images separately

@@ -118,3 +118,50 @@ const adDensity: AdDensity[] = [
   [6, [12, 15]],
   [7, [14, 20]],
 ];
+
+// TODO.Briant new component types for more reusable ad component
+type AscendeumAdSizes = typeof ascendeumAdSizes;
+export const ascendeumAdSizes = {
+  leaderboard: ['728x90', '970x90', '970x250', '300x250', '300x100', '320x50', '320x100', '468x60'],
+  sidebar: ['300x250', '336x280'],
+  dynamicInContent: ['300x250', '336x280'],
+  stickySidebar: ['300x600', '160x600', '120x600'],
+} as const;
+
+export type AscendeumAdUnitType = keyof AscendeumAdUnitSizeMap;
+type AscendeumAdUnitSizeMap = {
+  Leaderboard_A: AscendeumAdSizes['leaderboard'];
+  Leaderboard_B: AscendeumAdSizes['leaderboard'];
+  Leaderboard_C: AscendeumAdSizes['leaderboard'];
+  Sidebar_A: AscendeumAdSizes['sidebar'];
+  Sidebar_B: AscendeumAdSizes['sidebar'];
+  Dynamic_InContent: AscendeumAdSizes['dynamicInContent'];
+  StickySidebar_A: AscendeumAdSizes['stickySidebar'];
+  StickySidebar_B: AscendeumAdSizes['stickySidebar'];
+};
+
+export type AscendeumAdUnit<T extends AscendeumAdUnitType> = {
+  type: 'ascendeum';
+  adunit: T;
+  breakpoints: {
+    minWidth?: number;
+    maxWidth?: number;
+    sizes: AscendeumAdUnitSizeMap[T][number][];
+  }[];
+};
+
+type ExoclickAdSizes = typeof exoclickAdSizes;
+const exoclickAdSizes = ['900x250', '728x90', '300x250', '300x100', '300x500', '160x600'] as const;
+export type ExoclickAdUnit = {
+  type: 'exoclick';
+  breakpoints: { minWidth?: number; maxWidth?: number; sizes: ExoclickAdSizes[number][] }[];
+};
+
+export const exoclickAdunitSizeMap: Record<ExoclickAdSizes[number], string> = {
+  '900x250': '5187102',
+  '728x90': '5186882',
+  '300x250': '5187018',
+  '300x100': '5187104',
+  '300x500': '5187110',
+  '160x600': '5187116',
+};

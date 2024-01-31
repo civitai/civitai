@@ -179,17 +179,12 @@ export function ImagesAsPostsCard({
                           {image.meta && 'civitaiResources' in (image.meta as object) && (
                             <OnsiteIndicator />
                           )}
-                          <Group
-                            position="apart"
-                            align="start"
-                            spacing={4}
-                            className={cx(classes.contentOverlay, classes.top)}
-                          >
-                            <ImageGuard.ToggleImage position="top-left" />
-                            <Stack spacing="xs" ml="auto">
+                          <ImageGuard.ToggleImage position="top-left" />
+                          {safe && (
+                            <Stack spacing="xs" className={classes.topRight}>
                               <ImageGuard.Report
-                                position="static"
                                 additionalMenuItems={moderationOptions(image.id)}
+                                position="static"
                                 withinPortal
                               />
                               {features.imageGeneration && image.meta && (
@@ -211,7 +206,7 @@ export function ImagesAsPostsCard({
                                 </HoverActionButton>
                               )}
                             </Stack>
-                          </Group>
+                          )}
                           <RoutedDialogLink
                             name="imageDetail"
                             state={{ imageId: image.id, images: [image] }}
@@ -319,14 +314,9 @@ export function ImagesAsPostsCard({
                                 {image.meta && 'civitaiResources' in (image.meta as object) && (
                                   <OnsiteIndicator />
                                 )}
-                                <Group
-                                  position="apart"
-                                  align="start"
-                                  spacing={4}
-                                  className={cx(classes.contentOverlay, classes.top)}
-                                >
-                                  <ImageGuard.ToggleConnect position="top-left" />
-                                  <Stack spacing="xs" ml="auto">
+                                <ImageGuard.ToggleConnect position="top-left" />
+                                {safe && (
+                                  <Stack spacing="xs" className={classes.topRight}>
                                     <ImageGuard.Report
                                       additionalMenuItems={moderationOptions(image.id)}
                                       position="static"
@@ -351,7 +341,7 @@ export function ImagesAsPostsCard({
                                       </HoverActionButton>
                                     )}
                                   </Stack>
-                                </Group>
+                                )}
                                 <RoutedDialogLink
                                   name="imageDetail"
                                   state={{ imageId: image.id, images: data.images }}
@@ -470,6 +460,12 @@ const useStyles = createStyles((theme) => ({
     // background: theme.colors.dark[9],
     flexDirection: 'column',
     overflow: 'hidden',
+  },
+  topRight: {
+    position: 'absolute',
+    top: theme.spacing.sm,
+    right: theme.spacing.sm,
+    zIndex: 10,
   },
   contentOverlay: {
     position: 'absolute',

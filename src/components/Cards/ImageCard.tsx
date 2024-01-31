@@ -59,27 +59,29 @@ export function UnroutedImageCard({ data }: Props) {
                         className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
                       >
                         <ImageGuard.ToggleImage className={sharedClasses.chip} position="static" />
-                        <Stack spacing="xs" ml="auto">
-                          <ImageGuard.Report context="image" position="static" withinPortal />
-                          {features.imageGeneration && image.meta && (
-                            <HoverActionButton
-                              label="Remix"
-                              size={30}
-                              color="white"
-                              variant="filled"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                generationPanel.open({
-                                  type: 'image',
-                                  id: image.id,
-                                });
-                              }}
-                            >
-                              <IconBrush stroke={2.5} size={16} />
-                            </HoverActionButton>
-                          )}
-                        </Stack>
+                        {safe && (
+                          <Stack spacing="xs" ml="auto">
+                            <ImageGuard.Report context="image" position="static" withinPortal />
+                            {features.imageGeneration && image.meta && (
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
+                                color="white"
+                                variant="filled"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({
+                                    type: 'image',
+                                    id: image.id,
+                                  });
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                          </Stack>
+                        )}
                       </Group>
                       {safe ? (
                         <EdgeMedia

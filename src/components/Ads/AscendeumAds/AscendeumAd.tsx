@@ -43,10 +43,12 @@ export function AscendeumAd<T extends AdUnitType>({
   const {
     adsBlocked,
     nsfw: globalNsfw,
-    showAds,
+    adsEnabled: showAds,
     username,
     ascendeumReady,
     exoclickReady,
+    cmpDeclined,
+    // nsfwOverride,
   } = useAdsContext();
   const containerWidth = useContainerWidth();
 
@@ -89,6 +91,17 @@ export function AscendeumAd<T extends AdUnitType>({
   const includeWrapper = showRemoveAds || showFeedback;
   const zoneId = exoclickSizes[size];
 
+  const SupportUs = (
+    <NextLink href="/pricing" style={{ display: 'flex' }}>
+      <Image
+        src={`/images/become-a-member/${width}x${height}.jpg`}
+        alt="Please become a member to support creators today"
+        width={width}
+        height={height}
+      />
+    </NextLink>
+  );
+
   const content = (
     <Box ref={ref} component={Center} h={height} w={width} {...(!includeWrapper ? boxProps : {})}>
       {isCurrentStack && inView && (
@@ -102,32 +115,16 @@ export function AscendeumAd<T extends AdUnitType>({
                 height={height}
               />
             </NextLink>
+          ) : cmpDeclined ? (
+            SupportUs
           ) : (
             <>
               {showAscendeumAd && <AscendeumAdContent adunit={adunit} bidSizes={bidSizes} />}
-              {showAlternateAd && (
-                <NextLink href="/pricing" style={{ display: 'flex' }}>
-                  <Image
-                    src={`/images/become-a-member/${width}x${height}.jpg`}
-                    alt="Please become a member to support creators today"
-                    width={width}
-                    height={height}
-                  />
-                </NextLink>
-              )}
+              {showAlternateAd && SupportUs}
               {/* {showAlternateAd &&
                 (zoneId ? (
                   <ExoclickAd zoneId={zoneId} size={size} />
-                ) : (
-                  <NextLink href="/pricing">
-                    <Image
-                      src={`/images/support-us/${width}x${height}.jpg`}
-                      alt="Please become a member to support creators today"
-                      width={width}
-                      height={height}
-                    />
-                  </NextLink>
-                ))} */}
+                ) : SupportUs)} */}
             </>
           )}
         </>
