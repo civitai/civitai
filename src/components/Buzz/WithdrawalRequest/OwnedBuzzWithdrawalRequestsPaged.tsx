@@ -43,7 +43,7 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
   //#endregion
 
   const handleRequestCancelled = (id: number) => {
-    console.log('Noo!!!');
+    console.log('handleRequestCancelled');
   };
 
   return (
