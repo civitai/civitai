@@ -16,6 +16,8 @@ import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 import { completeClubMembershipCharge } from '~/server/services/clubMembership.service';
+import { notifyAir } from '~/server/services/integration.service';
+import { isDev } from '~/env/other';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -97,6 +99,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (checkoutSession.mode === 'subscription') {
               // do nothing
             } else if (checkoutSession.mode === 'payment') {
+              // First, check if this payment is for Civitai AIR
+
+              if (
+                env.AIR_PAYMENT_LINK_ID &&
+                checkoutSession.payment_link === env.AIR_PAYMENT_LINK_ID
+              ) {
+                // For AIR stuff...
+                const email =
+                  checkoutSession.customer_details?.email || checkoutSession.customer_email;
+
+                console.log(email);
+
+                if (!email || isDev) {
+                  return;
+                }
+
+                await notifyAir(email);
+                return;
+              }
+
               await manageCheckoutPayment(checkoutSession.id, checkoutSession.customer as string);
             }
             break;
