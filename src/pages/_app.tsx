@@ -92,8 +92,6 @@ function MyApp(props: CustomAppProps) {
     if (colorScheme === undefined && typeof window !== 'undefined') {
       const osColor = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       setColorScheme(osColor);
-    } else {
-      document.body.className = colorScheme === 'dark' ? 'theme-dark' : 'theme-light';
     }
   }, [colorScheme]);
 

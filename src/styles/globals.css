@@ -236,18 +236,3 @@ iframe {
     background-position: 0 0;
   }
 }
-
-/* Google Recapcha Hiding  */
-.grecaptcha-badge {
-  visibility: hidden;
-}
-
-/* CMP modal */
-.theme-dark #qc-cmp2-ui *:not(.qc-cmp2-footer *) {
-  color: #fff;
-}
-.theme-dark #qc-cmp2-ui,
-.theme-dark #qc-cmp2-ui:before,
-.theme-dark #qc-cmp2-ui:after {
-  background: #1a1b1e;
-}
