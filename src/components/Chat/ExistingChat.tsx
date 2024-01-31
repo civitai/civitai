@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
-import { IconChevronLeft, IconSend } from '@tabler/icons-react';
+import { IconChevronLeft, IconCrown, IconSend } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
@@ -77,6 +77,13 @@ const useStyles = createStyles((theme) => ({
     //   theme.colorScheme === 'dark'
     //     ? theme.fn.rgba(theme.colors.green[7], 0.1)
     //     : theme.fn.rgba(theme.colors.green[2], 0.1),
+  },
+  dot: {
+    height: theme.spacing.sm,
+    width: theme.spacing.sm,
+    // border: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
+    borderRadius: '50%',
+    display: 'inline-block',
   },
 }));
 
@@ -347,7 +354,6 @@ export function ExistingChat() {
     };
   }, [connected, worker, handleIsTyping]);
 
-  // TODO this doesnt trigger sometimes, like if typing and sending very quickly
   useEffect(() => {
     if (!currentUser) return;
 
@@ -422,21 +428,54 @@ export function ExistingChat() {
           <Group>
             {/* TODO limit this to one line, then expand */}
             {/* TODO improve useravatar to show loading */}
-            {/* TODO mark when a user is the owner, online status (later), blocked users, etc */}
+            {/* TODO online status (later), blocked users, etc */}
             {otherMembers?.map((cm) => (
-              <UserAvatar
-                key={cm.userId}
-                userId={cm.userId}
-                size="sm"
-                withUsername
-                linkToProfile
-                // TODO don't do the uuid thing
-                badge={
-                  cm.user.isModerator ? (
-                    <EdgeMedia src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'} width={20} />
-                  ) : undefined
-                }
-              />
+              <Button key={cm.userId} variant="light" color="gray" compact>
+                <UserAvatar
+                  userId={cm.userId}
+                  size="xs"
+                  withUsername
+                  linkToProfile
+                  // TODO don't do the uuid thing
+                  badge={
+                    <Group spacing={6} ml={4} align="center">
+                      {cm.user.isModerator ? (
+                        <EdgeMedia
+                          title="Moderator"
+                          src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'}
+                          width={16}
+                        />
+                      ) : undefined}
+                      {cm.isOwner === true ? (
+                        <Box title="Creator" display="flex">
+                          <IconCrown size={16} fill="currentColor" />
+                        </Box>
+                      ) : undefined}
+                      <Box
+                        className={classes.dot}
+                        title={
+                          cm.status === ChatMemberStatus.Joined
+                            ? 'Joined'
+                            : cm.status === ChatMemberStatus.Left
+                            ? 'Left'
+                            : cm.status === ChatMemberStatus.Kicked
+                            ? 'Kicked'
+                            : 'Invited'
+                        }
+                        sx={{
+                          backgroundColor:
+                            cm.status === ChatMemberStatus.Joined
+                              ? 'green'
+                              : cm.status === ChatMemberStatus.Left ||
+                                cm.status === ChatMemberStatus.Kicked
+                              ? 'orangered'
+                              : 'darkgray',
+                        }}
+                      ></Box>
+                    </Group>
+                  }
+                />
+              </Button>
             ))}
           </Group>
         )}
@@ -535,6 +574,12 @@ export function ExistingChat() {
         myMember.status === ChatMemberStatus.Ignored ? (
         <Center h="100%">
           <Stack>
+            {allChats.length > 0 && (
+              <Text mb="md" p="sm" size="xs" italic align="center">{`"${allChats[0].content.slice(
+                0,
+                70
+              )}${allChats[0].content.length > 70 ? '...' : ''}"`}</Text>
+            )}
             <Text align="center">Join the chat?</Text>
             <Group p="sm" position="center">
               <Button
