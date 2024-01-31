@@ -16,7 +16,14 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
-import { IconChevronLeft, IconCrown, IconSend } from '@tabler/icons-react';
+import {
+  IconChevronLeft,
+  IconCircleCheck,
+  IconCircleMinus,
+  IconCircleX,
+  IconCrown,
+  IconSend,
+} from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
@@ -77,13 +84,6 @@ const useStyles = createStyles((theme) => ({
     //   theme.colorScheme === 'dark'
     //     ? theme.fn.rgba(theme.colors.green[7], 0.1)
     //     : theme.fn.rgba(theme.colors.green[2], 0.1),
-  },
-  dot: {
-    height: theme.spacing.sm,
-    width: theme.spacing.sm,
-    // border: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
-    borderRadius: '50%',
-    display: 'inline-block',
   },
 }));
 
@@ -237,7 +237,7 @@ export function ExistingChat() {
 
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
-    onSuccess() {
+    onSuccess(data) {
       setIsSending(false);
       setChatMsg('');
 
@@ -250,6 +250,33 @@ export function ExistingChat() {
 
       setTypingStatus(newTotalStatus);
       setTypingText(isTypingText);
+
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId: data.chatId },
+        produce((old) => {
+          if (!old) return old;
+
+          const lastPage = old.pages[old.pages.length - 1];
+
+          lastPage.items.push(data);
+        })
+      );
+
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const thisChat = old.find((o) => o.id === data.chatId);
+          if (!thisChat) return old;
+          thisChat.messages = [
+            {
+              content: data.content,
+              createdAt: new Date(data.createdAt),
+            },
+          ];
+        })
+      );
     },
     onError(error) {
       setIsSending(false);
@@ -452,26 +479,23 @@ export function ExistingChat() {
                         </Box>
                       ) : undefined}
                       <Box
-                        className={classes.dot}
                         title={
-                          cm.status === ChatMemberStatus.Joined
-                            ? 'Joined'
-                            : cm.status === ChatMemberStatus.Left
-                            ? 'Left'
-                            : cm.status === ChatMemberStatus.Kicked
-                            ? 'Kicked'
-                            : 'Invited'
+                          cm.status === ChatMemberStatus.Invited ||
+                          cm.status === ChatMemberStatus.Ignored
+                            ? 'Invited'
+                            : cm.status
                         }
-                        sx={{
-                          backgroundColor:
-                            cm.status === ChatMemberStatus.Joined
-                              ? 'green'
-                              : cm.status === ChatMemberStatus.Left ||
-                                cm.status === ChatMemberStatus.Kicked
-                              ? 'orangered'
-                              : 'darkgray',
-                        }}
-                      ></Box>
+                        display="flex"
+                      >
+                        {cm.status === ChatMemberStatus.Joined ? (
+                          <IconCircleCheck size={16} color="green" />
+                        ) : cm.status === ChatMemberStatus.Left ||
+                          cm.status === ChatMemberStatus.Kicked ? (
+                          <IconCircleX size={16} color="orangered" />
+                        ) : (
+                          <IconCircleMinus size={16} />
+                        )}
+                      </Box>
                     </Group>
                   }
                 />
