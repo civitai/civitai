@@ -831,8 +831,6 @@ export const getAllImages = async ({
       LIMIT ${limit + 1}
   `;
 
-  console.dir(AND);
-
   if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
