@@ -74,8 +74,8 @@ export function ModelsInfinite({
             <MasonryColumns
               data={models}
               imageDimensions={(data) => {
-                const width = data.image?.width ?? 450;
-                const height = data.image?.height ?? 450;
+                const width = data.images[0]?.width ?? 450;
+                const height = data.images[0]?.height ?? 450;
                 return { width, height };
               }}
               adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}

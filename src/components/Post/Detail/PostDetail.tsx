@@ -3,20 +3,26 @@ import {
   Anchor,
   Badge,
   Button,
+  Card,
+  Center,
   CloseButton,
   Container,
   Divider,
+  Grid,
   Group,
+  Paper,
   Stack,
   Text,
   Title,
+  createStyles,
   useMantineTheme,
 } from '@mantine/core';
-import { CollectionType } from '@prisma/client';
+import { Availability, CollectionType } from '@prisma/client';
 import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -45,6 +51,7 @@ import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function PostDetail({ postId }: { postId: number }) {
+  const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const { query } = useBrowserRouter();
   const theme = useMantineTheme();
@@ -71,6 +78,7 @@ export function PostDetail({ postId }: { postId: number }) {
           : getEdgeUrl(images[0].url, { width: 1200 })
       }
       links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
+      deIndex={post?.availability === Availability.Unsearchable ? 'noindex, nofollow' : undefined}
     />
   );
 
@@ -93,152 +101,216 @@ export function PostDetail({ postId }: { postId: number }) {
     <>
       {meta}
       <TrackView entityId={post.id} entityType="Post" type="PostView" />
-      <Container size="md">
-        <Stack>
-          <Stack spacing={8}>
-            <Group spacing="md" position="apart" align="center" noWrap>
-              {post.title && (
-                <Title order={1} lineClamp={2} size={26}>
-                  {post.title}
-                </Title>
-              )}
-              {query.dialog && (
-                <NavigateBack url="/posts">
-                  {({ onClick }) => <CloseButton onClick={onClick} size="lg" ml="auto" />}
-                </NavigateBack>
-              )}
-            </Group>
-            <Group position="apart" align="flex-start">
-              <Group spacing="sm">
-                <Text size="xs" color="dimmed">
-                  {relatedResource && (
-                    <>
-                      Posted to{' '}
-                      <Link
-                        href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
-                        passHref
-                      >
-                        <Anchor>
-                          {relatedResource.modelName} - {relatedResource.modelVersionName}
-                        </Anchor>
-                      </Link>{' '}
-                    </>
-                  )}
-                  {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
-                </Text>
-                {!!post.tags.length && (
-                  <>
-                    <Divider
-                      orientation="vertical"
-                      sx={(theme) => ({ [containerQuery.smallerThan('sm')]: { display: 'none' } })}
-                    />
-                    <Collection
-                      items={post.tags}
-                      limit={2}
-                      badgeProps={{ radius: 'xl', size: 'lg' }}
-                      renderItem={(item) => (
-                        <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
-                          <Badge
-                            component="a"
-                            color="gray"
-                            radius="xl"
-                            size="lg"
-                            px={8}
-                            style={{ cursor: 'pointer' }}
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          >
-                            <Text size="xs" transform="capitalize" weight={500}>
-                              {item.name}
-                            </Text>
-                          </Badge>
-                        </Link>
-                      )}
-                      grouped
-                    />
-                  </>
+      <div className={classes.container}>
+        <div className={classes.content}>
+          <Stack>
+            <Stack spacing={8}>
+              <Group spacing="md" position="apart" align="center" noWrap>
+                {post.title && (
+                  <Title order={1} lineClamp={2} size={26}>
+                    {post.title}
+                  </Title>
+                )}
+                {query.dialog && (
+                  <NavigateBack url="/posts">
+                    {({ onClick }) => <CloseButton onClick={onClick} size="lg" ml="auto" />}
+                  </NavigateBack>
                 )}
               </Group>
-              <Group spacing="xs" position="right" sx={{ flex: '1 0 !important' }} noWrap>
-                <Button
-                  size="md"
-                  radius="xl"
-                  color="gray"
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  leftIcon={<IconPlaylistAdd size={14} />}
-                  onClick={() =>
-                    openContext('addToCollection', {
-                      postId: post.id,
-                      type: CollectionType.Post,
-                    })
-                  }
-                  compact
-                >
-                  <Text size="xs">Save</Text>
-                </Button>
-                <ShareButton
-                  url={`/posts/${post.id}`}
-                  title={post.title ?? `Post by ${post.user.username}`}
-                  collect={{ type: CollectionType.Post, postId: post.id }}
-                >
+              <Group position="apart" align="flex-start">
+                <Group spacing="sm">
+                  <Text size="xs" color="dimmed">
+                    {relatedResource && (
+                      <>
+                        Posted to{' '}
+                        <Link
+                          href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
+                          passHref
+                        >
+                          <Anchor>
+                            {relatedResource.modelName} - {relatedResource.modelVersionName}
+                          </Anchor>
+                        </Link>{' '}
+                      </>
+                    )}
+                    {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
+                  </Text>
+                  {!!post.tags.length && (
+                    <>
+                      <Divider
+                        orientation="vertical"
+                        sx={(theme) => ({
+                          [containerQuery.smallerThan('sm')]: { display: 'none' },
+                        })}
+                      />
+                      <Collection
+                        items={post.tags}
+                        limit={2}
+                        badgeProps={{ radius: 'xl', size: 'lg' }}
+                        renderItem={(item) => (
+                          <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
+                            <Badge
+                              component="a"
+                              color="gray"
+                              radius="xl"
+                              size="lg"
+                              px={8}
+                              style={{ cursor: 'pointer' }}
+                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            >
+                              <Text size="xs" transform="capitalize" weight={500}>
+                                {item.name}
+                              </Text>
+                            </Badge>
+                          </Link>
+                        )}
+                        grouped
+                      />
+                    </>
+                  )}
+                </Group>
+                <Group spacing="xs" position="right" sx={{ flex: '1 0 !important' }} noWrap>
                   <Button
+                    size="md"
                     radius="xl"
                     color="gray"
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    size="md"
-                    leftIcon={<IconShare3 size={14} />}
+                    leftIcon={<IconPlaylistAdd size={14} />}
+                    onClick={() =>
+                      openContext('addToCollection', {
+                        postId: post.id,
+                        type: CollectionType.Post,
+                      })
+                    }
                     compact
                   >
-                    <Text size="xs">Share</Text>
+                    <Text size="xs">Save</Text>
                   </Button>
-                </ShareButton>
-                <PostControls
-                  postId={post.id}
-                  userId={post.user.id}
-                  isModelVersionPost={post.modelVersionId}
-                >
-                  <ActionIcon
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    size={30}
-                    radius="xl"
-                    sx={(theme) => ({ [containerQuery.smallerThan('sm')]: { marginLeft: 'auto' } })}
+                  <ShareButton
+                    url={`/posts/${post.id}`}
+                    title={post.title ?? `Post by ${post.user.username}`}
+                    collect={{ type: CollectionType.Post, postId: post.id }}
                   >
-                    <IconDotsVertical size={16} />
-                  </ActionIcon>
-                </PostControls>
+                    <Button
+                      radius="xl"
+                      color="gray"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      size="md"
+                      leftIcon={<IconShare3 size={14} />}
+                      compact
+                    >
+                      <Text size="xs">Share</Text>
+                    </Button>
+                  </ShareButton>
+                  <PostControls
+                    postId={post.id}
+                    userId={post.user.id}
+                    isModelVersionPost={post.modelVersionId}
+                  >
+                    <ActionIcon
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      size={30}
+                      radius="xl"
+                      sx={(theme) => ({
+                        [containerQuery.smallerThan('sm')]: { marginLeft: 'auto' },
+                      })}
+                    >
+                      <IconDotsVertical size={16} />
+                    </ActionIcon>
+                  </PostControls>
+                </Group>
               </Group>
-            </Group>
-            <Group spacing="xl" mt="sm">
-              <UserAvatar
-                user={post.user}
-                avatarProps={{ size: 32 }}
-                size="md"
-                subTextSize="sm"
-                textSize="md"
-                withUsername
-                linkToProfile
-              />
-              <Group spacing={8} noWrap>
-                <TipBuzzButton
-                  toUserId={post.user.id}
-                  entityId={post.id}
-                  entityType="Post"
+              <Group spacing="xl" mt="sm">
+                <UserAvatar
+                  user={post.user}
+                  avatarProps={{ size: 32 }}
                   size="md"
-                  compact
+                  subTextSize="sm"
+                  textSize="md"
+                  withUsername
+                  linkToProfile
                 />
-                <ChatUserButton user={post.user} size="md" compact />
-                <FollowUserButton userId={post.user.id} size="md" compact />
+                <Group spacing={8} noWrap>
+                  <TipBuzzButton
+                    toUserId={post.user.id}
+                    entityId={post.id}
+                    entityType="Post"
+                    size="md"
+                    compact
+                  />
+                  <ChatUserButton user={post.user} size="md" compact />
+                  <FollowUserButton userId={post.user.id} size="md" compact />
+                </Group>
               </Group>
-            </Group>
-          </Stack>
-          <Container size="sm">
+            </Stack>
             <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
-            <Stack spacing="xl" mt="xl" id="comments">
+            <Stack spacing="xl" mt="xl" id="comments" mb={90}>
               {post.detail && <RenderHtml html={post.detail} withMentions />}
               <PostComments postId={postId} userId={post.user.id} />
             </Stack>
-          </Container>
-        </Stack>
-      </Container>
+          </Stack>
+        </div>
+        <div className={classes.sidebar}>
+          <AscendeumAd
+            adunit="StickySidebar_A"
+            sizes={{ [theme.breakpoints.md]: '300x600' }}
+            style={{ margin: '0 auto' }}
+            showRemoveAds
+            showFeedback
+          />
+        </div>
+      </div>
+      {/* TODO - ad wrapper so that this container around the ad goes away when the ad goes away */}
+      <Paper
+        component={Center}
+        py={30}
+        sx={(theme) => ({
+          background: theme.colorScheme === 'light' ? theme.colors.gray[2] : undefined,
+        })}
+      >
+        <AscendeumAd
+          adunit="Leaderboard_A"
+          sizes={{
+            [0]: '300x250',
+            [theme.breakpoints.md]: '970x250',
+          }}
+        />
+      </Paper>
     </>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  container: {
+    display: 'flex',
+    flexDirection: 'column-reverse',
+    gap: theme.spacing.md,
+    margin: '0 auto',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: theme.spacing.md,
+    paddingRight: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+
+    [`@media(min-width: ${theme.breakpoints.md}px)`]: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+    },
+  },
+  content: {
+    maxWidth: '100%',
+    [`@media(min-width: ${theme.breakpoints.md}px)`]: {
+      flex: 1,
+      maxWidth: 700,
+    },
+  },
+  sidebar: {
+    display: 'none',
+    [`@media(min-width: ${theme.breakpoints.md}px)`]: {
+      display: 'block',
+      width: 300,
+      position: 'sticky',
+      top: theme.spacing.md,
+    },
+  },
+}));

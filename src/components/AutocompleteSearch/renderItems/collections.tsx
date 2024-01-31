@@ -5,21 +5,20 @@ import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { Hit } from 'instantsearch.js';
 import {
   ActionIconBadge,
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const CollectionsSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<CollectionSearchIndexRecord> }
+  AutocompleteItem & { hit: SearchIndexDataMap['collections'][number] }
 >(({ value, hit, ...props }, ref) => {
   const { classes } = useSearchItemStyles();
 

@@ -1,6 +1,7 @@
 import {
   Container,
   createStyles,
+  Divider,
   Group,
   Stack,
   Text,
@@ -31,6 +32,10 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { z } from 'zod';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants } from '~/server/common/constants';
 
 const SIDEBAR_SIZE = 377;
 
@@ -61,57 +66,40 @@ export const useSearchLayout = () => {
 };
 
 const useStyles = createStyles((theme, _, getRef) => {
-  const sidebarRef = getRef('sidebar');
-  const contentRef = getRef('content');
-
   return {
     sidebar: {
-      ref: sidebarRef,
-      height: 'calc(100vh - 2 * var(--mantine-header-height, 50px))',
-      position: 'fixed',
-      left: -SIDEBAR_SIZE,
-      top: 'var(--mantine-header-height,50px)',
+      height: '100%',
+      marginLeft: `-${SIDEBAR_SIZE}px`,
       width: `${SIDEBAR_SIZE}px`,
-      overflowY: 'auto',
-      padding: theme.spacing.md,
-      transition: 'transform 200ms ease',
+
+      transition: 'margin 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
       zIndex: 200,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+      display: 'flex',
+      flexDirection: 'column',
 
       [containerQuery.smallerThan('sm')]: {
         top: 0,
-        height: '100vh',
-        left: '-100vw',
-        width: '100vw',
-        position: 'fixed',
+        left: 0,
+        height: '100%',
+        width: '100%',
+        marginLeft: `-100%`,
+        position: 'absolute',
       },
     },
 
-    content: {
-      ref: contentRef,
-      width: '100%',
-      paddingLeft: 0,
-      // TODO: Performance wise - padding left is not the best route here.
-      // We should probably use a transform instead
-      transition: 'padding-left 200ms ease',
+    scrollable: {
+      padding: theme.spacing.md,
+      overflowY: 'auto',
+      flex: 1,
     },
 
-    sidebarOpen: {
-      [`& .${sidebarRef}`]: {
-        transform: `translate(${SIDEBAR_SIZE}px, 0)`,
-        [containerQuery.smallerThan('sm')]: {
-          transform: `translate(100vw, 0)`,
-          paddingBottom: theme.spacing.xl,
-        },
-      },
-      [`& .${contentRef}`]: {
-        paddingLeft: `${SIDEBAR_SIZE}px`,
-        [containerQuery.smallerThan('sm')]: {
-          paddingLeft: 0,
-        },
-      },
+    root: { height: '100%', width: '100%', display: 'flex' },
+
+    active: {
+      marginLeft: '0 !important',
     },
   };
 });
@@ -158,31 +146,28 @@ export function SearchLayout({
         routing={routing}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
-        <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
+        <AppLayout renderSearchComponent={renderSearchComponent} withScrollArea={false}>
+          {children}
+        </AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>
   );
 }
 
 SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
-  const { classes, cx } = useStyles();
-  const { sidebarOpen } = useSearchLayout();
+  const { classes } = useStyles();
 
-  return (
-    <Container fluid className={cx({ [classes.sidebarOpen]: sidebarOpen })}>
-      {children}
-    </Container>
-  );
+  return <div className={classes.root}>{children}</div>;
 };
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
   const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <Stack className={classes.sidebar}>
-      <Group>
+    <div className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+      <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
             <ThemeIcon
@@ -198,14 +183,27 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
         </Tooltip>
         <Text size="lg">Filters &amp; sorting</Text>
       </Group>
-      {children}
-    </Stack>
+      <Divider />
+      <div className={classes.scrollable}>{children}</div>
+    </div>
   );
 };
 
+const maxColumnCount = 7;
 SearchLayout.Content = function Content({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
-  return <Stack className={classes.content}>{children}</Stack>;
+  return (
+    <ScrollArea p="md">
+      <MasonryProvider
+        columnWidth={constants.cardSizes.model}
+        maxColumnCount={maxColumnCount}
+        maxSingleColumnWidth={450}
+      >
+        <MasonryContainer p={0}>
+          <Stack>{children}</Stack>
+        </MasonryContainer>
+      </MasonryProvider>
+    </ScrollArea>
+  );
 };
 
 export const useSearchLayoutStyles = createStyles((theme) => ({

@@ -4,8 +4,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { Hit } from 'instantsearch.js';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import {
   ActionIconBadge,
   useSearchItemStyles,
@@ -15,10 +13,11 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<ImageSearchIndexRecord> }
+  AutocompleteItem & { hit: SearchIndexDataMap['images'][number] }
 >(({ value, hit, ...props }, ref) => {
   const { theme } = useSearchItemStyles();
 

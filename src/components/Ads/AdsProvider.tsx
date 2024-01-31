@@ -5,12 +5,7 @@ import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { useScript } from '~/hooks/useScript';
-
-enum Test {
-  Member,
-  AdsBlocked,
-  Ads,
-}
+import { isProd } from '~/env/other';
 
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
@@ -20,6 +15,7 @@ const AscendeumAdsContext = createContext<{
   isMember: boolean;
   enabled: boolean;
   ascendeumReady: boolean;
+  // adSenseReady: boolean;
   exoclickReady: boolean;
 } | null>(null);
 
@@ -47,8 +43,14 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   );
 
   const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
-    canLoad: showAds && !nsfw,
+    canLoad: showAds,
   });
+  // const adSenseReady = useScript(
+  //   'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
+  //   {
+  //     canLoad: showAds && !nsfw,
+  //   }
+  // );
   // const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
   //   canLoad: showAds && nsfw,
   // });
@@ -59,7 +61,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (!readyRef.current && showAds) {
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
-        setAdsBlocked(blocked);
+        setAdsBlocked(!isProd ? true : blocked);
       });
     }
   }, [showAds]);
@@ -73,6 +75,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         username: currentUser?.username,
         ascendeumReady,
         exoclickReady,
+        // adSenseReady,
         isMember,
         enabled,
       }}

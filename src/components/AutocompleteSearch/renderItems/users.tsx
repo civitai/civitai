@@ -1,17 +1,16 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Group, Image, Rating, Stack, Text, ThemeIcon } from '@mantine/core';
+import { AutocompleteItem, Group, Image, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconDownload, IconHeart, IconUpload, IconUser, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { Hit } from 'instantsearch.js';
-import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
 import { StarRating } from '~/components/StartRating/StarRating';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const UserSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<UserSearchIndexRecord> }
+  AutocompleteItem & { hit: SearchIndexDataMap['users'][number] }
 >(({ value, hit, ...props }, ref) => {
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 

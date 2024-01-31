@@ -29,6 +29,7 @@ type Props = {
   imageId?: number;
   onCreateClick?: () => void;
   mainResourceId?: number;
+  hideSoftware?: boolean;
 };
 type MetaDisplay = {
   label: string;
@@ -54,6 +55,7 @@ export function ImageMeta({
   generationProcess = 'txt2img',
   mainResourceId,
   onCreateClick,
+  hideSoftware,
 }: Props) {
   const flags = useFeatureFlags();
 
@@ -83,8 +85,10 @@ export function ImageMeta({
     }
 
     const onSite = 'civitaiResources' in meta;
+    const software =
+      meta.software?.toString() ?? (onSite ? 'Civitai Generator' : 'External Generator');
 
-    return { long, medium, short, hasControlNet, onSite };
+    return { long, medium, short, hasControlNet, onSite, software };
   }, [meta]);
 
   // TODO.optimize - can we get this data higher up?
@@ -113,13 +117,9 @@ export function ImageMeta({
 
             {label === 'Prompt' && (
               <>
-                {metas.onSite ? (
+                {!hideSoftware && (
                   <Badge size="xs" radius="sm">
-                    Civitai Generator
-                  </Badge>
-                ) : (
-                  <Badge size="xs" radius="sm">
-                    External Generator
+                    {metas.software}
                   </Badge>
                 )}
                 <Badge size="xs" radius="sm">
@@ -271,6 +271,7 @@ export function ImageMetaPopover({
   children,
   imageId,
   mainResourceId,
+  hideSoftware = false,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   const [opened, setOpened] = useState(false);
@@ -301,6 +302,7 @@ export function ImageMetaPopover({
             generationProcess={generationProcess}
             imageId={imageId}
             mainResourceId={mainResourceId}
+            hideSoftware={hideSoftware}
             onCreateClick={() => setOpened(false)}
           />
         </Popover.Dropdown>

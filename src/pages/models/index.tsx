@@ -11,25 +11,7 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { QS } from '~/utils/qs';
-
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ ctx, features }) => {
-    if (!features?.alternateHome) {
-      const queryString = QS.stringify(ctx.query);
-
-      return {
-        redirect: {
-          destination: `/${queryString ? '?' + queryString : ''}`,
-          permanent: false,
-        },
-      };
-    }
-  },
-});
 
 export default function ModelsPage() {
   const storedView = useFiltersContext((state) => state.models.view);

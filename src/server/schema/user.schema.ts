@@ -176,6 +176,7 @@ export const userSettingsSchema = z.object({
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
+  airEmail: z.string().email().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;

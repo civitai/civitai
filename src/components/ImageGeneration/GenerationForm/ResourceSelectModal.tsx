@@ -17,30 +17,21 @@ import {
   Select,
   Button,
 } from '@mantine/core';
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { getDisplayName } from '~/utils/string-helpers';
 import {
   Configure,
   InstantSearch,
   InstantSearchProps,
-  useInfiniteHits,
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
-import {
-  BaseModel,
-  MODELS_SEARCH_INDEX,
-  baseModelSets,
-  constants,
-} from '~/server/common/constants';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { applyUserPreferencesModels } from '~/components/Search/search.utils';
 import { useInView } from '~/hooks/useInView';
 import { IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
@@ -69,6 +60,9 @@ import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/gen
 import { ModelType } from '@prisma/client';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { truncate } from 'lodash-es';
+import { searchIndexMap } from '~/components/Search/search.types';
+import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -88,7 +82,9 @@ export const openResourceSelectModal = ({ title, ...innerProps }: ResourceSelect
 const ResourceSelectContext = React.createContext<{
   canGenerate?: boolean;
   resources: { type: ModelType; baseModels: BaseModel[] }[];
-  onSelect: (value: Generation.Resource & { image: ResourceSelectData['image'] }) => void;
+  onSelect: (
+    value: Generation.Resource & { image: SearchIndexDataMap['models'][number]['images'][number] }
+  ) => void;
 } | null>(null);
 
 const useResourceSelectContext = () => {
@@ -147,7 +143,7 @@ export default function ResourceSelectModal({
     <ResourceSelectContext.Provider
       value={{ onSelect: handleSelect, canGenerate, resources: _resources }}
     >
-      <InstantSearch searchClient={searchClient} indexName={MODELS_SEARCH_INDEX}>
+      <InstantSearch searchClient={searchClient} indexName={searchIndexMap.models}>
         <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
         <Stack>
           <CustomSearchBox isMobile={isMobile} autoFocus />
@@ -180,30 +176,18 @@ function CategoryTagFilters() {
 
 function ResourceHitList() {
   const startedRef = useRef(false);
-  const currentUser = useCurrentUser();
+  // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
   const { classes } = useSearchLayoutStyles();
-  const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
+  const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
-    models: hiddenModels,
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
-
-  const models = useMemo(() => {
-    return applyUserPreferencesModels({
-      items: hits,
-      hiddenModels,
-      hiddenImages,
-      hiddenTags,
-      hiddenUsers,
-      currentUserId: currentUser?.id,
-    });
-  }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
-
-  const hiddenItems = hits.length - models.length;
+    items: models,
+    loadingPreferences,
+    hiddenCount,
+  } = useApplyHiddenPreferences({
+    type: 'models',
+    data: hits,
+  });
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
@@ -225,9 +209,9 @@ function ResourceHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems} models have been hidden due to your settings.
+                {hiddenCount} models have been hidden due to your settings.
               </Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
@@ -247,8 +231,8 @@ function ResourceHitList() {
 
   return (
     <Stack>
-      {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} models have been hidden due to your settings.</Text>
+      {hiddenCount > 0 && (
+        <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
       <Box className={classes.grid}>
         {models.map((model, index) => {
@@ -276,19 +260,18 @@ const createRenderElement = trieMemoize(
 );
 
 const IMAGE_CARD_WIDTH = 450;
-type ResourceSelectData = ReturnType<
-  typeof applyUserPreferencesModels<ModelSearchIndexRecord>
->[number];
-
-function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData }) {
+function ResourceSelectCard({
+  data,
+}: {
+  index: number;
+  data: SearchIndexDataMap['models'][number];
+}) {
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { onSelect, canGenerate, resources } = useResourceSelectContext();
+  const image = data.images[0];
   const { classes, cx } = useCardStyles({
-    aspectRatio:
-      data.image && data.image.width && data.image.height
-        ? data.image.width / data.image.height
-        : 1,
+    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
   const resourceFilter = resources.find((x) => x.type === data.type);
@@ -316,7 +299,7 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
       modelId: data.id,
       modelName: data.name,
       modelType: data.type,
-      image: data.image,
+      image: image,
       covered: data.canGenerate,
       strength: 1, // TODO - use version recommendations or default to 1
     });
@@ -361,7 +344,7 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
           openContext('report', {
             entityType: ReportEntity.Image,
             // Explicitly cast to number because we know it's not undefined
-            entityId: data.image.id,
+            entityId: image.id,
           })
         }
       />,
@@ -406,7 +389,7 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
       {inView ? (
         <div className={classes.root} onClick={handleSelect}>
           <ImageGuard
-            images={[data.image]}
+            images={[image]}
             connect={{ entityId: data.id, entityType: 'model' }}
             render={(image) => (
               <ImageGuard.Content>
@@ -527,7 +510,7 @@ function ResourceSelectCard({ data }: { index: number; data: ResourceSelectData 
                           loading="lazy"
                         />
                       ) : (
-                        <MediaHash {...data.image} />
+                        <MediaHash {...image} />
                       )}
                     </>
                   );

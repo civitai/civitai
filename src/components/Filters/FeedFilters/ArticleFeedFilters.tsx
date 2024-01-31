@@ -22,7 +22,7 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
           className: classes.subnavDropdown,
         }}
       />
-      <ArticleFiltersDropdown size="sm" compact className={classes.subnavDropdown} />
+      <ArticleFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
       {canToggleView && (
         <ViewToggle
           type="articles"

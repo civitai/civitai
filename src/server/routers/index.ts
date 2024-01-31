@@ -49,6 +49,7 @@ import { trackRouter } from './track.router';
 import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
+import { integrationRouter } from './integration.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -100,6 +101,7 @@ export const appRouter = router({
   cosmetic: cosmeticRouter,
   event: eventRouter,
   csam: csamRouter,
+  integration: integrationRouter,
 });
 
 // export type definition of API

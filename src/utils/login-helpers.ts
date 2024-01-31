@@ -13,6 +13,7 @@ export const loginRedirectReasons = {
   'favorite-model': 'You need to be logged in to like a model',
   'create-comment': 'You need to be logged in to add a comment',
   'report-comment': 'You need to be logged in to report this comment',
+  'confirm-membership': 'You need to be logged in to confirm your membership',
   'follow-user': 'You need to be logged in to follow a user',
   'follow-collection': 'You need to be logged in to follow a collection',
   'hide-content': 'You need to be logged in to hide content',

@@ -14,7 +14,7 @@ import {
   Menu,
   Popover,
 } from '@mantine/core';
-import { CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
+import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -440,7 +440,11 @@ export function Collection({
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
           description={collection.description ?? undefined}
-          deIndex={collection.read !== 'Public' ? 'noindex, nofollow' : undefined}
+          deIndex={
+            collection.read !== 'Public' || collection.availability === Availability.Unsearchable
+              ? 'noindex, nofollow'
+              : undefined
+          }
         />
       )}
       <SensitiveShield enabled={(collection?.nsfw ?? false) && !currentUser}>

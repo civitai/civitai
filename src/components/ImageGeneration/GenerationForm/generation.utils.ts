@@ -225,9 +225,9 @@ export const getFormData = (
       .filter(resourceFilter);
   } else if (type === 'remix') {
     formData.vae = resources.filter((x) => x.modelType === 'VAE')[0];
-    formData.resources = resources.filter(
-      (x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE'
-    );
+    formData.resources = resources
+      .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
+      .filter(resourceFilter);
   }
 
   if (params) {

@@ -369,6 +369,7 @@ export function GeneratedImage({
                 <ImageMetaPopover
                   meta={request.params}
                   zIndex={constants.imageGeneration.drawerZIndex + 1}
+                  hideSoftware
                   // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
                 >
                   <ActionIcon variant="transparent" size="md">
