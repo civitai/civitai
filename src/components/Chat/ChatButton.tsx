@@ -13,8 +13,8 @@ const useStyles = createStyles((theme) => ({
     bottom: theme.spacing.xs,
     left: theme.spacing.md,
     zIndex: 500,
-    height: 'min(600px, 70%)',
-    width: 'min(700px, 80%)',
+    height: 'min(700px, 70%)',
+    width: 'min(800px, 80%)',
     [containerQuery.smallerThan('sm')]: {
       height: `calc(100% - ${theme.spacing.xs * 2}px)`,
       width: `calc(100% - ${theme.spacing.md * 2}px)`,
@@ -42,6 +42,7 @@ export function ChatButton() {
       <Indicator
         color="red"
         disabled={unreadLoading || !totalUnread}
+        // processing={unreadLoading} (this doesn't work)
         label={totalUnread}
         inline
         size={14}

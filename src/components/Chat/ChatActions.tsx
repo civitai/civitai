@@ -1,9 +1,11 @@
-import { ActionIcon, Group, Menu } from '@mantine/core';
+import { ActionIcon, Group, Menu, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ChatMemberStatus } from '@prisma/client';
 import {
+  IconArrowsJoin2,
   IconBell,
   IconBellOff,
+  IconDoorExit,
   IconEar,
   IconEarOff,
   IconFlag,
@@ -32,7 +34,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const muteSounds = userSettings?.muteSounds ?? false;
 
   const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
-  const isOwner = myMember?.isOwner === true;
+  // const isOwner = myMember?.isOwner === true;
 
   const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
     onSuccess(data) {
@@ -57,16 +59,16 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
         produce((old) => {
           if (!old) return old;
 
-          if (isDefined(req.status) && req.status !== ChatMemberStatus.Joined) {
-            setState((prev) => ({ ...prev, existingChatId: undefined }));
-            return old.filter((c) => c.id !== chatObj?.id);
-          }
-
           const tChat = old.find((c) => c.id === chatObj?.id);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === data.userId);
           if (!tMember) return old;
 
-          tMember.isMuted = data.isMuted;
+          if (isDefined(req.status)) {
+            tMember.status = data.status;
+          }
+          if (isDefined(req.isMuted)) {
+            tMember.isMuted = data.isMuted;
+          }
         })
       );
     },
@@ -101,7 +103,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
     });
   };
 
-  const leaveChat = () => {
+  const adjustChat = (status: ChatMemberStatus) => {
     if (!myMember || !currentUser) {
       showErrorNotification({
         title: 'Failed to update chat membership.',
@@ -113,18 +115,18 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
     modifyMembership({
       chatMemberId: myMember.id,
-      status: ChatMemberStatus.Left,
+      status: status,
     });
   };
 
-  // TODO check leaving and then reopening a new chat with same people
   // TODO probably don't close modal until left
   const leaveModal = () =>
     openConfirmModal({
       title: 'Really leave this chat?',
+      children: <Text size="sm">You can rejoin at any time from the Archived tab.</Text>,
       centered: true,
       labels: { confirm: 'Confirm', cancel: 'Cancel' },
-      onConfirm: leaveChat,
+      onConfirm: () => adjustChat(ChatMemberStatus.Left),
     });
 
   const reportModal = () => {
@@ -150,17 +152,28 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
               {/*TODO enable these*/}
               {/*{isOwner && <Menu.Item icon={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
               {/*{isOwner && <Menu.Item icon={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
-              <Menu.Item
-                icon={myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />}
-                onClick={toggleNotifications}
-              >{`${myMember?.isMuted ? 'Enable' : 'Disable'} notifications`}</Menu.Item>
+              {myMember?.status === ChatMemberStatus.Joined && (
+                <Menu.Item
+                  icon={myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />}
+                  onClick={toggleNotifications}
+                >{`${myMember?.isMuted ? 'Enable' : 'Disable'} notifications`}</Menu.Item>
+              )}
               <Menu.Item icon={<IconFlag size={18} />} color="orange" onClick={reportModal}>
                 Report
               </Menu.Item>
-              {/*TODO reenable*/}
-              {/*<Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveModal}>*/}
-              {/*  Leave*/}
-              {/*</Menu.Item>*/}
+              {myMember?.status === ChatMemberStatus.Joined ? (
+                <Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveModal}>
+                  Leave
+                </Menu.Item>
+              ) : myMember?.status === ChatMemberStatus.Left ? (
+                <Menu.Item
+                  icon={<IconArrowsJoin2 size={18} />}
+                  color="green"
+                  onClick={() => adjustChat(ChatMemberStatus.Joined)}
+                >
+                  Rejoin
+                </Menu.Item>
+              ) : undefined}
             </>
           )}
           <Menu.Label>Global</Menu.Label>

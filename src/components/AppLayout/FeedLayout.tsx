@@ -42,8 +42,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           maxColumnCount={maxColumnCount}
           maxSingleColumnWidth={450}
           style={{ margin: 0, flex: 1, zIndex: 10 }}
-          p="md"
-          pt={0}
+          pb="md"
         >
           <AscendeumAd
             adunit="Leaderboard_A"
