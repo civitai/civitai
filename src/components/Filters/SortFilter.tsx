@@ -82,6 +82,7 @@ function DumbSortFilter({ type, value, onChange, includeNewest = true, ...props 
     onClick: onChange,
     value,
   };
+  props.variant ??= 'menu';
 
   return (
     <IsClient>
