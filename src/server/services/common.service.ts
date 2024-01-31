@@ -36,8 +36,6 @@ export const hasEntityAccess = async ({
     return [];
   }
 
-  console.log(entityIds);
-
   const query: Prisma.Sql =
     entityType === 'ModelVersion'
       ? Prisma.sql` 
