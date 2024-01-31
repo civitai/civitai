@@ -482,7 +482,7 @@ export const getAllImages = async ({
   modelVersionId,
   imageId,
   username,
-  excludedImageIds,
+  // excludedImageIds,
   period,
   periodMode,
   sort,
@@ -515,9 +515,19 @@ export const getAllImages = async ({
 
   const showClubPosts = !!postId || !!collectionId || !!modelId || !!modelVersionId || !!reviewId;
 
-  if (hidden && !userId) throw throwAuthorizationError();
-  if (hidden && (excludedImageIds ?? []).length === 0) {
-    return { items: [], nextCursor: undefined };
+  if (hidden) {
+    if (!userId) throw throwAuthorizationError();
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (imageIds.length) {
+      cacheTime = 0;
+      AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
+    } else {
+      return { items: [], nextCursor: undefined };
+    }
   }
 
   if (excludeCrossPosts && modelVersionId) {
@@ -575,23 +585,15 @@ export const getAllImages = async ({
 
   // Filter only followed users
   if (userId && followed) {
-    const followedUsers = await dbRead.user.findUnique({
-      where: { id: userId },
-      select: {
-        engagingUsers: {
-          select: { targetUser: { select: { id: true } } },
-          where: { type: 'Follow' },
-        },
-      },
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId, type: 'Follow' },
+      select: { targetUserId: true },
     });
-    const followedUsersIds =
-      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
-    AND.push(
-      Prisma.sql`i."userId" IN (${
-        followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null
-      })`
-    );
-    cacheTime = 0;
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      cacheTime = 0;
+      AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
+    }
   }
 
   // Filter to specific tags
@@ -695,10 +697,10 @@ export const getAllImages = async ({
     }
   }
 
-  if (hidden) {
-    cacheTime = 0;
-    AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
-  }
+  // if (hidden) {
+  //   cacheTime = 0;
+  //   AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
+  // }
 
   if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
   else if (nsfw !== undefined) {
@@ -828,6 +830,8 @@ export const getAllImages = async ({
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
+
+  console.dir(AND);
 
   if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
