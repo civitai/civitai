@@ -82,8 +82,7 @@ export async function updateByStripeConnectAccount({
 }: {
   stripeAccount: Stripe.Account;
 }) {
-  console.log(stripeAccount);
-  const userStripeConnect = await dbRead.userStripeConnect.findUnique({
+  const userStripeConnect = await dbWrite.userStripeConnect.findUnique({
     where: { connectedAccountId: stripeAccount.id },
   });
 
@@ -97,7 +96,7 @@ export async function updateByStripeConnectAccount({
     chargesEnabled: stripeAccount.charges_enabled,
   };
 
-  if (stripeAccount.payouts_enabled) {
+  if (stripeAccount.payouts_enabled && userStripeConnect.status !== StripeConnectStatus.Approved) {
     // If we're here, user is good to go!
 
     updated = await dbWrite.userStripeConnect.update({
@@ -112,7 +111,10 @@ export async function updateByStripeConnectAccount({
       userId: userStripeConnect.userId,
       type: 'creators-program-payments-enabled',
     }).catch();
-  } else if (stripeAccount.requirements?.disabled_reason) {
+  } else if (
+    stripeAccount.requirements?.disabled_reason &&
+    userStripeConnect.status !== StripeConnectStatus.Rejected
+  ) {
     // If we're here, user is not good to go!
     updated = await dbWrite.userStripeConnect.update({
       where: { connectedAccountId: stripeAccount.id },
