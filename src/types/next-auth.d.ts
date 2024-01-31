@@ -23,10 +23,13 @@ interface ExtendedUser {
   permissions?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string; // client only
-  // client only
-  referral?: {
-    id: number;
-  };
+  referral?: { id: number }; // client only
+
+  // TODO.briant - clean up user session data
+  /*
+    remove `deletedAt` from session user data
+    remove `emailVerified`, update user account page to make call to get current user data
+   */
 }
 
 declare module 'next-auth' {
