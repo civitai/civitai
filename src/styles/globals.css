@@ -236,3 +236,7 @@ iframe {
     background-position: 0 0;
   }
 }
+
+.grecaptcha-badge {
+  visibility: hidden;
+}
