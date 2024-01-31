@@ -18,7 +18,7 @@ export const useChatNewMessageSignal = () => {
     (updated: ChatAllMessages[number]) => {
       // queryUtils.chat.getInfiniteMessages.cancel();
 
-      if (updated.userId === currentUser?.id) return;
+      if (!currentUser || updated.userId === currentUser.id) return;
 
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
         { chatId: updated.chatId },
@@ -69,7 +69,7 @@ export const useChatNewMessageSignal = () => {
         play();
       }
     },
-    [queryUtils, play]
+    [queryUtils, play, currentUser]
   );
 
   useSignalConnection(SignalMessages.ChatNewMessage, onUpdate);
@@ -102,7 +102,7 @@ export const useChatNewRoomSignal = () => {
         }
       }
     },
-    [queryUtils, play]
+    [queryUtils, play, currentUser]
   );
 
   useSignalConnection(SignalMessages.ChatNewRoom, onUpdate);
