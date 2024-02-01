@@ -19,6 +19,7 @@ html {
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
+
   input:focus,
   select:focus,
   textarea:focus {
@@ -84,7 +85,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2 + p {
+.markdown-content h2+p {
   margin-top: 0;
 }
 
@@ -111,6 +112,11 @@ a {
 .theme-light .markdown-content blockquote {
   background: #eee;
   border-top: 4px solid #ddd;
+}
+
+img.load-error {
+  opacity: 1;
+  background: rgba(255, 00, 00, 0.35);
 }
 
 iframe {
@@ -209,7 +215,7 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs > * {
+.frame-decor .footer-abs>* {
   bottom: 36px !important;
 }
 
