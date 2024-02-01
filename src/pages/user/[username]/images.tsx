@@ -183,6 +183,7 @@ export function UserImagesPage() {
                 sort,
                 types,
                 withMeta,
+                hidden: undefined,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
                 followed,

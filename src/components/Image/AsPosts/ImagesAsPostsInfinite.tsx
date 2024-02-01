@@ -105,6 +105,7 @@ export default function ImagesAsPostsInfinite({
     modelVersionId: selectedVersionId,
     modelId: model.id,
     username,
+    hidden: undefined, // override global hidden filter
     types: undefined, // override global types image filter
   });
 

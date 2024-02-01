@@ -236,6 +236,7 @@ const ImageCollection = ({
                 sort,
                 collectionId: collection.id,
                 types: undefined,
+                hidden: undefined,
                 withMeta: undefined,
                 followed: undefined,
                 browsingMode: currentUser ? undefined : BrowsingMode.All,
