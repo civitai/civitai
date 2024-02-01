@@ -13,16 +13,25 @@ export function ConsentManager() {
             dataLayer.push(arguments);
           }
 
-          if(localStorage.getItem('consentMode') === null){
+          const consentMode = localStorage.getItem('consentMode')
+            ? JSON.parse(localStorage.getItem('consentMode')).state.consentMode
+            : null
+          if(!consentMode){
               gtag('consent', 'default', {
-                  'functionality_storage': 'denied',
-                  'security_storage': 'denied',
+                  'functionality_storage': 'granted',
+                  'security_storage': 'granted',
                   'ad_storage': 'denied',
                   'ad_user_data': 'denied',
                   'ad_personalization': 'denied',
               });
           } else {
-              gtag('consent', 'default', JSON.parse(localStorage.getItem('consentMode')));
+              gtag('consent', 'default', {
+                'functionality_storage': 'granted',
+                'security_storage': 'granted',
+                'ad_storage': consentMode.marketing ? 'granted' : 'denied',
+                'ad_user_data': consentMode.marketing ? 'granted' : 'denied',
+                'ad_personalization': consentMode.marketing ? 'granted' : 'denied',
+            });
           }
         `}
       </Script>
@@ -35,7 +44,6 @@ export function ConsentManager() {
               }); var f = d.getElementsByTagName(s)[0],
                   j = d.createElement(s), dl = l != 'dataLayer' ? '&l=' + l : ''; j.async = true; j.src =
                       'https://www.googletagmanager.com/gtm.js?id=' + i + dl; f.parentNode.insertBefore(j, f);
-                      console.log('https://www.googletagmanager.com/gtm.js?id=' + i + dl);
           })(window, document, 'script', 'dataLayer', 'GTM-5Z6C3PK4');
         `}
       </Script>

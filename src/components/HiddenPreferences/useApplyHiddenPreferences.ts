@@ -1,5 +1,5 @@
 import { ImageIngestionStatus } from '@prisma/client';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingMode } from '~/server/common/enums';
@@ -174,14 +174,12 @@ export function useApplyHiddenPreferences<
   }, [
     currentUser?.id,
     data,
-    type,
     hiddenModels,
     hiddenImages,
     hiddenTags,
     hiddenUsers,
     loadingPreferences,
     browsingMode,
-    showHidden,
     disabled,
   ]);
 
