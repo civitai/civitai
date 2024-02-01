@@ -202,6 +202,10 @@ export class Tracker {
     return this.track('actions', values);
   }
 
+  public activity(activity: string) {
+    return this.track('activities', { activity });
+  }
+
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
     return this.track('modelEvents', values);
   }

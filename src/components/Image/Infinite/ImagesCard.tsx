@@ -114,6 +114,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                     size={30}
                                     color="white"
                                     variant="filled"
+                                    data-activity="remix:image-card"
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();

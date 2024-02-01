@@ -215,7 +215,7 @@ export function ModelVersionDetails({
             <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
           </IconBadge>
           {version.canGenerate && (
-            <GenerateButton modelVersionId={version.id}>
+            <GenerateButton modelVersionId={version.id} data-activity="create:version-stat">
               <IconBadge radius="xs" icon={<IconBrush size={14} />}>
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
@@ -533,7 +533,11 @@ export function ModelVersionDetails({
                 {hasAccess ? (
                   <>
                     {canGenerate && (
-                      <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
+                      <GenerateButton
+                        iconOnly={displayCivitaiLink}
+                        modelVersionId={version.id}
+                        data-activity="create:model"
+                      />
                     )}
                     {displayCivitaiLink || canGenerate ? (
                       <Menu position="bottom-end">
