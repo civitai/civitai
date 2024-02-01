@@ -84,7 +84,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
-import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
+import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export function ModelVersionDetails({
@@ -98,7 +98,7 @@ export function ModelVersionDetails({
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);

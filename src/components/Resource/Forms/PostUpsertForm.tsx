@@ -1,7 +1,7 @@
 import { Button, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
-import { IconAlertTriangle, IconArrowsSort, IconClock } from '@tabler/icons-react';
+import { IconAlertTriangle, IconClock } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
@@ -26,7 +26,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const reset = useEditPostContext((state) => state.reset);
   const reorder = useEditPostContext((state) => state.reorder);
@@ -93,7 +93,7 @@ type Props = { modelVersionId: number; modelId: number };
 function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVersionId: number }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 
