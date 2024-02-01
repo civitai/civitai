@@ -65,6 +65,7 @@ export function PostImages({
                 radius="md"
                 className={classes.frame}
                 shadow="md"
+                mx="auto"
                 style={{
                   maxWidth: '100%',
                   width: width < maxWidth ? width : maxWidth,
