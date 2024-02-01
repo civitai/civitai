@@ -1,52 +1,29 @@
 import {
-  Container,
-  Stack,
-  Group,
-  Text,
-  Loader,
+  ActionIcon,
+  Anchor,
   Badge,
+  Button,
+  Container,
+  Drawer,
+  Group,
+  Input,
+  Loader,
+  MantineSize,
   Menu,
   SegmentedControl,
-  Drawer,
-  useMantineTheme,
-  Title,
-  Button,
-  ActionIcon,
-  Tooltip,
-  Input,
-  MantineSize,
-  Anchor,
   SelectItem,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { IconExternalLink } from '@tabler/icons-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { upperFirst } from 'lodash-es';
-import Link from 'next/link';
-import { useRouter } from 'next/router';
-import { useState, useMemo, useEffect } from 'react';
-import { z } from 'zod';
-
-import { trpc } from '~/utils/trpc';
-import { QS } from '~/utils/qs';
-import { formatDate } from '~/utils/date-helpers';
-import {
-  ReportEntity,
-  reportStatusColorScheme,
-  SetReportStatusInput,
-} from '~/server/schema/report.schema';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { GetReportsProps } from '~/server/controllers/report.controller';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
-import { constants } from '~/server/common/constants';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { Meta } from '~/components/Meta/Meta';
-import { Form, InputTextArea, useForm } from '~/libs/form';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import {
   MantineReactTable,
   MRT_ColumnDef,
@@ -54,8 +31,32 @@ import {
   MRT_PaginationState,
   MRT_SortingState,
 } from 'mantine-react-table';
-import { useQueryClient } from '@tanstack/react-query';
-import { getQueryKey } from '@trpc/react-query';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { useEffect, useMemo, useState } from 'react';
+import { z } from 'zod';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { Meta } from '~/components/Meta/Meta';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { env } from '~/env/client.mjs';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { Form, InputTextArea, useForm } from '~/libs/form';
+import { constants } from '~/server/common/constants';
+import { GetReportsProps } from '~/server/controllers/report.controller';
+import {
+  ReportEntity,
+  reportStatusColorScheme,
+  SetReportStatusInput,
+} from '~/server/schema/report.schema';
+import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { QS } from '~/utils/qs';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+
+import { trpc } from '~/utils/trpc';
 
 const limit = constants.reportingFilterDefaults.limit;
 
@@ -461,6 +462,10 @@ const getReportLink = (report: ReportDetail) => {
   else if (report.bountyEntry)
     return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
   else if (report.commentV2?.commentV2) return `/comments/v2/${report.commentV2.commentV2.id}`;
+  else if (report.chat)
+    return !!env.NEXT_PUBLIC_CHAT_LOOKUP_URL
+      ? `${env.NEXT_PUBLIC_CHAT_LOOKUP_URL}${report.chat.id}`
+      : undefined;
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {

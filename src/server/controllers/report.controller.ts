@@ -1,4 +1,3 @@
-import { ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
@@ -10,18 +9,13 @@ import {
   UpdateReportSchema,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
-  bulkUpdateReports,
+  bulkSetReportStatus,
   createReport,
-  getReportById,
   getReports,
   updateReportById,
-  getReportByIds,
-  bulkSetReportStatus,
 } from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { reportAcceptedReward } from '~/server/rewards';
 
 export async function createReportHandler({
   input,
@@ -86,6 +80,7 @@ export async function bulkUpdateReportStatusHandler({
 }
 
 export type GetReportsProps = AsyncReturnType<typeof getReportsHandler>;
+
 export async function getReportsHandler({ input }: { input: GetReportsInput }) {
   try {
     const { items, ...result } = await getReports({
@@ -218,6 +213,13 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        chat: {
+          select: {
+            chat: {
+              select: { id: true },
+            },
+          },
+        },
       },
     });
     return {
@@ -234,6 +236,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           collection: item.collection?.collection,
           bounty: item.bounty?.bounty,
           bountyEntry: item.bountyEntry?.bountyEntry,
+          chat: item.chat?.chat,
         };
       }),
       ...result,

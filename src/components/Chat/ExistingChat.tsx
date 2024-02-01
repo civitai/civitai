@@ -459,7 +459,7 @@ export function ExistingChat() {
             {otherMembers?.map((cm) => (
               <Button key={cm.userId} variant="light" color="gray" compact>
                 <UserAvatar
-                  userId={cm.userId}
+                  user={cm.user}
                   size="xs"
                   withUsername
                   linkToProfile
@@ -633,66 +633,70 @@ export function ExistingChat() {
 function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const { state } = useChatContext();
+
+  const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
+
+  const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
 
   return (
     <AnimatePresence initial={false} mode="sync">
-      {chats.map((c, idx) => (
+      {chats.map((c, idx) => {
         // TODO probably combine messages if within a certain amount of time
-        <PStack
-          component={motion.div}
-          // ref={c.id === lastReadId ? lastReadRef : undefined}
-          key={c.id}
-          spacing="xs"
-          style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: 'spring', duration: 0.4 }}
-        >
-          {c.userId === -1 ? (
-            // <Group align="center" position="center">
-            //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-            //   <Text
-            //     className={cx(classes.chatMessage)}
-            //     size="xs"
-            //     py={0}
-            //     sx={{
-            //       // alignSelf: 'center',
-            //       border: '1px solid gray',
-            //     }}
-            //   >
-            //     {c.content}
-            //   </Text>
-            // </Group>
-            <Text
-              className={cx(classes.chatMessage)}
-              size="xs"
-              py={0}
-              sx={{
-                alignSelf: 'center',
-                border: '1px solid gray',
-              }}
-            >
-              {c.content}
-            </Text>
-          ) : (
-            <>
-              <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
-                <UserAvatar userId={c.userId} withUsername />
-                <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-              </Group>
-              {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+
+        const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
+
+        return (
+          <PStack
+            component={motion.div}
+            // ref={c.id === lastReadId ? lastReadRef : undefined}
+            key={c.id}
+            spacing="xs"
+            style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ type: 'spring', duration: 0.4 }}
+          >
+            {c.userId === -1 ? (
+              // <Group align="center" position="center">
+              //   <Text size="xs">{formatDate(c.createdAt)}</Text>
+              //   ...Text (below)
+              // </Group>
               <Text
-                className={cx(classes.chatMessage, {
-                  [classes.otherMessage]: c.userId !== currentUser?.id,
-                  [classes.myMessage]: c.userId === currentUser?.id,
-                })}
+                className={cx(classes.chatMessage)}
+                size="xs"
+                py={0}
+                sx={{
+                  alignSelf: 'center',
+                  border: '1px solid gray',
+                }}
               >
                 {c.content}
               </Text>
-            </>
-          )}
-        </PStack>
-      ))}
+            ) : (
+              <>
+                <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
+                  {!!cachedUser ? (
+                    <UserAvatar user={cachedUser} withUsername />
+                  ) : (
+                    <UserAvatar userId={c.userId} withUsername />
+                  )}
+                  <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
+                </Group>
+                {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+                <Text
+                  className={cx(classes.chatMessage, {
+                    [classes.otherMessage]: c.userId !== currentUser?.id,
+                    [classes.myMessage]: c.userId === currentUser?.id,
+                  })}
+                >
+                  {c.content}
+                </Text>
+              </>
+            )}
+          </PStack>
+        );
+      })}
     </AnimatePresence>
   );
 }
