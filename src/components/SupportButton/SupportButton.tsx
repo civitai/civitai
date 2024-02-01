@@ -26,7 +26,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           h={36}
           {...props}
         >
-          <EdgeMedia src="501aec85-e3b4-42ec-afda-2fadc2361506" width={24} />
+          <EdgeMedia src="5844e919-31e3-4dd7-a3c3-f5affdc7af7a" width={24} />
           <IconChevronRight size={18} strokeWidth={2.5} />
         </Button>,
         <Button
