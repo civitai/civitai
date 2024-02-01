@@ -9,43 +9,62 @@ export const getByVersionId = ({ modelVersionId }: { modelVersionId: number }) =
   return dbRead.modelFile.findMany({ where: { modelVersionId } });
 };
 
-export const createFile = <TSelect extends Prisma.ModelFileSelect>({
+export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   select,
+  userId,
   ...data
-}: ModelFileCreateInput & { select: TSelect }) => {
+}: ModelFileCreateInput & { select: TSelect; userId: number }) {
   const file = prepareFile(data);
+
+  const ownsVersion = await dbWrite.modelVersion.findFirst({
+    where: { id: data.modelVersionId, model: { userId } },
+  });
+  if (!ownsVersion) throw throwNotFoundError();
 
   return dbWrite.modelFile.create({
     data: { ...file, modelVersionId: data.modelVersionId },
     select,
   });
-};
+}
 
-export const updateFile = async ({ id, metadata, ...inputData }: ModelFileUpdateInput) => {
-  const modelFile = await dbRead.modelFile.findUnique({
-    where: { id },
-    select: { id: true, metadata: true },
+export async function updateFile({
+  id,
+  metadata,
+  userId,
+  ...inputData
+}: ModelFileUpdateInput & { userId: number }) {
+  const modelFile = await dbWrite.modelFile.findUnique({
+    where: { id, modelVersion: { model: { userId } } },
+    select: { id: true, metadata: true, modelVersionId: true },
   });
   if (!modelFile) throw throwNotFoundError();
-  return dbWrite.modelFile.update({
+
+  metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
+  await dbWrite.modelFile.updateMany({
     where: { id },
     data: {
       ...inputData,
-      metadata: metadata
-        ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata }
-        : undefined,
+      metadata,
     },
-    select: { id: true },
   });
-};
 
-// only pass data that can change (ie. modelFile.type)
-// export const updateFile = async (data) => {};
+  return {
+    ...modelFile,
+    metadata,
+  };
+}
 
-export const deleteFile = ({ id }: GetByIdInput) => {
-  return dbWrite.modelFile.delete({ where: { id } });
-};
+export async function deleteFile({ id, userId }: GetByIdInput & { userId: number }) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
+    DELETE FROM "ModelFile" mf
+    USING "ModelVersion" mv, "Model" m
+    WHERE mf."modelVersionId" = mv.id
+    AND mv."modelId" = m.id
+    AND mf.id = ${id}
+    AND m."userId" = ${userId}
+    RETURNING
+      mv.id as "modelVersionId"
+  `;
 
-export const batchDeleteFiles = ({ ids }: { ids: number[] }) => {
-  return dbWrite.modelFile.deleteMany({ where: { id: { in: ids } } });
-};
+  return rows[0];
+}
