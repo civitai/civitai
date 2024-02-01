@@ -244,7 +244,7 @@ export function ChatList() {
                         ) : otherMembers.length === 0 ? (
                           <IconUserX />
                         ) : (
-                          <UserAvatar userId={otherMembers[0].userId} />
+                          <UserAvatar user={otherMembers[0].user} />
                         )}
                       </Box>
                     </Indicator>

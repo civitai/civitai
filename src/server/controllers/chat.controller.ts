@@ -17,6 +17,7 @@ import {
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import {
   throwBadRequestError,
@@ -54,6 +55,11 @@ const singleChatSelect = {
           id: true,
           username: true,
           isModerator: true,
+          deletedAt: true,
+          image: true,
+          profilePicture: {
+            select: profileImageSelect,
+          },
         },
       },
     },
