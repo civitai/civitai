@@ -46,7 +46,12 @@ import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/
 import { useTrackEvent } from '../TrackView/track.utils';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { SearchIndexDataMap, useHitsTransformed } from '~/components/Search/search.utils2';
-import { SearchIndexKey, searchIndexMap } from '~/components/Search/search.types';
+import {
+  ReverseSearchIndexKey,
+  SearchIndexKey,
+  reverseSearchIndexMap,
+  searchIndexMap,
+} from '~/components/Search/search.types';
 import { paired } from '~/utils/type-guards';
 
 const meilisearch = instantMeiliSearch(
@@ -210,7 +215,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onSubmit,
     className,
     searchBoxProps,
-    indexName,
+    indexName: indexNameProp,
     onTargetChange,
     ...autocompleteProps
   }: AutocompleteSearchProps<TKey>,
@@ -229,6 +234,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
   const { query, refine: setQuery } = useSearchBox(searchBoxProps);
   const { hits, results } = useHitsTransformed<TKey>();
+  const indexName = results?.index
+    ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
+    : indexNameProp;
 
   const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
   const [search, setSearch] = useState(query);

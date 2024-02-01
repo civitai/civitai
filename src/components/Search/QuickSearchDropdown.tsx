@@ -20,7 +20,12 @@ import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/user
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { SearchIndexKey, searchIndexMap } from '~/components/Search/search.types';
+import {
+  ReverseSearchIndexKey,
+  reverseSearchIndexMap,
+  SearchIndexKey,
+  searchIndexMap,
+} from '~/components/Search/search.types';
 
 import { SearchIndexDataMap, useHitsTransformed } from '~/components/Search/search.utils2';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
@@ -167,7 +172,7 @@ export const QuickSearchDropdown = ({
 };
 
 function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
-  indexName,
+  indexName: indexNameProp,
   onIndexNameChange,
   onItemSelected,
   filters,
@@ -189,6 +194,9 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const availableIndexes = supportedIndexes ?? [];
 
+  const indexName = results?.index
+    ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
+    : indexNameProp;
   const { key, value } = paired<SearchIndexDataMap>(indexName, hits as SearchIndexDataMap[TIndex]);
   const { items: filtered } = useApplyHiddenPreferences({
     type: key,
