@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Menu, Text } from '@mantine/core';
+import { ActionIcon, Group, Menu, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ChatMemberStatus } from '@prisma/client';
 import {
@@ -33,8 +33,12 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   // TODO if this works, more of this for getAllByUser
   const muteSounds = userSettings?.muteSounds ?? false;
 
-  const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   // const isOwner = myMember?.isOwner === true;
+  const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
+  const modSender = chatObj?.chatMembers.find(
+    (cm) => cm.userId !== currentUser?.id && cm.isOwner === true && cm.user.isModerator === true
+  );
+  const cantLeave = modSender?.status === ChatMemberStatus.Joined && !myMember?.user.isModerator;
 
   const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
     onSuccess(data) {
@@ -162,9 +166,23 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                 Report
               </Menu.Item>
               {myMember?.status === ChatMemberStatus.Joined ? (
-                <Menu.Item icon={<IconDoorExit size={18} />} color="red" onClick={leaveModal}>
-                  Leave
-                </Menu.Item>
+                <Tooltip
+                  label={
+                    cantLeave
+                      ? 'Cannot leave a moderator chat while they are still present'
+                      : undefined
+                  }
+                >
+                  <Menu.Item
+                    icon={<IconDoorExit size={18} />}
+                    color="red"
+                    onClick={leaveModal}
+                    disabled={cantLeave}
+                    style={cantLeave ? { pointerEvents: 'all', cursor: 'default' } : undefined}
+                  >
+                    Leave
+                  </Menu.Item>
+                </Tooltip>
               ) : myMember?.status === ChatMemberStatus.Left ? (
                 <Menu.Item
                   icon={<IconArrowsJoin2 size={18} />}
