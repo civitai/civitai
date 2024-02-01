@@ -12,6 +12,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Badge,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
@@ -32,15 +33,24 @@ import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 
+const WithdrawalRequestBadgeColor = {
+  [BuzzWithdrawalRequestStatus.Requested]: 'blue',
+  [BuzzWithdrawalRequestStatus.Approved]: 'yellow',
+  [BuzzWithdrawalRequestStatus.Transferred]: 'green',
+  [BuzzWithdrawalRequestStatus.Canceled]: 'gray',
+  [BuzzWithdrawalRequestStatus.Rejected]: 'red',
+  [BuzzWithdrawalRequestStatus.Reverted]: 'orange',
+};
+
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { classes } = useBuzzDashboardStyles();
-  const utils = trpc.useContext();
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { requests, pagination, isLoading, isRefetching } =
     useQueryOwnedBuzzWithdrawalRequests(debouncedFilters);
+
   const { cancelingBuzzWithdrawalRequest, cancelBuzzWithdrawalRequest } =
     useMutateBuzzWithdrawalRequest();
 
@@ -106,7 +116,11 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                     <tr key={request.id}>
                       <td>{formatDate(request.createdAt)}</td>
                       <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
-                      <td>{request.status}</td>
+                      <td>
+                        <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
+                          {request.status}
+                        </Badge>
+                      </td>
                       <td align="right">
                         {request.status === BuzzWithdrawalRequestStatus.Requested && (
                           <Button
