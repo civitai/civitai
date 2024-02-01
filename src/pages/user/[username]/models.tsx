@@ -102,7 +102,7 @@ export default function UserModelsPage() {
                       value={sort}
                       onChange={(x) => set({ sort: x as ModelSort })}
                     />
-                    <ModelFiltersDropdown filterMode="query" position="left" />
+                    <ModelFiltersDropdown filterMode="query" position="left" compact />
                   </Group>
                 </>
               )}

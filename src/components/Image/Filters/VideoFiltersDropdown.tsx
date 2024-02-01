@@ -54,13 +54,11 @@ const useStyles = createStyles((theme) => ({
   indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function VideoFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
+export function VideoFiltersDropdown({ query, onChange, isFeed, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
-  const router = useRouter();
-  const isSameUser = useIsSameUser(router.query.username);
 
   const [opened, setOpened] = useState(false);
 
@@ -154,25 +152,27 @@ export function VideoFiltersDropdown({ query, onChange, ...buttonProps }: Props)
           >
             Metadata only
           </Chip>
-          <Chip
-            {...chipProps}
-            checked={mergedFilters.hidden}
-            onChange={(checked) =>
-              onChange ? onChange({ hidden: checked }) : setFilters({ hidden: checked })
-            }
-          >
-            My hidden Images
-          </Chip>
-          {currentUser && !isSameUser && (
-            <Chip
-              {...chipProps}
-              checked={mergedFilters.followed}
-              onChange={(checked) =>
-                onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
-              }
-            >
-              Followed Only
-            </Chip>
+          {isFeed && currentUser && (
+            <>
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.hidden}
+                onChange={(checked) =>
+                  onChange ? onChange({ hidden: checked }) : setFilters({ hidden: checked })
+                }
+              >
+                Hidden
+              </Chip>
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.followed}
+                onChange={(checked) =>
+                  onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
+                }
+              >
+                Followed Only
+              </Chip>
+            </>
           )}
         </Group>
       </Stack>
@@ -234,4 +234,5 @@ export function VideoFiltersDropdown({ query, onChange, ...buttonProps }: Props)
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesInput>;
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
+  isFeed?: boolean;
 };
