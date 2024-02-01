@@ -40,19 +40,24 @@ export function useApplyHiddenPreferences<
         case 'models':
           return value
             .filter((model) => {
-              if (model.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
+              if (
+                model.user &&
+                model.user.id === currentUser?.id &&
+                browsingMode !== BrowsingMode.SFW
+              )
                 return true;
-              if (hiddenUsers.get(model.user.id)) return false;
+              if (model.user && hiddenUsers.get(model.user.id)) return false;
               if (hiddenModels.get(model.id) && !showHidden) return false;
               for (const tag of model.tags ?? []) if (hiddenTags.get(tag)) return false;
               return true;
             })
             .map(({ images, ...x }) => {
-              const filteredImages = images?.filter((i) => {
-                if (hiddenImages.get(i.id)) return false;
-                for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
-                return true;
-              });
+              const filteredImages =
+                images?.filter((i) => {
+                  if (hiddenImages.get(i.id)) return false;
+                  for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
+                  return true;
+                }) ?? [];
               return filteredImages.length
                 ? {
                     ...x,
@@ -73,9 +78,13 @@ export function useApplyHiddenPreferences<
           });
         case 'articles':
           return value.filter((article) => {
-            if (article.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW)
+            if (
+              article.user &&
+              article.user.id === currentUser?.id &&
+              browsingMode !== BrowsingMode.SFW
+            )
               return true;
-            if (hiddenUsers.get(article.user.id)) return false;
+            if (article.user && hiddenUsers.get(article.user.id)) return false;
             for (const tag of article.tags ?? []) if (hiddenTags.get(tag.id)) return false;
             return true;
           });
@@ -99,11 +108,12 @@ export function useApplyHiddenPreferences<
               return true;
             })
             .map(({ images, ...x }) => {
-              const filteredImages = images?.filter((i) => {
-                if (hiddenImages.get(i.id)) return false;
-                for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-                return true;
-              });
+              const filteredImages =
+                images?.filter((i) => {
+                  if (hiddenImages.get(i.id)) return false;
+                  for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+                  return true;
+                }) ?? [];
               return filteredImages.length
                 ? {
                     ...x,
