@@ -6,11 +6,13 @@ import {
 } from '../schema/buzz-withdrawal-request.schema';
 import { Context } from '../createContext';
 import {
+  cancelBuzzWithdrawalRequest,
   createBuzzWithdrawalRequest,
   getPaginatedBuzzWithdrawalRequests,
   getPaginatedOwnedBuzzWithdrawalRequests,
 } from '../services/buzz-withdrawal-request.service';
 import { throwDbError } from '../utils/errorHandling';
+import { GetByIdInput, GetByIdStringInput } from '~/server/schema/base.schema';
 
 export function createBuzzWithdrawalRequestHandler({
   input,
@@ -54,3 +56,17 @@ export const getPaginatedBuzzWithdrawalRequestsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export function cancelBuzzWithdrawalRequestHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdStringInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return cancelBuzzWithdrawalRequest({ userId: ctx.user.id, ...input });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}

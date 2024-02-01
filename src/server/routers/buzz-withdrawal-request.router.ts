@@ -11,10 +11,12 @@ import {
   getPaginatedBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
 import {
+  cancelBuzzWithdrawalRequestHandler,
   createBuzzWithdrawalRequestHandler,
   getPaginatedBuzzWithdrawalRequestsHandler,
   getPaginatedOwnedBuzzWithdrawalRequestsHandler,
 } from '../controllers/buzz-withdrawal-request.controller';
+import { getByIdStringSchema } from '~/server/schema/base.schema';
 
 export const buzzWithdrawalRequestRouter = router({
   getPaginated: publicProcedure
@@ -29,6 +31,9 @@ export const buzzWithdrawalRequestRouter = router({
     .input(createBuzzWithdrawalRequestSchema)
     .use(isFlagProtected('creatorsProgram'))
     .mutation(createBuzzWithdrawalRequestHandler),
-  // cancel:
+  cancel: protectedProcedure
+    .input(getByIdStringSchema)
+    .use(isFlagProtected('creatorsProgram'))
+    .mutation(cancelBuzzWithdrawalRequestHandler),
   // update:
 });

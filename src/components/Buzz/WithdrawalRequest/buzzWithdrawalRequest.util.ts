@@ -5,6 +5,7 @@ import {
 } from '~/server/schema/buzz-withdrawal-request.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
 
 export const useQueryOwnedBuzzWithdrawalRequests = (
   filters?: Partial<GetPaginatedBuzzWithdrawalRequestSchema>,
@@ -32,25 +33,38 @@ export const useQueryOwnedBuzzWithdrawalRequests = (
 export const useMutateBuzzWithdrawalRequest = () => {
   const queryUtils = trpc.useContext();
 
+  const onError = (error: any, message = 'There was an error while performing your request') => {
+    try {
+      // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+      const parsedError = JSON.parse(error.message);
+      showErrorNotification({
+        title: message,
+        error: parsedError,
+      });
+    } catch (e) {
+      // Report old error as is:
+      showErrorNotification({
+        title: message,
+        error: new Error(error.message),
+      });
+    }
+  };
+
   const createBuzzWithdrawalRequestMutation = trpc.buzzWithdrawalRequest.create.useMutation({
     async onSuccess() {
       await queryUtils.buzzWithdrawalRequest.getPaginated.invalidate();
     },
     onError(error) {
-      try {
-        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
-        const parsedError = JSON.parse(error.message);
-        showErrorNotification({
-          title: 'Failed to create a withdrawal request',
-          error: parsedError,
-        });
-      } catch (e) {
-        // Report old error as is:
-        showErrorNotification({
-          title: 'Failed to create a withdrawal request',
-          error: new Error(error.message),
-        });
-      }
+      onError(error, 'Failed to create a withdrawal request');
+    },
+  });
+
+  const cancelBuzzWithdrawalRequestMutation = trpc.buzzWithdrawalRequest.cancel.useMutation({
+    async onSuccess() {
+      await queryUtils.buzzWithdrawalRequest.getPaginated.invalidate();
+    },
+    onError(error) {
+      onError(error, 'Failed to cancel a withdrawal request');
     },
   });
 
@@ -58,8 +72,14 @@ export const useMutateBuzzWithdrawalRequest = () => {
     return createBuzzWithdrawalRequestMutation.mutateAsync(data);
   };
 
+  const handleCancelBuzzWithdrawalRequest = (data: GetByIdStringInput) => {
+    return cancelBuzzWithdrawalRequestMutation.mutateAsync(data);
+  };
+
   return {
     createBuzzWithdrawalRequest: handleCreateBuzzWithdrawalRequest,
     creatingBuzzWithdrawalRequest: createBuzzWithdrawalRequestMutation.isLoading,
+    cancelBuzzWithdrawalRequest: handleCancelBuzzWithdrawalRequest,
+    cancelingBuzzWithdrawalRequest: cancelBuzzWithdrawalRequestMutation.isLoading,
   };
 };

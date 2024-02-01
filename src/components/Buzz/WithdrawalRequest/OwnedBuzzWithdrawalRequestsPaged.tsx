@@ -18,13 +18,19 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
-import { useQueryOwnedBuzzWithdrawalRequests } from '../WithdrawalRequest/buzzWithdrawalRequest.util';
+import {
+  useMutateBuzzWithdrawalRequest,
+  useQueryOwnedBuzzWithdrawalRequests,
+} from '../WithdrawalRequest/buzzWithdrawalRequest.util';
 import { formatDate } from '../../../utils/date-helpers';
 import { numberWithCommas } from '../../../utils/number-helpers';
 import { useBuzzDashboardStyles } from '../buzz.styles';
 import { IconCloudOff } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
+import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { openConfirmModal } from '@mantine/modals';
+import { showSuccessNotification } from '~/utils/notifications';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { classes } = useBuzzDashboardStyles();
@@ -35,6 +41,8 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { requests, pagination, isLoading, isRefetching } =
     useQueryOwnedBuzzWithdrawalRequests(debouncedFilters);
+  const { cancelingBuzzWithdrawalRequest, cancelBuzzWithdrawalRequest } =
+    useMutateBuzzWithdrawalRequest();
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -42,8 +50,22 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
-  const handleRequestCancelled = (id: number) => {
-    console.log('handleRequestCancelled');
+  const handleCancelRequest = (id: string) => {
+    openConfirmModal({
+      title: 'Cancel withdrawal request',
+      children: <Text size="sm">Are you sure you want to cancel this withdrawal request?</Text>,
+      centered: true,
+      labels: { confirm: 'Cancel request', cancel: "No, don't cancel it" },
+      confirmProps: { color: 'red' },
+      closeOnConfirm: true,
+      onConfirm: async () => {
+        await cancelBuzzWithdrawalRequest({ id });
+        showSuccessNotification({
+          title: 'Withdrawal request canceled',
+          message: 'Withdrawal request has been canceled successfully and buzz has been refunded.',
+        });
+      },
+    });
   };
 
   return (
@@ -85,7 +107,20 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                       <td>{formatDate(request.createdAt)}</td>
                       <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
                       <td>{request.status}</td>
-                      <td>...</td>
+                      <td align="right">
+                        {request.status === BuzzWithdrawalRequestStatus.Requested && (
+                          <Button
+                            color="red"
+                            onClick={() => {
+                              handleCancelRequest(request.id);
+                            }}
+                            loading={cancelingBuzzWithdrawalRequest}
+                            size="xs"
+                          >
+                            <Text size="sm">Cancel</Text>
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

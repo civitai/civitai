@@ -14,6 +14,7 @@ import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
 } from '../selectors/buzzWithdrawalRequest.select';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -63,13 +64,6 @@ export const createBuzzWithdrawalRequest = async ({
   });
 
   try {
-    console.log({
-      userId,
-      connectedAccountId: userStripeConnect.connectedAccountId,
-      buzzWithdrawalTransactionId: transaction.transactionId,
-      requestedBuzzAmount: amount,
-      platformFeeRate: constants.buzz.platformFeeRate,
-    });
     // Create the withdrawal request:
     const request = await dbWrite.buzzWithdrawalRequest.create({
       data: {
@@ -151,4 +145,65 @@ export const getPaginatedBuzzWithdrawalRequests = async (
   const count = await dbRead.buzzWithdrawalRequest.count({ where });
 
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+};
+
+export const cancelBuzzWithdrawalRequest = async ({
+  userId,
+  id,
+}: GetByIdStringInput & {
+  userId: number;
+}) => {
+  // Check if the user has  a pending withdrawal request:
+  const request = await dbRead.buzzWithdrawalRequest.findUniqueOrThrow({
+    where: { id },
+  });
+
+  if (request.status !== BuzzWithdrawalRequestStatus.Requested) {
+    throw throwBadRequestError('The request you are trying to cancel is not on a pending status');
+  }
+
+  if (userId !== request.userId) {
+    throw throwBadRequestError('Only the owner of a withdrawal request can cancel it.');
+  }
+
+  // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
+
+  const transaction = await createBuzzTransaction({
+    fromAccountId: 0, // bank
+    toAccountId: userId,
+    amount: request.requestedBuzzAmount,
+    type: TransactionType.Refund,
+    description: 'Refund due to cancellation of withdrawal request',
+    externalTransactionId: request.buzzWithdrawalTransactionId,
+  });
+
+  try {
+    // Create the withdrawal request:
+    await dbWrite.buzzWithdrawalRequestHistory.create({
+      data: {
+        updatedById: userId,
+        requestId: id,
+        status: BuzzWithdrawalRequestStatus.Canceled,
+        metadata: { buzzTransactionId: transaction.transactionId },
+      },
+    });
+
+    const updatedRequest = await dbWrite.buzzWithdrawalRequest.findUniqueOrThrow({
+      where: { id },
+      select: buzzWithdrawalRequestDetails,
+    });
+
+    return updatedRequest;
+  } catch (e) {
+    // Refund the user:
+    await createBuzzTransaction({
+      fromAccountId: userId, // bank
+      toAccountId: 0,
+      amount: request.requestedBuzzAmount,
+      type: TransactionType.Withdrawal,
+      description: 'Unable to cancel request.',
+    });
+
+    throw e;
+  }
 };

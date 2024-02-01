@@ -67,6 +67,7 @@ export default function UserBuzzDashboard() {
           <BuzzDashboardOverview accountId={currentUser?.id as number} />
 
           <StripeConnectCard />
+          <OwnedBuzzWithdrawalRequestsPaged />
 
           <EarningBuzz withCTA />
 
