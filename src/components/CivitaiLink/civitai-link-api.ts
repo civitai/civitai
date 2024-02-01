@@ -32,7 +32,7 @@ export const createLinkInstance = async (id?: number) => {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: id ? JSON.stringify({ id }) : undefined,
+    body: id ? JSON.stringify({ id }) : JSON.stringify({}),
   })) as { id: number; key: string; instanceCount: number; instanceLimit: number; name: string };
 };
 
