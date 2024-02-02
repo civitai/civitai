@@ -32,11 +32,13 @@ import { WithdrawalRequestBadgeColor, useBuzzDashboardStyles } from '../buzz.sty
 import { IconCloudOff } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
-import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, Currency, StripeConnectStatus } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
+  const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
   const { classes } = useBuzzDashboardStyles();
   const [filters, setFilters] = useState<
     Omit<GetPaginatedOwnedBuzzWithdrawalRequestSchema, 'limit'>
@@ -74,6 +76,10 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
       },
     });
   };
+
+  if (!userStripeConnect || userStripeConnect.status !== StripeConnectStatus.Approved) {
+    return null;
+  }
 
   return (
     <Paper withBorder p="lg" radius="md" className={classes.tileCard} id="buzz-withdrawals">

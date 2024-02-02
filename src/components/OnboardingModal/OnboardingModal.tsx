@@ -150,7 +150,7 @@ export default function OnboardingModal() {
         showErrorNotification({
           title: 'Cannot save',
           error: new Error(error.message),
-          reason: 'An unknown error occurred. Please try again later',
+          // reason: 'An unknown error occurred. Please try again later',
         });
       },
     });
@@ -184,11 +184,12 @@ export default function OnboardingModal() {
     });
   };
   const handleCompleteStep = (step: OnboardingStep) => {
+    console.log({ recaptchaToken });
     if (!recaptchaToken) {
       showErrorNotification({
         title: 'Cannot save',
         error: new Error('Recaptcha token is missing'),
-        reason: 'An unknown error occurred. Please try again later',
+        // reason: 'An unknown error occurred. Please try again later',
       });
 
       return;

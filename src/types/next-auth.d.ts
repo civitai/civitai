@@ -4,21 +4,21 @@ import type { DefaultSession } from 'next-auth';
 interface ExtendedUser {
   id: number;
   showNsfw: boolean;
-  blurNsfw: boolean;
+  blurNsfw: boolean; // client only
   username: string;
   // feedbackToken?: string;
   image?: string;
   email?: string;
   emailVerified?: Date;
   createdAt?: Date;
-  tos?: boolean;
+  tos?: boolean; // client only
   isModerator?: boolean;
-  customerId?: string;
-  subscriptionId?: string;
+  customerId?: string; // could be fetched
+  subscriptionId?: string; // could be fetched
   tier?: string;
   muted?: boolean;
   bannedAt?: Date;
-  autoplayGifs?: boolean; // client only
+  autoplayGifs?: boolean; // client only - could be cookie setting
   onboardingSteps?: OnboardingStep[]; // client only
   permissions?: string[];
   filePreferences?: UserFilePreferences;
