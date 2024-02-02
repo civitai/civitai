@@ -34,7 +34,8 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -76,15 +77,7 @@ export default function Home() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
-          <AscendeumAd
-            adunit="Leaderboard_A"
-            style={{ margin: `${theme.spacing.md}px auto ${theme.spacing.xs}px` }}
-            sizes={{
-              [0]: '300x100',
-              [theme.breakpoints.md]: '728x90',
-              [theme.breakpoints.lg]: ['970x90', '728x90'],
-            }}
-          />
+          <Adunit mt="md" mb="xs" {...adsRegistry.homePageHeader} />
         </MasonryContainer>
 
         {isLoading && (

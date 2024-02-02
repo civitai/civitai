@@ -11,7 +11,8 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useState } from 'react';
-import { ConsentForm, useConsentMode } from '~/components/ConsentManager/ConsentForm';
+import { useConsentManager } from '~/components/Ads/ads.utils';
+import { ConsentForm } from '~/components/ConsentManager/ConsentForm';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
@@ -34,11 +35,11 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
   const features = useFeatureFlags();
   const isClient = useIsClient();
 
-  const { consentMode } = useConsentMode();
+  const { targeting: cookies } = useConsentManager();
 
   return (
     <Footer className={cx(classes.root)} height="auto" p="sm" py={4}>
-      {!consentMode && isClient ? (
+      {!cookies && isClient ? (
         <ConsentForm />
       ) : (
         <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>

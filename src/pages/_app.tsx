@@ -49,7 +49,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { ConsentManager } from '~/components/ConsentManager/ConsentManager';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -207,7 +206,6 @@ function MyApp(props: CustomAppProps) {
           withGlobalStyles
           withNormalizeCSS
         >
-          <ConsentManager />
           <PlausibleProvider
             domain="civitai.com"
             customDomain="https://analytics.civitai.com"
