@@ -179,7 +179,7 @@ const exclusivePerks: { text: string; icon: React.ReactNode }[] = [
     icon: <IconWand size={sizing.exclusivePerks.icons} />,
   },
   {
-    text: 'A direct comunication channel to the Civitai Team',
+    text: 'A direct communication channel to the Civitai Team',
     icon: <IconHeartHandshake size={sizing.exclusivePerks.icons} />,
   },
   {
