@@ -231,9 +231,12 @@ export function ArticleUpsertForm({ article }: Props) {
               label={
                 <Group spacing={4}>
                   <Input.Label required>Category</Input.Label>
-                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                    {/* TODO.howto: get the right text and link */}
-                    <Text>Hello, we are missing the content for this bubble</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Categories determine what kind of article you&apos;re making. Selecting a
+                      category that&apos;s the closest match to your subject helps users find your
+                      article
+                    </Text>
                   </InfoPopover>
                 </Group>
               }
@@ -247,9 +250,11 @@ export function ArticleUpsertForm({ article }: Props) {
               label={
                 <Group spacing={4}>
                   <Input.Label>Tags</Input.Label>
-                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                    {/* TODO.howto: get the right text and link */}
-                    <Text>Hello, we are missing the content for this bubble</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Tags are how users filter content on the site. It&apos;s important to
+                      correctly tag your content so it can be found by interested users
+                    </Text>
                   </InfoPopover>
                 </Group>
               }
@@ -263,9 +268,11 @@ export function ArticleUpsertForm({ article }: Props) {
               label={
                 <Group spacing={4}>
                   <Input.Label>Attachments</Input.Label>
-                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                    {/* TODO.howto: get the right content and link */}
-                    <Text>Hello, we are missing the content for this bubble</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Attachments may be additional context for your article, training data, or
+                      larger files that don&apos;t make sense to post as a model
+                    </Text>
                   </InfoPopover>
                 </Group>
               }

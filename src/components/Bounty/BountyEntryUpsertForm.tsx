@@ -188,10 +188,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         <Group spacing="md">
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
-          {/* TODO.howto: need video? */}
           <FeatureIntroduction
-            feature="bounty-create"
-            contentSlug={['feature-introduction', 'bounty-create']}
+            feature="bounty-submit-entry"
+            contentSlug={['feature-introduction', 'bounty-submit-entry']}
             actionButton={<HelpButton size="md" radius="xl" />}
           />
         </Group>

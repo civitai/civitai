@@ -39,6 +39,7 @@ import {
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
+  IconPlayerPlayFilled,
   IconPlaylistAdd,
   IconPlus,
   IconProgressBolt,
@@ -71,7 +72,6 @@ import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
@@ -91,6 +91,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
+import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 const HEADER_HEIGHT = 70;
 
@@ -255,7 +256,6 @@ export function AppHeader({
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
-  const { url: homeUrl } = useHomeSelection();
 
   const isMuted = currentUser?.muted ?? false;
   const isMember = !!currentUser?.tier;
@@ -293,7 +293,7 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconBarbell stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Text span inline>
-              Train a model
+              Train a LoRA
             </Text>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
@@ -503,13 +503,31 @@ export function AppHeader({
           </Group>
         ),
       },
+      {
+        href: '',
+        visible: !!currentUser,
+        label: (
+          <FeatureIntroduction
+            feature="getting-started"
+            // TODO.howto: Add correct contentSlug
+            contentSlug={['feature-introduction', 'bounty-create']}
+            actionButton={
+              <Menu.Item>
+                <Group align="center" spacing="xs">
+                  <IconPlayerPlayFilled stroke={1.5} />
+                  Get Started
+                </Group>
+              </Menu.Item>
+            }
+          />
+        ),
+      },
     ],
     [
       currentUser,
       features.imageTrainingResults,
       features.bounties,
       features.buzz,
-      features.clubs,
       router.asPath,
       theme,
     ]

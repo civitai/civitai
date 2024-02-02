@@ -363,17 +363,17 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         label={
                           <Group spacing={4}>
                             <Input.Label required>Bounty Type</Input.Label>
-                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                              {/* TODO.howto: get correct text and link */}
+                            <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                               <Text>
-                                Not sure which type to choose? Learn more about{' '}
+                                Not sure which type to choose? Learn more about bounties and their
+                                types by reading our{' '}
                                 <Anchor
                                   href="https://education.civitai.com/civitais-guide-to-bounties/"
                                   target="_blank"
                                   rel="nofollow noreferrer"
                                   span
                                 >
-                                  bounties
+                                  Bounty Guide
                                 </Anchor>
                                 .
                               </Text>
@@ -788,9 +788,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 label={
                   <Group spacing={4}>
                     <Input.Label>Tags</Input.Label>
-                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                      {/* TODO.howto: get the right content and link */}
-                      <Text>Hello, we are missing the content for this bubble</Text>
+                    <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                      <Text>
+                        Tags are how users filter content on the site. It&apos;s important to
+                        correctly tag your content so it can be found by interested users
+                      </Text>
                     </InfoPopover>
                   </Group>
                 }

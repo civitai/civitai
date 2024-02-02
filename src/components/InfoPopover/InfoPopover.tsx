@@ -1,9 +1,18 @@
-import { ActionIcon, ActionIconProps, Popover, PopoverProps, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  ActionIconProps,
+  HoverCard,
+  Popover as MantinePopover,
+  PopoverProps,
+  Text,
+} from '@mantine/core';
 import { IconInfoCircle, TablerIconsProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 
 export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
-  ({ iconProps, buttonProps, size, variant, children, ...popoverProps }, ref) => {
+  ({ iconProps, buttonProps, size, variant, children, type = 'click', ...popoverProps }, ref) => {
+    const Popover = type === 'hover' ? HoverCard : MantinePopover;
+
     return (
       <Popover width={300} {...popoverProps}>
         <Popover.Target>
@@ -29,4 +38,5 @@ type Props = PopoverProps & {
     'children' | 'onClick'
   >;
   iconProps?: TablerIconsProps;
+  type?: 'hover' | 'click';
 };

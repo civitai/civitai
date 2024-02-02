@@ -42,6 +42,7 @@ import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mi
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { useImageStore } from '~/store/image.store';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -67,6 +68,10 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
         count={images.length}
         max={max}
         accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+      />
+      <DismissibleAlert
+        id="image-tagging"
+        content="Images are tagged automatically by our tagging system. You can always downvote tags that you think are wrongly placed on your images for moderators to review."
       />
       <Stack>
         {images.map(({ discriminator: type, data }, index) => (

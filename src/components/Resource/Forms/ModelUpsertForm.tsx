@@ -196,9 +196,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               label={
                 <Group spacing={4}>
                   <Input.Label>Category</Input.Label>
-                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                    {/* TODO.howto: get the right content and link */}
-                    <Text>Hello, we are missing the content for this bubble</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Categories determine what kind of resource you&apos;re making. Selecting a
+                      category that&apos;s the closest match to your subject helps users find your
+                      resource
+                    </Text>
                   </InfoPopover>
                 </Group>
               }
@@ -213,9 +216,11 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               label={
                 <Group spacing={4}>
                   <Input.Label>Tags</Input.Label>
-                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                    {/* TODO.howto: get the right content and link */}
-                    <Text>Hello, we are missing the content for this bubble</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Tags are how users filter content on the site. It&apos;s important to
+                      correctly tag your content so it can be found by interested users
+                    </Text>
                   </InfoPopover>
                 </Group>
               }
@@ -227,7 +232,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             />
             <InputRTE
               name="description"
-              label="Model Description"
+              label="Description"
               description="Tell us what your model does"
               includeControls={[
                 'heading',
@@ -267,9 +272,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         target="_blank"
                         rel="nofollow noreferrer"
                       >
-                        {/* TODO.howto: get the right wording and link */}
-                        Licensing Article goes here
+                        {/* TODO.howto: get the right link */}
+                        Licensing Guide
                       </Anchor>
+                      .
                     </Text>
                   </Stack>
                 </ContainerGrid.Col>
