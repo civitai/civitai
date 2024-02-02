@@ -92,6 +92,21 @@ export const adsRegistry = {
     sfw: { type: 'ascendeum', adunit: 'Sidebar_A', breakpoints: [{ sizes: ['300x250'] }] },
     nsfw: { type: 'exoclick', breakpoints: [{ sizes: '300x250' }] },
   }),
+  modelDetailSectionDivider: config({
+    sfw: {
+      type: 'ascendeum',
+      adunit: 'Leaderboard_B',
+      breakpoints: [
+        { sizes: ['300x100'] },
+        { minWidth: breakpoints.md, sizes: ['728x90'] },
+        { minWidth: breakpoints.lg, sizes: ['728x90', '970x90'] },
+      ],
+    },
+    nsfw: {
+      type: 'exoclick',
+      breakpoints: [{ sizes: '300x100' }, { minWidth: breakpoints.md, sizes: '728x90' }],
+    },
+  }),
   postDetailSidebar: config({
     sfw: {
       type: 'ascendeum',

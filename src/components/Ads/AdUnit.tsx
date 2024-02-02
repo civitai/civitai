@@ -13,11 +13,15 @@ import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
 import { useStackingContext } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
-import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd2';
+import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { BrowsingMode } from '~/server/common/enums';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd2';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
+
+const useStyles = createStyles((theme) => ({
+  root: { display: 'flex', flexDirection: 'column', background: 'none' },
+}));
 
 export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   browsingModeOverride,
@@ -92,6 +96,32 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
         >
           Remove ads
         </Text>
+        //   <Group position="apart">
+        //   {showRemoveAds && (
+        //     <Text
+        //       component={NextLink}
+        //       td="underline"
+        //       href="/pricing"
+        //       color="dimmed"
+        //       size="xs"
+        //       align="center"
+        //     >
+        //       Remove ads
+        //     </Text>
+        //   )}
+        //   {showFeedback && username && (
+        //     <Text
+        //       component={NextLink}
+        //       td="underline"
+        //       href={`/ad-feedback?Username=${username}&Ad unit=${adunit}`}
+        //       color="dimmed"
+        //       size="xs"
+        //       align="center"
+        //     >
+        //       Feedback
+        //     </Text>
+        //   )}
+        // </Group>
       )}
     </>
   );
@@ -103,12 +133,11 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  root: { display: 'flex', flexDirection: 'column', background: 'none' },
-}));
-
-function PlaceholderImage({ height, width }: { height: number; width: number }) {
+function AdPlaceholder({ size }: { size: string }) {
   const { adsBlocked } = useAdsContext();
+  const _size = adSizeImageMap[size as AnyAdSize];
+  if (!_size) return null;
+  const [width, height] = _size.split('x').map(Number);
 
   return adsBlocked ? (
     <NextLink href="/pricing" style={{ display: 'flex' }}>
@@ -128,28 +157,6 @@ function PlaceholderImage({ height, width }: { height: number; width: number }) 
         height={height}
       />
     </NextLink>
-  );
-}
-
-function AdPlaceholder({ size }: { size: string }) {
-  const { adsBlocked } = useAdsContext();
-  const _size = adSizeImageMap[size as AnyAdSize];
-  if (!_size) return null;
-  const [width, height] = size.split('x').map(Number);
-  const [imageWidth, imageHeight] = _size.split('x').map(Number);
-  const dir = adsBlocked ? '/images/support-us' : '/images/become-a-member';
-
-  return (
-    <Paper
-      w={imageWidth}
-      h={imageHeight}
-      withBorder
-      style={{ backgroundImage: `url(${dir}/${imageWidth}x${imageHeight}.jpg)` }}
-      sx={{
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'center',
-      }}
-    ></Paper>
   );
 }
 
