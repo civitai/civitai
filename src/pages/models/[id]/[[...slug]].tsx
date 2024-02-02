@@ -108,8 +108,9 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -986,17 +987,7 @@ export default function ModelDetailsV2({
         (!model.locked ? (
           <Container size="xl" my="xl">
             <Stack spacing="md">
-              {model.hasSuggestedResources && (
-                <AscendeumAd
-                  adunit="Leaderboard_B"
-                  style={{ margin: '0 auto' }}
-                  sizes={{
-                    [0]: '300x100',
-                    [theme.breakpoints.md]: '728x90',
-                    [theme.breakpoints.lg]: '970x90',
-                  }}
-                />
-              )}
+              {model.hasSuggestedResources && <Adunit {...adsRegistry.modelDetailSectionDivider} />}
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                 <Group spacing="xs">
                   <Title order={2}>Discussion</Title>

@@ -1,6 +1,5 @@
 import { Box, BoxProps } from '@mantine/core';
 import { useEffect, useRef } from 'react';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { isProd } from '~/env/other';
 import { createDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
@@ -20,14 +19,13 @@ emitter.on('serve', () =>
 );
 
 export function AdSenseAd(props: BoxProps) {
-  const { adSenseReady } = useAdsContext();
   const hasRunRef = useRef(false);
   useEffect(() => {
-    if (adSenseReady && !hasRunRef.current) {
+    if (!hasRunRef.current) {
       hasRunRef.current = true;
       emitter.emit('serve', undefined);
     }
-  }, [adSenseReady]);
+  }, []);
 
   return (
     <Box {...props}>

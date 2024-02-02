@@ -47,9 +47,10 @@ import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { isDefined } from '~/utils/type-guards';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -244,15 +245,6 @@ export default function ImagesAsPostsInfinite({
           background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
         })}
       >
-        {/* <AscendeumAd
-          adunit="StickySidebar_B"
-          sizes={{
-            [theme.breakpoints.md]: '120x600',
-            [2030]: '300x600',
-          }}
-          style={{ ...adStyle }}
-          showRemoveAds
-        /> */}
         <MasonryProvider
           columnWidth={310}
           maxColumnCount={6}
@@ -261,15 +253,7 @@ export default function ImagesAsPostsInfinite({
         >
           <MasonryContainer>
             <Stack spacing="md">
-              <AscendeumAd
-                adunit="Leaderboard_B"
-                style={{ margin: '0 auto' }}
-                sizes={{
-                  [0]: '300x100',
-                  [theme.breakpoints.md]: '728x90',
-                  [theme.breakpoints.lg]: '970x90',
-                }}
-              />
+              <Adunit {...adsRegistry.modelDetailFeedHeader} />
               <Group spacing="xs">
                 <Title order={2}>Gallery</Title>
                 {!isMuted && (

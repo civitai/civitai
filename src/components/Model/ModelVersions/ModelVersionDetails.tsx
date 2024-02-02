@@ -85,7 +85,8 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export function ModelVersionDetails({
   model,
@@ -932,14 +933,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-
-          <AscendeumAd
-            adunit="Sidebar_A"
-            m="0 auto"
-            sizes={{ [0]: '300x250' }}
-            showFeedback
-            showRemoveAds
-          />
+          <Adunit {...adsRegistry.modelVersionDetail} showRemoveAds />
         </Stack>
       </ContainerGrid.Col>
 
