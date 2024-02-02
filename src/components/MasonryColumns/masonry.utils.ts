@@ -79,7 +79,7 @@ const getMasonryColumns = <TData>(
   for (const item of feed) {
     let height = 0;
     if (item.type === 'ad') {
-      height = item.data.height;
+      height = 250 + 20;
     } else {
       const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
 
