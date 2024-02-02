@@ -12,6 +12,7 @@ import {
   StackProps,
   Text,
   Textarea,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
@@ -520,7 +521,7 @@ export function ExistingChat() {
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }}>
+              <Stack sx={{ overflowWrap: 'break-word' }} spacing={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -639,10 +640,18 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
 
   const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
 
+  let loopMsgDate = new Date(1970);
+  let loopPreviousChatter = 0;
+
   return (
     <AnimatePresence initial={false} mode="sync">
       {chats.map((c, idx) => {
-        // TODO probably combine messages if within a certain amount of time
+        const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
+        const sameChatter = loopPreviousChatter === c.userId;
+        const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+
+        loopMsgDate = c.createdAt;
+        loopPreviousChatter = c.userId;
 
         const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
 
@@ -651,7 +660,7 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
             component={motion.div}
             // ref={c.id === lastReadId ? lastReadRef : undefined}
             key={c.id}
-            spacing="xs"
+            spacing={12}
             style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -675,23 +684,36 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
               </Text>
             ) : (
               <>
-                <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
-                  {!!cachedUser ? (
-                    <UserAvatar user={cachedUser} withUsername />
-                  ) : (
-                    <UserAvatar userId={c.userId} withUsername />
-                  )}
-                  <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-                </Group>
+                {shouldShowInfo && (
+                  <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
+                    {!!cachedUser ? (
+                      <UserAvatar user={cachedUser} withUsername />
+                    ) : (
+                      <UserAvatar userId={c.userId} withUsername />
+                    )}
+                    <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
+                  </Group>
+                )}
                 {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
-                <Text
-                  className={cx(classes.chatMessage, {
-                    [classes.otherMessage]: c.userId !== currentUser?.id,
-                    [classes.myMessage]: c.userId === currentUser?.id,
-                  })}
+                <Tooltip
+                  label={
+                    !shouldShowInfo ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a') : undefined
+                  }
+                  disabled={shouldShowInfo}
+                  sx={{ opacity: 0.85 }}
+                  openDelay={350}
+                  position={c.userId === currentUser?.id ? 'top-end' : 'top-start'}
+                  withArrow
                 >
-                  {c.content}
-                </Text>
+                  <Text
+                    className={cx(classes.chatMessage, {
+                      [classes.otherMessage]: c.userId !== currentUser?.id,
+                      [classes.myMessage]: c.userId === currentUser?.id,
+                    })}
+                  >
+                    {c.content}
+                  </Text>
+                </Tooltip>
               </>
             )}
           </PStack>
