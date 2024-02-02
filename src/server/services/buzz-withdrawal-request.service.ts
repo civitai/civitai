@@ -2,9 +2,11 @@ import { BuzzWithdrawalRequestStatus, Prisma } from '@prisma/client';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import {
+  BuzzWithdrawalRequestHistoryMetadataSchema,
   CreateBuzzWithdrawalRequestSchema,
-  GetPaginatedBuzzWithdrawalRequestForModerationSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
+  GetPaginatedOwnedBuzzWithdrawalRequestSchema,
+  UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
 import { TransactionType } from '../schema/buzz.schema';
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
@@ -15,6 +17,11 @@ import {
   buzzWithdrawalRequestModerationDetails,
 } from '../selectors/buzzWithdrawalRequest.select';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
+import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
+import {
+  payToStripeConnectAccount,
+  revertStripeConnectTransfer,
+} from '~/server/services/user-stripe-connect.service';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -93,7 +100,7 @@ export const createBuzzWithdrawalRequest = async ({
 };
 
 export const getPaginatedOwnedBuzzWithdrawalRequests = async (
-  input: GetPaginatedBuzzWithdrawalRequestSchema & { userId: number }
+  input: GetPaginatedOwnedBuzzWithdrawalRequestSchema & { userId: number }
 ) => {
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
@@ -115,7 +122,7 @@ export const getPaginatedOwnedBuzzWithdrawalRequests = async (
 };
 
 export const getPaginatedBuzzWithdrawalRequests = async (
-  input: GetPaginatedBuzzWithdrawalRequestForModerationSchema
+  input: GetPaginatedBuzzWithdrawalRequestSchema
 ) => {
   const { limit = DEFAULT_PAGE_SIZE, page, username, status } = input || {};
   const { take, skip } = getPagination(limit, page);
@@ -195,7 +202,7 @@ export const cancelBuzzWithdrawalRequest = async ({
 
     return updatedRequest;
   } catch (e) {
-    // Refund the user:
+    // Refund the bank:
     await createBuzzTransaction({
       fromAccountId: userId, // bank
       toAccountId: 0,
@@ -203,6 +210,168 @@ export const cancelBuzzWithdrawalRequest = async ({
       type: TransactionType.Withdrawal,
       description: 'Unable to cancel request.',
     });
+
+    throw e;
+  }
+};
+
+const BuzzWithdrawalStatusStateMap: Record<
+  BuzzWithdrawalRequestStatus,
+  BuzzWithdrawalRequestStatus[]
+> = {
+  [BuzzWithdrawalRequestStatus.Canceled]: [],
+  [BuzzWithdrawalRequestStatus.Requested]: [
+    BuzzWithdrawalRequestStatus.Approved,
+    BuzzWithdrawalRequestStatus.Canceled,
+    BuzzWithdrawalRequestStatus.Rejected,
+    BuzzWithdrawalRequestStatus.Transferred,
+  ],
+  [BuzzWithdrawalRequestStatus.Approved]: [
+    BuzzWithdrawalRequestStatus.Rejected,
+    BuzzWithdrawalRequestStatus.Transferred,
+  ],
+  [BuzzWithdrawalRequestStatus.Rejected]: [
+    BuzzWithdrawalRequestStatus.Approved,
+    BuzzWithdrawalRequestStatus.Transferred,
+  ],
+  [BuzzWithdrawalRequestStatus.Transferred]: [BuzzWithdrawalRequestStatus.Reverted],
+  [BuzzWithdrawalRequestStatus.Reverted]: [], // Because buzz gets refunded, we don't want to allow any other state.
+};
+
+export const updateBuzzWithdrawalRequest = async ({
+  requestId,
+  status,
+  note,
+  userId,
+}: UpdateBuzzWithdrawalRequestSchema & {
+  userId: number;
+}) => {
+  // Check if the user has  a pending withdrawal request:
+  const request = await dbRead.buzzWithdrawalRequest.findUniqueOrThrow({
+    where: { id: requestId },
+  });
+
+  const possibleStates = BuzzWithdrawalStatusStateMap[request.status];
+
+  if (!possibleStates.includes(status)) {
+    throw throwBadRequestError(
+      `You cannot change the status of a withdrawal request from ${request.status} to ${status}`
+    );
+  }
+
+  // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
+  const metadata: BuzzWithdrawalRequestHistoryMetadataSchema = {};
+
+  if (
+    status === BuzzWithdrawalRequestStatus.Rejected ||
+    status === BuzzWithdrawalRequestStatus.Canceled
+  ) {
+    const transaction = await createBuzzTransaction({
+      fromAccountId: 0, // bank
+      toAccountId: userId,
+      amount: request.requestedBuzzAmount,
+      type: TransactionType.Refund,
+      description: 'Refund due to rejection or cancellation of withdrawal request',
+      externalTransactionId: request.buzzWithdrawalTransactionId,
+    });
+
+    metadata.buzzTransactionId = transaction.transactionId;
+  }
+
+  if (status === BuzzWithdrawalRequestStatus.Transferred) {
+    if (!request.userId) {
+      throw throwBadRequestError(
+        'The user you are trying to transfer to has been deleted or a problem caused the withdrawal request to be orphaned.'
+      );
+    }
+    // Transfer the funds to the user's stripe account:
+    const userStripeConnect = await dbRead.userStripeConnect.findFirst({
+      where: { userId: request.userId },
+    });
+
+    if (!userStripeConnect) {
+      throw throwBadRequestError('You must have a connected stripe account to withdraw funds');
+    }
+
+    const { dollarAmount } = getBuzzWithdrawalDetails(
+      request.requestedBuzzAmount,
+      request.platformFeeRate
+    );
+
+    const transfer = await payToStripeConnectAccount({
+      toUserId: request.userId as number, // Ofcs, user should exist for one.
+      amount: dollarAmount,
+      description: 'Payment from Mod',
+      byUserId: userId,
+    });
+
+    metadata.stripeTransferId = transfer.id;
+  }
+
+  if (status === BuzzWithdrawalRequestStatus.Reverted) {
+    const transferRecord = await dbRead.buzzWithdrawalRequestHistory.findFirstOrThrow({
+      where: {
+        requestId,
+        status: BuzzWithdrawalRequestStatus.Transferred,
+      },
+    });
+
+    const transferRecordMetadata =
+      transferRecord.metadata as BuzzWithdrawalRequestHistoryMetadataSchema;
+
+    if (!transferRecordMetadata.stripeTransferId) {
+      throw throwBadRequestError(
+        'The transfer record does not have a stripe transfer id. A transfer reversal cannot be performed.'
+      );
+    }
+
+    // Refund the user:
+    const transaction = await createBuzzTransaction({
+      fromAccountId: userId, // bank
+      toAccountId: 0,
+      amount: request.requestedBuzzAmount,
+      type: TransactionType.Refund,
+      description: 'Refund due to reversal of withdrawal request',
+    });
+
+    metadata.buzzTransactionId = transaction.transactionId;
+
+    const revesal = await revertStripeConnectTransfer({
+      transferId: transferRecordMetadata.stripeTransferId as string,
+    });
+
+    metadata.stripeReversalId = revesal.id;
+  }
+
+  try {
+    // Create the withdrawal request:
+    await dbWrite.buzzWithdrawalRequestHistory.create({
+      data: {
+        updatedById: userId,
+        requestId,
+        status,
+        metadata,
+        note,
+      },
+    });
+
+    const updatedRequest = await dbWrite.buzzWithdrawalRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: buzzWithdrawalRequestModerationDetails,
+    });
+
+    return updatedRequest;
+  } catch (e) {
+    if (metadata.buzzTransactionId) {
+      // Refund the bank
+      await createBuzzTransaction({
+        fromAccountId: userId, // bank
+        toAccountId: 0,
+        amount: request.requestedBuzzAmount,
+        type: TransactionType.Withdrawal,
+        description: 'Unable to cancel or reject request.',
+      });
+    }
 
     throw e;
   }

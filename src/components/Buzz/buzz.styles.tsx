@@ -1,4 +1,5 @@
 import { createStyles, keyframes } from '@mantine/core';
+import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 
 const moveBackground = keyframes({
   '0%': {
@@ -46,3 +47,12 @@ export const useBuzzDashboardStyles = createStyles((theme) => ({
     animation: `${pulse} 1s ease-in-out infinite`,
   },
 }));
+
+export const WithdrawalRequestBadgeColor = {
+  [BuzzWithdrawalRequestStatus.Requested]: 'yellow',
+  [BuzzWithdrawalRequestStatus.Approved]: 'blue',
+  [BuzzWithdrawalRequestStatus.Transferred]: 'green',
+  [BuzzWithdrawalRequestStatus.Canceled]: 'gray',
+  [BuzzWithdrawalRequestStatus.Rejected]: 'red',
+  [BuzzWithdrawalRequestStatus.Reverted]: 'orange',
+};

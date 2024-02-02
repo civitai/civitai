@@ -2,17 +2,18 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
+  GetPaginatedOwnedBuzzWithdrawalRequestSchema,
 } from '~/server/schema/buzz-withdrawal-request.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 
 export const useQueryOwnedBuzzWithdrawalRequests = (
-  filters?: Partial<GetPaginatedBuzzWithdrawalRequestSchema>,
+  filters?: Partial<GetPaginatedOwnedBuzzWithdrawalRequestSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const currentUser = useCurrentUser();
-  const { data, ...rest } = trpc.buzzWithdrawalRequest.getPaginated.useQuery(
+  const { data, ...rest } = trpc.buzzWithdrawalRequest.getPaginatedOwned.useQuery(
     {
       ...filters,
     },
@@ -52,7 +53,7 @@ export const useMutateBuzzWithdrawalRequest = () => {
 
   const createBuzzWithdrawalRequestMutation = trpc.buzzWithdrawalRequest.create.useMutation({
     async onSuccess() {
-      await queryUtils.buzzWithdrawalRequest.getPaginated.invalidate();
+      await queryUtils.buzzWithdrawalRequest.getPaginatedOwned.invalidate();
     },
     onError(error) {
       onError(error, 'Failed to create a withdrawal request');
@@ -61,7 +62,7 @@ export const useMutateBuzzWithdrawalRequest = () => {
 
   const cancelBuzzWithdrawalRequestMutation = trpc.buzzWithdrawalRequest.cancel.useMutation({
     async onSuccess() {
-      await queryUtils.buzzWithdrawalRequest.getPaginated.invalidate();
+      await queryUtils.buzzWithdrawalRequest.getPaginatedOwned.invalidate();
     },
     onError(error) {
       onError(error, 'Failed to cancel a withdrawal request');
@@ -82,4 +83,27 @@ export const useMutateBuzzWithdrawalRequest = () => {
     cancelBuzzWithdrawalRequest: handleCancelBuzzWithdrawalRequest,
     cancelingBuzzWithdrawalRequest: cancelBuzzWithdrawalRequestMutation.isLoading,
   };
+};
+
+export const useQueryBuzzWithdrawalRequests = (
+  filters?: Partial<GetPaginatedBuzzWithdrawalRequestSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.buzzWithdrawalRequest.getPaginated.useQuery(
+    {
+      ...filters,
+    },
+    {
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
+
+  if (data) {
+    const { items: requests = [], ...pagination } = data;
+    return { requests, pagination, ...rest };
+  }
+
+  return { requests: [], pagination: null, ...rest };
 };

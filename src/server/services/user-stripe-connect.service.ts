@@ -173,3 +173,24 @@ export const payToStripeConnectAccount = async ({
     throw error;
   }
 };
+
+export const revertStripeConnectTransfer = async ({ transferId }: { transferId: string }) => {
+  const stripe = await getServerStripe();
+
+  try {
+    const transfer = await stripe.transfers.retrieve(transferId, {
+      expand: ['reversals'],
+    });
+
+    if (transfer.reversed) {
+      return transfer.reversals.data[0];
+    }
+
+    const reversal = await stripe.transfers.createReversal(transferId);
+
+    return reversal;
+  } catch (error) {
+    log({ method: 'revertStripeConnectTransfer', error, transferId });
+    throw error;
+  }
+};

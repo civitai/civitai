@@ -117,9 +117,12 @@ export const formatCurrencyForDisplay = (value: number, currency?: Currency) => 
   return `${numberWithCommas(intPart)}.${decimalPart}`;
 };
 
-export const getBuzzWithdrawalDetails = (buzzAmount: number) => {
+export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: number) => {
+  if (!platformFeeRate) {
+    platformFeeRate = constants.buzz.platformFeeRate;
+  }
   const dollarAmount = (buzzAmount / constants.buzz.buzzDollarRatio) * 100;
-  const platformFee = dollarAmount * (constants.buzz.platformFeeRate / 10000);
+  const platformFee = dollarAmount * (platformFeeRate / 10000);
   const payoutAmount = dollarAmount - platformFee;
 
   return {

@@ -18,14 +18,14 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { trpc } from '~/utils/trpc';
-import { GetPaginatedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
+import { GetPaginatedOwnedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryOwnedBuzzWithdrawalRequests,
 } from '../WithdrawalRequest/buzzWithdrawalRequest.util';
 import { formatDate } from '../../../utils/date-helpers';
 import { numberWithCommas } from '../../../utils/number-helpers';
-import { useBuzzDashboardStyles } from '../buzz.styles';
+import { WithdrawalRequestBadgeColor, useBuzzDashboardStyles } from '../buzz.styles';
 import { IconCloudOff } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
@@ -33,18 +33,11 @@ import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 
-const WithdrawalRequestBadgeColor = {
-  [BuzzWithdrawalRequestStatus.Requested]: 'blue',
-  [BuzzWithdrawalRequestStatus.Approved]: 'yellow',
-  [BuzzWithdrawalRequestStatus.Transferred]: 'green',
-  [BuzzWithdrawalRequestStatus.Canceled]: 'gray',
-  [BuzzWithdrawalRequestStatus.Rejected]: 'red',
-  [BuzzWithdrawalRequestStatus.Reverted]: 'orange',
-};
-
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { classes } = useBuzzDashboardStyles();
-  const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
+  const [filters, setFilters] = useState<
+    Omit<GetPaginatedOwnedBuzzWithdrawalRequestSchema, 'limit'>
+  >({
     page: 1,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);

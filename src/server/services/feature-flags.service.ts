@@ -78,6 +78,8 @@ const featureFlags = createFeatureFlags({
   moderateTags: ['granted'],
   chat: ['user'],
   creatorsProgram: ['mod', 'granted'],
+  // TODO: Remove mod once deployed.
+  buzzWithdrawalTransfer: ['mod', 'granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

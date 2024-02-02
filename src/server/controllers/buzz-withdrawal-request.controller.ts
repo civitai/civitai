@@ -1,8 +1,9 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import {
   CreateBuzzWithdrawalRequestSchema,
-  GetPaginatedBuzzWithdrawalRequestForModerationSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
+  GetPaginatedOwnedBuzzWithdrawalRequestSchema,
+  UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
 import { Context } from '../createContext';
 import {
@@ -10,9 +11,12 @@ import {
   createBuzzWithdrawalRequest,
   getPaginatedBuzzWithdrawalRequests,
   getPaginatedOwnedBuzzWithdrawalRequests,
+  updateBuzzWithdrawalRequest,
 } from '../services/buzz-withdrawal-request.service';
-import { throwDbError } from '../utils/errorHandling';
+import { throwAuthorizationError, throwDbError } from '../utils/errorHandling';
 import { GetByIdInput, GetByIdStringInput } from '~/server/schema/base.schema';
+import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { hasFeature } from '~/server/services/feature-flags.service';
 
 export function createBuzzWithdrawalRequestHandler({
   input,
@@ -32,7 +36,7 @@ export const getPaginatedOwnedBuzzWithdrawalRequestsHandler = async ({
   input,
   ctx,
 }: {
-  input: GetPaginatedBuzzWithdrawalRequestSchema;
+  input: GetPaginatedOwnedBuzzWithdrawalRequestSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   const { user } = ctx;
@@ -47,7 +51,7 @@ export const getPaginatedBuzzWithdrawalRequestsHandler = async ({
   input,
   ctx,
 }: {
-  input: GetPaginatedBuzzWithdrawalRequestForModerationSchema;
+  input: GetPaginatedBuzzWithdrawalRequestSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
@@ -66,6 +70,30 @@ export function cancelBuzzWithdrawalRequestHandler({
 }) {
   try {
     return cancelBuzzWithdrawalRequest({ userId: ctx.user.id, ...input });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function updateBuzzWithdrawalRequestHandler({
+  input,
+  ctx,
+}: {
+  input: UpdateBuzzWithdrawalRequestSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    if (
+      [BuzzWithdrawalRequestStatus.Reverted, BuzzWithdrawalRequestStatus.Transferred].some(
+        (s) => s === input.status
+      ) &&
+      !hasFeature('buzzWithdrawalTransfer', ctx.user)
+    ) {
+      // Ensure this user has permission to do this:
+      throw throwAuthorizationError('You do not have permission to perform this action');
+    }
+
+    return updateBuzzWithdrawalRequest({ userId: ctx.user.id, ...input });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
