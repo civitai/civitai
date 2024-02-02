@@ -19,6 +19,8 @@ export const buzzWithdrawalRequestModerationDetails =
     buzzWithdrawalTransactionId: true,
     transferId: true,
     connectedAccountId: true,
+    transferredAmount: true,
+    platformFeeRate: true,
     history: {
       select: {
         id: true,

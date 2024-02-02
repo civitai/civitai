@@ -10,6 +10,7 @@ import {
   LoadingOverlay,
   Modal,
   Pagination,
+  Popover,
   Stack,
   Table,
   Text,
@@ -18,13 +19,17 @@ import {
   Title,
   Tooltip,
   TooltipProps,
+  List,
+  TextInput,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
 import { IconCashBanknote } from '@tabler/icons-react';
+import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
+import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryBuzzWithdrawalRequests,
@@ -32,7 +37,11 @@ import {
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { InputText } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import { BuzzWithdrawalRequestForModerator } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
@@ -43,6 +52,7 @@ import {
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
   position: 'top',
@@ -130,8 +140,50 @@ const UpdateBuzzWithdrawalRequest = ({
   );
 };
 
+const RequestHistory = ({ request }: { request: BuzzWithdrawalRequestForModerator }) => {
+  return (
+    <Popover width={300} withArrow withinPortal shadow="sm">
+      <Popover.Target>
+        <ActionIcon color="gray">
+          <IconInfoSquareRounded size={20} />
+        </ActionIcon>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack spacing="xs">
+          <Text size="sm" weight={500}>
+            History
+          </Text>
+          {request.history.map((record) => (
+            <Stack key={record.id}>
+              <Group noWrap position="apart">
+                <UserAvatar
+                  user={record.updatedBy}
+                  size="xs"
+                  subText={`Actioned on ${formatDate(record.createdAt)}`}
+                  withUsername
+                />
+
+                <Badge size="xs" color={WithdrawalRequestBadgeColor[record.status]} variant="light">
+                  {getDisplayName(record.status)}
+                </Badge>
+              </Group>
+              {record.note && (
+                <Text size="xs">
+                  <Text weight={500}>Note:</Text> {record.note}
+                </Text>
+              )}
+              <Divider />
+            </Stack>
+          ))}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+};
+
 export default function ModeratorBuzzWithdrawalRequests() {
   const queryUtils = trpc.useContext();
+  const features = useFeatureFlags();
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
   });
@@ -175,31 +227,33 @@ export default function ModeratorBuzzWithdrawalRequests() {
     </Tooltip>
   );
 
-  const revertBtn = (requestId: string) => (
-    <Tooltip label="Revert stripe transfer. Use with care" key="revert-btn" {...tooltipProps}>
-      <ActionIcon
-        onClick={() => {
-          handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Reverted);
-        }}
-        color="orange"
-        key="revert-btn"
-      >
-        <IconCashBanknoteOff />
-      </ActionIcon>
-    </Tooltip>
-  );
-  const transferBtn = (requestId: string) => (
-    <Tooltip label="Send requested money through stripe" key="transfer-btn" {...tooltipProps}>
-      <ActionIcon
-        onClick={() => {
-          handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Transferred);
-        }}
-        color="green"
-      >
-        <IconCashBanknote />
-      </ActionIcon>
-    </Tooltip>
-  );
+  const revertBtn = (requestId: string) =>
+    features.buzzWithdrawalTransfer ? (
+      <Tooltip label="Revert stripe transfer. Use with care" key="revert-btn" {...tooltipProps}>
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Reverted);
+          }}
+          color="orange"
+          key="revert-btn"
+        >
+          <IconCashBanknoteOff />
+        </ActionIcon>
+      </Tooltip>
+    ) : null;
+  const transferBtn = (requestId: string) =>
+    features.buzzWithdrawalTransfer ? (
+      <Tooltip label="Send requested money through stripe" key="transfer-btn" {...tooltipProps}>
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Transferred);
+          }}
+          color="green"
+        >
+          <IconCashBanknote />
+        </ActionIcon>
+      </Tooltip>
+    ) : null;
 
   return (
     <Container size="lg">
@@ -210,6 +264,26 @@ export default function ModeratorBuzzWithdrawalRequests() {
           request&rsquo;s details and history as well as the user&rsquo;s account details.
         </Text>
       </Stack>
+      <Group position="apart" mb="md">
+        <Group>
+          <TextInput
+            label="Filter by username"
+            value={filters.username ?? ''}
+            onChange={(e) => setFilters({ ...filters, username: e.target.value || undefined })}
+            size="sm"
+          />
+          <TextInput
+            label="Filter by request ID"
+            value={filters.requestId ?? ''}
+            onChange={(e) => setFilters({ ...filters, requestId: e.target.value || undefined })}
+            size="sm"
+          />
+        </Group>
+        <BuzzWithdrawalRequestFilterDropdown
+          setFilters={(f) => setFilters({ ...filters, ...f })}
+          filters={filters}
+        />
+      </Group>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -217,9 +291,11 @@ export default function ModeratorBuzzWithdrawalRequests() {
       ) : !!requests.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+
           <Table>
             <thead>
               <tr>
+                <th>Requested by</th>
                 <th>Requested at</th>
                 <th>Buzz Amount</th>
                 <th>Platform fee rate</th>
@@ -233,7 +309,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
             </thead>
             <tbody>
               {requests.map((request) => {
-                const buttons =
+                const buttons = (
                   request.status === BuzzWithdrawalRequestStatus.Requested
                     ? [approveBtn(request.id), rejectBtn(request.id), transferBtn(request.id)]
                     : request.status === BuzzWithdrawalRequestStatus.Approved
@@ -243,28 +319,55 @@ export default function ModeratorBuzzWithdrawalRequests() {
                     : // Reverted,
                       // Rejected,
                       // Canceled
-                      [];
+                      []
+                ).filter(isDefined);
 
                 const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(
                   request.requestedBuzzAmount,
                   request.platformFeeRate
                 );
 
+                const showColorTransferedAmount = [
+                  BuzzWithdrawalRequestStatus.Transferred,
+                  BuzzWithdrawalRequestStatus.Reverted,
+                ].some((t) => t === request.status);
+
                 return (
                   <tr key={request.id}>
+                    <td>
+                      <UserAvatar size="sm" user={request.user} withUsername />
+                    </td>
                     <td>{formatDate(request.createdAt)}</td>
                     <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
                     <td>{numberWithCommas(request.platformFeeRate / 100)}%</td>
                     <td>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</td>
                     <td>${formatCurrencyForDisplay(platformFee, Currency.USD)}</td>
-                    <td>${formatCurrencyForDisplay(payoutAmount, Currency.USD)}</td>
+                    <td>
+                      <Text
+                        color={
+                          showColorTransferedAmount
+                            ? WithdrawalRequestBadgeColor[request.status]
+                            : undefined
+                        }
+                        weight={showColorTransferedAmount ? 'bold' : undefined}
+                      >
+                        $
+                        {formatCurrencyForDisplay(
+                          request.transferredAmount ?? payoutAmount,
+                          Currency.USD
+                        )}
+                      </Text>
+                    </td>
                     <td>
                       <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
                         {getDisplayName(request.status)}
                       </Badge>
                     </td>
                     <td align="right">
-                      <Group>{buttons.map((btn) => btn)}</Group>
+                      <Group noWrap>
+                        {buttons.map((btn) => btn)}
+                        <RequestHistory request={request} />
+                      </Group>
                     </td>
                   </tr>
                 );

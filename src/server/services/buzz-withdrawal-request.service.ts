@@ -124,7 +124,7 @@ export const getPaginatedOwnedBuzzWithdrawalRequests = async (
 export const getPaginatedBuzzWithdrawalRequests = async (
   input: GetPaginatedBuzzWithdrawalRequestSchema
 ) => {
-  const { limit = DEFAULT_PAGE_SIZE, page, username, status } = input || {};
+  const { limit = DEFAULT_PAGE_SIZE, page, username, status, requestId } = input || {};
   const { take, skip } = getPagination(limit, page);
   let userId = input.userId;
 
@@ -137,8 +137,9 @@ export const getPaginatedBuzzWithdrawalRequests = async (
   }
 
   const where: Prisma.BuzzWithdrawalRequestFindManyArgs['where'] = {
-    status,
+    status: (status?.length ?? 0) > 0 ? { in: status } : undefined,
     userId,
+    id: requestId,
   };
 
   const items = await dbRead.buzzWithdrawalRequest.findMany({

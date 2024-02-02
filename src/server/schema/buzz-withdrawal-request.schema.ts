@@ -29,6 +29,7 @@ export const getPaginatedBuzzWithdrawalRequestSchema =
       username: z.string().optional(),
       userId: z.number().optional(),
       requestId: z.string().optional(),
+      status: z.array(z.nativeEnum(BuzzWithdrawalRequestStatus)).optional(),
     })
   );
 
