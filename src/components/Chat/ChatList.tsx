@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   GroupProps,
+  Highlight,
   Indicator,
   Input,
   Loader,
@@ -240,16 +241,16 @@ export function ChatList() {
                     >
                       <Box>
                         {otherMembers.length > 1 ? (
-                          <IconUsers />
+                          <IconUsers width={26} />
                         ) : otherMembers.length === 0 ? (
-                          <IconUserX />
+                          <IconUserX width={26} />
                         ) : (
-                          <UserAvatar userId={otherMembers[0].userId} />
+                          <UserAvatar user={otherMembers[0].user} />
                         )}
                       </Box>
                     </Indicator>
                     <Stack sx={{ overflow: 'hidden' }} spacing={0}>
-                      <Text
+                      <Highlight
                         size="sm"
                         fw={500}
                         sx={{
@@ -259,9 +260,10 @@ export function ChatList() {
                           minWidth: 0,
                         }}
                         color={hasMod ? 'red' : undefined}
+                        highlight={searchInput}
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
-                      </Text>
+                      </Highlight>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text

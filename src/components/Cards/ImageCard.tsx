@@ -68,6 +68,7 @@ export function UnroutedImageCard({ data }: Props) {
                                 size={30}
                                 color="white"
                                 variant="filled"
+                                data-activity="remix:image-card"
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();

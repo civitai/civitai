@@ -39,135 +39,141 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
 
   return (
     <Footer className={cx(classes.root)} height="auto" p="sm" py={4}>
-      {!cookies && isClient ? (
-        <ConsentForm />
-      ) : (
-        <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
-          <Text
-            weight={700}
-            sx={{ whiteSpace: 'nowrap', userSelect: 'none' }}
-            onDoubleClick={() => {
-              if (hash) setShowHash((x) => !x);
-            }}
+      <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
+        <Text
+          weight={700}
+          sx={{ whiteSpace: 'nowrap', userSelect: 'none' }}
+          onDoubleClick={() => {
+            if (hash) setShowHash((x) => !x);
+          }}
+        >
+          &copy; Civitai {new Date().getFullYear()}
+        </Text>
+        {showHash && hash && (
+          <Stack spacing={2}>
+            <Text weight={500} size="xs" sx={{ lineHeight: 1.1 }}>
+              Site Version
+            </Text>
+            <Anchor
+              target="_blank"
+              href={`/github/commit/${hash}`}
+              w="100%"
+              sx={{ '&:hover': { textDecoration: 'none' } }}
+            >
+              <Code sx={{ textAlign: 'center', lineHeight: 1.1, display: 'block' }}>
+                {hash.substring(0, 7)}
+              </Code>
+            </Anchor>
+          </Stack>
+        )}
+        <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/content/careers"
+            {...buttonProps}
+            variant="subtle"
+            color="green"
+            px={mobile ? 5 : 'xs'}
           >
-            &copy; Civitai {new Date().getFullYear()}
-          </Text>
-          {showHash && hash && (
-            <Stack spacing={2}>
-              <Text weight={500} size="xs" sx={{ lineHeight: 1.1 }}>
-                Site Version
-              </Text>
-              <Anchor
-                target="_blank"
-                href={`/github/commit/${hash}`}
-                w="100%"
-                sx={{ '&:hover': { textDecoration: 'none' } }}
-              >
-                <Code sx={{ textAlign: 'center', lineHeight: 1.1, display: 'block' }}>
-                  {hash.substring(0, 7)}
-                </Code>
-              </Anchor>
-            </Stack>
+            Join Us 💼
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/advertise-with-us"
+            {...buttonProps}
+            variant="subtle"
+            color="yellow"
+            target="_blank"
+            rel="nofollow noreferrer"
+            px={mobile ? 5 : 'xs'}
+          >
+            Advertise 📰
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/creators-program"
+            {...buttonProps}
+            color="blue"
+            px={mobile ? 5 : 'xs'}
+          >
+            Creators
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/content/tos"
+            {...buttonProps}
+            px={mobile ? 5 : 'xs'}
+          >
+            Terms of Service
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/content/privacy"
+            {...buttonProps}
+            px={mobile ? 5 : 'xs'}
+          >
+            Privacy
+          </Button>
+          {features.safety && (
+            <Button component={NextLink} href="/safety" {...buttonProps}>
+              Safety
+            </Button>
           )}
-          <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
-            <Button
-              component={NextLink}
-              prefetch={false}
-              href="/content/careers"
-              {...buttonProps}
-              variant="subtle"
-              color="green"
-              px={mobile ? 5 : 'xs'}
-            >
-              Join Us 💼
+          {features.newsroom && (
+            <Button component={NextLink} href="/newsroom" {...buttonProps}>
+              Newsroom
             </Button>
-            <Button
-              component={NextLink}
-              prefetch={false}
-              href="/advertise-with-us"
-              {...buttonProps}
-              variant="subtle"
-              color="yellow"
-              target="_blank"
-              rel="nofollow noreferrer"
-              px={mobile ? 5 : 'xs'}
-            >
-              Advertise 📰
-            </Button>
-            <Button
-              component={NextLink}
-              prefetch={false}
-              href="/creators-program"
-              {...buttonProps}
-              color="blue"
-              px={mobile ? 5 : 'xs'}
-            >
-              Creators
-            </Button>
-            <Button
-              component={NextLink}
-              prefetch={false}
-              href="/content/tos"
-              {...buttonProps}
-              px={mobile ? 5 : 'xs'}
-            >
-              Terms of Service
-            </Button>
-            <Button
-              component={NextLink}
-              prefetch={false}
-              href="/content/privacy"
-              {...buttonProps}
-              px={mobile ? 5 : 'xs'}
-            >
-              Privacy
-            </Button>
-            {features.safety && (
-              <Button component={NextLink} href="/safety" {...buttonProps}>
-                Safety
-              </Button>
-            )}
-            {features.newsroom && (
-              <Button component={NextLink} href="/newsroom" {...buttonProps}>
-                Newsroom
-              </Button>
-            )}
-            <Button
-              component="a"
-              href="/github/wiki/REST-API-Reference"
-              {...buttonProps}
-              target="_blank"
-              rel="nofollow noreferrer"
-            >
-              API
-            </Button>
-            <Button
-              component="a"
-              href="https://status.civitai.com"
-              {...buttonProps}
-              target="_blank"
-              rel="nofollow noreferrer"
-            >
-              Status
-            </Button>
-            <Button
-              component="a"
-              href="/wiki"
-              {...buttonProps}
-              target="_blank"
-              rel="nofollow noreferrer"
-            >
-              Wiki
-            </Button>
-            <Button
-              component="a"
-              href="/education"
-              {...buttonProps}
-              target="_blank"
-              rel="nofollow noreferrer"
-            >
-              Education
-            </Button>
+          )}
+          <Button
+            component="a"
+            href="/github/wiki/REST-API-Reference"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            API
+          </Button>
+          <Button
+            component="a"
+            href="https://status.civitai.com"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Status
+          </Button>
+          <Button
+            component="a"
+            href="/wiki"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Wiki
+          </Button>
+          <Button
+            component="a"
+            href="/education"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Education
+          </Button>
+          <Button
+            component="a"
+            href="https://air.civitai.com"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Residency
+          </Button>
 
             <SocialLinks />
           </Group>

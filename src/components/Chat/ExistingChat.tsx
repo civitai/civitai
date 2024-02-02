@@ -12,6 +12,7 @@ import {
   StackProps,
   Text,
   Textarea,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
@@ -459,7 +460,7 @@ export function ExistingChat() {
             {otherMembers?.map((cm) => (
               <Button key={cm.userId} variant="light" color="gray" compact>
                 <UserAvatar
-                  userId={cm.userId}
+                  user={cm.user}
                   size="xs"
                   withUsername
                   linkToProfile
@@ -520,7 +521,7 @@ export function ExistingChat() {
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }}>
+              <Stack sx={{ overflowWrap: 'break-word' }} spacing={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -633,66 +634,91 @@ export function ExistingChat() {
 function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const { state } = useChatContext();
+
+  const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
+
+  const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
+
+  let loopMsgDate = new Date(1970);
+  let loopPreviousChatter = 0;
 
   return (
     <AnimatePresence initial={false} mode="sync">
-      {chats.map((c, idx) => (
-        // TODO probably combine messages if within a certain amount of time
-        <PStack
-          component={motion.div}
-          // ref={c.id === lastReadId ? lastReadRef : undefined}
-          key={c.id}
-          spacing="xs"
-          style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: 'spring', duration: 0.4 }}
-        >
-          {c.userId === -1 ? (
-            // <Group align="center" position="center">
-            //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-            //   <Text
-            //     className={cx(classes.chatMessage)}
-            //     size="xs"
-            //     py={0}
-            //     sx={{
-            //       // alignSelf: 'center',
-            //       border: '1px solid gray',
-            //     }}
-            //   >
-            //     {c.content}
-            //   </Text>
-            // </Group>
-            <Text
-              className={cx(classes.chatMessage)}
-              size="xs"
-              py={0}
-              sx={{
-                alignSelf: 'center',
-                border: '1px solid gray',
-              }}
-            >
-              {c.content}
-            </Text>
-          ) : (
-            <>
-              <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
-                <UserAvatar userId={c.userId} withUsername />
-                <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-              </Group>
-              {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+      {chats.map((c, idx) => {
+        const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
+        const sameChatter = loopPreviousChatter === c.userId;
+        const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+
+        loopMsgDate = c.createdAt;
+        loopPreviousChatter = c.userId;
+
+        const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
+
+        return (
+          <PStack
+            component={motion.div}
+            // ref={c.id === lastReadId ? lastReadRef : undefined}
+            key={c.id}
+            spacing={12}
+            style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ type: 'spring', duration: 0.4 }}
+          >
+            {c.userId === -1 ? (
+              // <Group align="center" position="center">
+              //   <Text size="xs">{formatDate(c.createdAt)}</Text>
+              //   ...Text (below)
+              // </Group>
               <Text
-                className={cx(classes.chatMessage, {
-                  [classes.otherMessage]: c.userId !== currentUser?.id,
-                  [classes.myMessage]: c.userId === currentUser?.id,
-                })}
+                className={cx(classes.chatMessage)}
+                size="xs"
+                py={0}
+                sx={{
+                  alignSelf: 'center',
+                  border: '1px solid gray',
+                }}
               >
                 {c.content}
               </Text>
-            </>
-          )}
-        </PStack>
-      ))}
+            ) : (
+              <>
+                {shouldShowInfo && (
+                  <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
+                    {!!cachedUser ? (
+                      <UserAvatar user={cachedUser} withUsername />
+                    ) : (
+                      <UserAvatar userId={c.userId} withUsername />
+                    )}
+                    <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
+                  </Group>
+                )}
+                {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+                <Tooltip
+                  label={
+                    !shouldShowInfo ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a') : undefined
+                  }
+                  disabled={shouldShowInfo}
+                  sx={{ opacity: 0.85 }}
+                  openDelay={350}
+                  position={c.userId === currentUser?.id ? 'top-end' : 'top-start'}
+                  withArrow
+                >
+                  <Text
+                    className={cx(classes.chatMessage, {
+                      [classes.otherMessage]: c.userId !== currentUser?.id,
+                      [classes.myMessage]: c.userId === currentUser?.id,
+                    })}
+                  >
+                    {c.content}
+                  </Text>
+                </Tooltip>
+              </>
+            )}
+          </PStack>
+        );
+      })}
     </AnimatePresence>
   );
 }

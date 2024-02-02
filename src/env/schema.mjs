@@ -1,7 +1,7 @@
 // @ts-check
 import { z } from "zod";
 import { zc } from "~/utils/schema-helpers";
-import { commaDelimitedStringObject, commaDelimitedStringArray } from "~/utils/zod-helpers";
+import { commaDelimitedStringArray, commaDelimitedStringObject } from "~/utils/zod-helpers";
 
 /**
  * Specify your server-side environment variables schema here.
@@ -12,7 +12,7 @@ export const serverSchema = z.object({
   DATABASE_REPLICA_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
-  NODE_ENV: z.enum(['development', 'test', 'production']),
+  NODE_ENV: z.enum(["development", "test", "production"]),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
     // This makes Vercel deployments not fail if you don't set NEXTAUTH_URL
@@ -44,14 +44,14 @@ export const serverSchema = z.object({
   S3_UPLOAD_KEY: z.string(),
   S3_ORIGINS: z.preprocess((value) => {
     const str = String(value);
-    return str.split(',');
+    return str.split(",");
   }, z.array(z.string().url()).optional()),
   S3_UPLOAD_SECRET: z.string(),
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
-  S3_IMAGE_CACHE_BUCKET: z.string().default(''),
+  S3_IMAGE_CACHE_BUCKET: z.string().default(""),
   S3_SETTLED_BUCKET: z.string(),
   RATE_LIMITING: zc.booleanString,
   CF_ACCOUNT_ID: z.string(),
@@ -99,11 +99,11 @@ export const serverSchema = z.object({
   SIGNALS_ENDPOINT: z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
-  CSAM_UPLOAD_KEY: z.string().default(''),
-  CSAM_UPLOAD_SECRET: z.string().default(''),
-  CSAM_BUCKET_NAME: z.string().default(''),
-  CSAM_UPLOAD_REGION: z.string().default(''),
-  CSAM_UPLOAD_ENDPOINT: z.string().default(''),
+  CSAM_UPLOAD_KEY: z.string().default(""),
+  CSAM_UPLOAD_SECRET: z.string().default(""),
+  CSAM_BUCKET_NAME: z.string().default(""),
+  CSAM_UPLOAD_REGION: z.string().default(""),
+  CSAM_UPLOAD_ENDPOINT: z.string().default(""),
   NCMEC_URL: z.string().optional(),
   NCMEC_USERNAME: z.string().optional(),
   NCMEC_PASSWORD: z.string().optional(),
@@ -116,9 +116,9 @@ export const serverSchema = z.object({
   ALT_ORCHESTRATION_ENDPOINT: z.string().url().optional(),
   ALT_ORCHESTRATION_TOKEN: z.string().optional(),
   ALT_ORCHESTRATION_TIMEFRAME: z.preprocess((value) => {
-    if (typeof value !== 'string') return null;
+    if (typeof value !== "string") return null;
 
-    const [start, end] = value.split(',').map((x) => new Date(x))
+    const [start, end] = value.split(",").map((x) => new Date(x));
     return { start, end };
   }, z.object({
     start: z.date().optional(),
@@ -127,7 +127,7 @@ export const serverSchema = z.object({
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.string().url().optional(),
-  AIR_PAYMENT_LINK_ID: z.string().optional(),
+  AIR_PAYMENT_LINK_ID: z.string().optional()
 });
 
 /**
@@ -154,6 +154,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
   NEXT_PUBLIC_USER_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
+  NEXT_PUBLIC_CHAT_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
@@ -188,11 +189,12 @@ export const clientEnv = {
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
   NEXT_PUBLIC_USER_LOOKUP_URL: process.env.NEXT_PUBLIC_USER_LOOKUP_URL,
   NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
+  NEXT_PUBLIC_CHAT_LOOKUP_URL: process.env.NEXT_PUBLIC_CHAT_LOOKUP_URL,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
-  NEXT_PUBLIC_UI_CATEGORY_VIEWS: process.env.NEXT_PUBLIC_UI_CATEGORY_VIEWS !== 'false',
-  NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES !== 'false',
-  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== 'false',
+  NEXT_PUBLIC_UI_CATEGORY_VIEWS: process.env.NEXT_PUBLIC_UI_CATEGORY_VIEWS !== "false",
+  NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES !== "false",
+  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== "false",
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
-  NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true'
+  NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === "true"
 };

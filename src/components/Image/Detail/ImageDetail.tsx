@@ -168,6 +168,7 @@ export function ImageDetail() {
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                       onClick={() => generationPanel.open({ type: 'image', id: image.id })}
                       compact
+                      data-activity="remix:image"
                     >
                       <Group spacing={4} noWrap>
                         <IconBrush size={14} />

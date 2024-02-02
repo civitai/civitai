@@ -241,6 +241,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                             username: currentUser.username,
                             period: 'AllTime',
                             sort: ImageSort.Newest,
+                            hidden: undefined,
                             types: undefined,
                             withMeta: undefined,
                           }}

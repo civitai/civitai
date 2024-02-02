@@ -193,6 +193,7 @@ export function ImagesAsPostsCard({
                                   size={30}
                                   color="white"
                                   variant="filled"
+                                  data-activity="remix:model-gallery"
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -328,6 +329,7 @@ export function ImagesAsPostsCard({
                                         size={30}
                                         color="white"
                                         variant="filled"
+                                        data-activity="remix:model-gallery"
                                         onClick={(e) => {
                                           e.preventDefault();
                                           e.stopPropagation();

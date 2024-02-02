@@ -98,6 +98,7 @@ export default function UserArticlesPage() {
                   <ArticleFiltersDropdown
                     query={{ ...query, period, followed }}
                     onChange={(filters) => replace(filters)}
+                    compact
                   />
                 </Group>
               )}

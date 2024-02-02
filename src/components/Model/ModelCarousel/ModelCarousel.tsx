@@ -237,6 +237,7 @@ export function ModelCarousel({
                               size={30}
                               color="white"
                               variant="filled"
+                              data-activity="remix:model-carousel"
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();

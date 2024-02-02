@@ -108,12 +108,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 // For AIR stuff...
                 const email =
                   checkoutSession.customer_details?.email || checkoutSession.customer_email;
+                const name = checkoutSession.customer_details?.name ?? 'Stripe Customer';
 
                 if (!email || isDev) {
                   return;
                 }
 
-                await notifyAir(email);
+                await notifyAir({ email, name });
                 return;
               }
 

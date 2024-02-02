@@ -4,14 +4,11 @@ import { SearchIndexUpdateQueueAction } from '@prisma/client';
 import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex, usersSearchIndex } from '~/server/search-index';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 export const schema = z.object({
-  updateIds: z
-    .preprocess((val) => (Array.isArray(val) ? val : [val]), z.array(z.coerce.number()))
-    .optional(),
-  deleteIds: z
-    .preprocess((val) => (Array.isArray(val) ? val : [val]), z.array(z.coerce.number()))
-    .optional(),
+  updateIds: commaDelimitedNumberArray().optional(),
+  deleteIds: commaDelimitedNumberArray().optional(),
   index: z.enum([MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX]),
 });
 export default ModEndpoint(async function updateIndexSync(

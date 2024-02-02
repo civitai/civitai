@@ -171,6 +171,7 @@ export function UserImagesPage() {
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <ImageFiltersDropdown
+                  compact
                   query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
                 />
@@ -183,6 +184,7 @@ export function UserImagesPage() {
                 sort,
                 types,
                 withMeta,
+                hidden: undefined,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
                 followed,
