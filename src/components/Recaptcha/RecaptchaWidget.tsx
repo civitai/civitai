@@ -34,7 +34,7 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
       <Script
         src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
         onLoad={() => {
-          window?.grecaptcha.enterprise.ready(() => {
+          window.grecaptcha.enterprise.ready(() => {
             setReady(true);
           });
         }}
