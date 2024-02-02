@@ -159,6 +159,15 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           >
             Education
           </Button>
+          <Button
+            component="a"
+            href="https://air.civitai.com"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Residency
+          </Button>
 
           <SocialLinks />
         </Group>
