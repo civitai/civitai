@@ -22,6 +22,7 @@ import {
   payToStripeConnectAccount,
   revertStripeConnectTransfer,
 } from '~/server/services/user-stripe-connect.service';
+import { createNotification } from '~/server/services/notification.service';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -376,6 +377,33 @@ export const updateBuzzWithdrawalRequest = async ({
           transferredAmount: payoutAmount,
         },
       });
+    }
+
+    switch (status) {
+      case BuzzWithdrawalRequestStatus.Approved:
+        await createNotification({
+          userId: request.userId as number,
+          type: 'creators-program-withdrawal-approved',
+        }).catch();
+        break;
+      case BuzzWithdrawalRequestStatus.Rejected:
+        await createNotification({
+          userId: request.userId as number,
+          type: 'creators-program-withdrawal-rejected',
+        }).catch();
+        break;
+      case BuzzWithdrawalRequestStatus.Transferred:
+        await createNotification({
+          userId: request.userId as number,
+          type: 'creators-program-withdrawal-transferred',
+        }).catch();
+        break;
+      case BuzzWithdrawalRequestStatus.Reverted:
+        await createNotification({
+          userId: request.userId as number,
+          type: 'creators-program-withdrawal-reverted',
+        }).catch();
+        break;
     }
 
     const updatedRequest = await dbWrite.buzzWithdrawalRequest.findUniqueOrThrow({

@@ -72,7 +72,7 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
   };
 
   return (
-    <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
+    <Paper withBorder p="lg" radius="md" className={classes.tileCard} id="buzz-withdrawals">
       <Stack spacing="sm">
         <Group position="apart">
           <Title order={2}>Withdrawal Requests</Title>

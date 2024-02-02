@@ -25,4 +25,36 @@ export const creatorsProgramNotifications = createNotificationProcessor({
       url: `/creators-program`,
     }),
   },
+  'creators-program-withdrawal-approved': {
+    displayName: 'Creators program - Withdrawal Approved',
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your withdrawal request has been approved. Your funds will be transferred to your stripe account soon`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
+  'creators-program-withdrawal-transferred': {
+    displayName: 'Creators program - Money transferred',
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your request has been processed and money has been transfered to your stripe account.`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
+  'creators-program-withdrawal-rejected': {
+    displayName: 'Creators program - Withdrawal Rejected',
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Moderators have rejected your withdrawal request. Please contact us for more information.`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
+  'creators-program-withdrawal-reverted': {
+    displayName: 'Creators program - Money reverted',
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `We have decided to revert money that was transfered to your stripe account. Please contact us for more information on why we came to this desicion.`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
 });
