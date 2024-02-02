@@ -45,6 +45,7 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent } = useAdsContext();
   const containerWidth = useContainerWidth();
 
+  // TODO - maybe consider the priority of each nsfw override flag. Which flags have the most priority?
   const showNsfw = nsfwOverride ?? (browsingModeOverride ?? browsingMode) !== BrowsingMode.SFW;
   const renderTypeMap = { sfw, nsfw };
   const renderType = !showNsfw ? 'sfw' : 'nsfw';
