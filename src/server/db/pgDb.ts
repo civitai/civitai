@@ -11,7 +11,10 @@ declare global {
 
 function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   console.log('Creating PG client');
-  const connectionString = readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL;
+  const connectionStringUrl = new URL(readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL);
+  connectionStringUrl.searchParams.delete('sslmode');
+  const connectionString = connectionStringUrl.toString();
+
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
