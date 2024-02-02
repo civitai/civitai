@@ -3,6 +3,7 @@ import {
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
+  UpdateBuzzWithdrawalRequestSchema,
 } from '~/server/schema/buzz-withdrawal-request.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
@@ -69,6 +70,15 @@ export const useMutateBuzzWithdrawalRequest = () => {
     },
   });
 
+  const updateBuzzWithdrawalRequestMutation = trpc.buzzWithdrawalRequest.update.useMutation({
+    async onSuccess() {
+      await queryUtils.buzzWithdrawalRequest.getPaginated.invalidate();
+    },
+    onError(error) {
+      onError(error, 'Failed to update a withdrawal request');
+    },
+  });
+
   const handleCreateBuzzWithdrawalRequest = (data: CreateBuzzWithdrawalRequestSchema) => {
     return createBuzzWithdrawalRequestMutation.mutateAsync(data);
   };
@@ -76,12 +86,17 @@ export const useMutateBuzzWithdrawalRequest = () => {
   const handleCancelBuzzWithdrawalRequest = (data: GetByIdStringInput) => {
     return cancelBuzzWithdrawalRequestMutation.mutateAsync(data);
   };
+  const handleUpdateBuzzWithdrawalRequest = (data: UpdateBuzzWithdrawalRequestSchema) => {
+    return updateBuzzWithdrawalRequestMutation.mutateAsync(data);
+  };
 
   return {
     createBuzzWithdrawalRequest: handleCreateBuzzWithdrawalRequest,
     creatingBuzzWithdrawalRequest: createBuzzWithdrawalRequestMutation.isLoading,
     cancelBuzzWithdrawalRequest: handleCancelBuzzWithdrawalRequest,
     cancelingBuzzWithdrawalRequest: cancelBuzzWithdrawalRequestMutation.isLoading,
+    updateBuzzWithdrawalRequest: handleUpdateBuzzWithdrawalRequest,
+    updatingBuzzWithdrawalRequest: updateBuzzWithdrawalRequestMutation.isLoading,
   };
 };
 

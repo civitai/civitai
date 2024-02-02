@@ -4,13 +4,16 @@ import {
   Button,
   Center,
   Container,
+  Divider,
   Group,
   Loader,
   LoadingOverlay,
+  Modal,
   Pagination,
   Stack,
   Table,
   Text,
+  Textarea,
   ThemeIcon,
   Title,
   Tooltip,
@@ -18,16 +21,27 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
 import { IconCashBanknote } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useQueryBuzzWithdrawalRequests } from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
+import {
+  useMutateBuzzWithdrawalRequest,
+  useQueryBuzzWithdrawalRequests,
+} from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import { formatDate } from '~/utils/date-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 
-import { numberWithCommas } from '~/utils/number-helpers';
+import {
+  formatCurrencyForDisplay,
+  getBuzzWithdrawalDetails,
+  numberWithCommas,
+} from '~/utils/number-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -37,6 +51,83 @@ const tooltipProps: Partial<TooltipProps> = {
   multiline: true,
   // @ts-ignore This works fine.
   align: 'center',
+};
+
+const UpdateBuzzWithdrawalRequest = ({
+  requestId,
+  status,
+}: {
+  requestId: string;
+  status: BuzzWithdrawalRequestStatus;
+}) => {
+  const dialog = useDialogContext();
+  const utils = trpc.useContext();
+  const handleClose = dialog.onClose;
+  const [note, setNote] = useState('');
+  const { updateBuzzWithdrawalRequest, updatingBuzzWithdrawalRequest } =
+    useMutateBuzzWithdrawalRequest();
+
+  const handleSuccess = () => {
+    showSuccessNotification({
+      title: 'Buzz withdrawal request updated successfully!',
+      message: 'The user will be notified of these changes.',
+    });
+
+    handleClose();
+  };
+
+  const handleSubmit = async () => {
+    await updateBuzzWithdrawalRequest({
+      requestId,
+      status,
+      note,
+    });
+
+    handleSuccess();
+  };
+
+  return (
+    <Modal {...dialog} size="md" withCloseButton={false} radius="md">
+      <Group position="apart" mb="md">
+        <Text size="lg" weight="bold">
+          Confirm the status change
+        </Text>
+      </Group>
+      <Divider mx="-lg" mb="md" />
+      <Stack>
+        <Text>
+          You are about to set withdrawal request to{' '}
+          <Text component="span" weight="bold" color={WithdrawalRequestBadgeColor[status]}>
+            {getDisplayName(status)}
+          </Text>
+          .
+        </Text>
+        <Stack spacing={0}>
+          <Textarea
+            name="note"
+            label="Add a note (optional)"
+            placeholder="If you want to keep a record as to why you're updating this request, you can add a note here."
+            rows={2}
+            value={note}
+            onChange={(event) => setNote(event.currentTarget.value)}
+          />
+        </Stack>
+        <Group ml="auto">
+          <Button
+            type="button"
+            onClick={handleClose}
+            color="gray"
+            disabled={updatingBuzzWithdrawalRequest}
+          >
+            Cancel update
+          </Button>
+          <Button onClick={handleSubmit} loading={updatingBuzzWithdrawalRequest}>
+            Yes, update
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
 };
 
 export default function ModeratorBuzzWithdrawalRequests() {
@@ -49,27 +140,9 @@ export default function ModeratorBuzzWithdrawalRequests() {
     useQueryBuzzWithdrawalRequests(debouncedFilters);
 
   const handleUpdateRequest = (requestId: string, status: BuzzWithdrawalRequestStatus) => {
-    openConfirmModal({
-      title: 'Update withdrawal request',
-      children: (
-        <Stack>
-          <Text>
-            Are you sure you want to update this request to{' '}
-            <Text weight="bold" component="span" color={WithdrawalRequestBadgeColor[status]}>
-              {status}
-            </Text>
-            ?
-          </Text>
-          <Text size="sm" color="dimmed">
-            A history of this action will be recorded to ensure transparency.
-          </Text>
-        </Stack>
-      ),
-      centered: true,
-      labels: { confirm: 'Yes, update', cancel: "No, don't update it" },
-      onConfirm: () => {
-        console.log('OK lets go');
-      },
+    dialogStore.trigger({
+      component: UpdateBuzzWithdrawalRequest,
+      props: { requestId, status },
     });
   };
 
@@ -129,7 +202,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
   );
 
   return (
-    <Container size="sm">
+    <Container size="lg">
       <Stack spacing={0} mb="xl">
         <Title order={1}>User Buzz Withdrawal Requests</Title>
         <Text size="sm" color="dimmed">
@@ -149,6 +222,11 @@ export default function ModeratorBuzzWithdrawalRequests() {
               <tr>
                 <th>Requested at</th>
                 <th>Buzz Amount</th>
+                <th>Platform fee rate</th>
+                <th>Dollar Amount Total</th>
+                <th>Application Fee</th>
+                <th>Transfer amount</th>
+
                 <th>Status</th>
                 <th>&nbsp;</th>
               </tr>
@@ -162,17 +240,27 @@ export default function ModeratorBuzzWithdrawalRequests() {
                     ? [rejectBtn(request.id), transferBtn(request.id)]
                     : request.status === BuzzWithdrawalRequestStatus.Transferred
                     ? [revertBtn(request.id)]
-                    : request.status === BuzzWithdrawalRequestStatus.Rejected
-                    ? [approveBtn(request.id), transferBtn(request.id)]
-                    : [];
+                    : // Reverted,
+                      // Rejected,
+                      // Canceled
+                      [];
+
+                const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(
+                  request.requestedBuzzAmount,
+                  request.platformFeeRate
+                );
 
                 return (
                   <tr key={request.id}>
                     <td>{formatDate(request.createdAt)}</td>
                     <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
+                    <td>{numberWithCommas(request.platformFeeRate / 100)}%</td>
+                    <td>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</td>
+                    <td>${formatCurrencyForDisplay(platformFee, Currency.USD)}</td>
+                    <td>${formatCurrencyForDisplay(payoutAmount, Currency.USD)}</td>
                     <td>
                       <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
-                        {request.status}
+                        {getDisplayName(request.status)}
                       </Badge>
                     </td>
                     <td align="right">

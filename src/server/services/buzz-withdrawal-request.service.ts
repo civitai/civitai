@@ -219,7 +219,6 @@ const BuzzWithdrawalStatusStateMap: Record<
   BuzzWithdrawalRequestStatus,
   BuzzWithdrawalRequestStatus[]
 > = {
-  [BuzzWithdrawalRequestStatus.Canceled]: [],
   [BuzzWithdrawalRequestStatus.Requested]: [
     BuzzWithdrawalRequestStatus.Approved,
     BuzzWithdrawalRequestStatus.Canceled,
@@ -230,11 +229,9 @@ const BuzzWithdrawalStatusStateMap: Record<
     BuzzWithdrawalRequestStatus.Rejected,
     BuzzWithdrawalRequestStatus.Transferred,
   ],
-  [BuzzWithdrawalRequestStatus.Rejected]: [
-    BuzzWithdrawalRequestStatus.Approved,
-    BuzzWithdrawalRequestStatus.Transferred,
-  ],
   [BuzzWithdrawalRequestStatus.Transferred]: [BuzzWithdrawalRequestStatus.Reverted],
+  [BuzzWithdrawalRequestStatus.Canceled]: [],
+  [BuzzWithdrawalRequestStatus.Rejected]: [], //  Because buzz gets refunded, we don't want to allow any other state.
   [BuzzWithdrawalRequestStatus.Reverted]: [], // Because buzz gets refunded, we don't want to allow any other state.
 };
 
@@ -293,14 +290,14 @@ export const updateBuzzWithdrawalRequest = async ({
       throw throwBadRequestError('You must have a connected stripe account to withdraw funds');
     }
 
-    const { dollarAmount } = getBuzzWithdrawalDetails(
+    const { payoutAmount } = getBuzzWithdrawalDetails(
       request.requestedBuzzAmount,
       request.platformFeeRate
     );
 
     const transfer = await payToStripeConnectAccount({
       toUserId: request.userId as number, // Ofcs, user should exist for one.
-      amount: dollarAmount,
+      amount: payoutAmount,
       description: 'Payment from Mod',
       byUserId: userId,
     });
@@ -325,10 +322,16 @@ export const updateBuzzWithdrawalRequest = async ({
       );
     }
 
+    if (!request.userId) {
+      throw throwBadRequestError(
+        'The user you are trying to rever a transfer from has been deleted or a problem caused the withdrawal request to be orphaned.'
+      );
+    }
+
     // Refund the user:
     const transaction = await createBuzzTransaction({
-      fromAccountId: userId, // bank
-      toAccountId: 0,
+      fromAccountId: 0, // bank
+      toAccountId: request.userId,
       amount: request.requestedBuzzAmount,
       type: TransactionType.Refund,
       description: 'Refund due to reversal of withdrawal request',
@@ -365,7 +368,7 @@ export const updateBuzzWithdrawalRequest = async ({
     if (metadata.buzzTransactionId) {
       // Refund the bank
       await createBuzzTransaction({
-        fromAccountId: userId, // bank
+        fromAccountId: request.userId as number, // bank
         toAccountId: 0,
         amount: request.requestedBuzzAmount,
         type: TransactionType.Withdrawal,
