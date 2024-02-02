@@ -142,7 +142,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   };
 
   return (
-    <Group>
+    <Group noWrap>
       <Menu withArrow position="bottom-end">
         <Menu.Target>
           <ActionIcon>
@@ -172,6 +172,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                       ? 'Cannot leave a moderator chat while they are still present'
                       : undefined
                   }
+                  disabled={!cantLeave}
                 >
                   <Menu.Item
                     icon={<IconDoorExit size={18} />}
