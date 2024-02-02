@@ -171,7 +171,6 @@ export function UserImagesPage() {
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <ImageFiltersDropdown
-                  compact
                   query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
                   size="sm"

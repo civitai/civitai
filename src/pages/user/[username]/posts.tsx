@@ -83,6 +83,7 @@ export default function UserPostsPage() {
                 <PostFiltersDropdown
                   query={{ ...query, period, followed }}
                   onChange={(filters) => replace(filters)}
+                  size="sm"
                   compact
                 />
               </Group>
