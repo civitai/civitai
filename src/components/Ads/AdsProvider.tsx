@@ -34,7 +34,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = !!currentUser?.subscriptionId;
   const enabled = env.NEXT_PUBLIC_ADS;
   const adsEnabled = enabled && !isMember;
-  const { targeting: cookieConsent = false } = useConsentManager();
+  // const { targeting: cookieConsent = false } = useConsentManager();
+  const cookieConsent = true;
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {

@@ -11,13 +11,10 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useState } from 'react';
-import { useConsentManager } from '~/components/Ads/ads.utils';
-import { ConsentForm } from '~/components/ConsentManager/ConsentForm';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useIsClient } from '~/providers/IsClientProvider';
 
 const buttonProps: ButtonProps = {
   size: 'xs',
@@ -33,9 +30,6 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
   const [showHash, setShowHash] = useState(false);
   const mobile = useContainerSmallerThan('sm');
   const features = useFeatureFlags();
-  const isClient = useIsClient();
-
-  const { targeting: cookies } = useConsentManager();
 
   return (
     <Footer className={cx(classes.root)} height="auto" p="sm" py={4}>
@@ -175,36 +169,35 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Residency
           </Button>
 
-            <SocialLinks />
-          </Group>
-          <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
-            <Button
-              component="a"
-              href="/bugs"
-              {...buttonProps}
-              target="_blank"
-              pl={4}
-              pr="xs"
-              rel="nofollow noreferrer"
-            >
-              🪲 Bugs
-            </Button>
-            <Button
-              component="a"
-              href="/feedback"
-              variant="light"
-              color="yellow"
-              target="_blank"
-              size={!fixed ? 'xs' : undefined}
-              pl={4}
-              pr="xs"
-              rel="nofollow noreferrer"
-            >
-              💡 Feature Requests
-            </Button>
-          </Group>
+          <SocialLinks />
         </Group>
-      )}
+        <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
+          <Button
+            component="a"
+            href="/bugs"
+            {...buttonProps}
+            target="_blank"
+            pl={4}
+            pr="xs"
+            rel="nofollow noreferrer"
+          >
+            🪲 Bugs
+          </Button>
+          <Button
+            component="a"
+            href="/feedback"
+            variant="light"
+            color="yellow"
+            target="_blank"
+            size={!fixed ? 'xs' : undefined}
+            pl={4}
+            pr="xs"
+            rel="nofollow noreferrer"
+          >
+            💡 Feature Requests
+          </Button>
+        </Group>
+      </Group>
     </Footer>
   );
 }
