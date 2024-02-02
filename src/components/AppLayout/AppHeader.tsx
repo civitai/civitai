@@ -876,8 +876,8 @@ export function AppHeader({
               </ActionIcon>
             )}
             {currentUser && <CivitaiLinkPopover />}
-            {currentUser && features.chat && <ChatButton />}
             {currentUser && <NotificationBell />}
+            {currentUser && features.chat && <ChatButton />}
             <Burger
               opened={burgerOpened}
               onClick={() => setBurgerOpened(!burgerOpened)}
