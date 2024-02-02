@@ -60,8 +60,9 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
       const satisfiesMinWidth = minWidth ? containerWidth >= minWidth : true;
       const satisfiesMaxWidth = maxWidth ? containerWidth <= maxWidth : true;
       if (satisfiesMinWidth && satisfiesMaxWidth) {
-        const bidSizes = (Array.isArray(sizes) ? sizes : [sizes]).filter(isDefined) as string[];
-        if (bidSizes.length) return bidSizes;
+        const bidSizes = (sizes ? (Array.isArray(sizes) ? sizes : [sizes]) : []) as string[];
+        const filtered = bidSizes.filter(isDefined);
+        if (filtered.length) return filtered;
       }
     }
   }, [containerWidth, renderType]);
