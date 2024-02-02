@@ -275,6 +275,11 @@ export const updateBuzzWithdrawalRequest = async ({
     metadata.buzzTransactionId = transaction.transactionId;
   }
 
+  const { payoutAmount, platformFee } = getBuzzWithdrawalDetails(
+    request.requestedBuzzAmount,
+    request.platformFeeRate
+  );
+
   if (status === BuzzWithdrawalRequestStatus.Transferred) {
     if (!request.userId) {
       throw throwBadRequestError(
@@ -290,16 +295,19 @@ export const updateBuzzWithdrawalRequest = async ({
       throw throwBadRequestError('You must have a connected stripe account to withdraw funds');
     }
 
-    const { payoutAmount } = getBuzzWithdrawalDetails(
-      request.requestedBuzzAmount,
-      request.platformFeeRate
-    );
-
     const transfer = await payToStripeConnectAccount({
       toUserId: request.userId as number, // Ofcs, user should exist for one.
       amount: payoutAmount,
-      description: 'Payment from Mod',
+      description: `Payment for withdrawal request ${requestId}`,
       byUserId: userId,
+      metadata: {
+        requestId,
+        platformFee,
+        paymentBy: userId,
+        platformFeeRate: request.platformFeeRate,
+        requestedBuzzAmount: request.requestedBuzzAmount,
+        buzzTransactionId: request.buzzWithdrawalTransactionId,
+      },
     });
 
     metadata.stripeTransferId = transfer.id;
@@ -357,6 +365,17 @@ export const updateBuzzWithdrawalRequest = async ({
         note,
       },
     });
+
+    if (status === BuzzWithdrawalRequestStatus.Transferred) {
+      // Ensure we update the main request details:
+      await dbWrite.buzzWithdrawalRequest.update({
+        where: { id: requestId },
+        data: {
+          transferId: metadata.stripeTransferId,
+          transferredAmount: payoutAmount,
+        },
+      });
+    }
 
     const updatedRequest = await dbWrite.buzzWithdrawalRequest.findUniqueOrThrow({
       where: { id: requestId },

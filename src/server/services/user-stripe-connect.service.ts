@@ -146,11 +146,13 @@ export const payToStripeConnectAccount = async ({
   toUserId,
   amount,
   description,
+  metadata,
 }: {
   byUserId: number;
   toUserId: number;
   amount: number;
   description: string;
+  metadata?: MixedObject;
 }) => {
   const stripe = await getServerStripe();
   const toUserStripeConnect = await getUserStripeConnectAccount({ userId: toUserId });
@@ -164,6 +166,7 @@ export const payToStripeConnectAccount = async ({
       metadata: {
         byUserId: byUserId.toString(),
         toUserId: toUserId.toString(),
+        ...(metadata ?? {}),
       },
     });
 
