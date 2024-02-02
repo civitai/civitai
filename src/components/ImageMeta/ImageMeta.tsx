@@ -142,6 +142,7 @@ export function ImageMeta({
                       color={copied ? 'green' : 'blue'}
                       onClick={copy}
                       ml="auto"
+                      data-activity="copy:prompt"
                     >
                       {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
                     </ActionIcon>
@@ -199,6 +200,7 @@ export function ImageMeta({
             size="xs"
             variant="light"
             leftIcon={<IconBrush size={16} />}
+            data-activity="remix:image-meta"
             onClick={() => {
               generationPanel.open({ type: 'image', id: imageId ?? 0 });
               onCreateClick?.();
@@ -224,6 +226,7 @@ function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
       onClick={() => copy(JSON.stringify(workflow))}
       spacing={4}
       sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
+      data-activity="copy:workflow"
     >
       {workflow?.nodes?.length ?? 0} Nodes
       {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
@@ -249,6 +252,7 @@ function GenerationDataButton({
         copy(encodeMetadata(meta));
       }}
       w={!iconOnly ? '100%' : undefined}
+      data-activity="copy:image-meta"
     >
       <Group spacing={4}>
         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}

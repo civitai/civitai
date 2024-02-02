@@ -17,6 +17,7 @@ import {
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import {
   throwBadRequestError,
@@ -54,6 +55,11 @@ const singleChatSelect = {
           id: true,
           username: true,
           isModerator: true,
+          deletedAt: true,
+          image: true,
+          profilePicture: {
+            select: profileImageSelect,
+          },
         },
       },
     },
@@ -271,21 +277,30 @@ export const createChatHandler = async ({
           userId: u,
           chatId: newChat.id,
           isOwner: u === userId,
-          // TODO check here for || isModerator, and if so, autojoin
-          status: u === userId ? ChatMemberStatus.Joined : ChatMemberStatus.Invited,
-          joinedAt: u === userId ? newChat.createdAt : undefined,
+          status: u === userId || isModerator ? ChatMemberStatus.Joined : ChatMemberStatus.Invited,
+          joinedAt: u === userId || isModerator ? newChat.createdAt : undefined,
         })),
       });
 
       return newChat;
     });
 
-    // - add self to group
-    fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(`chat:${createdChat.id}`),
-    }).catch();
+    if (isModerator) {
+      for (const cmId of dedupedUserIds) {
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(`chat:${createdChat.id}`),
+        }).catch();
+      }
+    } else {
+      // - add self to group
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${createdChat.id}`),
+      }).catch();
+    }
 
     // I don't like the idea of querying after an insert, but it's just easier than merging all the data together
     const insertedChat = await dbWrite.chat.findFirst({
@@ -301,13 +316,24 @@ export const createChatHandler = async ({
       throw throwBadRequestError('Chat creation failed.');
     }
 
-    // - sending new chat room signal without being part of the group
-    for (const cmId of dedupedUserIds) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }).catch();
+    if (isModerator) {
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${insertedChat.id}/signals/${SignalMessages.ChatNewRoom}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        }
+      ).catch();
+    } else {
+      // - sending new chat room signal without being part of the group
+      for (const cmId of dedupedUserIds) {
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        }).catch();
+      }
     }
 
     return insertedChat;
@@ -440,12 +466,24 @@ export const modifyUserHandler = async ({
         user: {
           select: {
             username: true,
+            isModerator: true,
           },
         },
         chat: {
           select: {
             id: true,
             ownerId: true,
+            owner: {
+              select: {
+                isModerator: true,
+              },
+            },
+            chatMembers: {
+              where: { isOwner: true },
+              select: {
+                status: true,
+              },
+            },
           },
         },
       },
@@ -465,6 +503,17 @@ export const modifyUserHandler = async ({
         throw throwBadRequestError(`Cannot modify chat status for another user`);
       }
     }
+
+    if (
+      status === ChatMemberStatus.Left &&
+      existing.chat.owner.isModerator &&
+      existing.chat.chatMembers[0]?.status === ChatMemberStatus.Joined &&
+      !existing.user.isModerator
+    ) {
+      throw throwBadRequestError(`Cannot leave a moderator chat while they are still present`);
+    }
+
+    // TODO if a moderator rejoins, auto-rejoin other users
 
     const extra = {
       joinedAt: status === ChatMemberStatus.Joined ? new Date() : undefined,

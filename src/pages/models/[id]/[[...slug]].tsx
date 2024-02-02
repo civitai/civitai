@@ -570,7 +570,10 @@ export default function ModelDetailsV2({
                     </Text>
                   </IconBadge>
                   {model.canGenerate && latestGenerationVersion && (
-                    <GenerateButton modelVersionId={latestGenerationVersion.id}>
+                    <GenerateButton
+                      modelVersionId={latestGenerationVersion.id}
+                      data-activity="create:model-stat"
+                    >
                       <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                         <Text className={classes.modelBadgeText}>
                           {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}

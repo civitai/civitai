@@ -1,5 +1,7 @@
+import { Box, BoxProps } from '@mantine/core';
 import { useEffect, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { isProd } from '~/env/other';
 import { createDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';
 
@@ -17,25 +19,25 @@ emitter.on('serve', () =>
   })
 );
 
-export function AdSenseAd() {
-  // const { adSenseReady } = useAdsContext();
-  // const hasRunRef = useRef(false);
-  // useEffect(() => {
-  //   if (adSenseReady && !hasRunRef.current) {
-  //     hasRunRef.current = true;
-  //     emitter.emit('serve', undefined);
-  //   }
-  // }, [adSenseReady]);
+export function AdSenseAd(props: BoxProps) {
+  const { adSenseReady } = useAdsContext();
+  const hasRunRef = useRef(false);
+  useEffect(() => {
+    if (adSenseReady && !hasRunRef.current) {
+      hasRunRef.current = true;
+      emitter.emit('serve', undefined);
+    }
+  }, [adSenseReady]);
 
   return (
-    <ins
-      className="adsbygoogle"
-      style={{ display: 'block' }}
-      data-ad-client="ca-pub-6320044818993728"
-      data-ad-slot="2186801716"
-      data-ad-format="auto"
-      data-full-width-responsive="true"
-      data-adtest="on"
-    ></ins>
+    <Box {...props}>
+      <ins
+        className="adsbygoogle"
+        style={{ display: 'block', width: 300, height: 250 }}
+        data-ad-client="ca-pub-6320044818993728"
+        data-ad-slot="2186801716"
+        data-adtest="on"
+      ></ins>
+    </Box>
   );
 }

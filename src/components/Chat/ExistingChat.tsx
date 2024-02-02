@@ -12,11 +12,19 @@ import {
   StackProps,
   Text,
   Textarea,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
-import { IconChevronLeft, IconSend } from '@tabler/icons-react';
+import {
+  IconChevronLeft,
+  IconCircleCheck,
+  IconCircleMinus,
+  IconCircleX,
+  IconCrown,
+  IconSend,
+} from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import { throttle } from 'lodash-es';
@@ -230,7 +238,7 @@ export function ExistingChat() {
 
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
-    onSuccess() {
+    onSuccess(data) {
       setIsSending(false);
       setChatMsg('');
 
@@ -243,6 +251,33 @@ export function ExistingChat() {
 
       setTypingStatus(newTotalStatus);
       setTypingText(isTypingText);
+
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId: data.chatId },
+        produce((old) => {
+          if (!old) return old;
+
+          const lastPage = old.pages[old.pages.length - 1];
+
+          lastPage.items.push(data);
+        })
+      );
+
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const thisChat = old.find((o) => o.id === data.chatId);
+          if (!thisChat) return old;
+          thisChat.messages = [
+            {
+              content: data.content,
+              createdAt: new Date(data.createdAt),
+            },
+          ];
+        })
+      );
     },
     onError(error) {
       setIsSending(false);
@@ -347,7 +382,6 @@ export function ExistingChat() {
     };
   }, [connected, worker, handleIsTyping]);
 
-  // TODO this doesnt trigger sometimes, like if typing and sending very quickly
   useEffect(() => {
     if (!currentUser) return;
 
@@ -422,21 +456,51 @@ export function ExistingChat() {
           <Group>
             {/* TODO limit this to one line, then expand */}
             {/* TODO improve useravatar to show loading */}
-            {/* TODO mark when a user is the owner, online status (later), blocked users, etc */}
+            {/* TODO online status (later), blocked users, etc */}
             {otherMembers?.map((cm) => (
-              <UserAvatar
-                key={cm.userId}
-                userId={cm.userId}
-                size="sm"
-                withUsername
-                linkToProfile
-                // TODO don't do the uuid thing
-                badge={
-                  cm.user.isModerator ? (
-                    <EdgeMedia src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'} width={20} />
-                  ) : undefined
-                }
-              />
+              <Button key={cm.userId} variant="light" color="gray" compact>
+                <UserAvatar
+                  user={cm.user}
+                  size="xs"
+                  withUsername
+                  linkToProfile
+                  // TODO don't do the uuid thing
+                  badge={
+                    <Group spacing={6} ml={4} align="center">
+                      {cm.user.isModerator ? (
+                        <EdgeMedia
+                          title="Moderator"
+                          src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'}
+                          width={16}
+                        />
+                      ) : undefined}
+                      {cm.isOwner === true ? (
+                        <Box title="Creator" display="flex">
+                          <IconCrown size={16} fill="currentColor" />
+                        </Box>
+                      ) : undefined}
+                      <Box
+                        title={
+                          cm.status === ChatMemberStatus.Invited ||
+                          cm.status === ChatMemberStatus.Ignored
+                            ? 'Invited'
+                            : cm.status
+                        }
+                        display="flex"
+                      >
+                        {cm.status === ChatMemberStatus.Joined ? (
+                          <IconCircleCheck size={16} color="green" />
+                        ) : cm.status === ChatMemberStatus.Left ||
+                          cm.status === ChatMemberStatus.Kicked ? (
+                          <IconCircleX size={16} color="orangered" />
+                        ) : (
+                          <IconCircleMinus size={16} />
+                        )}
+                      </Box>
+                    </Group>
+                  }
+                />
+              </Button>
             ))}
           </Group>
         )}
@@ -457,7 +521,7 @@ export function ExistingChat() {
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }}>
+              <Stack sx={{ overflowWrap: 'break-word' }} spacing={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -535,6 +599,12 @@ export function ExistingChat() {
         myMember.status === ChatMemberStatus.Ignored ? (
         <Center h="100%">
           <Stack>
+            {allChats.length > 0 && (
+              <Text mb="md" p="sm" size="xs" italic align="center">{`"${allChats[0].content.slice(
+                0,
+                70
+              )}${allChats[0].content.length > 70 ? '...' : ''}"`}</Text>
+            )}
             <Text align="center">Join the chat?</Text>
             <Group p="sm" position="center">
               <Button
@@ -564,66 +634,91 @@ export function ExistingChat() {
 function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const { state } = useChatContext();
+
+  const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
+
+  const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
+
+  let loopMsgDate = new Date(1970);
+  let loopPreviousChatter = 0;
 
   return (
     <AnimatePresence initial={false} mode="sync">
-      {chats.map((c, idx) => (
-        // TODO probably combine messages if within a certain amount of time
-        <PStack
-          component={motion.div}
-          // ref={c.id === lastReadId ? lastReadRef : undefined}
-          key={c.id}
-          spacing="xs"
-          style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: 'spring', duration: 0.4 }}
-        >
-          {c.userId === -1 ? (
-            // <Group align="center" position="center">
-            //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-            //   <Text
-            //     className={cx(classes.chatMessage)}
-            //     size="xs"
-            //     py={0}
-            //     sx={{
-            //       // alignSelf: 'center',
-            //       border: '1px solid gray',
-            //     }}
-            //   >
-            //     {c.content}
-            //   </Text>
-            // </Group>
-            <Text
-              className={cx(classes.chatMessage)}
-              size="xs"
-              py={0}
-              sx={{
-                alignSelf: 'center',
-                border: '1px solid gray',
-              }}
-            >
-              {c.content}
-            </Text>
-          ) : (
-            <>
-              <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
-                <UserAvatar userId={c.userId} withUsername />
-                <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-              </Group>
-              {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+      {chats.map((c, idx) => {
+        const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
+        const sameChatter = loopPreviousChatter === c.userId;
+        const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+
+        loopMsgDate = c.createdAt;
+        loopPreviousChatter = c.userId;
+
+        const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
+
+        return (
+          <PStack
+            component={motion.div}
+            // ref={c.id === lastReadId ? lastReadRef : undefined}
+            key={c.id}
+            spacing={12}
+            style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ type: 'spring', duration: 0.4 }}
+          >
+            {c.userId === -1 ? (
+              // <Group align="center" position="center">
+              //   <Text size="xs">{formatDate(c.createdAt)}</Text>
+              //   ...Text (below)
+              // </Group>
               <Text
-                className={cx(classes.chatMessage, {
-                  [classes.otherMessage]: c.userId !== currentUser?.id,
-                  [classes.myMessage]: c.userId === currentUser?.id,
-                })}
+                className={cx(classes.chatMessage)}
+                size="xs"
+                py={0}
+                sx={{
+                  alignSelf: 'center',
+                  border: '1px solid gray',
+                }}
               >
                 {c.content}
               </Text>
-            </>
-          )}
-        </PStack>
-      ))}
+            ) : (
+              <>
+                {shouldShowInfo && (
+                  <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
+                    {!!cachedUser ? (
+                      <UserAvatar user={cachedUser} withUsername />
+                    ) : (
+                      <UserAvatar userId={c.userId} withUsername />
+                    )}
+                    <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
+                  </Group>
+                )}
+                {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
+                <Tooltip
+                  label={
+                    !shouldShowInfo ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a') : undefined
+                  }
+                  disabled={shouldShowInfo}
+                  sx={{ opacity: 0.85 }}
+                  openDelay={350}
+                  position={c.userId === currentUser?.id ? 'top-end' : 'top-start'}
+                  withArrow
+                >
+                  <Text
+                    className={cx(classes.chatMessage, {
+                      [classes.otherMessage]: c.userId !== currentUser?.id,
+                      [classes.myMessage]: c.userId === currentUser?.id,
+                    })}
+                  >
+                    {c.content}
+                  </Text>
+                </Tooltip>
+              </>
+            )}
+          </PStack>
+        );
+      })}
     </AnimatePresence>
   );
 }

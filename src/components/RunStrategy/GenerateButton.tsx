@@ -20,7 +20,11 @@ export function GenerateButton({
   };
 
   if (children)
-    return React.cloneElement(children, { onClick: onClickHandler, style: { cursor: 'pointer' } });
+    return React.cloneElement(children, {
+      ...buttonProps,
+      onClick: onClickHandler,
+      style: { cursor: 'pointer' },
+    });
 
   const button = (
     <Button

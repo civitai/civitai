@@ -207,9 +207,9 @@ export default function Home() {
                         period: MetricTimeframe.Week,
                         sort: ImageSort.MostReactions,
                         types: undefined,
+                        hidden: undefined,
                         followed: false,
                         withMeta: true,
-                        hidden: false,
                       }}
                     />
                   </IsClient>

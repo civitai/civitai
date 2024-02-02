@@ -21,6 +21,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
       entityId={imageId}
       badges={[{ userId, label: 'op', color: 'violet' }]}
       limit={3}
+      key={imageId}
     >
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (

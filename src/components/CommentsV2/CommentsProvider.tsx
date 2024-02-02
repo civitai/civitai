@@ -117,21 +117,21 @@ export function RootThreadProvider({
     { entityId: entity.entityId, entityType: entity.entityType, hidden },
     {
       onSuccess: (data) => {
-        if ('children' in data) {
-          (data?.children ?? []).forEach((child) => {
-            utils.commentv2.getThreadDetails.setData(
-              {
-                entityId: child.commentId as number,
-                entityType: 'comment',
-                hidden,
-              },
-              child
-            );
-          });
+        if (!data || !('children' in data)) return;
 
-          const expandedCommentIds = data.children.map((c) => c.commentId).filter(isDefined);
-          setExpanded(expandedCommentIds);
-        }
+        (data?.children ?? []).forEach((child) => {
+          utils.commentv2.getThreadDetails.setData(
+            {
+              entityId: child.commentId as number,
+              entityType: 'comment',
+              hidden,
+            },
+            child
+          );
+        });
+
+        const expandedCommentIds = data.children.map((c) => c.commentId).filter(isDefined);
+        setExpanded(expandedCommentIds);
       },
     }
   );

@@ -74,9 +74,10 @@ export default function UserCollectionsPage() {
       >
         <MasonryContainer p={0}>
           <Stack spacing="xs">
-            <Group spacing={8}>
+            <Group spacing={8} position="right">
               <SortFilter
                 type="collections"
+                variant="button"
                 value={sort}
                 onChange={(x) => set({ sort: x as CollectionSort })}
               />

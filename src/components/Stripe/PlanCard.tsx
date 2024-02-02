@@ -100,7 +100,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
 export const planDetails: PlanMeta[] = [
   {
     name: 'Supporter Tier',
-    image: '501aec85-e3b4-42ec-afda-2fadc2361506',
+    image: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
     benefits: [
       { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
       { content: 'Early access to new features' },

@@ -37,10 +37,10 @@ export function MasonryGrid<TData>({
     rowGap,
   });
 
-  const { showAds } = useAdsContext();
+  const { adsEnabled } = useAdsContext();
   const items = useMemo(
-    () => createAdFeed({ data, columnCount, showAds: showAds && withAds }),
-    [columnCount, data, showAds]
+    () => createAdFeed({ data, columnCount, showAds: adsEnabled && withAds }),
+    [columnCount, data, adsEnabled, withAds]
   );
 
   return items.length ? (
