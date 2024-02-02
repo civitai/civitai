@@ -23,7 +23,7 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   return pool;
 }
 
-types.setTypeParser(1114, function (stringValue) {
+types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
   return new Date(stringValue.replace(' ', 'T') + 'Z');
 });
 

@@ -830,12 +830,12 @@ export const getAllImages = async ({
       LIMIT ${limit + 1}
   `;
 
-  console.time('getAllImages');
+  // Disable Prisma query
   // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+
   const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
-  console.timeEnd('getAllImages');
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
