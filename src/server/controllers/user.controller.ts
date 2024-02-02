@@ -23,6 +23,7 @@ import {
   GetUserCosmeticsSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
+  SetUserSettingsInput,
   ToggleBlockedTagSchema,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -1145,6 +1146,37 @@ export const toggleUserFeatureFlagHandler = async ({
     await setUserSetting(id, { ...restSettings, features: updatedFeatures });
 
     return updatedFeatures;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    const settings = await getUserSettings(id);
+
+    // Limits it to the input type
+    return settings as SetUserSettingsInput;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setUserSettingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetUserSettingsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const { ...restSettings } = await getUserSettings(id);
+    const newSettings = { ...restSettings, ...input };
+
+    await setUserSetting(id, newSettings);
+    return newSettings;
   } catch (error) {
     throw throwDbError(error);
   }

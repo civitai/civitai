@@ -24,6 +24,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
+import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
+import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -63,6 +65,9 @@ export default function UserBuzzDashboard() {
           <Title order={1}>My Buzz Dashboard</Title>
 
           <BuzzDashboardOverview accountId={currentUser?.id as number} />
+
+          <StripeConnectCard />
+          <OwnedBuzzWithdrawalRequestsPaged />
 
           <EarningBuzz withCTA />
 

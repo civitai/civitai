@@ -33,6 +33,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { getDisplayName } from '~/utils/string-helpers';
+import { useBuzzDashboardStyles } from '../buzz.styles';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -48,52 +49,6 @@ const options = {
   },
 };
 
-const moveBackground = keyframes({
-  '0%': {
-    backgroundPosition: '0% 50%',
-  },
-  '50%': {
-    backgroundPosition: '100% 50%',
-  },
-  '100%': {
-    backgroundPosition: '0% 50%',
-  },
-});
-
-const pulse = keyframes({
-  '0%': {
-    stroke: '#FFD43B',
-    opacity: 1,
-  },
-  '50%': {
-    stroke: '#F59F00',
-    opacity: 0.7,
-  },
-  '100%': {
-    stroke: '#F08C00',
-    opacity: 1,
-  },
-});
-
-const useStyles = createStyles((theme) => ({
-  lifetimeBuzzContainer: {
-    border: `2px solid ${theme.colors.yellow[7]}`,
-    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
-    animation: `${moveBackground} 5s ease infinite`,
-    backgroundSize: '200% 200%',
-  },
-  lifetimeBuzzBadge: {
-    background: theme.colors.dark[6],
-    borderRadius: '22px',
-    padding: '10px 20px',
-  },
-  tileCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
-  lifetimeBuzz: {
-    animation: `${pulse} 1s ease-in-out infinite`,
-  },
-}));
 export const BuzzDashboardOverview = ({
   accountId,
   accountType = 'User',
@@ -101,7 +56,7 @@ export const BuzzDashboardOverview = ({
   accountId: number;
   accountType?: BuzzAccountType;
 }) => {
-  const { classes, theme } = useStyles();
+  const { classes, theme } = useBuzzDashboardStyles();
   const { balance, lifetimeBalance, balanceLoading } = useBuzz(accountId, accountType);
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getAccountTransactions.useQuery(
     {
