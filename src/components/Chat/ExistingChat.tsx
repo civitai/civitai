@@ -696,7 +696,10 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
                 )}
                 {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
                 <Tooltip
-                  label={formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}
+                  label={
+                    !shouldShowInfo ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a') : undefined
+                  }
+                  disabled={shouldShowInfo}
                   sx={{ opacity: 0.85 }}
                   openDelay={350}
                   position={c.userId === currentUser?.id ? 'top-end' : 'top-start'}
