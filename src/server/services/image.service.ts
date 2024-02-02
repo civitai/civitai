@@ -66,6 +66,7 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -767,9 +768,7 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    ${Prisma.raw(
-      isDev ? 'LEFT ' : ''
-    )}JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -831,9 +830,12 @@ export const getAllImages = async ({
       LIMIT ${limit + 1}
   `;
 
-  if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
-  const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
-  const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+  console.time('getAllImages');
+  // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
+  // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
+  // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+  const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  console.timeEnd('getAllImages');
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
