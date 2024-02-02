@@ -13,14 +13,10 @@ import {
   ThemeIcon,
   Title,
   Badge,
-  Modal,
-  ScrollArea,
-  Checkbox,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
-import { trpc } from '~/utils/trpc';
 import { GetPaginatedOwnedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
 import {
   useMutateBuzzWithdrawalRequest,
@@ -38,91 +34,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
 import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import ReactMarkdown from 'react-markdown';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import rehypeRaw from 'rehype-raw';
-
-export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) => {
-  const dialog = useDialogContext();
-  const utils = trpc.useContext();
-  const currentUser = useCurrentUser();
-  const handleClose = dialog.onClose;
-  const [acceptedCoC, setAcceptedCoC] = useState(false);
-  const { data, isLoading } = trpc.content.get.useQuery({
-    slug: 'creators-program-coc',
-  });
-  const queryUtils = trpc.useContext();
-
-  const updateUserSettings = trpc.user.setSettings.useMutation({
-    async onSuccess(res, t2) {
-      queryUtils.user.getSettings.setData(undefined, res);
-    },
-    onError(_error, _payload, context) {
-      showErrorNotification({
-        title: 'Failed to accept code of conduct',
-        error: new Error('Something went wrong, please try again later.'),
-      });
-    },
-  });
-  const handleConfirm = async () => {
-    if (!acceptedCoC) {
-      return;
-    }
-
-    await updateUserSettings.mutate({
-      creatorsProgramCodeOfConductAccepted: true,
-    });
-
-    handleClose();
-    onAccepted();
-  };
-
-  return (
-    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
-        <Text size="lg" weight="bold">
-          Civitai Creator Program Code of Conduct
-        </Text>
-      </Group>
-      <Divider mx="-lg" mb="md" />
-      {isLoading || !data?.content ? (
-        <Center>
-          <Loader />
-        </Center>
-      ) : (
-        <Stack spacing="md">
-          <ScrollArea.Autosize maxHeight={500}>
-            <Stack>
-              <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
-                {data.content}
-              </ReactMarkdown>
-              <Checkbox
-                checked={acceptedCoC}
-                onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}
-                label="I have read and agree to the Creator Program Code of Conduct."
-                size="sm"
-              />
-            </Stack>
-          </ScrollArea.Autosize>
-          <Group ml="auto">
-            <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
-              Go back
-            </Button>
-            <Button
-              onClick={handleConfirm}
-              disabled={!acceptedCoC}
-              loading={updateUserSettings.isLoading}
-            >
-              Accept
-            </Button>
-          </Group>
-        </Stack>
-      )}
-    </Modal>
-  );
-};
+import { showSuccessNotification } from '~/utils/notifications';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { classes } = useBuzzDashboardStyles();
@@ -132,8 +44,6 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
     page: 1,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
-
-  const { data: settings, isLoading: isLoadingSettings } = trpc.user.getSettings.useQuery();
 
   const { requests, pagination, isLoading, isRefetching } =
     useQueryOwnedBuzzWithdrawalRequests(debouncedFilters);
@@ -172,26 +82,10 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
           <Title order={2}>Withdrawal Requests</Title>
           <Button
             onClick={() => {
-              if (!settings?.creatorsProgramCodeOfConductAccepted) {
-                dialogStore.trigger({
-                  component: AcceptCodeOfConduct,
-                  props: {
-                    onAccepted: () => {
-                      dialogStore.trigger({
-                        component: CreateWithdrawalRequest,
-                      });
-                    },
-                  },
-                });
-
-                return;
-              }
-
               dialogStore.trigger({
                 component: CreateWithdrawalRequest,
               });
             }}
-            disabled={isLoadingSettings}
           >
             Withdraw
           </Button>

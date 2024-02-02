@@ -1,28 +1,145 @@
 import {
-  Accordion,
-  ActionIcon,
   Alert,
   Button,
+  ButtonProps,
   Card,
   Center,
+  Checkbox,
   Divider,
   Group,
-  GroupProps,
   Loader,
+  Modal,
+  ScrollArea,
   Stack,
   Text,
   Title,
-  Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { StripeConnectStatus } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
 import { IconExternalLink } from '@tabler/icons-react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useState } from 'react';
+import { showErrorNotification } from '~/utils/notifications';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
+export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) => {
+  const dialog = useDialogContext();
+  const utils = trpc.useContext();
+  const currentUser = useCurrentUser();
+  const handleClose = dialog.onClose;
+  const [acceptedCoC, setAcceptedCoC] = useState(false);
+  const { data, isLoading } = trpc.content.get.useQuery({
+    slug: 'creators-program-coc',
+  });
+  const queryUtils = trpc.useContext();
+
+  const updateUserSettings = trpc.user.setSettings.useMutation({
+    async onSuccess(res) {
+      queryUtils.user.getSettings.setData(undefined, res);
+    },
+    onError(_error, _payload, context) {
+      showErrorNotification({
+        title: 'Failed to accept code of conduct',
+        error: new Error('Something went wrong, please try again later.'),
+      });
+    },
+  });
+  const handleConfirm = async () => {
+    if (!acceptedCoC) {
+      return;
+    }
+
+    await updateUserSettings.mutate({
+      creatorsProgramCodeOfConductAccepted: true,
+    });
+
+    handleClose();
+    onAccepted();
+  };
+
+  return (
+    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
+      <Group position="apart" mb="md">
+        <Text size="lg" weight="bold">
+          Civitai Creator Program Code of Conduct
+        </Text>
+      </Group>
+      <Divider mx="-lg" mb="md" />
+      {isLoading || !data?.content ? (
+        <Center>
+          <Loader />
+        </Center>
+      ) : (
+        <Stack spacing="md">
+          <ScrollArea.Autosize maxHeight={500}>
+            <Stack>
+              <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
+                {data.content}
+              </ReactMarkdown>
+              <Checkbox
+                checked={acceptedCoC}
+                onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}
+                label="I have read and agree to the Creator Program Code of Conduct."
+                size="sm"
+              />
+            </Stack>
+          </ScrollArea.Autosize>
+          <Group ml="auto">
+            <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
+              Go back
+            </Button>
+            <Button
+              onClick={handleConfirm}
+              disabled={!acceptedCoC}
+              loading={updateUserSettings.isLoading}
+            >
+              Accept
+            </Button>
+          </Group>
+        </Stack>
+      )}
+    </Modal>
+  );
+};
+
 const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus }) => {
+  const { data: settings, isLoading: isLoadingSettings } = trpc.user.getSettings.useQuery();
+
+  const targetUrl =
+    status === StripeConnectStatus.PendingOnboarding
+      ? '/user/stripe-connect/onboard'
+      : stripeConnectLoginUrl;
+
+  const btnProps: Partial<ButtonProps> = settings?.creatorsProgramCodeOfConductAccepted
+    ? {
+        // @ts-ignore - component is indeed valid prop for buttons
+        component: 'a',
+        href: targetUrl,
+        rightIcon: <IconExternalLink size={18} />,
+        target: '/blank',
+        loading: isLoadingSettings,
+      }
+    : {
+        rightIcon: <IconExternalLink size={18} />,
+        loading: isLoadingSettings,
+        onClick: () => {
+          dialogStore.trigger({
+            component: AcceptCodeOfConduct,
+            props: {
+              onAccepted: () => {
+                window.open(targetUrl, '_blank', 'noreferrer');
+              },
+            },
+          });
+        },
+      };
+
   switch (status) {
     case StripeConnectStatus.PendingOnboarding:
       return (
@@ -34,14 +151,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
             Click the button below to create your Stripe connect account and start receiving money.
           </Text>
 
-          <Button
-            component="a"
-            href="/user/stripe-connect/onboard"
-            rightIcon={<IconExternalLink size={18} />}
-            target="/blank"
-          >
-            Setup Stripe Connect
-          </Button>
+          <Button {...btnProps}>Setup Stripe Connect</Button>
         </Stack>
       );
     case StripeConnectStatus.Approved:
@@ -49,14 +159,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
         <Stack>
           <Text>You&rsquo;re all set!</Text>
           <Text> You can now start receiving payments for your content!</Text>
-          <Button
-            component="a"
-            href={stripeConnectLoginUrl}
-            target="/blank"
-            rightIcon={<IconExternalLink size={18} />}
-          >
-            Go to my stripe account
-          </Button>
+          <Button {...btnProps}>Go to my stripe account</Button>
         </Stack>
       );
     case StripeConnectStatus.Rejected:
@@ -69,13 +172,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
             You can login into your stripe account to see why your account was rejected and try to
             fix whatever issues may have been found.
           </Text>
-          <Button
-            component="a"
-            href="https://connect.stripe.com/express_login"
-            target="/blank"
-            rightIcon={<IconExternalLink size={18} />}
-            color="red"
-          >
+          <Button {...btnProps} color="red">
             Go to my stripe account
           </Button>
         </Stack>
@@ -93,14 +190,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
             If you want to check information on your progress, or update your details, feel free to
             visit your Stripe Connect account.
           </Text>
-          <Button
-            component="a"
-            href="https://connect.stripe.com/express_login"
-            target="/blank"
-            rightIcon={<IconExternalLink size={18} />}
-          >
-            Go to my stripe account
-          </Button>
+          <Button {...btnProps}>Go to my stripe account</Button>
         </Stack>
       );
     default:
