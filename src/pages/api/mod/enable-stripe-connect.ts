@@ -15,7 +15,6 @@ export default ModEndpoint(async (req: NextApiRequest, res: NextApiResponse) => 
   await Promise.all(
     userIds.map(async (userId) => {
       await createUserStripeConnectAccount({ userId });
-      await addSystemPermission('creatorsProgram', [userId]);
 
       await createNotification({
         userId,
@@ -23,6 +22,8 @@ export default ModEndpoint(async (req: NextApiRequest, res: NextApiResponse) => 
       }).catch();
     })
   );
+
+  await addSystemPermission('creatorsProgram', userIds);
 
   return res.status(200).json({
     success: true,
