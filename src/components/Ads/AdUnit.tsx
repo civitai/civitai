@@ -42,7 +42,8 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   const [ref, inView] = useInView({ rootMargin: '200%' });
   const { isCurrentStack } = useStackingContext();
   const { browsingMode } = useHiddenPreferencesContext();
-  const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent } = useAdsContext();
+  const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent, username } =
+    useAdsContext();
   const containerWidth = useContainerWidth();
 
   // TODO - maybe consider the priority of each nsfw override flag. Which flags have the most priority?
@@ -88,42 +89,39 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
         )}
       </Center>
       {showRemoveAds && (
-        <Text
-          component={NextLink}
-          td="underline"
-          href="/pricing"
-          color="dimmed"
-          size="xs"
-          align="center"
-        >
-          Remove ads
-        </Text>
-        //   <Group position="apart">
-        //   {showRemoveAds && (
-        //     <Text
-        //       component={NextLink}
-        //       td="underline"
-        //       href="/pricing"
-        //       color="dimmed"
-        //       size="xs"
-        //       align="center"
-        //     >
-        //       Remove ads
-        //     </Text>
-        //   )}
-        //   {showFeedback && username && (
-        //     <Text
-        //       component={NextLink}
-        //       td="underline"
-        //       href={`/ad-feedback?Username=${username}&Ad unit=${adunit}`}
-        //       color="dimmed"
-        //       size="xs"
-        //       align="center"
-        //     >
-        //       Feedback
-        //     </Text>
-        //   )}
-        // </Group>
+        // <Text
+        //   component={NextLink}
+        //   td="underline"
+        //   href="/pricing"
+        //   color="dimmed"
+        //   size="xs"
+        //   align="center"
+        // >
+        //   Remove ads
+        // </Text>
+        <Group position="apart" miw={width}>
+          <Text
+            component={NextLink}
+            td="underline"
+            href="/pricing"
+            color="dimmed"
+            size="xs"
+            align="center"
+          >
+            Remove ads
+          </Text>
+
+          <Text
+            component={NextLink}
+            td="underline"
+            href={`/ad-feedback?Username=${username}`}
+            color="dimmed"
+            size="xs"
+            align="center"
+          >
+            Feedback
+          </Text>
+        </Group>
       )}
     </>
   );
