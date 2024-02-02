@@ -53,8 +53,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (!readyRef.current && adsEnabled && cookieConsent) {
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
-        setAdsBlocked(blocked);
-        // setAdsBlocked(!isProd ? true : blocked);
+        // setAdsBlocked(blocked);
+        setAdsBlocked(!isProd ? true : blocked);
       });
     }
   }, [adsEnabled, cookieConsent]);
