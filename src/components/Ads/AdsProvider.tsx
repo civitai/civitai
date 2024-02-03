@@ -48,16 +48,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
   );
 
-  const readyRef = useRef(false);
-  useEffect(() => {
-    if (!readyRef.current && adsEnabled && cookieConsent) {
-      readyRef.current = true;
-      checkAdsBlocked((blocked) => {
-        // setAdsBlocked(blocked);
-        setAdsBlocked(!isProd ? true : blocked);
-      });
-    }
-  }, [adsEnabled, cookieConsent]);
+  // const readyRef = useRef(false);
+  // useEffect(() => {
+  //   if (!readyRef.current && adsEnabled && cookieConsent) {
+  //     readyRef.current = true;
+  //     checkAdsBlocked((blocked) => {
+  //       // setAdsBlocked(blocked);
+  //       setAdsBlocked(!isProd ? true : blocked);
+  //     });
+  //   }
+  // }, [adsEnabled, cookieConsent]);
 
   return (
     <AscendeumAdsContext.Provider
@@ -75,19 +75,28 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     >
       {adsEnabled &&
         cookieConsent &&
-        adProviders.map((provider) => <LoadProviderScript key={provider} provider={provider} />)}
+        adProviders.map((provider) => (
+          <LoadProviderScript
+            key={provider}
+            provider={provider}
+            onError={() => setAdsBlocked(true)}
+          />
+        ))}
       {children}
     </AscendeumAdsContext.Provider>
   );
 }
 
-function LoadProviderScript({ provider }: { provider: AdProvider }) {
+function LoadProviderScript({ provider, onError }: { provider: AdProvider; onError: () => void }) {
   switch (provider) {
     case 'ascendeum':
-      return <Script src="https://ads.civitai.com/asc.civitai.js" />;
+      return <Script src="https://ads.civitai.com/asc.civitai.js" onError={onError} />;
     case 'adsense':
       return (
-        <Script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728" />
+        <Script
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728"
+          onError={onError}
+        />
       );
     case 'exoclick':
     default:
