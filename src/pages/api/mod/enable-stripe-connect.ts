@@ -24,6 +24,8 @@ export default ModEndpoint(async (req: NextApiRequest, res: NextApiResponse) => 
     })
   );
 
+  await addSystemPermission('creatorsProgram', userIds);
+
   return res.status(200).json({
     success: true,
   });
