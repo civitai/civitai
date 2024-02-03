@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { ModEndpoint, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createUserStripeConnectAccount } from '../../../server/services/user-stripe-connect.service';
 import { createNotification } from '../../../server/services/notification.service';
 import { addSystemPermission } from '../../../server/services/system-cache';
@@ -9,7 +9,7 @@ const schema = z.object({
   userIds: z.preprocess((val) => (Array.isArray(val) ? val : [val]), z.array(z.coerce.number())),
 });
 
-export default ModEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const { userIds } = schema.parse(req.query);
 
   await Promise.all(
