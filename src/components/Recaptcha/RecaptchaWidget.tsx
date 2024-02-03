@@ -14,7 +14,7 @@ export const RecaptchaContext = createContext<{
   ready: boolean | null;
   tokens: Partial<Record<RecaptchaAction, RecaptchaTokenInfo>>;
   updateToken: (action: RecaptchaAction, token: RecaptchaTokenInfo) => void;
-}>({ ready: false, tokens: {}, updateToken: () => {} });
+}>({ ready: false, tokens: {}, updateToken: () => undefined });
 
 export function RecaptchaWidgetProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
