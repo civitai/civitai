@@ -71,6 +71,7 @@ export const serverSchema = z.object({
   SHOW_SFW_IN_NSFW: zc.booleanString,
   STRIPE_SECRET_KEY: z.string(),
   STRIPE_WEBHOOK_SECRET: z.string(),
+  STRIPE_CONNECT_WEBHOOK_SECRET: z.string(),
   STRIPE_DONATE_ID: z.string(),
   STRIPE_METADATA_KEY: z.string(),
   LOGGING: commaDelimitedStringArray(),

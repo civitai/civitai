@@ -9,7 +9,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["metrics", "relationJoins"]
+  previewFeatures = ["metrics"]
 }
 
 datasource db {
@@ -87,6 +87,61 @@ model UserReferralCode {
   @@index([userId], type: Hash)
 }
 
+enum StripeConnectStatus {
+  PendingOnboarding
+  Approved
+  PendingVerification
+  Rejected
+}
+
+model UserStripeConnect {
+  userId             Int                 @unique
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectedAccountId String              @unique
+  status             StripeConnectStatus @default(PendingOnboarding)
+  payoutsEnabled     Boolean             @default(false)
+  chargesEnabled     Boolean             @default(false)
+}
+
+enum BuzzWithdrawalRequestStatus {
+  Requested
+  Canceled // Refunds buzz - allows user to cancel existing one.
+  Rejected
+  Approved // Different than transferred in that a 3rd party can say it's a valid request, and the owners can reject after the fact.
+  Reverted
+  Transferred
+}
+
+model BuzzWithdrawalRequestHistory {
+  id          String                      @id @default(cuid())
+  requestId   String
+  request     BuzzWithdrawalRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  updatedById Int
+  updatedBy   User                        @relation(fields: [updatedById], references: [id], onDelete: Cascade)
+  status      BuzzWithdrawalRequestStatus @default(Requested)
+  note        String?
+  createdAt   DateTime                    @default(now())
+  metadata    Json                        @default("{}")
+}
+
+model BuzzWithdrawalRequest {
+  id                          String                         @id @default(cuid())
+  userId                      Int?
+  user                        User?                          @relation(fields: [userId], references: [id])
+  connectedAccountId          String // Keeping this for double safe-measure :)
+  buzzWithdrawalTransactionId String // from Buzz Service
+  requestedBuzzAmount         Int // 1000
+  platformFeeRate             Int // 3000 = 30% so we can do 30.25
+  transferredAmount           Int?
+  transferId                  String? // Stripe ID
+  currency                    Currency? // We should always transfer on USD really (?)
+  metadata                    Json                           @default("{}")
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
+  status                      BuzzWithdrawalRequestStatus    @default(Requested) // updated with trigger
+  history                     BuzzWithdrawalRequestHistory[]
+}
+
 model User {
   id                  Int                   @id @default(autoincrement())
   name                String?
@@ -115,6 +170,7 @@ model User {
   profilePictureId    Int?                  @unique
   profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
   settings            Json?                 @default("{}")
+  connectedAccount    UserStripeConnect?
 
   accounts             Account[]
   sessions             Session[]
@@ -146,46 +202,48 @@ model User {
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
-  imageReactions          ImageReaction[]
-  sessionInvalidation     SessionInvalidation[]
-  stats                   UserStat?
-  rank                    UserRank?
-  downloads               DownloadHistory[]
-  purchases               Purchase[]
-  cosmetics               UserCosmetic[]
-  postReactions           PostReaction[]
-  posts                   Post[]
-  resourceReviews         ResourceReview[]
-  tagImageVotes           TagsOnImageVote[]
-  tagModelVotes           TagsOnModelsVote[]
-  tagPostVotes            TagsOnPostVote[]
-  resourceReviewReactions ResourceReviewReaction[]
-  articleReactions        ArticleReaction[]
-  articles                Article[]
-  articleEngagements      ArticleEngagement[]
-  leaderboardResults      LeaderboardResult[]
-  receivedReports         UserReport[]
-  engagedImages           ImageEngagement[]
-  collections             Collection[]
-  collectionItems         CollectionItem[]
-  reviewedCollectionItems CollectionItem[]         @relation("reviewedBy")
-  contributingCollections CollectionContributor[]
-  homeBlocks              HomeBlock[]
-  bounties                Bounty[]
-  bountyEntries           BountyEntry[]
-  sponsoredBounties       BountyBenefactor[]
-  engagedBounties         BountyEngagement[]
-  bountyEntryReactions    BountyEntryReaction[]
-  referralCodes           UserReferralCode[]
-  clubs                   Club[]
-  memberships             ClubMembership[]
-  addedClubPosts          ClubPost[]
-  accessGrantedBy         EntityAccess[]
-  clubAdmin               ClubAdmin[]
-  clubPostReactions       ClubPostReaction[]
-  chatMembers             ChatMember[]
-  chatMessages            ChatMessage[]
-  chatOwners              Chat[]
+  imageReactions             ImageReaction[]
+  sessionInvalidation        SessionInvalidation[]
+  stats                      UserStat?
+  rank                       UserRank?
+  downloads                  DownloadHistory[]
+  purchases                  Purchase[]
+  cosmetics                  UserCosmetic[]
+  postReactions              PostReaction[]
+  posts                      Post[]
+  resourceReviews            ResourceReview[]
+  tagImageVotes              TagsOnImageVote[]
+  tagModelVotes              TagsOnModelsVote[]
+  tagPostVotes               TagsOnPostVote[]
+  resourceReviewReactions    ResourceReviewReaction[]
+  articleReactions           ArticleReaction[]
+  articles                   Article[]
+  articleEngagements         ArticleEngagement[]
+  leaderboardResults         LeaderboardResult[]
+  receivedReports            UserReport[]
+  engagedImages              ImageEngagement[]
+  collections                Collection[]
+  collectionItems            CollectionItem[]
+  reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
+  contributingCollections    CollectionContributor[]
+  homeBlocks                 HomeBlock[]
+  bounties                   Bounty[]
+  bountyEntries              BountyEntry[]
+  sponsoredBounties          BountyBenefactor[]
+  engagedBounties            BountyEngagement[]
+  bountyEntryReactions       BountyEntryReaction[]
+  referralCodes              UserReferralCode[]
+  clubs                      Club[]
+  memberships                ClubMembership[]
+  addedClubPosts             ClubPost[]
+  accessGrantedBy            EntityAccess[]
+  clubAdmin                  ClubAdmin[]
+  clubPostReactions          ClubPostReaction[]
+  withdrawalRequests         BuzzWithdrawalRequest[]
+  actionedWithdrawalRequests BuzzWithdrawalRequestHistory[]
+  chatMembers                ChatMember[]
+  chatMessages               ChatMessage[]
+  chatOwners                 Chat[]
 }
 
 enum OnboardingStep {

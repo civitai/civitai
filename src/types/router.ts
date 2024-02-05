@@ -120,3 +120,7 @@ type ChatRouter = RouterOutput['chat'];
 export type ChatListMessage = ChatRouter['getAllByUser'][number];
 export type ChatAllMessages = ChatRouter['getInfiniteMessages']['items'];
 export type ChatCreateChat = ChatRouter['createChat'];
+
+type BuzzWithdrawalRequestRouter = RouterOutput['buzzWithdrawalRequest'];
+export type BuzzWithdrawalRequestForModerator =
+  BuzzWithdrawalRequestRouter['getPaginated']['items'][number];

@@ -88,6 +88,8 @@ import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export function ModelVersionDetails({
   model,
@@ -953,14 +955,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-
-          <AscendeumAd
-            adunit="Sidebar_A"
-            m="0 auto"
-            sizes={{ [0]: '300x250' }}
-            showFeedback
-            showRemoveAds
-          />
+          <Adunit {...adsRegistry.modelVersionDetail} showRemoveAds />
         </Stack>
       </ContainerGrid.Col>
 

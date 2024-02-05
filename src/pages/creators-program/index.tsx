@@ -179,7 +179,7 @@ const exclusivePerks: { text: string; icon: React.ReactNode }[] = [
     icon: <IconWand size={sizing.exclusivePerks.icons} />,
   },
   {
-    text: 'A direct comunication channel to the Civitai Team',
+    text: 'A direct communication channel to the Civitai Team',
     icon: <IconHeartHandshake size={sizing.exclusivePerks.icons} />,
   },
   {
@@ -233,9 +233,9 @@ const ExclusivePerksSection = () => {
                   </Text>
                 </Text>
                 <Text>
-                  At the time of withdrawal Civitai will{' '}
+                  At the time of payment Civitai will{' '}
                   <Text component="span" className={classes.highlightColor} underline>
-                    take a {constants.buzz.platformFee * 100}% platform fee.
+                    take a {constants.buzz.platformFeeRate / 100}% platform fee.
                   </Text>
                 </Text>
               </Stack>
@@ -425,7 +425,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
 
 const faq: { q: string; a: string | React.ReactNode }[] = [
   {
-    q: 'Why a 30% platform fee on withdrawals?',
+    q: 'Why a 30% platform fee on payments?',
     a: 'While some of that fee goes to covering payment processing and currency conversion, most of it goes towards offsetting the cost of the Buzz we give out to users for the rewards system. That’s the Buzz you get for reacting to content, posting images, receiving reactions and more. Its important to keep this Buzz in circulation, since it encourages users to engage with your resources and content. Since introducing the Buzz reward system we’ve seen a 60% increase in the number of people that react to content each day.',
   },
   {
@@ -436,7 +436,7 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     q: 'How and when will I get paid?',
     a: (
       <Text>
-        You can withdraw a minimum of{' '}
+        You can get paid for a minimum of{' '}
         <CurrencyIcon
           currency={Currency.BUZZ}
           stroke={0}
@@ -454,8 +454,8 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     ),
   },
   {
-    q: 'Can I withdraw my earnings in currencies other than USD?',
-    a: 'Yes, you can withdraw in your native currency.',
+    q: 'Can I get paid in currencies other than USD?',
+    a: 'Yes, you can get paid in your native currency.',
   },
   {
     q: 'Can I leave the Creator Program?',

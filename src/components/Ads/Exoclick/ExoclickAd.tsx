@@ -1,13 +1,4 @@
-import { useDidUpdate } from '@mantine/hooks';
-import { useEffect, useRef } from 'react';
-import { createDebouncer } from '~/utils/debouncer';
-import { EventEmitter } from '~/utils/eventEmitter';
-
-declare global {
-  interface Window {
-    AdProvider: any[];
-  }
-}
+import { exoclickAdunitSizeMap, ExoclickAdSizes } from '~/components/Ads/ads.utils';
 
 // const debouncer = createDebouncer(50);
 // const emitter = new EventEmitter<{ serve: undefined }>();
@@ -16,8 +7,12 @@ declare global {
 //     (window.AdProvider = window.AdProvider || []).push({ serve: {} });
 //   })
 // );
+export function ExoclickAd({ bidSizes }: { bidSizes: string[] }) {
+  const bidSize = bidSizes[0] as ExoclickAdSizes[number];
+  const zoneId = exoclickAdunitSizeMap[bidSize];
 
-export function ExoclickAd({ zoneId, size }: { zoneId: string; size: string }) {
+  const [width, height] = bidSize.split('x');
+
   // const hasRunRef = useRef(false);
   // useEffect(() => {
   //   if (!hasRunRef.current) {
@@ -25,11 +20,10 @@ export function ExoclickAd({ zoneId, size }: { zoneId: string; size: string }) {
   //     emitter.emit('serve', undefined);
   //   }
   // }, []);
-  const [width, height] = size.split('x');
 
   return (
     <iframe
-      src={`https://a.magsrv.com/iframe.php?idzone=${zoneId}&size=${size}`}
+      src={`https://a.magsrv.com/iframe.php?idzone=${zoneId}&size=${bidSize}`}
       width={width}
       height={height}
       scrolling="no"

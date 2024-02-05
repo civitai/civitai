@@ -187,4 +187,9 @@ export const toggleFeatureInputSchema = z.object({
   value: z.boolean().optional(),
 });
 
+export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
+export const setUserSettingsInput = z.object({
+  creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
+});
+
 export const dismissAlertSchema = z.object({ alertId: z.string() });

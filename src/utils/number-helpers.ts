@@ -1,4 +1,5 @@
 import { Currency } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 
 /**
  * @see https://gist.github.com/zentala/1e6f72438796d74531803cc3833c039c
@@ -114,4 +115,19 @@ export const formatCurrencyForDisplay = (value: number, currency?: Currency) => 
 
   const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
   return `${numberWithCommas(intPart)}.${decimalPart}`;
+};
+
+export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: number) => {
+  if (!platformFeeRate) {
+    platformFeeRate = constants.buzz.platformFeeRate;
+  }
+  const dollarAmount = (buzzAmount / constants.buzz.buzzDollarRatio) * 100;
+  const platformFee = dollarAmount * (platformFeeRate / 10000);
+  const payoutAmount = dollarAmount - platformFee;
+
+  return {
+    dollarAmount,
+    platformFee,
+    payoutAmount,
+  };
 };

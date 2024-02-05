@@ -1,9 +1,8 @@
-import { add } from 'lodash';
 import { getRandomInt } from '~/utils/number-helpers';
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
-export type AdFeedItem<T> =
-  | { type: 'data'; data: T }
-  | { type: 'ad'; data: { adunit: AdUnitType; height: number; width: number } };
+export type AdFeedItem<T> = { type: 'data'; data: T } | { type: 'ad' };
 export type AdFeed<T> = AdFeedItem<T>[];
 
 type AdMatrix = {
@@ -41,72 +40,16 @@ export function createAdFeed<T>({
 
   return data.reduce<AdFeed<T>>((acc, item, i) => {
     if (adMatrix.indices.includes(i)) {
-      acc.push({
-        type: 'ad',
-        data: {
-          adunit: 'Dynamic_InContent',
-          // + 20 to account for css padding
-          height: 250 + 20,
-          width: 300,
-        },
-      });
+      acc.push({ type: 'ad' });
     }
     acc.push({ type: 'data', data: item });
     return acc;
   }, []);
 }
 
-export type AdSizeType = keyof typeof sizes;
-export type AdSizes<T extends AdSizeType> = (typeof sizes)[T];
-
-const sizes = {
-  hero: ['728x90', '970x90', '970x250', '300x250', '300x100', '320x50', '320x100', '468x60'],
-  inContent: ['300x250', '336x280'],
-  stickySidebar: ['300x600', '160x600', '120x600'],
-} as const;
-
-type AdUnits = typeof adunits;
-export type AdUnitType = keyof typeof adunits;
-export type AdUnitSizes<T extends AdUnitType> = AdSizes<AdUnits[T]>;
-export type AdUnitSize<T extends AdUnitType> = AdUnitSizes<T>[number];
-export type AdUnitBidSizes<T extends AdUnitType> = AdUnitSize<T> | AdUnitSize<T>[];
-const adunits = {
-  Leaderboard_A: 'hero',
-  Leaderboard_B: 'hero',
-  Leaderboard_C: 'hero',
-  Sidebar_A: 'inContent',
-  Sidebar_B: 'inContent',
-  Dynamic_InContent: 'inContent',
-  StickySidebar_A: 'stickySidebar',
-  StickySidebar_B: 'stickySidebar',
-} as const;
-
-export const exoclickSizes: Record<string, string> = {
-  '900x250': '5187102',
-  '728x90': '5186882',
-  '300x250': '5187018',
-  '300x100': '5187104',
-  '300x500': '5187110',
-  '160x600': '5187116',
-};
-
-export const ascendeumExoclickSizeMap: Record<string, string | null | undefined> = {
-  '728x90': '728x90',
-  '970x90': '728x90',
-  // '970x250': '900x250',
-  '970x250': null,
-  '300x250': '300x250',
-  '300x100': '300x100',
-  '320x50': '300x100',
-  '320x100': '300x100',
-  '468x60': '300x100',
-  '336x280': '300x250',
-  '300x600': null,
-  // '300x600': '300x500',
-  // '300x600': '160x600',
-  '160x600': '160x600',
-  '120x600': null,
-};
+export const useConsentManager = create<{ targeting?: boolean }>()(
+  persist(() => ({}), { name: 'cookieConsent' })
+);
 
 type AdDensity = [columns: number, interval: [min: number, max: number]];
 const adDensity: AdDensity[] = [
@@ -119,7 +62,16 @@ const adDensity: AdDensity[] = [
   [7, [14, 20]],
 ];
 
-// TODO.Briant new component types for more reusable ad component
+interface IAdUnit {
+  type: string;
+  breakpoints: {
+    minWidth?: number;
+    maxWidth?: number;
+    sizes: string[] | string;
+  }[];
+}
+
+// #region [ascendeum]
 type AscendeumAdSizes = typeof ascendeumAdSizes;
 export const ascendeumAdSizes = {
   leaderboard: ['728x90', '970x90', '970x250', '300x250', '300x100', '320x50', '320x100', '468x60'],
@@ -139,8 +91,7 @@ type AscendeumAdUnitSizeMap = {
   StickySidebar_A: AscendeumAdSizes['stickySidebar'];
   StickySidebar_B: AscendeumAdSizes['stickySidebar'];
 };
-
-export type AscendeumAdUnit<T extends AscendeumAdUnitType> = {
+export interface AscendeumAdUnit<T extends AscendeumAdUnitType> extends IAdUnit {
   type: 'ascendeum';
   adunit: T;
   breakpoints: {
@@ -148,14 +99,21 @@ export type AscendeumAdUnit<T extends AscendeumAdUnitType> = {
     maxWidth?: number;
     sizes: AscendeumAdUnitSizeMap[T][number][];
   }[];
-};
+}
+// #endregion
 
-type ExoclickAdSizes = typeof exoclickAdSizes;
+// #region [exoclick]
+export type ExoclickAdSizes = typeof exoclickAdSizes;
 const exoclickAdSizes = ['900x250', '728x90', '300x250', '300x100', '300x500', '160x600'] as const;
-export type ExoclickAdUnit = {
+
+export interface ExoclickAdUnit extends IAdUnit {
   type: 'exoclick';
-  breakpoints: { minWidth?: number; maxWidth?: number; sizes: ExoclickAdSizes[number][] }[];
-};
+  breakpoints: {
+    minWidth?: number;
+    maxWidth?: number;
+    sizes: ExoclickAdSizes[number];
+  }[];
+}
 
 export const exoclickAdunitSizeMap: Record<ExoclickAdSizes[number], string> = {
   '900x250': '5187102',
@@ -164,4 +122,44 @@ export const exoclickAdunitSizeMap: Record<ExoclickAdSizes[number], string> = {
   '300x100': '5187104',
   '300x500': '5187110',
   '160x600': '5187116',
+} as const;
+// #endregion
+
+// #region [placholder images]
+export type AnyAdSize = (typeof allAdSizes)[number];
+export const allAdSizes = [
+  ...ascendeumAdSizes.dynamicInContent,
+  ...ascendeumAdSizes.leaderboard,
+  ...ascendeumAdSizes.sidebar,
+  ...ascendeumAdSizes.stickySidebar,
+  ...exoclickAdSizes,
+] as const;
+
+const placeholderImageSizes = [
+  '120x600',
+  '300x100',
+  '300x250',
+  '300x600',
+  '728x90',
+  '970x90',
+  '970x250',
+] as const;
+
+export const adSizeImageMap: Record<AnyAdSize, (typeof placeholderImageSizes)[number]> = {
+  '728x90': '728x90',
+  '970x90': '970x90',
+  '970x250': '970x250',
+  '300x250': '300x250',
+  '300x100': '300x100',
+  '320x50': '300x100',
+  '320x100': '300x100',
+  '468x60': '300x100',
+  '336x280': '300x250',
+  '300x600': '300x600',
+  '160x600': '120x600',
+  '120x600': '120x600',
+  '900x250': '970x250',
+  '300x500': '300x600',
 };
+
+// #endregion
