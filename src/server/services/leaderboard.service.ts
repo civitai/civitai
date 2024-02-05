@@ -8,6 +8,8 @@ import {
   GetLeaderboardsInput,
   GetLeaderboardsWithResultsInput,
 } from '~/server/schema/leaderboard.schema';
+import { ProfileImage } from '~/server/selectors/image.selector';
+import { getProfilePicturesForUsers } from '~/server/services/user.service';
 
 export async function isLeaderboardPopulated() {
   const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
@@ -168,7 +170,11 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     ORDER BY lr.position
   `;
 
-  return formatLeaderboardResults(leaderboardResultsRaw, metricOrder);
+  const profilePictures = await getProfilePicturesForUsers(
+    leaderboardResultsRaw.map((r) => r.userId)
+  );
+
+  return formatLeaderboardResults(leaderboardResultsRaw, metricOrder, profilePictures);
 }
 
 export type LeaderboardWithResults = Awaited<ReturnType<typeof getLeaderboardsWithResults>>[number];
@@ -259,10 +265,18 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
     ORDER BY s.score DESC
   `;
 
-  return formatLeaderboardResults(leaderboardResultsRaw, legendsMetricOrder);
+  const profilePictures = await getProfilePicturesForUsers(
+    leaderboardResultsRaw.map((r) => r.userId)
+  );
+
+  return formatLeaderboardResults(leaderboardResultsRaw, legendsMetricOrder, profilePictures);
 }
 
-function formatLeaderboardResults(results: LeaderboardRaw[], metricSortOrder = metricOrder) {
+function formatLeaderboardResults(
+  results: LeaderboardRaw[],
+  metricSortOrder = metricOrder,
+  profilePictures: Record<string, ProfileImage> = {}
+) {
   return results.map(
     ({ metrics: metricsRaw, userId, username, deletedAt, image, cosmetics, ...results }) => {
       const metrics = Object.entries(metricsRaw)
@@ -286,6 +300,7 @@ function formatLeaderboardResults(results: LeaderboardRaw[], metricSortOrder = m
           deletedAt,
           image,
           cosmetics: cosmetics ?? [],
+          profilePicture: profilePictures[userId] ?? null,
         },
         metrics,
       };
