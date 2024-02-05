@@ -12,7 +12,7 @@ import {
   getByVersionId,
   updateFile,
 } from '~/server/services/model-file.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
@@ -33,6 +33,7 @@ export const createFileHandler = async ({
     const file = await createFile({
       ...input,
       userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
       select: {
         id: true,
         name: true,
@@ -45,7 +46,9 @@ export const createFileHandler = async ({
         },
       },
     });
-    ctx.track.modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id });
+    ctx.track
+      .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
+      .catch(handleLogError);
 
     return file;
   } catch (error) {

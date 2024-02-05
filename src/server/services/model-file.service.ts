@@ -12,12 +12,13 @@ export const getByVersionId = ({ modelVersionId }: { modelVersionId: number }) =
 export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   select,
   userId,
+  isModerator,
   ...data
-}: ModelFileCreateInput & { select: TSelect; userId: number }) {
+}: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
-    where: { id: data.modelVersionId, model: { userId } },
+    where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
   });
   if (!ownsVersion) throw throwNotFoundError();
 
