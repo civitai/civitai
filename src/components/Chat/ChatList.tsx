@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   GroupProps,
+  Highlight,
   Indicator,
   Input,
   Loader,
@@ -21,6 +22,7 @@ import { ChatMemberStatus } from '@prisma/client';
 import {
   IconCirclePlus,
   IconCloudOff,
+  IconPlugConnected,
   IconSearch,
   IconUsers,
   IconUserX,
@@ -30,6 +32,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatListMessage } from '~/types/router';
@@ -71,6 +74,7 @@ export function ChatList() {
   const [searchInput, setSearchInput] = useState<string>('');
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
+  const { connected } = useSignalContext();
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -128,7 +132,14 @@ export function ChatList() {
   return (
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart" align="center">
-        <Text>Chats</Text>
+        <Group>
+          <Text>Chats</Text>
+          {!connected && (
+            <Tooltip label="Not connected. May not receive live messages or alerts.">
+              <IconPlugConnected color="orangered" />
+            </Tooltip>
+          )}
+        </Group>
         <ActionIcon>
           <IconCirclePlus
             onClick={() => {
@@ -230,16 +241,16 @@ export function ChatList() {
                     >
                       <Box>
                         {otherMembers.length > 1 ? (
-                          <IconUsers />
+                          <IconUsers width={26} />
                         ) : otherMembers.length === 0 ? (
-                          <IconUserX />
+                          <IconUserX width={26} />
                         ) : (
-                          <UserAvatar userId={otherMembers[0].userId} />
+                          <UserAvatar user={otherMembers[0].user} />
                         )}
                       </Box>
                     </Indicator>
                     <Stack sx={{ overflow: 'hidden' }} spacing={0}>
-                      <Text
+                      <Highlight
                         size="sm"
                         fw={500}
                         sx={{
@@ -249,9 +260,10 @@ export function ChatList() {
                           minWidth: 0,
                         }}
                         color={hasMod ? 'red' : undefined}
+                        highlight={searchInput}
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
-                      </Text>
+                      </Highlight>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text

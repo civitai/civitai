@@ -2,43 +2,32 @@ import { ImageIngestionStatus } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { BlockedReason } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
+import { BlockedReason, ImageType } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImageById, ingestImageBulk } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 3;
+const rescanInterval = `${env.IMAGE_SCANNING_RETRY_DELAY} minutes`;
+const errorInterval = `${IMAGE_SCANNING_ERROR_DELAY} minutes`;
+
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
   // if (!isProd) return;
-  const images = await dbRead.image.findMany({
-    where: {
-      OR: [
-        {
-          ingestion: ImageIngestionStatus.Pending,
-          scanRequestedAt: {
-            lte: decreaseDate(new Date(), env.IMAGE_SCANNING_RETRY_DELAY, 'minute'),
-          },
-        },
-        { scanRequestedAt: null, ingestion: ImageIngestionStatus.Pending },
-        {
-          ingestion: ImageIngestionStatus.Error,
-          scanRequestedAt: {
-            lte: decreaseDate(new Date(), IMAGE_SCANNING_ERROR_DELAY, 'minute'),
-          },
-          scanJobs: { path: ['retryCount'], lt: IMAGE_SCANNING_RETRY_LIMIT },
-        },
-      ],
-    },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-      width: true,
-      height: true,
-    },
-  });
+  const images = await dbWrite.$queryRaw<IngestImageInput[]>`
+    SELECT id, url, type, width, height
+    FROM "Image"
+    WHERE (
+        ingestion = ${ImageIngestionStatus.Pending}::"ImageIngestionStatus"
+        AND ("scanRequestedAt" IS NULL OR "scanRequestedAt" <= now() - ${rescanInterval}::interval)
+      ) OR (
+        ingestion = ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+        AND "scanRequestedAt" <= now() - ${errorInterval}::interval
+        AND ("scanJobs"->>'retryCount')::int < ${IMAGE_SCANNING_RETRY_LIMIT}
+      )
+  `;
 
   if (!isProd) {
     console.log(images.length);

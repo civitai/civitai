@@ -49,6 +49,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -223,38 +224,40 @@ function MyApp(props: CustomAppProps) {
                 <FeatureFlagsProvider flags={flags}>
                   <CivitaiSessionProvider>
                     <SignalProvider>
-                      <CivitaiPosthogProvider>
-                        <CookiesProvider value={cookies}>
-                          <ReferralsProvider>
-                            <FiltersProvider value={filters}>
-                              <AdsProvider>
-                                <HiddenPreferencesProvider>
-                                  <CivitaiLinkProvider>
-                                    <NotificationsProvider zIndex={9999}>
-                                      <BrowserRouterProvider>
-                                        <RecaptchaWidgetProvider>
-                                          <ChatContextProvider>
-                                            <BaseLayout>
-                                              <CustomModalsProvider>
-                                                <TosProvider>
-                                                  {getLayout(<Component {...pageProps} />)}
-                                                </TosProvider>
-                                                <StripeSetupSuccessProvider />
-                                                <DialogProvider />
-                                                <RoutedDialogProvider />
-                                              </CustomModalsProvider>
-                                            </BaseLayout>
-                                          </ChatContextProvider>
-                                        </RecaptchaWidgetProvider>
-                                      </BrowserRouterProvider>
-                                    </NotificationsProvider>
-                                  </CivitaiLinkProvider>
-                                </HiddenPreferencesProvider>
-                              </AdsProvider>
-                            </FiltersProvider>
-                          </ReferralsProvider>
-                        </CookiesProvider>
-                      </CivitaiPosthogProvider>
+                      <ActivityReportingProvider>
+                        <CivitaiPosthogProvider>
+                          <CookiesProvider value={cookies}>
+                            <ReferralsProvider>
+                              <FiltersProvider value={filters}>
+                                <AdsProvider>
+                                  <HiddenPreferencesProvider>
+                                    <CivitaiLinkProvider>
+                                      <NotificationsProvider zIndex={9999}>
+                                        <BrowserRouterProvider>
+                                          <RecaptchaWidgetProvider>
+                                            <ChatContextProvider>
+                                              <BaseLayout>
+                                                <CustomModalsProvider>
+                                                  <TosProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                  </TosProvider>
+                                                  <StripeSetupSuccessProvider />
+                                                  <DialogProvider />
+                                                  <RoutedDialogProvider />
+                                                </CustomModalsProvider>
+                                              </BaseLayout>
+                                            </ChatContextProvider>
+                                          </RecaptchaWidgetProvider>
+                                        </BrowserRouterProvider>
+                                      </NotificationsProvider>
+                                    </CivitaiLinkProvider>
+                                  </HiddenPreferencesProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
+                          </CookiesProvider>
+                        </CivitaiPosthogProvider>
+                      </ActivityReportingProvider>
                     </SignalProvider>
                   </CivitaiSessionProvider>
                 </FeatureFlagsProvider>

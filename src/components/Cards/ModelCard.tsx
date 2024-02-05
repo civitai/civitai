@@ -309,6 +309,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                       size={30}
                                       color="white"
                                       variant="filled"
+                                      data-activity="create:model-card"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();

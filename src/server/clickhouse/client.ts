@@ -124,6 +124,7 @@ export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
 export type BountyBenefactorActivity = 'Create';
 
 export type FileActivity = 'Download';
+export type ModelFileActivity = 'Create' | 'Delete' | 'Update';
 
 export const ActionType = [
   'AddToBounty_Click',
@@ -201,6 +202,10 @@ export class Tracker {
     return this.track('actions', values);
   }
 
+  public activity(activity: string) {
+    return this.track('activities', { activity });
+  }
+
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
     return this.track('modelEvents', values);
   }
@@ -271,6 +276,10 @@ export class Tracker {
 
   public post(values: { type: PostActivityType; postId: number; nsfw: boolean; tags: string[] }) {
     return this.track('posts', values);
+  }
+
+  public modelFile(values: { type: ModelFileActivity; id: number; modelVersionId: number }) {
+    return this.track('modelFileEvents', values);
   }
 
   public image(values: {

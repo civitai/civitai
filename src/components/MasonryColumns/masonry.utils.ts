@@ -36,7 +36,7 @@ export function useMasonryColumns<TData>(
   maxItemHeight?: number,
   withAds?: boolean
 ) {
-  const { showAds } = useAdsContext();
+  const { adsEnabled } = useAdsContext();
 
   return useMemo(
     () =>
@@ -47,9 +47,9 @@ export function useMasonryColumns<TData>(
         imageDimensions,
         adjustDimensions,
         maxItemHeight,
-        showAds && withAds
+        adsEnabled && withAds
       ),
-      [data, columnWidth, columnCount, maxItemHeight, showAds] // eslint-disable-line
+      [data, columnWidth, columnCount, maxItemHeight, adsEnabled] // eslint-disable-line
   );
 }
 
@@ -79,7 +79,7 @@ const getMasonryColumns = <TData>(
   for (const item of feed) {
     let height = 0;
     if (item.type === 'ad') {
-      height = item.data.height;
+      height = 250 + 20;
     } else {
       const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
 

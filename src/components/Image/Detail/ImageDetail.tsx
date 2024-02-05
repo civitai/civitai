@@ -24,7 +24,8 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -49,6 +50,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { BrowsingMode } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -166,6 +168,7 @@ export function ImageDetail() {
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                       onClick={() => generationPanel.open({ type: 'image', id: image.id })}
                       compact
+                      data-activity="remix:image"
                     >
                       <Group spacing={4} noWrap>
                         <IconBrush size={14} />
@@ -317,15 +320,11 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
-                <AscendeumAd
-                  adunit="Sidebar_A"
-                  m="0 auto"
-                  nsfw={nsfw}
-                  sizes={{ [0]: '300x250' }}
-                  showFeedback
+                <Adunit
+                  browsingModeOverride={!nsfw ? BrowsingMode.SFW : undefined}
                   showRemoveAds
+                  {...adsRegistry.imageDetail}
                 />
-                {/* <AdsterraAd style={{ margin: '0 auto' }} /> */}
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

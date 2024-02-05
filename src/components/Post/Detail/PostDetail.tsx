@@ -3,14 +3,9 @@ import {
   Anchor,
   Badge,
   Button,
-  Card,
-  Center,
   CloseButton,
-  Container,
   Divider,
-  Grid,
   Group,
-  Paper,
   Stack,
   Text,
   Title,
@@ -22,7 +17,8 @@ import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-rea
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -251,31 +247,16 @@ export function PostDetail({ postId }: { postId: number }) {
           </Stack>
         </div>
         <div className={classes.sidebar}>
-          <AscendeumAd
-            adunit="StickySidebar_A"
-            sizes={{ [theme.breakpoints.md]: '300x600' }}
-            style={{ margin: '0 auto' }}
-            showRemoveAds
-            showFeedback
-          />
+          <Adunit showRemoveAds {...adsRegistry.postDetailSidebar} />
         </div>
       </div>
-      {/* TODO - ad wrapper so that this container around the ad goes away when the ad goes away */}
-      <Paper
-        component={Center}
+      <Adunit
         py={30}
         sx={(theme) => ({
-          background: theme.colorScheme === 'light' ? theme.colors.gray[2] : undefined,
+          background: theme.colorScheme === 'light' ? theme.colors.gray[2] : theme.colors.dark[6],
         })}
-      >
-        <AscendeumAd
-          adunit="Leaderboard_A"
-          sizes={{
-            [0]: '300x250',
-            [theme.breakpoints.md]: '970x250',
-          }}
-        />
-      </Paper>
+        {...adsRegistry.postDetailFooter}
+      />
     </>
   );
 }

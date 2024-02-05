@@ -47,8 +47,10 @@ import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { isDefined } from '~/utils/type-guards';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -104,6 +106,7 @@ export default function ImagesAsPostsInfinite({
     modelVersionId: selectedVersionId,
     modelId: model.id,
     username,
+    hidden: undefined, // override global hidden filter
     types: undefined, // override global types image filter
   });
 
@@ -119,7 +122,11 @@ export default function ImagesAsPostsInfinite({
     );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items } = useApplyHiddenPreferences({ type: 'posts', data: flatData, showHidden });
+  const { items: preferred } = useApplyHiddenPreferences({
+    type: 'posts',
+    data: flatData,
+    showHidden,
+  });
 
   // const {
   //   images: hiddenImages,
@@ -134,6 +141,28 @@ export default function ImagesAsPostsInfinite({
     hiddenUsers: galleryHiddenUsers,
     isLoading: loadingGallerySettings,
   } = useModelGallerySettings({ modelId: model.id });
+
+  const items = useMemo(() => {
+    if (loadingGallerySettings) return [];
+    return preferred
+      .filter((post) => {
+        if (!showHidden && galleryHiddenUsers.get(post.user.id)) return false;
+        return true;
+      })
+      .map(({ images, ...post }) => {
+        const filteredImages = images?.filter((i) => {
+          // show hidden images only
+          if (showHidden) return galleryHiddenImages.get(i.id);
+          if (galleryHiddenImages.get(i.id)) return false;
+          for (const tag of i.tagIds ?? []) {
+            if (galleryHiddenTags.get(tag)) return false;
+          }
+          return true;
+        });
+        return !!filteredImages?.length ? { ...post, images: filteredImages } : null;
+      })
+      .filter(isDefined);
+  }, [preferred, galleryHiddenUsers, galleryHiddenImages, loadingGallerySettings]);
 
   // const items = useMemo(() => {
   //   // TODO - fetch user reactions for images separately
@@ -216,15 +245,6 @@ export default function ImagesAsPostsInfinite({
           background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
         })}
       >
-        {/* <AscendeumAd
-          adunit="StickySidebar_B"
-          sizes={{
-            [theme.breakpoints.md]: '120x600',
-            [2030]: '300x600',
-          }}
-          style={{ ...adStyle }}
-          showRemoveAds
-        /> */}
         <MasonryProvider
           columnWidth={310}
           maxColumnCount={6}
@@ -233,15 +253,7 @@ export default function ImagesAsPostsInfinite({
         >
           <MasonryContainer>
             <Stack spacing="md">
-              <AscendeumAd
-                adunit="Leaderboard_B"
-                style={{ margin: '0 auto' }}
-                sizes={{
-                  [0]: '300x100',
-                  [theme.breakpoints.md]: '728x90',
-                  [theme.breakpoints.lg]: '970x90',
-                }}
-              />
+              <Adunit {...adsRegistry.modelDetailFeedHeader} />
               <Group spacing="xs">
                 <Title order={2}>Gallery</Title>
                 {!isMuted && (

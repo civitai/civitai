@@ -227,7 +227,7 @@ export const constants = {
     minTipAmount: 50,
     maxEntityTip: 2000,
     buzzDollarRatio: 1000,
-    platformFee: 0.3,
+    platformFeeRate: 3000, // 30.00%. Divide by 10000
     minBuzzWithdrawal: 100000,
     maxBuzzWithdrawal: 100000000,
   },

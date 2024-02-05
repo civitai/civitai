@@ -5,13 +5,14 @@ import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Paper, Text } from '@mantine/core';
 import { Logo } from '~/components/Logo/Logo';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 type Props<TData> = {
   data: TData[];
@@ -37,10 +38,10 @@ export function MasonryGrid<TData>({
     rowGap,
   });
 
-  const { showAds } = useAdsContext();
+  const { adsEnabled } = useAdsContext();
   const items = useMemo(
-    () => createAdFeed({ data, columnCount, showAds: showAds && withAds }),
-    [columnCount, data, showAds]
+    () => createAdFeed({ data, columnCount, showAds: adsEnabled && withAds }),
+    [columnCount, data, adsEnabled, withAds]
   );
 
   return items.length ? (
@@ -99,12 +100,7 @@ export function MasonryGrid<TData>({
                   </Button>
                 </Stack>
 
-                <AscendeumAd
-                  adunit="Dynamic_InContent"
-                  sizes={{ [0]: '300x250' }}
-                  showFeedback
-                  showRemoveAds
-                />
+                <Adunit showRemoveAds {...adsRegistry.masonryGrid} />
               </Paper>
             )}
           </React.Fragment>

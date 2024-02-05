@@ -649,6 +649,7 @@ export function AppHeader({
       mode="toggle"
       compact
       className="show-mobile"
+      data-activity="create:navbar"
     />
   );
 
@@ -668,6 +669,7 @@ export function AppHeader({
               // Quick hack to avoid svg from going over the button. cc: Justin 👀
               sx={() => ({ borderTopRightRadius: 0, borderBottomRightRadius: 0 })}
               compact
+              data-activity="create:navbar"
             />
             <Button
               variant="light"
@@ -874,8 +876,8 @@ export function AppHeader({
               </ActionIcon>
             )}
             {currentUser && <CivitaiLinkPopover />}
-            {currentUser && features.chat && <ChatButton />}
             {currentUser && <NotificationBell />}
+            {currentUser && features.chat && <ChatButton />}
             <Burger
               opened={burgerOpened}
               onClick={() => setBurgerOpened(!burgerOpened)}

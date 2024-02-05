@@ -1,6 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Paper, createStyles } from '@mantine/core';
+import { createStyles } from '@mantine/core';
 import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -9,7 +9,8 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 type Props<TData> = {
   data: TData[];
@@ -67,7 +68,7 @@ export function MasonryColumns<TData>({
                 {data.type === 'data' &&
                   createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
                 {data.type === 'ad' && (
-                  <Paper
+                  <Adunit
                     radius="sm"
                     sx={(theme) => ({
                       overflow: 'hidden',
@@ -75,16 +76,12 @@ export function MasonryColumns<TData>({
                       background:
                         theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
                     })}
-                    py={10}
+                    p={10}
                     withBorder
                     shadow="sm"
-                  >
-                    <AscendeumAd
-                      adunit="Dynamic_InContent"
-                      sizes={{ [0]: '300x250' }}
-                      style={{ margin: '0 auto' }}
-                    />
-                  </Paper>
+                    mx="auto"
+                    {...adsRegistry.masonryColumns}
+                  />
                 )}
               </React.Fragment>
             );

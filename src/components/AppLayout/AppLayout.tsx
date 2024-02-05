@@ -32,6 +32,7 @@ export function AppLayout({
   const InnerLayout: any = innerLayout;
   const { classes } = useStyles();
   const user = useCurrentUser();
+  // TODO - move the bannedAt check to _app.tsx
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
 

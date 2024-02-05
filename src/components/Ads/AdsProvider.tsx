@@ -4,19 +4,22 @@ import { BrowsingMode } from '~/server/common/enums';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
-import { useScript } from '~/hooks/useScript';
 import { isProd } from '~/env/other';
+import Script from 'next/script';
+import { useConsentManager } from '~/components/Ads/ads.utils';
 
+type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
+const adProviders: AdProvider[] = ['ascendeum'];
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
-  showAds: boolean;
+  nsfwOverride?: boolean;
+  adsEnabled: boolean;
   username?: string;
   isMember: boolean;
   enabled: boolean;
-  ascendeumReady: boolean;
-  // adSenseReady: boolean;
-  exoclickReady: boolean;
+  providers: readonly string[];
+  cookieConsent: boolean;
 } | null>(null);
 
 export function useAdsContext() {
@@ -24,12 +27,15 @@ export function useAdsContext() {
   if (!context) throw new Error('missing AscendumAdsProvider');
   return context;
 }
+
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
-  const isMember = !!currentUser?.subscriptionId;
+  const isMember = !!currentUser?.isMember;
   const enabled = env.NEXT_PUBLIC_ADS;
-  const showAds = enabled && !isMember;
+  const adsEnabled = enabled && !isMember;
+  // const { targeting: cookieConsent = false } = useConsentManager();
+  const cookieConsent = true;
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {
@@ -42,47 +48,60 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
   );
 
-  const ascendeumReady = useScript('https://ads.civitai.com/asc.civitai.js', {
-    canLoad: showAds,
-  });
-  // const adSenseReady = useScript(
-  //   'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728',
-  //   {
-  //     canLoad: showAds && !nsfw,
+  // const readyRef = useRef(false);
+  // useEffect(() => {
+  //   if (!readyRef.current && adsEnabled && cookieConsent) {
+  //     readyRef.current = true;
+  //     checkAdsBlocked((blocked) => {
+  //       // setAdsBlocked(blocked);
+  //       setAdsBlocked(!isProd ? true : blocked);
+  //     });
   //   }
-  // );
-  // const exoclickReady = useScript('https://a.magsrv.com/ad-provider.js', {
-  //   canLoad: showAds && nsfw,
-  // });
-  const exoclickReady = true;
-
-  const readyRef = useRef(false);
-  useEffect(() => {
-    if (!readyRef.current && showAds) {
-      readyRef.current = true;
-      checkAdsBlocked((blocked) => {
-        setAdsBlocked(!isProd ? true : blocked);
-      });
-    }
-  }, [showAds]);
+  // }, [adsEnabled, cookieConsent]);
 
   return (
     <AscendeumAdsContext.Provider
       value={{
         adsBlocked,
         nsfw,
-        showAds,
+        adsEnabled: adsEnabled,
         username: currentUser?.username,
-        ascendeumReady,
-        exoclickReady,
-        // adSenseReady,
+        nsfwOverride,
         isMember,
         enabled,
+        cookieConsent,
+        providers: adProviders,
       }}
     >
+      {adsEnabled &&
+        cookieConsent &&
+        adProviders.map((provider) => (
+          <LoadProviderScript
+            key={provider}
+            provider={provider}
+            onError={() => setAdsBlocked(true)}
+          />
+        ))}
       {children}
     </AscendeumAdsContext.Provider>
   );
+}
+
+function LoadProviderScript({ provider, onError }: { provider: AdProvider; onError: () => void }) {
+  switch (provider) {
+    case 'ascendeum':
+      return <Script src="https://ads.civitai.com/asc.civitai.js" onError={onError} />;
+    case 'adsense':
+      return (
+        <Script
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728"
+          onError={onError}
+        />
+      );
+    case 'exoclick':
+    default:
+      return null;
+  }
 }
 
 const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';

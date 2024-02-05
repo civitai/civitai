@@ -85,6 +85,8 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 
 export function ModelVersionDetails({
@@ -215,7 +217,7 @@ export function ModelVersionDetails({
             <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
           </IconBadge>
           {version.canGenerate && (
-            <GenerateButton modelVersionId={version.id}>
+            <GenerateButton modelVersionId={version.id} data-activity="create:version-stat">
               <IconBadge radius="xs" icon={<IconBrush size={14} />}>
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
@@ -533,7 +535,11 @@ export function ModelVersionDetails({
                 {hasAccess ? (
                   <>
                     {canGenerate && (
-                      <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
+                      <GenerateButton
+                        iconOnly={displayCivitaiLink}
+                        modelVersionId={version.id}
+                        data-activity="create:model"
+                      />
                     )}
                     {displayCivitaiLink || canGenerate ? (
                       <Menu position="bottom-end">
@@ -928,14 +934,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-
-          <AscendeumAd
-            adunit="Sidebar_A"
-            m="0 auto"
-            sizes={{ [0]: '300x250' }}
-            showFeedback
-            showRemoveAds
-          />
+          <Adunit {...adsRegistry.modelVersionDetail} showRemoveAds />
         </Stack>
       </ContainerGrid.Col>
 

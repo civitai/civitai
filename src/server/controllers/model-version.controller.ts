@@ -229,6 +229,7 @@ export const upsertModelVersionHandler = async ({
                     bountyId: awardedEntry.bounty.id,
                     bountyEntryId: awardedEntry.id,
                   },
+                  userId: ctx.user.id,
                   name: f.name,
                   select: {
                     id: true,

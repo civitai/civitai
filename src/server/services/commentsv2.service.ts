@@ -127,7 +127,7 @@ export const getCommentsThreadDetails = async ({
     },
   });
 
-  if (!mainThread) throw throwNotFoundError();
+  if (!mainThread) return null;
 
   type ChildThread = {
     id: number;
@@ -142,9 +142,9 @@ export const getCommentsThreadDetails = async ({
           1 AS "generationNumber"
       FROM "Thread" t
       WHERE t."parentThreadId" = ${mainThread?.id}
-    
+
       UNION ALL
-    
+
       SELECT "childThread".id,
           "childThread"."parentThreadId",
           "generationNumber"+1 AS "generationNumber"

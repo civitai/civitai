@@ -83,6 +83,7 @@ export function EdgeMedia({
           ref={imgRef}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+          onError={(e) => e.currentTarget.classList.add('load-error')}
           src={_src}
           style={style}
           {...imgProps}

@@ -151,7 +151,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     <ChatUserButton
       user={user}
       label={label}
-      sx={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5, color: theme.colors.success[2] }}
+      size={sizeOpts.button}
+      color="success.9"
+      sx={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5 }}
     />
   );
 
