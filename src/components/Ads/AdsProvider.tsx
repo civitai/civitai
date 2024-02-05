@@ -32,7 +32,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.isMember;
-  const enabled = env.NEXT_PUBLIC_ADS;
+  // const enabled = env.NEXT_PUBLIC_ADS;
+  const enabled = false;
   const adsEnabled = enabled && !isMember;
   // const { targeting: cookieConsent = false } = useConsentManager();
   const cookieConsent = true;
