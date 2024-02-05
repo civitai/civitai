@@ -65,8 +65,15 @@ export const updateFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const result = await updateFile({ ...input, userId: ctx.user.id });
-    ctx.track.modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId });
+    const result = await updateFile({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+    ctx.track
+      .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
+      .catch(handleLogError);
+
     return result;
   } catch (error) {
     throw throwDbError(error);
@@ -99,9 +106,16 @@ export const deleteFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const deleted = await deleteFile({ id: input.id, userId: ctx.user.id });
+    const deleted = await deleteFile({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     if (!deleted) throw throwNotFoundError(`No file with id ${input.id}`);
-    ctx.track.modelFile({ type: 'Delete', id: input.id, modelVersionId: deleted.modelVersionId });
+
+    ctx.track
+      .modelFile({ type: 'Delete', id: input.id, modelVersionId: deleted.modelVersionId })
+      .catch(handleLogError);
 
     return deleted;
   } catch (error) {
