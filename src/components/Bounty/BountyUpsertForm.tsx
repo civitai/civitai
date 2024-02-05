@@ -352,7 +352,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   <>
                     <InputText
                       name="name"
-                      label="Bounty Name"
+                      label="Name"
                       placeholder="e.g.:LoRA for XYZ"
                       withAsterisk
                     />
@@ -362,7 +362,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         name="type"
                         label={
                           <Group spacing={4}>
-                            <Input.Label required>Bounty Type</Input.Label>
+                            <Input.Label required>Type</Input.Label>
                             <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                               <Text>
                                 Not sure which type to choose? Learn more about bounties and their
@@ -422,6 +422,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   label="About your bounty"
                   editorSize="xl"
                   includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']}
+                  placeholder="What kind of entries are you looking for? Why did you make this? What's it for? Examples of the best case and worst case outputs from bounty entries"
                   withAsterisk
                   stickyToolbar
                 />

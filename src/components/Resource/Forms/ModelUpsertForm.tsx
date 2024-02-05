@@ -244,6 +244,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 'colors',
               ]}
               editorSize="xl"
+              placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
               withAsterisk
             />
           </Stack>
@@ -287,7 +288,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                           Commercial Use
                         </Text>
                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                          <Text>Hello, we are missing the content for this bubble</Text>
+                          <Text>
+                            These permissions determine what others can do with your resource.
+                            Select the option that make the most sense for your use case.
+                          </Text>
                         </InfoPopover>
                       </Group>
                       <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
