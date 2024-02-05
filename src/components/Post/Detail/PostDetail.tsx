@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Anchor,
   Badge,
   Button,
@@ -52,7 +53,11 @@ export function PostDetail({ postId }: { postId: number }) {
   const { query } = useBrowserRouter();
   const theme = useMantineTheme();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
-  const { images, isLoading: imagesLoading } = useQueryImages(
+  const {
+    data: unfilteredImages,
+    images,
+    isLoading: imagesLoading,
+  } = useQueryImages(
     { postId, limit: post?.hasAccess ? undefined : 1 },
     // Haivng this be enabled only when the post is available is a bit slower for the user
     // but prevents users with no access from looking at all the images in the post
@@ -239,7 +244,11 @@ export function PostDetail({ postId }: { postId: number }) {
                 </Group>
               </Group>
             </Stack>
-            <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+            {!unfilteredImages?.length ? (
+              <Alert>Unable to load images</Alert>
+            ) : (
+              <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+            )}
             <Stack spacing="xl" mt="xl" id="comments" mb={90}>
               {post.detail && <RenderHtml html={post.detail} withMentions />}
               <PostComments postId={postId} userId={post.user.id} />

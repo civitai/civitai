@@ -89,7 +89,7 @@ export const useQueryImages = (
   });
 
   return {
-    data,
+    data: flatData,
     images: items,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,
