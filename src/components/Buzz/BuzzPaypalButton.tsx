@@ -15,14 +15,9 @@ type Props = {
 export const BuzzPaypalButton = ({ amount, onError, onSuccess, ...props }: Props) => {
   const { mutateAsync: createBuzzOrderMutation } = trpc.paypal.createBuzzOrder.useMutation();
   const { mutateAsync: processBuzzOrderMutation } = trpc.paypal.processBuzzOrder.useMutation();
-  const iframeRef = useRef<any>(null);
 
   const createOrder = useCallback(async () => {
     try {
-      if (amount <= 0) {
-        throw new Error('Invalid buzz amount');
-      }
-
       const order = await createBuzzOrderMutation({ amount });
       return order.id;
     } catch (error) {
@@ -46,26 +41,27 @@ export const BuzzPaypalButton = ({ amount, onError, onSuccess, ...props }: Props
     }
   }, []);
 
+  const onValidate = () => {
+    if (amount <= 0) {
+      throw new Error('Invalid buzz amount');
+    }
+  };
+
   if (!env.NEXT_PUBLIC_PAYPAL_CLIENT_ID) {
     return null;
   }
-
-  console.log(iframeRef.current);
 
   return (
     <Box style={{ colorScheme: 'none' }}>
       <PayPalButtons
         createOrder={createOrder}
+        onClick={onValidate}
         onApprove={onApprove}
         onError={onError}
         forceReRender={[amount]}
         style={{
           height: 35,
           shape: 'pill',
-        }}
-        ref={(r) => {
-          console.log(r);
-          iframeRef.current = r;
         }}
         {...props}
       />
