@@ -244,7 +244,7 @@ export function PostDetail({ postId }: { postId: number }) {
                 </Group>
               </Group>
             </Stack>
-            {!unfilteredImages?.length ? (
+            {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
             ) : (
               <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
