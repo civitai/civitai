@@ -1122,10 +1122,10 @@ export async function equipCosmetic({
 }) {
   if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
   const userCosmetics = await dbRead.userCosmetic.findMany({
-    where: { userId, cosmeticId: { in: cosmeticId } },
+    where: { userId, cosmeticId: cosmeticId.length > 0 ? { in: cosmeticId } : undefined },
     select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
-  if (!userCosmetics) throw new Error("You don't have that cosmetic");
+  if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
 
@@ -1141,5 +1141,19 @@ export async function equipCosmetic({
   ]);
 
   // Clear cache
+  await deleteUserCosmeticCache(userId);
+}
+
+export async function unequipCosmeticByType({
+  type,
+  userId,
+}: {
+  type: CosmeticType;
+  userId: number;
+}) {
+  await dbWrite.userCosmetic.updateMany({
+    where: { userId, cosmetic: { type }, equippedAt: { not: null } },
+    data: { equippedAt: null },
+  });
   await deleteUserCosmeticCache(userId);
 }

@@ -54,7 +54,7 @@ export function PostDetail({ postId }: { postId: number }) {
   const theme = useMantineTheme();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const {
-    data: unfilteredImages,
+    flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
   } = useQueryImages(

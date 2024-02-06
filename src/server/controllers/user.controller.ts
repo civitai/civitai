@@ -67,6 +67,7 @@ import {
   deleteUserProfilePictureCache,
   getUserSettings,
   setUserSetting,
+  unequipCosmeticByType,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -314,12 +315,15 @@ export const updateUserHandler = async ({
   const isSettingCosmetics = badgeId !== undefined && nameplateId !== undefined;
 
   try {
-    const payloadCosmeticIds: number[] = [];
-    if (badgeId) payloadCosmeticIds.push(badgeId);
-    if (nameplateId) payloadCosmeticIds.push(nameplateId);
-
     const user = await getUserById({ id, select: { profilePictureId: true } });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    const payloadCosmeticIds: number[] = [];
+    if (badgeId) payloadCosmeticIds.push(badgeId);
+    else await unequipCosmeticByType({ userId: id, type: CosmeticType.Badge });
+
+    if (nameplateId) payloadCosmeticIds.push(nameplateId);
+    else await unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate });
 
     const updatedUser = await updateUserById({
       id,
@@ -368,6 +372,7 @@ export const updateUserHandler = async ({
       });
       await deleteUserProfilePictureCache(id);
     }
+
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
