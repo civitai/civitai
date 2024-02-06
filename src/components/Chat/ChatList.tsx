@@ -35,6 +35,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { ChatListMessage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
@@ -75,6 +76,7 @@ export function ChatList() {
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const { connected } = useSignalContext();
+  const isMobile = useIsMobile();
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -140,13 +142,20 @@ export function ChatList() {
             </Tooltip>
           )}
         </Group>
-        <ActionIcon>
-          <IconCirclePlus
-            onClick={() => {
-              setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
-            }}
-          />
-        </ActionIcon>
+        <Group>
+          <ActionIcon>
+            <IconCirclePlus
+              onClick={() => {
+                setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
+              }}
+            />
+          </ActionIcon>
+          {isMobile && (
+            <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+              <IconX />
+            </ActionIcon>
+          )}
+        </Group>
       </Group>
       <Box p="sm" pt={0}>
         <Input
