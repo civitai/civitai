@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
+import { populateNotificationDetails } from '~/server/notifications/utils.notifications';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
@@ -11,7 +12,7 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 type NotificationsRaw = {
   id: string;
   type: string;
-  details: Prisma.JsonValue;
+  details: MixedObject;
   createdAt: Date;
   read: boolean;
 };
@@ -38,6 +39,8 @@ export async function getUserNotifications({
     ORDER BY "createdAt" DESC
     LIMIT ${limit}
   `;
+
+  await populateNotificationDetails(items);
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
