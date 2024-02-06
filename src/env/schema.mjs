@@ -132,7 +132,9 @@ export const serverSchema = z.object({
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.string().url().optional(),
-  AIR_PAYMENT_LINK_ID: z.string().optional()
+  AIR_PAYMENT_LINK_ID: z.string().optional(),
+  PAYPAL_SECRET: z.string().optional(),
+  PAYPAL_CLIENT_ID: z.string().optional()
 });
 
 /**
@@ -166,7 +168,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: zc.booleanString.default(true),
   NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
-  NEXT_PUBLIC_ADS: zc.booleanString.default(false)
+  NEXT_PUBLIC_ADS: zc.booleanString.default(false),
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional()
 });
 
 /**
@@ -201,5 +204,6 @@ export const clientEnv = {
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES !== "false",
   NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== "false",
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
-  NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === "true"
+  NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === "true",
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID
 };

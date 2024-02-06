@@ -27,6 +27,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { BuzzPaypalButton } from './BuzzPaypalButton';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -138,11 +139,11 @@ export const BuzzPurchase = ({
     },
   });
 
+  const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
+  const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
+
   const handleSubmit = async () => {
     if (!selectedPrice && !customAmount) return setError('Please choose one option');
-
-    const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
-    const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
 
     if (unitAmount < constants.buzz.minChargeAmount)
       return setError(
@@ -375,6 +376,23 @@ export const BuzzPurchase = ({
           {processing ? 'Completing your purchase...' : 'Continue'}
         </Button>
       </Group>
+      {ctaEnabled && (
+        <Accordion variant="default" classNames={{ item: classes.accordionItem }}>
+          <Accordion.Item value="otherBuyingOptions">
+            <Accordion.Control>
+              <Text>Pay with other platforms</Text>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <BuzzPaypalButton
+                onError={(error) => setError(error.message)}
+                onSuccess={() => onPurchaseSuccess?.()}
+                amount={buzzAmount}
+                disabled={!ctaEnabled || processing}
+              />
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+      )}
     </Stack>
   );
 };
