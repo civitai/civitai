@@ -194,7 +194,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             <InputSelect
               name="category"
               label={
-                <Group spacing={4}>
+                <Group spacing={4} noWrap>
                   <Input.Label>Category</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -214,7 +214,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             <InputTags
               name="tagsOnModels"
               label={
-                <Group spacing={4}>
+                <Group spacing={4} noWrap>
                   <Input.Label>Tags</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -283,7 +283,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 <ContainerGrid.Col xs={12} sm={6}>
                   <Stack spacing="xs">
                     <Stack spacing={4}>
-                      <Group spacing={4}>
+                      <Group spacing={4} noWrap>
                         <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
                           Commercial Use
                         </Text>

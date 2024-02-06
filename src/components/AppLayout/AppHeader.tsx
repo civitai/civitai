@@ -509,13 +509,12 @@ export function AppHeader({
         label: (
           <FeatureIntroduction
             feature="getting-started"
-            // TODO.howto: Add correct contentSlug
-            contentSlug={['feature-introduction', 'bounty-create']}
+            contentSlug={['feature-introduction', 'welcome']}
             actionButton={
               <Menu.Item>
                 <Group align="center" spacing="xs">
                   <IconPlayerPlayFilled stroke={1.5} />
-                  Get Started
+                  Getting Started
                 </Group>
               </Menu.Item>
             }

@@ -229,7 +229,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSelect
               name="categoryId"
               label={
-                <Group spacing={4}>
+                <Group spacing={4} noWrap>
                   <Input.Label required>Category</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -248,7 +248,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputTags
               name="tags"
               label={
-                <Group spacing={4}>
+                <Group spacing={4} noWrap>
                   <Input.Label>Tags</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -266,7 +266,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputMultiFileUpload
               name="attachments"
               label={
-                <Group spacing={4}>
+                <Group spacing={4} noWrap>
                   <Input.Label>Attachments</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>

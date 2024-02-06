@@ -361,7 +361,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         className={classes.fluid}
                         name="type"
                         label={
-                          <Group spacing={4}>
+                          <Group spacing={4} noWrap>
                             <Input.Label required>Type</Input.Label>
                             <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                               <Text>
@@ -787,7 +787,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               <InputTags
                 name="tags"
                 label={
-                  <Group spacing={4}>
+                  <Group spacing={4} noWrap>
                     <Input.Label>Tags</Input.Label>
                     <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                       <Text>

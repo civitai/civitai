@@ -990,7 +990,7 @@ export default function ModelDetailsV2({
           fromId={model.id}
           type="Suggested"
           label={
-            <Group spacing={8}>
+            <Group spacing={8} noWrap>
               Suggested Resources{' '}
               <InfoPopover>
                 <Text size="sm" weight={400}>
