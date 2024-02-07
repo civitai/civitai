@@ -68,8 +68,11 @@ export default function ContentPage({
           components={{
             a: ({ node, ...props }) => {
               return (
-                <Link href={props.href as string}>
-                  <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                <Link href={props.href as string} passHref>
+                  <a
+                    target={props.href?.includes('http') ? '_blank' : '_self'}
+                    rel="nofollow noreferrer"
+                  >
                     {props.children?.[0]}
                   </a>
                 </Link>

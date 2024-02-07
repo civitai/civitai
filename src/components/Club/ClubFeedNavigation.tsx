@@ -1,7 +1,10 @@
 import React from 'react';
 import { IconCategory, IconClubs, IconLayoutList, IconPencilMinus } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import {
+  DataItem,
+  HomeStyleSegmentedControl,
+} from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 
 const overviewPath = '[id]';
 
@@ -11,26 +14,23 @@ export const ClubFeedNavigation = ({ id }: { id: number }) => {
 
   const baseUrl = `/clubs/${id}`;
 
-  const opts: Record<
-    string,
-    { url: string; icon: React.ReactNode; label?: string; count?: number | string }
-  > = {
+  const opts: Record<string, DataItem> = {
     [overviewPath]: {
       url: `${baseUrl}/`,
-      icon: <IconClubs />,
+      icon: (props) => <IconClubs {...props} />,
       label: 'Feed',
     },
     models: {
       url: `${baseUrl}/models`,
-      icon: <IconCategory />,
+      icon: (props) => <IconCategory {...props} />,
     },
     articles: {
       url: `${baseUrl}/articles`,
-      icon: <IconPencilMinus />,
+      icon: (props) => <IconPencilMinus {...props} />,
     },
     posts: {
       url: `${baseUrl}/posts`,
-      icon: <IconLayoutList />,
+      icon: (props) => <IconLayoutList {...props} />,
     },
   };
 

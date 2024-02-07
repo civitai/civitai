@@ -1,6 +1,5 @@
-import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Button, Center, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect } from 'react';
 
@@ -12,8 +11,13 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import Link from 'next/link';
 
-export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
+export function ArticlesInfinite({
+  filters: filterOverrides = {},
+  showEof = false,
+  showEmptyCta,
+}: Props) {
   const articlesFilters = useArticleFilters();
 
   const filters = removeEmpty({ ...articlesFilters, ...filterOverrides });
@@ -59,17 +63,13 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
       ) : (
-        <Stack align="center" py="lg">
-          <ThemeIcon size={128} radius={100}>
-            <IconCloudOff size={80} />
-          </ThemeIcon>
-          <Text size={32} align="center">
-            No results found
-          </Text>
-          <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
-          </Text>
-        </Stack>
+        <NoContent py="lg">
+          {showEmptyCta && (
+            <Link href="/articles/create">
+              <Button radius="xl">Write an Article</Button>
+            </Link>
+          )}
+        </NoContent>
       )}
     </>
   );
@@ -78,4 +78,5 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
 type Props = {
   filters?: Partial<GetInfiniteArticlesSchema>;
   showEof?: boolean;
+  showEmptyCta?: boolean;
 };

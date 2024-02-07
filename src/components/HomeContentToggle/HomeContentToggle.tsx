@@ -212,7 +212,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const { set } = useHomeSelection();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/')[1] || 'home';
-  const { classes, theme } = useTabsStyles();
+  const { classes } = useTabsStyles();
 
   const tabs = Object.entries(homeOptions)
     .filter(([key]) => ![key === 'bounties' && !features.bounties].some((b) => b))

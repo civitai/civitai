@@ -1,4 +1,4 @@
-import { Container, Stack, Stepper, Title } from '@mantine/core';
+import { Container, Group, Stack, Stepper, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -10,6 +10,8 @@ import { TrainingFormSubmit } from '~/components/Resource/Forms/Training/Trainin
 import { usePostHog } from '~/hooks/usePostHog';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 type WizardState = {
   step: number;
@@ -60,14 +62,19 @@ export default function TrainWizard() {
   return (
     <Container size="sm">
       {modelLoading ? (
-        <PageLoader text="Loading model..." />
+        <PageLoader text="Loading resource..." />
       ) : modelError ? (
         <NotFound />
       ) : (
         <Stack pb="xl">
-          <Title mb="sm" order={2}>
-            Train a Model
-          </Title>
+          <Group spacing={8} noWrap>
+            <Title order={2}>Train a LoRA</Title>
+            <FeatureIntroduction
+              feature="model-training"
+              contentSlug={['feature-introduction', 'model-training']}
+              actionButton={<HelpButton size="md" radius="xl" />}
+            />
+          </Group>
           <Stepper
             active={state.step - 1}
             onStepClick={(step) =>
@@ -79,9 +86,9 @@ export default function TrainWizard() {
             size="sm"
           >
             {/* == Step 1: Model type selection + name */}
-            <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
+            <Stepper.Step label={editing ? 'Edit LoRA' : 'Create your LoRA'}>
               <Stack>
-                <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
+                <Title order={3}>{editing ? 'Edit LoRA' : 'Create your LoRA'}</Title>
                 <TrainingFormBasic model={model} />
               </Stack>
             </Stepper.Step>

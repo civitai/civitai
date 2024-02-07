@@ -8,7 +8,10 @@ import {
   IconUsers,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import {
+  DataItem,
+  HomeStyleSegmentedControl,
+} from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubAdminPermission } from '@prisma/client';
 
@@ -26,44 +29,35 @@ export const ClubManagementNavigation = ({ id }: { id: number }) => {
   const isResourcesEnabled = permissions.includes(ClubAdminPermission.ManageResources);
   const isRevenueEnabled = permissions.includes(ClubAdminPermission.ViewRevenue);
 
-  const opts: Record<
-    string,
-    {
-      url: string;
-      icon: React.ReactNode;
-      label?: string;
-      count?: number | string;
-      disabled?: boolean;
-    }
-  > = {
+  const opts: Record<string, DataItem> = {
     [overviewPath]: {
       url: `${baseUrl}/`,
-      icon: <IconAssembly />,
+      icon: (props) => <IconAssembly {...props} />,
       label: 'General',
     },
     tiers: {
       url: `${baseUrl}/tiers`,
-      icon: <IconCategory />,
+      icon: (props) => <IconCategory {...props} />,
       disabled: !isOwner && !isModerator && !isTiersEnabled,
     },
     admins: {
       url: `${baseUrl}/admins`,
-      icon: <IconUserBolt />,
+      icon: (props) => <IconUserBolt {...props} />,
       disabled: !isOwner && !isModerator,
     },
     resources: {
       url: `${baseUrl}/resources`,
-      icon: <IconFiles />,
+      icon: (props) => <IconFiles {...props} />,
       disabled: !isOwner && !isModerator && !isResourcesEnabled,
     },
     members: {
       url: `${baseUrl}/members`,
-      icon: <IconUsers />,
+      icon: (props) => <IconUsers {...props} />,
       disabled: !isOwner && !isModerator && !isMembershipsEnabled,
     },
     revenue: {
       url: `${baseUrl}/revenue`,
-      icon: <IconBolt />,
+      icon: (props) => <IconBolt {...props} />,
       disabled: !isOwner && !isModerator && !isRevenueEnabled,
     },
   };
