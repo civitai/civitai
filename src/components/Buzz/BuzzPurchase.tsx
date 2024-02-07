@@ -29,6 +29,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { BuzzPaypalButton } from './BuzzPaypalButton';
+import { closeAllModals, openConfirmModal, openModal } from '@mantine/modals';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -142,6 +143,17 @@ export const BuzzPurchase = ({
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
   const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
+  const successMessage = purchaseSuccessMessage ? (
+    purchaseSuccessMessage(buzzAmount)
+  ) : (
+    <Stack>
+      <Text>Thank you for your purchase!</Text>
+      <Text>
+        <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited to
+        your account.
+      </Text>
+    </Stack>
+  );
 
   const handleSubmit = async () => {
     if (!selectedPrice && !customAmount) return setError('Please choose one option');
@@ -177,17 +189,7 @@ export const BuzzPurchase = ({
             <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
-        successMessage: purchaseSuccessMessage ? (
-          purchaseSuccessMessage(buzzAmount)
-        ) : (
-          <Stack>
-            <Text>Thank you for your purchase!</Text>
-            <Text>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
-              to your account.
-            </Text>
-          </Stack>
-        ),
+        successMessage,
         onSuccess: async (stripePaymentIntentId) => {
           // We do it here just in case, but the webhook should also do it
           await completeStripeBuzzPurchaseMutation({
@@ -394,7 +396,29 @@ export const BuzzPurchase = ({
                 <Divider />
                 <BuzzPaypalButton
                   onError={(error) => setError(error.message)}
-                  onSuccess={() => onPurchaseSuccess?.()}
+                  onSuccess={() => {
+                    openModal({
+                      title: 'Payment successful',
+                      children: (
+                        <Stack>
+                          <Divider mx="-lg" />
+                          {successMessage ? (
+                            <>{successMessage}</>
+                          ) : (
+                            <Text>Thank you for your purchase!</Text>
+                          )}
+                          <Button
+                            onClick={() => {
+                              closeAllModals();
+                            }}
+                          >
+                            Close
+                          </Button>
+                        </Stack>
+                      ),
+                    });
+                    onPurchaseSuccess?.();
+                  }}
                   amount={buzzAmount}
                   disabled={!ctaEnabled || processing}
                 />
