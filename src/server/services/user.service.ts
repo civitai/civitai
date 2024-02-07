@@ -645,6 +645,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await dbWrite.article.deleteMany({ where: { userId: id } });
   await dbWrite.post.deleteMany({ where: { userId: id } });
   await dbWrite.model.deleteMany({ where: { userId: id } });
+  await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
+  await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
   // remove images from s3 buckets before deleting them
   try {
