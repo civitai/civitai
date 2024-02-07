@@ -19,7 +19,7 @@ import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { BaseModel, BaseModelType, ModelFileType } from '~/server/common/constants';
+import { BaseModel, BaseModelType, ModelFileType, CacheTTL } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -75,6 +75,8 @@ import {
 } from '~/server/services/generation/generation.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
+import { fromJson, toJson } from '~/utils/json-helpers';
+import { redis } from '~/server/redis/client';
 import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -1877,6 +1879,27 @@ export const setAssociatedResources = async (
   ]);
 };
 // #endregion
+
+export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
+  const cachedSettings = await redis.get(`model:gallery-settings:${id}`);
+  if (cachedSettings)
+    return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
+
+  const model = await getModel({
+    id: id,
+    select: { id: true, userId: true, gallerySettings: true },
+  });
+  if (!model) return null;
+
+  const settings = model.gallerySettings
+    ? await getGalleryHiddenPreferences({
+        settings: model.gallerySettings as ModelGallerySettingsSchema,
+      })
+    : null;
+  await redis.set(`model:gallery-settings:${id}`, toJson(settings), { EX: CacheTTL.week });
+
+  return settings;
+};
 
 export const getGalleryHiddenPreferences = async ({
   settings,
