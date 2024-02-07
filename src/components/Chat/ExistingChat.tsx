@@ -678,8 +678,17 @@ function DisplayMessages({
   const { state } = useChatContext();
 
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
-
   const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
+
+  // TODO we should be checking first if this exists in `chats`
+  //      then, grab the content
+  //      then, grab the user info from chatMembers (but what if its not there?)
+  const replyIds = chats
+    .filter((c) => isDefined(c.referenceMessageId))
+    .map((c) => c.referenceMessageId as number);
+  const replyData = trpc.useQueries((t) =>
+    replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
+  );
 
   let loopMsgDate = new Date(1970);
   let loopPreviousChatter = 0;
@@ -696,6 +705,11 @@ function DisplayMessages({
 
         const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
         const isMe = c.userId === currentUser?.id;
+
+        const tReplyData =
+          !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
+            ? replyData[replyIds.indexOf(c.referenceMessageId)]
+            : undefined;
 
         return (
           <PStack
@@ -744,10 +758,20 @@ function DisplayMessages({
                     sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                   >
                     <IconArrowBack size={14} />
-                    {/* TODO this will probably break for pagination */}
+                    {!!tReplyData?.data?.user && (
+                      <Tooltip label={tReplyData.data.user.username}>
+                        <Box>
+                          <UserAvatar user={tReplyData.data.user} size="xs" />
+                        </Box>
+                      </Tooltip>
+                    )}
                     <Text className={cx([classes.chatMessage, classes.replyMessage])}>
-                      {chats.find((tc) => tc.id === c.referenceMessageId)?.content ?? (
+                      {!tReplyData || tReplyData.isError ? (
                         <em>Could not load message.</em>
+                      ) : tReplyData.isLoading ? (
+                        <em>Loading content...</em>
+                      ) : (
+                        tReplyData.data?.content ?? <em>Could not load message.</em>
                       )}
                     </Text>
                   </Group>
