@@ -1,13 +1,11 @@
 import { env } from '~/env/server.mjs';
 import { constants } from '../common/constants';
-import { isDev } from '~/env/other';
 import { createBuzzTransaction } from './buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { PaypalPurchaseBuzzSchema } from '../schema/paypal.schema';
 import { logToAxiom } from '../logging/client';
 
-const PAYPAL_URL = isDev ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
 const Authorization = `Basic ${Buffer.from(`${env.PAYPAL_CLIENT_ID}:${env.PAYPAL_SECRET}`).toString(
   'base64'
 )}`;
@@ -16,7 +14,7 @@ const log = (data: MixedObject) => {
 };
 
 export const createBuzzOrder = async ({ amount, userId }: PaypalPurchaseBuzzSchema) => {
-  const response = await fetch(`${PAYPAL_URL}/v2/checkout/orders`, {
+  const response = await fetch(`${env.PAYPAL_API_URL}/v2/checkout/orders`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -62,7 +60,7 @@ export const createBuzzOrder = async ({ amount, userId }: PaypalPurchaseBuzzSche
 };
 
 export const processBuzzOrder = async (orderId: string) => {
-  const response = await fetch(`${PAYPAL_URL}/v2/checkout/orders/${orderId}`, {
+  const response = await fetch(`${env.PAYPAL_API_URL}/v2/checkout/orders/${orderId}`, {
     headers: {
       Authorization,
     },
@@ -90,7 +88,7 @@ export const processBuzzOrder = async (orderId: string) => {
       });
 
       // Update order status
-      await fetch(`${PAYPAL_URL}/v2/checkout/orders/${orderId}`, {
+      await fetch(`${env.PAYPAL_API_URL}/v2/checkout/orders/${orderId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

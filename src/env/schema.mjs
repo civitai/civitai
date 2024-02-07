@@ -133,6 +133,7 @@ export const serverSchema = z.object({
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.string().url().optional(),
   AIR_PAYMENT_LINK_ID: z.string().optional(),
+  PAYPAL_API_URL: z.string().url().optional(),
   PAYPAL_SECRET: z.string().optional(),
   PAYPAL_CLIENT_ID: z.string().optional()
 });

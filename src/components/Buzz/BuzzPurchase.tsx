@@ -10,6 +10,7 @@ import {
   Input,
   Accordion,
   ThemeIcon,
+  Divider,
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
@@ -21,7 +22,7 @@ import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -383,12 +384,21 @@ export const BuzzPurchase = ({
               <Text>Pay with other platforms</Text>
             </Accordion.Control>
             <Accordion.Panel>
-              <BuzzPaypalButton
-                onError={(error) => setError(error.message)}
-                onSuccess={() => onPurchaseSuccess?.()}
-                amount={buzzAmount}
-                disabled={!ctaEnabled || processing}
-              />
+              <Stack>
+                <Text size="sm">
+                  Your total payment will be{' '}
+                  <Text component="span" weight="bold">
+                    ${formatCurrencyForDisplay(unitAmount)}
+                  </Text>
+                </Text>
+                <Divider />
+                <BuzzPaypalButton
+                  onError={(error) => setError(error.message)}
+                  onSuccess={() => onPurchaseSuccess?.()}
+                  amount={buzzAmount}
+                  disabled={!ctaEnabled || processing}
+                />
+              </Stack>
             </Accordion.Panel>
           </Accordion.Item>
         </Accordion>
