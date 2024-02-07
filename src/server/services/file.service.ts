@@ -196,14 +196,14 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  if (!noAuth && !user?.tier && !isMod) {
-    const deadline = getEarlyAccessDeadline({
-      versionCreatedAt: modelVersion.createdAt,
-      publishedAt: modelVersion.model.publishedAt,
-      earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
-    });
-    const inEarlyAccess = deadline && new Date() < deadline;
-    if (inEarlyAccess) return { status: 'early-access', details: { deadline } };
+  const deadline = getEarlyAccessDeadline({
+    versionCreatedAt: modelVersion.createdAt,
+    publishedAt: modelVersion.model.publishedAt,
+    earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
+  });
+  const inEarlyAccess = deadline !== undefined && new Date() < deadline;
+  if (!noAuth && !user?.tier && !isMod && inEarlyAccess) {
+    return { status: 'early-access', details: { deadline } };
   }
 
   // Get the correct file
@@ -250,6 +250,7 @@ export const getFileForModelVersion = async ({
       modelId: modelVersion.model.id,
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
+      inEarlyAccess,
     };
   } catch (error) {
     return { status: 'error' };
@@ -318,6 +319,7 @@ type ModelVersionFileResult =
       modelId: number;
       modelVersionId: number;
       nsfw: boolean;
+      inEarlyAccess: boolean;
     };
 
 type FileResult = {
