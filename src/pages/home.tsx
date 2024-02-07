@@ -45,17 +45,15 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function Home() {
-  const theme = useMantineTheme();
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
-  const user = useCurrentUser();
 
   const moderatedTagIds = useHiddenPreferencesData()
-    .tag.filter((x) => x.type === 'moderated' || x.type === 'always')
+    .tag.filter((x) => x.nsfwLevel !== undefined)
     .map((x) => x.id);
 
   useEffect(() => {

@@ -23,12 +23,12 @@ export const useToggleHiddenPreferences = () => {
         (old = { image: [], model: [], user: [], tag: [] }) =>
           produce(old, (draft) => {
             for (const { kind, id, ...props } of added) {
-              const index = draft[kind].findIndex((x) => x.id === id && x.type === props.type);
+              const index = draft[kind].findIndex((x) => x.id === id && x.hidden);
               if (index === -1) draft[kind].push({ id, ...props } as any);
               else draft[kind][index] = { id, ...props };
             }
             for (const { kind, id, ...props } of removed) {
-              const index = draft[kind].findIndex((x) => x.id === id && x.type === props.type);
+              const index = draft[kind].findIndex((x) => x.id === id && x.hidden);
               if (index > -1) draft[kind].splice(index, 1);
             }
           })
@@ -51,7 +51,7 @@ export const useUpdateHiddenPreferences = () => {
       (old = { image: [], model: [], user: [], tag: [] }) =>
         produce(old, (draft) => {
           for (const item of data) {
-            const index = draft[kind].findIndex((x) => x.id === item.id && x.type === type);
+            const index = draft[kind].findIndex((x) => x.id === item.id && x.hidden);
             if (hidden === true && index === -1) draft[kind].push({ ...item, type } as any);
             else if (hidden === false && index > -1) draft[kind].splice(index, 1);
             else if (hidden === undefined) {

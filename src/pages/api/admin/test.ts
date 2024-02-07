@@ -4,6 +4,15 @@ import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { getTopContributors } from '~/server/services/buzz.service';
+import {
+  getBlockedTags,
+  getModerationTags2,
+  getModerationTags,
+  getSystemHiddenTags,
+  getTagRules,
+} from '~/server/services/system-cache';
+import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
@@ -19,6 +28,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   //   entityId: 218322,
   //   userId: 969069,
   // });
+  // const test = await getAllHiddenForUser({ userId: 5418, refreshCache: true });
+  const test = await getAllHiddenForUser({ userId: 5, refreshCache: true });
+  return res.send(test);
 
   return res.status(200).json({
     ok: true,

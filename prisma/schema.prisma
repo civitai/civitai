@@ -1295,6 +1295,7 @@ model Tag {
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
   nsfw       NsfwLevel   @default(None)
+  nsfwLevel  Int         @default(0)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
@@ -1861,6 +1862,7 @@ model ArticleReaction {
 enum TagEngagementType {
   Hide
   Follow
+  // Depracated (don't use Allow)
   Allow
 }
 

@@ -12,10 +12,8 @@ export function HiddenTagsSection() {
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const tags = useHiddenPreferencesData().tag;
-  const hiddenTags = tags.filter((x) => x.type === 'hidden');
-  const moderationTags = tags
-    .filter((x) => x.type === 'moderated' || x.type === 'always')
-    .map((x) => x.id);
+  const hiddenTags = tags.filter((x) => x.hidden);
+  const moderationTags = tags.filter((x) => x.nsfwLevel !== undefined).map((x) => x.id);
 
   const blockedTags = hiddenTags.filter((x) => !moderationTags.includes(x.id));
 

@@ -42,7 +42,7 @@ export function HiddenTagsSection() {
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const tags = useHiddenPreferencesData().tag;
-  const moderationTags = tags.filter((x) => x.type === 'moderated');
+  const moderationTags = tags.filter((x) => x.nsfwLevel !== undefined);
   const { data: gallerySettings, toggleGallerySettings } = useModelGallerySettings({
     modelId: model.id,
   });
@@ -204,7 +204,7 @@ function MatureContentSection() {
   const { model } = useImagesAsPostsInfiniteContext();
 
   const tags = useHiddenPreferencesData().tag;
-  const moderationTags = tags.filter((x) => x.type === 'moderated');
+  const moderationTags = tags.filter((x) => x.nsfwLevel !== undefined);
   const { hiddenTags, toggleGallerySettings } = useModelGallerySettings({ modelId: model.id });
   const preferences = useMemo(
     () =>

@@ -64,6 +64,7 @@ export const REDIS_KEYS = {
   SYSTEM: {
     FEATURES: 'system:features',
     MODERATION_TAGS: 'system:moderation-tags-2',
+    MODERATED_TAGS: 'system:moderated_tags',
     TAG_RULES: 'system:tag-rules',
     BLOCKED_TAGS: 'system:blocked-tags',
     HIDDEN_TAGS: 'system:hidden-tags-2',

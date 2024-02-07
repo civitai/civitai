@@ -196,3 +196,21 @@ export enum ThreadSort {
   Oldest = 'Oldest',
   MostReactions = 'Most Reactions',
 }
+
+export enum NsfwLevel {
+  Blocked = -1,
+  PG = 0,
+  PG13 = 1,
+  R = 2,
+  X = 3,
+  XXX = 4,
+}
+
+export const NsfwLevelLabel = {
+  [NsfwLevel.Blocked]: 'Blocked',
+  [NsfwLevel.PG]: 'PG',
+  [NsfwLevel.PG13]: 'PG-13',
+  [NsfwLevel.R]: 'R',
+  [NsfwLevel.X]: 'X',
+  [NsfwLevel.XXX]: 'XXX',
+};

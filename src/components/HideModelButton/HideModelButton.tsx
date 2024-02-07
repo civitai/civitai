@@ -11,7 +11,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
   const currentUser = useCurrentUser();
 
   const models = useHiddenPreferencesData().model;
-  const hiddenModels = models.filter((x) => x.type === 'always');
+  const hiddenModels = models.filter((x) => x.hidden);
   const alreadyHiding = hiddenModels.some((x) => x.id === modelId);
 
   const toggleHiddenMutation = useToggleHiddenPreferences();
