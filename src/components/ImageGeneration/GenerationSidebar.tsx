@@ -5,6 +5,8 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
@@ -68,6 +70,11 @@ export function GenerationSidebar() {
             }`,
           })}
         >
+          <FeatureIntroduction
+            feature="image-generator"
+            contentSlug={['feature-introduction', 'image-generator']}
+            actionButton={<HelpButton size="md" radius="xl" mr="auto" />}
+          />
           {!isGeneratePage && (
             <>
               <GeneratedImageActions />

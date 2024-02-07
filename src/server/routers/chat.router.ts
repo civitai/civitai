@@ -4,6 +4,7 @@ import {
   createMessageHandler,
   getChatsForUserHandler,
   getInfiniteMessagesHandler,
+  getMessageByIdHandler,
   getUnreadMessagesForUserHandler,
   getUserSettingsHandler,
   isTypingHandler,
@@ -16,6 +17,7 @@ import {
   createChatInput,
   createMessageInput,
   getInfiniteMessagesInput,
+  getMessageByIdInput,
   isTypingInput,
   modifyUserInput,
   updateMessageInput,
@@ -35,6 +37,7 @@ export const chatRouter = router({
   getInfiniteMessages: protectedProcedure
     .input(getInfiniteMessagesInput)
     .query(getInfiniteMessagesHandler),
+  getMessageById: protectedProcedure.input(getMessageByIdInput).query(getMessageByIdHandler),
   createMessage: guardedProcedure.input(createMessageInput).mutation(createMessageHandler),
   updateMessage: guardedProcedure.input(updateMessageInput).mutation(updateMessageHandler),
   isTyping: guardedProcedure.input(isTypingInput).mutation(isTypingHandler),

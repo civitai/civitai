@@ -1414,6 +1414,7 @@ model TagsOnImageVote {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   vote      Int // 1 or -1
   createdAt DateTime @default(now())
+  applied   Boolean  @default(false)
 
   @@id([tagId, imageId, userId])
   @@index([imageId], type: Hash)

@@ -4,7 +4,6 @@ import {
   GetInfiniteImagesInput,
   ImageModerationSchema,
   ImageReviewQueueInput,
-  imageReviewQueueInputSchema,
 } from './../schema/image.schema';
 import {
   getAllImages,
@@ -36,7 +35,7 @@ import { ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { isDefined } from '../../utils/type-guards';
-import { SessionUser } from 'next-auth';
+import { getGallerySettingsByModelId } from '~/server/services/model.service';
 
 type SortableImage = {
   nsfw: NsfwLevel;
@@ -237,7 +236,7 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 export const getImagesAsPostsInfiniteHandler = async ({
-  input: { limit, cursor, ...input },
+  input: { limit, cursor, hidden, ...input },
   ctx,
 }: {
   input: GetInfiniteImagesInput;
@@ -246,12 +245,18 @@ export const getImagesAsPostsInfiniteHandler = async ({
   try {
     const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
+    const fetchHidden = hidden && input.modelId;
+    const modelGallerySettings = fetchHidden
+      ? await getGallerySettingsByModelId({ id: input.modelId as number }) // we know it's a number because fetchHidden is true
+      : null;
+    const hiddenImagesIds = modelGallerySettings?.hiddenImages ?? [];
 
     while (true) {
       const { nextCursor, items } = await getAllImages({
         ...input,
         followed: false,
         cursor,
+        ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         userId: ctx.user?.id,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },

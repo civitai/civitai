@@ -6,6 +6,7 @@ import {
   Menu,
   Stack,
   Text,
+  ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -18,6 +19,7 @@ import {
   IconPlaylistAdd,
   IconInfoCircle,
   IconBolt,
+  IconArchiveFilled,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -41,7 +43,7 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { CollectionType, CosmeticType } from '@prisma/client';
+import { CollectionType, CosmeticType, ModelModifier } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
@@ -194,6 +196,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
   const { useModelVersionRedirect } = useModelCardContext();
@@ -275,6 +278,15 @@ export function ModelCard({ data, forceInView }: Props) {
                                       <Text color="white" size="xs" transform="capitalize">
                                         {isUpdated ? 'Updated' : 'New'}
                                       </Text>
+                                    </Badge>
+                                  )}
+                                  {isArchived && (
+                                    <Badge
+                                      className={cx(classes.infoChip, classes.chip)}
+                                      variant="light"
+                                      radius="xl"
+                                    >
+                                      <IconArchiveFilled size={16} />
                                     </Badge>
                                   )}
                                 </Group>

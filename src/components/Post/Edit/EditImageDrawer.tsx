@@ -1,9 +1,7 @@
 import {
   Drawer,
   Stack,
-  Tooltip,
   Text,
-  TooltipProps,
   Grid,
   Input,
   Button,
@@ -21,30 +19,31 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { InputCheckbox, useForm, Form, InputTextArea, InputNumber, InputSelect } from '~/libs/form';
-import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
+import { useForm, Form, InputTextArea, InputNumber, InputSelect } from '~/libs/form';
+import {
+  ImageMetaProps,
+  imageGenerationSchema,
+  imageMetaSchema,
+} from '~/server/schema/image.schema';
 
 import { trpc } from '~/utils/trpc';
 import { splitUppercase } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
-import { TagType } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { sortAlphabeticallyBy } from '~/utils/array-helpers';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { auditImageMeta } from '~/utils/media-preprocessors';
 import { useState } from 'react';
 
-const matureLabel = 'Mature content may include content that is suggestive or provocative';
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
+// const matureLabel = 'Mature content may include content that is suggestive or provocative';
+// const tooltipProps: Partial<TooltipProps> = {
+//   maw: 300,
+//   multiline: true,
+//   position: 'bottom',
+//   withArrow: true,
+// };
 
 const schema = z.object({
   hideMeta: z.boolean().default(false),
@@ -63,7 +62,6 @@ export function EditImageDrawer() {
       opened={!!imageId}
       onClose={handleClose}
       position={mobile ? 'bottom' : 'right'}
-      // title={'Image details'}
       size={mobile ? '100%' : 'xl'}
       padding={0}
       shadow="sm"
@@ -96,7 +94,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
       steps: meta.steps ?? '',
       sampler: meta.sampler ?? '',
       seed: meta.seed ?? '',
-    } as any,
+    } as ImageMetaProps,
   };
 
   const form = useForm({ schema, defaultValues, mode: 'onChange' });
@@ -264,6 +262,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
               )}
             </Input.Wrapper>
             <Grid gutter="xs">
+              <Grid.Col span={12}>
+                <DismissibleAlert
+                  id="missing-gen-data"
+                  title="Missing generation data?"
+                  content="In some cases, we might not be able to pull in all the generation data from each image because either the image was not AI generated or we couldn't detect the right generation tool. You can always add/edit the generation data right here"
+                />
+              </Grid.Col>
               <Grid.Col span={12}>
                 <InputTextArea
                   name="meta.prompt"

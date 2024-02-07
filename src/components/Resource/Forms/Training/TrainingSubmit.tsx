@@ -37,6 +37,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzz } from '~/components/Buzz/useBuzz';
+import { NextLink } from '@mantine/next';
 
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
@@ -311,13 +312,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisFile = thisModelVersion.files[0];
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
+  const [openedSection, setOpenedSection] = useState<string | null>(null);
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
   );
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const router = useRouter();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { balance } = useBuzz();
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -681,9 +683,24 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Accordion>
         {/* TODO [bw] sample images here */}
 
-        <Title mt="md" order={5}>
-          Base Model for Training
-        </Title>
+        <Stack spacing={0}>
+          <Title mt="md" order={5}>
+            Base Model for Training
+          </Title>
+          <Text color="dimmed" size="sm">
+            Not sure which one to choose? Read our{' '}
+            <Text
+              component={NextLink}
+              variant="link"
+              target="_blank"
+              href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
+              rel="nofollow noreferrer"
+            >
+              On-Site LoRA Trainer Guide
+            </Text>{' '}
+            for more info.
+          </Text>
+        </Stack>
         <Input.Wrapper
           label="Select a base model to train your model on"
           withAsterisk
@@ -721,6 +738,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             // multiple
             // defaultValue={['training-settings']}
             mt="md"
+            onChange={setOpenedSection}
             styles={(theme) => ({
               content: { padding: 0 },
               item: {
@@ -735,7 +753,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             })}
           >
             <Accordion.Item value="training-settings">
-              <Accordion.Control>Advanced Training Settings</Accordion.Control>
+              <Accordion.Control>
+                <Stack spacing={4}>
+                  Advanced Training Settings
+                  {openedSection === 'training-settings' && (
+                    <Text size="xs" color="dimmed">
+                      Hover over each setting for more information.
+                    </Text>
+                  )}
+                </Stack>
+              </Accordion.Control>
               <Accordion.Panel>
                 <DescriptionTable
                   labelWidth="200px"

@@ -19,7 +19,7 @@ import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { BaseModel, BaseModelType, ModelFileType } from '~/server/common/constants';
+import { BaseModel, BaseModelType, ModelFileType, CacheTTL } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -75,6 +75,9 @@ import {
 } from '~/server/services/generation/generation.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
+import { fromJson, toJson } from '~/utils/json-helpers';
+import { redis } from '~/server/redis/client';
+import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -175,6 +178,7 @@ export const getModelsRaw = async ({
     cursor,
     query, // TODO: Support
     followed,
+    archived,
     tag,
     tagname,
     username,
@@ -236,6 +240,12 @@ export const getModelsRaw = async ({
         ],
         ' OR '
       )
+    );
+  }
+
+  if (!archived) {
+    AND.push(
+      Prisma.sql`m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier"`
     );
   }
 
@@ -537,7 +547,7 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
-  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
+  const modelQuery = Prisma.sql`
     ${queryWith}
     SELECT
       m."id",
@@ -632,6 +642,10 @@ export const getModelsRaw = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
+
+  const { rows: models } = await pgDbRead.query<ModelRaw & { cursorId: string | bigint | null }>(
+    modelQuery
+  );
 
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
@@ -1266,36 +1280,7 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
 
     // Handle POI change
     const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
-    if (poiChanged) {
-      if (result.poi) {
-        // Mark all nsfw images as needing review
-        await dbWrite.$executeRaw`
-          UPDATE "Image" i SET "needsReview" = 'poi'
-          FROM "ImageResource" ir
-          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-          JOIN "Model" m ON m.id = mv."modelId"
-          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" IS NULL
-            AND i.nsfw != ${NsfwLevel.None}::"NsfwLevel"
-        `;
-      } else {
-        // Remove review status from all images in poi queue
-        await dbWrite.$executeRaw`
-          UPDATE "Image" i SET "needsReview" = null
-          FROM "ImageResource" ir
-          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-          JOIN "Model" m ON m.id = mv."modelId"
-          WHERE ir."imageId" = i.id AND m.id = ${id} AND i."needsReview" = 'poi'
-            -- And there aren't any other poi models used by these images
-            AND NOT EXISTS (
-              SELECT 1
-              FROM "ImageResource" irr
-              JOIN "ModelVersion" mvv ON mvv.id = irr."modelVersionId"
-              JOIN "Model" mm ON mm.id = mvv."modelId"
-              WHERE mm.poi AND mm.id != ${id} AND irr."imageId" = i.id
-            )
-        `;
-      }
-    }
+    // A trigger now handles updating images to reflect the poi setting. We don't need to do it here.
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged) {
@@ -1894,6 +1879,27 @@ export const setAssociatedResources = async (
   ]);
 };
 // #endregion
+
+export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
+  const cachedSettings = await redis.get(`model:gallery-settings:${id}`);
+  if (cachedSettings)
+    return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
+
+  const model = await getModel({
+    id: id,
+    select: { id: true, userId: true, gallerySettings: true },
+  });
+  if (!model) return null;
+
+  const settings = model.gallerySettings
+    ? await getGalleryHiddenPreferences({
+        settings: model.gallerySettings as ModelGallerySettingsSchema,
+      })
+    : null;
+  await redis.set(`model:gallery-settings:${id}`, toJson(settings), { EX: CacheTTL.week });
+
+  return settings;
+};
 
 export const getGalleryHiddenPreferences = async ({
   settings,

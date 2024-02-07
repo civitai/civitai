@@ -1264,7 +1264,8 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
-  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+
+  const query = Prisma.sql`
     WITH targets AS (
       SELECT
         id,
@@ -1301,6 +1302,7 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
+  const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
 
   if (include.includes('tags')) {
     const tags = await dbRead.tagsOnImage.findMany({
