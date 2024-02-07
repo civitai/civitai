@@ -75,6 +75,7 @@ import {
 } from '~/server/services/generation/generation.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
+import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -175,6 +176,7 @@ export const getModelsRaw = async ({
     cursor,
     query, // TODO: Support
     followed,
+    archived,
     tag,
     tagname,
     username,
@@ -236,6 +238,12 @@ export const getModelsRaw = async ({
         ],
         ' OR '
       )
+    );
+  }
+
+  if (!archived) {
+    AND.push(
+      Prisma.sql`m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier"`
     );
   }
 
@@ -537,7 +545,7 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
-  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>`
+  const modelQuery = Prisma.sql`
     ${queryWith}
     SELECT
       m."id",
@@ -632,6 +640,10 @@ export const getModelsRaw = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
+
+  const { rows: models } = await pgDbRead.query<ModelRaw & { cursorId: string | bigint | null }>(
+    modelQuery
+  );
 
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
