@@ -98,7 +98,7 @@ export function ModelVersionDetails({
   isFavorite,
   onFavoriteClick,
   onBrowseClick,
-  hasAccess,
+  hasAccess = true,
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
