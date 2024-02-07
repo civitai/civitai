@@ -13,7 +13,14 @@ import {
   Divider,
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
-import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
+import {
+  IconArrowsExchange,
+  IconBolt,
+  IconBrandStripe,
+  IconCreditCard,
+  IconInfoCircle,
+  IconMoodDollar,
+} from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -324,7 +331,6 @@ export const BuzzPurchase = ({
                       value={customAmount ? customAmount * 10 : undefined}
                       min={1000}
                       max={constants.buzz.maxChargeAmount * 10}
-                      disabled={processing}
                       onChange={(value) => {
                         setError('');
                         setCustomAmount(Math.ceil((value ?? 0) / 10));
@@ -345,7 +351,6 @@ export const BuzzPurchase = ({
                       step={100}
                       max={constants.buzz.maxChargeAmount}
                       precision={2}
-                      disabled={processing}
                       rightSection={null}
                       rightSectionWidth="auto"
                       format="currency"
@@ -369,64 +374,59 @@ export const BuzzPurchase = ({
           </Stack>
         </Input.Wrapper>
       )}
-      <Group position="right">
+      <Stack spacing="md">
+        {!!unitAmount && (
+          <>
+            <Divider mx="-lg" />
+            <Text size="sm" align="right">
+              Your total payment will be{' '}
+              <Text component="span" weight="bold">
+                ${formatCurrencyForDisplay(unitAmount)}
+              </Text>
+            </Text>
+          </>
+        )}
+        <Button disabled={!ctaEnabled} onClick={handleSubmit} leftIcon={<IconBrandStripe />}>
+          Pay with Stripe
+        </Button>
+        <BuzzPaypalButton
+          onError={(error) => setError(error.message)}
+          onSuccess={() => {
+            openModal({
+              title: 'Payment successful',
+              children: (
+                <Stack>
+                  <Divider mx="-lg" />
+                  {successMessage ? (
+                    <>{successMessage}</>
+                  ) : (
+                    <Text>Thank you for your purchase!</Text>
+                  )}
+                  <Button
+                    onClick={() => {
+                      closeAllModals();
+                    }}
+                  >
+                    Close
+                  </Button>
+                </Stack>
+              ),
+            });
+            onPurchaseSuccess?.();
+          }}
+          amount={buzzAmount}
+          disabled={!ctaEnabled}
+        />
         {onCancel && (
           <Button variant="light" color="gray" onClick={onCancel}>
             Cancel
           </Button>
         )}
-        <Button disabled={!ctaEnabled} onClick={handleSubmit} loading={processing}>
-          {processing ? 'Completing your purchase...' : 'Continue'}
-        </Button>
-      </Group>
-      {ctaEnabled && (
-        <Accordion variant="default" classNames={{ item: classes.accordionItem }}>
-          <Accordion.Item value="otherBuyingOptions">
-            <Accordion.Control>
-              <Text>Pay with other platforms</Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack>
-                <Text size="sm">
-                  Your total payment will be{' '}
-                  <Text component="span" weight="bold">
-                    ${formatCurrencyForDisplay(unitAmount)}
-                  </Text>
-                </Text>
-                <Divider />
-                <BuzzPaypalButton
-                  onError={(error) => setError(error.message)}
-                  onSuccess={() => {
-                    openModal({
-                      title: 'Payment successful',
-                      children: (
-                        <Stack>
-                          <Divider mx="-lg" />
-                          {successMessage ? (
-                            <>{successMessage}</>
-                          ) : (
-                            <Text>Thank you for your purchase!</Text>
-                          )}
-                          <Button
-                            onClick={() => {
-                              closeAllModals();
-                            }}
-                          >
-                            Close
-                          </Button>
-                        </Stack>
-                      ),
-                    });
-                    onPurchaseSuccess?.();
-                  }}
-                  amount={buzzAmount}
-                  disabled={!ctaEnabled || processing}
-                />
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
-      )}
+
+        <Text size="xs" align="center" color="dimmed">
+          Stripe supports Credit cards, Bank transfer, Google Pay, Apple Pay, and more.
+        </Text>
+      </Stack>
     </Stack>
   );
 };

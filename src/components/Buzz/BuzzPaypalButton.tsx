@@ -10,9 +10,10 @@ type Props = {
   onError: (error: any) => void;
   onSuccess?: (data: any) => void;
   disabled?: boolean;
+  height?: number;
 };
 
-export const BuzzPaypalButton = ({ amount, onError, onSuccess, ...props }: Props) => {
+export const BuzzPaypalButton = ({ amount, onError, onSuccess, height = 35, ...props }: Props) => {
   const { mutateAsync: createBuzzOrderMutation } = trpc.paypal.createBuzzOrder.useMutation();
   const { mutateAsync: processBuzzOrderMutation } = trpc.paypal.processBuzzOrder.useMutation();
 
@@ -60,9 +61,9 @@ export const BuzzPaypalButton = ({ amount, onError, onSuccess, ...props }: Props
         onError={onError}
         forceReRender={[amount]}
         style={{
-          height: 35,
-          shape: 'pill',
+          height,
         }}
+        fundingSource={FUNDING.PAYPAL}
         {...props}
       />
     </Box>
