@@ -47,7 +47,7 @@ import {
 import { FileInfo } from '~/components/FileInfo/FileInfo';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
-import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
@@ -85,6 +85,9 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
+import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 
@@ -229,12 +232,18 @@ export function ModelVersionDetails({
     {
       label: 'Base Model',
       value: (
-        <Text>
-          {version.baseModel}{' '}
-          {version.baseModelType && version.baseModelType === 'Standard'
-            ? ''
-            : version.baseModelType}
-        </Text>
+        <Group spacing={8} position="apart" noWrap>
+          <Text>
+            {version.baseModel}{' '}
+            {version.baseModelType && version.baseModelType === 'Standard'
+              ? ''
+              : version.baseModelType}
+          </Text>
+          <HowToButton
+            href="https://youtu.be/IIy3YwsXtTE?si=YiJDxMODCOTkUUM4&t=417"
+            tooltip="What is this?"
+          />
+        </Group>
       ),
     },
     {
@@ -646,6 +655,19 @@ export function ModelVersionDetails({
             deadline={version.earlyAccessDeadline}
           />
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
+
+          <DismissibleAlert
+            id="model-reporting-alert"
+            size="sm"
+            title="Reporting Resources"
+            content={
+              <Text>
+                If this resource breaks our{' '}
+                <ContentPolicyLink size="xs" color="dimmed" td="underline" inline />, remember you
+                can always report it.
+              </Text>
+            }
+          />
           <Accordion
             variant="separated"
             multiple

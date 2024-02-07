@@ -171,9 +171,10 @@ export function UserImagesPage() {
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <ImageFiltersDropdown
-                  compact
                   query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
+                  size="sm"
+                  compact
                 />
               </Group>
             </Group>
@@ -189,6 +190,7 @@ export function UserImagesPage() {
                 username: viewingReactions ? undefined : username,
                 followed,
               }}
+              showEmptyCta={isSameUser}
             />
           </Stack>
         </MasonryContainer>

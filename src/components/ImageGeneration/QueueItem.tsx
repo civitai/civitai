@@ -132,7 +132,7 @@ export function QueueItem({ request }: Props) {
   const overwriteStatusLabel =
     hasUnstableResources && status === GenerationRequestStatus.Error
       ? `${status} - Potentially caused by unstable resources`
-      : status;
+      : `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using`;
 
   // const boost = (request: Generation.Request) => {
   //   console.log('boost it', request);

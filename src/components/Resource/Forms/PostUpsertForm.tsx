@@ -1,7 +1,7 @@
-import { Button, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Anchor, Button, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
-import { IconAlertTriangle, IconArrowsSort, IconClock } from '@tabler/icons-react';
+import { IconAlertTriangle, IconClock } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
@@ -24,9 +24,10 @@ import { useState } from 'react';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const reset = useEditPostContext((state) => state.reset);
   const reorder = useEditPostContext((state) => state.reorder);
@@ -78,13 +79,26 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
       </ContainerGrid.Col>
     </ContainerGrid>
   ) : (
-    <ImageDropzone
-      onDrop={handleDrop}
-      loading={createPostMutation.isLoading}
-      max={POST_IMAGE_LIMIT}
-      count={imagesCount}
-      accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-    />
+    <Stack spacing={8}>
+      <Text size="xs" color="dimmed">
+        Our site is mostly used for sharing AI generated content. Make sure the images you are
+        sharing for this resource have been generated with it.
+      </Text>
+      <ImageDropzone
+        onDrop={handleDrop}
+        loading={createPostMutation.isLoading}
+        max={POST_IMAGE_LIMIT}
+        count={imagesCount}
+        accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+      />
+      <Text size="xs">
+        By uploading images to our site you agree to our{' '}
+        <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+          Terms of service
+        </Anchor>
+        . Be sure to read our <ContentPolicyLink /> before uploading any images.
+      </Text>
+    </Stack>
   );
 }
 

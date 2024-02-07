@@ -9,7 +9,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["metrics", "relationJoins"]
+  previewFeatures = ["metrics"]
 }
 
 datasource db {
@@ -128,7 +128,7 @@ model BuzzWithdrawalRequest {
   id                          String                         @id @default(cuid())
   userId                      Int?
   user                        User?                          @relation(fields: [userId], references: [id])
-  connectedAccountId          String // Keeping this for double safe-measure :)                 
+  connectedAccountId          String // Keeping this for double safe-measure :)
   buzzWithdrawalTransactionId String // from Buzz Service
   requestedBuzzAmount         Int // 1000
   platformFeeRate             Int // 3000 = 30% so we can do 30.25

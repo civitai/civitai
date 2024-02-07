@@ -1,6 +1,6 @@
-import { Text, Tooltip } from '@mantine/core';
+import { Text, TextProps, Tooltip } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconInfoSquareRounded } from '@tabler/icons-react';
+import { IconInfoSquareRounded, TablerIconsProps } from '@tabler/icons-react';
 
 const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Checkpoint]: '#fine-tuned-model-checkpoints-dreambooth-models',
@@ -17,24 +17,40 @@ const instructions: Partial<Record<ModelType, string>> = {
 
 export const HowToUseModel = ({ type }: ModelFileAlertProps) => {
   if (!instructions[type]) return null;
+
   return (
-    <Tooltip label="How to use this" position="left" withArrow>
-      <Text
-        component="a"
-        href={`https://github.com/civitai/civitai/wiki/How-to-use-models${instructions[type]}`}
-        target="_blank"
-        rel="nofollow"
-        td="underline"
-        size="xs"
-        color="dimmed"
-        sx={{ lineHeight: 1 }}
-      >
-        <IconInfoSquareRounded size={20} />
-      </Text>
-    </Tooltip>
+    <HowToButton
+      href={`https://github.com/civitai/civitai/wiki/How-to-use-models${instructions[type]}`}
+    />
   );
 };
 
 type ModelFileAlertProps = {
   type: ModelType;
 };
+
+export const HowToButton = ({
+  href,
+  size = 20,
+  tooltip = 'How to use this',
+  ...iconProps
+}: HowToButtonProps) => {
+  return (
+    <Tooltip label={tooltip} position="left" withArrow>
+      <Text
+        component="a"
+        href={href}
+        target="_blank"
+        rel="nofollow noreferrer"
+        td="underline"
+        size="xs"
+        color="dimmed"
+        sx={{ lineHeight: 1 }}
+      >
+        <IconInfoSquareRounded size={size} {...iconProps} />
+      </Text>
+    </Tooltip>
+  );
+};
+
+type HowToButtonProps = TablerIconsProps & { href: string; tooltip?: string; size?: number };

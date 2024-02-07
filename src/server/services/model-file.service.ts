@@ -12,12 +12,13 @@ export const getByVersionId = ({ modelVersionId }: { modelVersionId: number }) =
 export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   select,
   userId,
+  isModerator,
   ...data
-}: ModelFileCreateInput & { select: TSelect; userId: number }) {
+}: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
-    where: { id: data.modelVersionId, model: { userId } },
+    where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
   });
   if (!ownsVersion) throw throwNotFoundError();
 
@@ -31,10 +32,11 @@ export async function updateFile({
   id,
   metadata,
   userId,
+  isModerator,
   ...inputData
-}: ModelFileUpdateInput & { userId: number }) {
+}: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
   const modelFile = await dbWrite.modelFile.findUnique({
-    where: { id, modelVersion: { model: { userId } } },
+    where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: { id: true, metadata: true, modelVersionId: true },
   });
   if (!modelFile) throw throwNotFoundError();
@@ -54,14 +56,18 @@ export async function updateFile({
   };
 }
 
-export async function deleteFile({ id, userId }: GetByIdInput & { userId: number }) {
+export async function deleteFile({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) {
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
     AND mv."modelId" = m.id
     AND mf.id = ${id}
-    AND m."userId" = ${userId}
+    ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
     RETURNING
       mv.id as "modelVersionId"
   `;

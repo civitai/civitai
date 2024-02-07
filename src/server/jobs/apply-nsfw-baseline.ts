@@ -1,7 +1,7 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 
-export const applyNsfwBaseline = createJob('apply-nsfw-baseline', '9 * * * *', async () => {
+export const applyNsfwBaseline = createJob('apply-nsfw-baseline', '* * * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('apply-nsfw-baseline');
 
   // Update NSFW baseline

@@ -138,6 +138,7 @@ export default RateLimitedEndpoint(
         modelId: fileResult.modelId,
         modelVersionId,
         nsfw: fileResult.nsfw,
+        earlyAccess: fileResult.inEarlyAccess,
         time: now,
       });
 

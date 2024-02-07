@@ -210,7 +210,7 @@ export function StripeConnectCard() {
     enabled: !!features.creatorsProgram,
   });
 
-  if (!features.creatorsProgram) return null;
+  if (!features.creatorsProgram || !userStripeConnect) return null;
 
   return (
     <Card withBorder id="stripe">

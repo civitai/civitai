@@ -12,7 +12,7 @@ import {
   getByVersionId,
   updateFile,
 } from '~/server/services/model-file.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
@@ -33,6 +33,7 @@ export const createFileHandler = async ({
     const file = await createFile({
       ...input,
       userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
       select: {
         id: true,
         name: true,
@@ -45,7 +46,9 @@ export const createFileHandler = async ({
         },
       },
     });
-    ctx.track.modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id });
+    ctx.track
+      .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
+      .catch(handleLogError);
 
     return file;
   } catch (error) {
@@ -62,8 +65,15 @@ export const updateFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const result = await updateFile({ ...input, userId: ctx.user.id });
-    ctx.track.modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId });
+    const result = await updateFile({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+    ctx.track
+      .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
+      .catch(handleLogError);
+
     return result;
   } catch (error) {
     throw throwDbError(error);
@@ -96,9 +106,16 @@ export const deleteFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const deleted = await deleteFile({ id: input.id, userId: ctx.user.id });
+    const deleted = await deleteFile({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     if (!deleted) throw throwNotFoundError(`No file with id ${input.id}`);
-    ctx.track.modelFile({ type: 'Delete', id: input.id, modelVersionId: deleted.modelVersionId });
+
+    ctx.track
+      .modelFile({ type: 'Delete', id: input.id, modelVersionId: deleted.modelVersionId })
+      .catch(handleLogError);
 
     return deleted;
   } catch (error) {
