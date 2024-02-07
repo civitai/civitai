@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Box,
   Center,
   Container,
@@ -11,12 +12,16 @@ import {
   Title,
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
@@ -39,6 +44,7 @@ export default function PostCreate() {
     ? Number(router.query.modelVersionId)
     : undefined;
   const clubId = router.query.clubId ? Number(router.query.clubId) : undefined;
+  const postingVideo = router.query.video != null;
 
   const reviewing = router.query.reviewing ? router.query.reviewing === 'true' : undefined;
   const isMuted = currentUser?.muted ?? false;
@@ -48,7 +54,7 @@ export default function PostCreate() {
   const reset = useEditPostContext((state) => state.reset);
   const images = useEditPostContext((state) => state.images);
   const upload = useEditPostContext((state) => state.upload);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data: versions, isLoading: versionsLoading } = trpc.model.getVersions.useQuery(
     { id: modelId ?? 0, excludeUnpublished: true },
@@ -117,9 +123,16 @@ export default function PostCreate() {
 
   return (
     <Container size="xs">
-      <Group spacing="xs">
+      <Group spacing="xs" mb="md" noWrap>
         <BackButton url={backButtonUrl} />
-        <Title>{displayReview ? 'Create a Review' : 'Create Image Post'}</Title>
+        <Title>
+          {displayReview ? 'Create a Review' : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
+        </Title>
+        <FeatureIntroduction
+          feature="post-create"
+          contentSlug={['feature-introduction', 'post-images']}
+          actionButton={<HelpButton size="md" radius="xl" />}
+        />
       </Group>
       {currentUser?.muted ? (
         <Container size="xs">
@@ -190,6 +203,20 @@ export default function PostCreate() {
               )}
             </>
           )}
+          {!displayReview && (
+            <Text size="xs" color="dimmed">
+              Our site is mostly used for sharing AI generated content. You can start generating
+              images using our{' '}
+              <Link href="/generate" passHref>
+                <Anchor>onsite generator</Anchor>
+              </Link>{' '}
+              or train your model using your own images by using our{' '}
+              <Link href="/models/train" passHref>
+                <Anchor>onsite LoRA trainer</Anchor>
+              </Link>
+              .
+            </Text>
+          )}
           <ImageDropzone
             mt="md"
             onDrop={handleDrop}
@@ -198,6 +225,13 @@ export default function PostCreate() {
             max={POST_IMAGE_LIMIT}
             accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           />
+          <Text size="xs">
+            By uploading images to our site you agree to our{' '}
+            <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+              Terms of service
+            </Anchor>
+            . Be sure to read our <ContentPolicyLink /> before uploading any images.
+          </Text>
         </Stack>
       )}
     </Container>

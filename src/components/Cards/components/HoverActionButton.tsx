@@ -112,43 +112,41 @@ const HoverActionButton = ({
   keepIconOnHover = false,
   ...props
 }: Props) => {
-  const { classes } = useStyles({ size });
+  const { classes, cx } = useStyles({ size });
   const isCustomVariant = CUSTOM_VARIANTS.includes(color as CustomVariantType);
   const colorCustomVariant = color as CustomVariantType;
 
   return (
     <UnstyledButton
       onClick={onClick}
-      className={isCustomVariant ? classes[colorCustomVariant] : undefined}
+      className={cx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}
       {...props}
     >
-      <Box className={classes.wrapper}>
-        <Badge className={classes.label} size="xs" variant={variant} color={color}>
-          {label}
-        </Badge>
+      <Badge className={classes.label} size="xs" variant={variant} color={color}>
+        {label}
+      </Badge>
+      <ThemeIcon
+        {...themeIconProps}
+        className={classes.icon}
+        color={color}
+        radius="xl"
+        size={size}
+        variant={variant}
+      >
+        {children}
+      </ThemeIcon>
+      {!keepIconOnHover && (
         <ThemeIcon
           {...themeIconProps}
-          className={classes.icon}
+          className={classes.hover}
           color={color}
           radius="xl"
           size={size}
           variant={variant}
         >
-          {children}
+          <IconArrowRight size={16} stroke={2.5} />
         </ThemeIcon>
-        {!keepIconOnHover && (
-          <ThemeIcon
-            {...themeIconProps}
-            className={classes.hover}
-            color={color}
-            radius="xl"
-            size={size}
-            variant={variant}
-          >
-            <IconArrowRight size={16} stroke={2.5} />
-          </ThemeIcon>
-        )}
-      </Box>
+      )}
     </UnstyledButton>
   );
 };

@@ -16,12 +16,13 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { trpc } from '~/utils/trpc';
 
 import { CollectionType } from '@prisma/client';
-import { IconBolt, IconClock } from '@tabler/icons-react';
+import { IconBolt, IconClock, IconQuestionMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -178,12 +179,15 @@ export function ManagePostMaturity() {
       onChange={toggleCheckbox}
       disabled={isLoading}
       label={
-        <Text>
-          Mature{' '}
+        <Group spacing={4}>
+          Mature
           <Tooltip label={matureLabel} {...tooltipProps}>
-            <Text component="span">(?)</Text>
+            <ThemeIcon radius="xl" size="xs" color="gray">
+              <IconQuestionMark />
+            </ThemeIcon>
           </Tooltip>
-        </Text>
+          <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
+        </Group>
       }
     />
   );

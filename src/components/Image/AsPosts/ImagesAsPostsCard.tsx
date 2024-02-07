@@ -35,6 +35,7 @@ import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { trpc } from '~/utils/trpc';
 
 export function ImagesAsPostsCard({
   data,
@@ -46,11 +47,13 @@ export function ImagesAsPostsCard({
   height: number;
 }) {
   const { ref, inView } = useInView({ rootMargin: '200%' });
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const queryUtils = trpc.useUtils();
 
-  const { modelVersions, showModerationOptions, model } = useImagesAsPostsInfiniteContext();
+  const { modelVersions, showModerationOptions, model, filters } =
+    useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
   const modelVersionName = targetModelVersion?.name;
   const postId = data.postId ?? undefined;
@@ -70,6 +73,10 @@ export function ImagesAsPostsCard({
         modelId: model.id,
         images: [{ id: imageId }],
       }).catch(() => null); // Error is handled in the mutation events
+
+      if (filters.hidden)
+        // Refetch the query to update the hidden images
+        await queryUtils.image.getImagesAsPostsInfinite.invalidate({ ...filters });
     }
   };
 

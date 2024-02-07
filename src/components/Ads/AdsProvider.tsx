@@ -31,8 +31,9 @@ export function useAdsContext() {
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
-  const isMember = !!currentUser?.subscriptionId;
-  const enabled = env.NEXT_PUBLIC_ADS;
+  const isMember = !!currentUser?.isMember;
+  // const enabled = env.NEXT_PUBLIC_ADS;
+  const enabled = false;
   const adsEnabled = enabled && !isMember;
   // const { targeting: cookieConsent = false } = useConsentManager();
   const cookieConsent = true;
@@ -48,16 +49,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
   );
 
-  const readyRef = useRef(false);
-  useEffect(() => {
-    if (!readyRef.current && adsEnabled && cookieConsent) {
-      readyRef.current = true;
-      checkAdsBlocked((blocked) => {
-        // setAdsBlocked(blocked);
-        setAdsBlocked(!isProd ? true : blocked);
-      });
-    }
-  }, [adsEnabled, cookieConsent]);
+  // const readyRef = useRef(false);
+  // useEffect(() => {
+  //   if (!readyRef.current && adsEnabled && cookieConsent) {
+  //     readyRef.current = true;
+  //     checkAdsBlocked((blocked) => {
+  //       // setAdsBlocked(blocked);
+  //       setAdsBlocked(!isProd ? true : blocked);
+  //     });
+  //   }
+  // }, [adsEnabled, cookieConsent]);
 
   return (
     <AscendeumAdsContext.Provider
@@ -75,19 +76,28 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     >
       {adsEnabled &&
         cookieConsent &&
-        adProviders.map((provider) => <LoadProviderScript key={provider} provider={provider} />)}
+        adProviders.map((provider) => (
+          <LoadProviderScript
+            key={provider}
+            provider={provider}
+            onError={() => setAdsBlocked(true)}
+          />
+        ))}
       {children}
     </AscendeumAdsContext.Provider>
   );
 }
 
-function LoadProviderScript({ provider }: { provider: AdProvider }) {
+function LoadProviderScript({ provider, onError }: { provider: AdProvider; onError: () => void }) {
   switch (provider) {
     case 'ascendeum':
-      return <Script src="https://ads.civitai.com/asc.civitai.js" />;
+      return <Script src="https://ads.civitai.com/asc.civitai.js" onError={onError} />;
     case 'adsense':
       return (
-        <Script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728" />
+        <Script
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728"
+          onError={onError}
+        />
       );
     case 'exoclick':
     default:

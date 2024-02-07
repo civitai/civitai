@@ -12,7 +12,6 @@ import {
   Text,
   ThemeIcon,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import {
   IconArrowsCross,
@@ -38,7 +37,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import { useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
@@ -89,12 +88,10 @@ export default function ImagesAsPostsInfinite({
   showModerationOptions,
   showPOIWarning,
 }: ImagesAsPostsInfiniteProps) {
-  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isMobile = useContainerSmallerThan('sm');
   // const globalFilters = useImageFilters();
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
   const [opened, setOpened] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -106,7 +103,7 @@ export default function ImagesAsPostsInfinite({
     modelVersionId: selectedVersionId,
     modelId: model.id,
     username,
-    hidden: undefined, // override global hidden filter
+    hidden: showHidden, // override global hidden filter
     types: undefined, // override global types image filter
   });
 
@@ -125,7 +122,7 @@ export default function ImagesAsPostsInfinite({
   const { items: preferred } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    showHidden,
+    // showHidden,
   });
 
   // const {
@@ -162,7 +159,14 @@ export default function ImagesAsPostsInfinite({
         return !!filteredImages?.length ? { ...post, images: filteredImages } : null;
       })
       .filter(isDefined);
-  }, [preferred, galleryHiddenUsers, galleryHiddenImages, loadingGallerySettings]);
+  }, [
+    loadingGallerySettings,
+    preferred,
+    showHidden,
+    galleryHiddenUsers,
+    galleryHiddenImages,
+    galleryHiddenTags,
+  ]);
 
   // const items = useMemo(() => {
   //   // TODO - fetch user reactions for images separately

@@ -16,7 +16,6 @@ import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 
 const IMAGE_CARD_WIDTH = 450;

@@ -77,6 +77,7 @@ import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { useEntityAccessRequirement } from '../../Club/club.utils';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -110,7 +111,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       ...defaultValues,
       ...useGenerationFormStore.getState(),
     });
-    const subscription = form.watch((value, { name, type }) => {
+    const subscription = form.watch((value) => {
       useGenerationFormStore.setState({ ...(value as GenerateFormModel) }, true);
     });
     return () => subscription.unsubscribe();
@@ -135,7 +136,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     samplerCfgOffset,
     isSDXL,
     isLCM,
-    isFullCoverageModel,
     unstableResources,
   } = useDerivedGenerationState();
 
@@ -276,10 +276,21 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             )} */}
             <InputResourceSelect
               name="model"
-              label="Model"
-              labelProps={{ mb: 5, style: { fontWeight: 590 } }}
+              label={
+                <Group mb={5} spacing={4} noWrap>
+                  <Input.Label style={{ fontWeight: 590 }} required>
+                    Model
+                  </Input.Label>
+                  <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                    <Text weight={400}>
+                      Models are the resources you&apos;re generating with. Using a different base
+                      model can drastically alter the style and composition of images, while adding
+                      additional resource can change the characters, concepts and objects
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
               buttonLabel="Add Model"
-              withAsterisk
               options={{
                 canGenerate: true,
                 resources: [
@@ -342,7 +353,18 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <Card {...sharedCardProps}>
               <Stack>
                 <Stack spacing={0}>
-                  <Input.Wrapper label="Prompt" error={errors.prompt?.message} withAsterisk>
+                  <Input.Wrapper
+                    label={
+                      <Group mb={5} spacing={4} noWrap>
+                        <Input.Label required>Prompt</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                          Type out what you&apos;d like to generate in the positive field, add
+                          aspects you&apos;d like to avoid in the negative prompt
+                        </InfoPopover>
+                      </Group>
+                    }
+                    error={errors.prompt?.message}
+                  >
                     <Paper
                       px="sm"
                       bg="transparent"
@@ -489,7 +511,23 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       <Stack>
                         <InputNumberSlider
                           name="cfgScale"
-                          label="CFG Scale"
+                          label={
+                            <Group spacing={4} noWrap>
+                              <Input.Label>CFG Scale</Input.Label>
+                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                Controls how closely the image generation follows the text prompt.{' '}
+                                <Anchor
+                                  href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                                  target="_blank"
+                                  rel="nofollow noreferrer"
+                                  span
+                                >
+                                  Learn more
+                                </Anchor>
+                                .
+                              </InfoPopover>
+                            </Group>
+                          }
                           min={1}
                           max={isSDXL ? 10 : 30}
                           step={0.5}
@@ -505,7 +543,24 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         />
                         <InputSelect
                           name="sampler"
-                          label="Sampler"
+                          label={
+                            <Group spacing={4} noWrap>
+                              <Input.Label>Sampler</Input.Label>
+                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                Each will produce a slightly (or significantly) different image
+                                result.{' '}
+                                <Anchor
+                                  href="https://wiki.civitai.com/wiki/Sampler"
+                                  target="_blank"
+                                  rel="nofollow noreferrer"
+                                  span
+                                >
+                                  Learn more
+                                </Anchor>
+                                .
+                              </InfoPopover>
+                            </Group>
+                          }
                           data={isLCM ? generation.lcmSamplers : generation.samplers}
                           presets={
                             isLCM
@@ -518,7 +573,23 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         />
                         <InputNumberSlider
                           name="steps"
-                          label="Steps"
+                          label={
+                            <Group spacing={4} noWrap>
+                              <Input.Label>Steps</Input.Label>
+                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                The number of iterations spent generating an image.{' '}
+                                <Anchor
+                                  href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                                  target="_blank"
+                                  rel="nofollow noreferrer"
+                                  span
+                                >
+                                  Learn more
+                                </Anchor>
+                                .
+                              </InfoPopover>
+                            </Group>
+                          }
                           min={isLCM ? 3 : 10}
                           max={isLCM ? 12 : generation.maxValues.steps}
                           sliderProps={sharedSliderProps}
@@ -564,7 +635,23 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         )}
                         <InputResourceSelect
                           name="vae"
-                          label={getDisplayName(ModelType.VAE)}
+                          label={
+                            <Group spacing={4} noWrap>
+                              <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
+                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                These provide additional color and detail improvements.{' '}
+                                <Anchor
+                                  href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
+                                  target="_blank"
+                                  rel="nofollow noreferrer"
+                                  span
+                                >
+                                  Learn more
+                                </Anchor>
+                                .
+                              </InfoPopover>
+                            </Group>
+                          }
                           buttonLabel="Add VAE"
                           options={{
                             canGenerate: true,
