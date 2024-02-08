@@ -106,7 +106,6 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
@@ -683,17 +682,17 @@ export default function ModelDetailsV2({
                         >
                           Unpublish
                         </Menu.Item>
-                                                                 )}
-          {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
-                                                                                    <Menu.Item
-                                                                                    icon={<IconRepeat size={14} stroke={1.5} />}
-                                                                                    color="green"
-                                                                                    onClick={handlePublishModel}
-                                                                                    disabled={publishModelMutation.isLoading}
-                                                                                    >
-                                                                                    Republish
-                                                                                    </Menu.Item>
-                                                                                    )}
+                      )}
+                      {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
+                        <Menu.Item
+                          icon={<IconRepeat size={14} stroke={1.5} />}
+                          color="green"
+                          onClick={handlePublishModel}
+                          disabled={publishModelMutation.isLoading}
+                        >
+                          Republish
+                        </Menu.Item>
+                      )}
                       {currentUser && isModerator && modelDeleted && (
                         <Menu.Item
                           icon={<IconRecycle size={14} stroke={1.5} />}
