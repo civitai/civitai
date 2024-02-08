@@ -28,7 +28,7 @@ import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { VideoFiltersDropdown } from '~/components/Image/Filters/VideoFiltersDropdown';
 
 const segments = [
-  { label: 'My Videos', value: 'videos' },
+  { label: 'My Videos', value: 'images' },
   { label: 'My Reactions', value: 'reactions' },
 ] as const;
 type Segment = (typeof segments)[number]['value'];
@@ -102,7 +102,7 @@ export function UserVideosPage() {
 
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
-  const section = isSameUser ? query.section ?? 'videos' : 'videos';
+  const section = isSameUser ? query.section ?? 'images' : 'images';
 
   const viewingReactions = section === 'reactions';
 
