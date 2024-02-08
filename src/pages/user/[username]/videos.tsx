@@ -28,7 +28,7 @@ import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { VideoFiltersDropdown } from '~/components/Image/Filters/VideoFiltersDropdown';
 
 const segments = [
-  { label: 'My Images', value: 'images' },
+  { label: 'My Videos', value: 'videos' },
   { label: 'My Reactions', value: 'reactions' },
 ] as const;
 type Segment = (typeof segments)[number]['value'];
@@ -102,7 +102,7 @@ export function UserVideosPage() {
 
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
-  const section = isSameUser ? query.section ?? 'images' : 'images';
+  const section = isSameUser ? query.section ?? 'videos' : 'videos';
 
   const viewingReactions = section === 'reactions';
 
@@ -112,7 +112,7 @@ export function UserVideosPage() {
         return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
-          <Tabs.Panel value="/images">{children}</Tabs.Panel>
+          <Tabs.Panel value="/videos">{children}</Tabs.Panel>
         );
       },
     [features.profileOverhaul]
@@ -165,7 +165,7 @@ export function UserVideosPage() {
               </Group>
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter
-                  type="images"
+                  type="videos"
                   variant="button"
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
