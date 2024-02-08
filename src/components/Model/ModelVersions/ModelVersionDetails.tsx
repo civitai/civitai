@@ -85,10 +85,10 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export function ModelVersionDetails({
   model,
