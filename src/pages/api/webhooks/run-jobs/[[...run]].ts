@@ -41,6 +41,7 @@ import { csamJobs } from '~/server/jobs/process-csam';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
+import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -80,6 +81,7 @@ export const jobs: Job[] = [
   resourceGenerationAvailability,
   cacheCleanup,
   applyTagRules,
+  processCreatorProgramEarlyAccessRewards,
 ];
 
 const log = createLogger('jobs', 'green');
