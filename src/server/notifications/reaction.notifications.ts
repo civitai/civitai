@@ -53,12 +53,13 @@ export const reactionNotifications = createNotificationProcessor({
         LEFT JOIN prior_milestones pm ON pm.reaction_count >= ms.value AND pm.affected_id = a.affected_id
         WHERE pm.affected_id IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'comment-reaction-milestone' "type",
-        details
+        details,
+        'Milestone'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'comment-reaction-milestone');
     `,
@@ -190,12 +191,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE NOT EXISTS (SELECT 1 FROM prior_milestones pm WHERE pm.affected_id = a.affected_id AND pm.reaction_count >= ms.value)
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'image-reaction-milestone' "type",
-        details
+        details,
+        'Milestone'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone');
     `,
@@ -243,12 +245,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= af.reaction_count
         WHERE NOT EXISTS (SELECT 1 FROM prior_milestones pm WHERE pm.affected_id = af.affected_id AND pm.reaction_count >= ms.value)
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'article-reaction-milestone' "type",
-        details
+        details,
+        'Milestone'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone');
     `,

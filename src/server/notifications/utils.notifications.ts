@@ -16,8 +16,6 @@ import { collectionNotifications } from '~/server/notifications/collection.notif
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { clubNotifications } from '~/server/notifications/club.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
-import { commentDetailFetcher } from '~/server/notifications/detail-fetchers/comment.detail-fetcher';
-import { dbRead } from '~/server/db/client';
 
 const notificationProcessors = {
   ...mentionNotifications,
@@ -70,12 +68,4 @@ export function getNotificationTypes() {
     if (toggleable !== false) notificationTypes[type] = displayName;
   }
   return notificationTypes;
-}
-
-const detailFetchers = [commentDetailFetcher];
-export async function populateNotificationDetails(notifications: BareNotification[]) {
-  for (const { types, fetcher } of detailFetchers) {
-    const targetNotifications = notifications.filter((n) => types.includes(n.type));
-    await fetcher(targetNotifications, { db: dbRead });
-  }
 }

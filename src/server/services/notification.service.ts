@@ -1,7 +1,7 @@
-import { Prisma } from '@prisma/client';
+import { NotificationCategory, Prisma } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
-import { populateNotificationDetails } from '~/server/notifications/utils.notifications';
+import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
@@ -20,6 +20,7 @@ export async function getUserNotifications({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
   userId,
+  category,
   count = false,
   unread = false,
 }: Partial<GetUserNotificationsSchema> & {
@@ -30,6 +31,8 @@ export async function getUserNotifications({
   if (unread) AND.push(Prisma.sql`nv.id IS NULL`);
   if (cursor) AND.push(Prisma.sql`n."createdAt" < ${cursor}`);
   else AND.push(Prisma.sql`n."createdAt" > NOW() - interval '1 month'`);
+
+  if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
   const items = await dbRead.$queryRaw<NotificationsRaw[]>`
     SELECT n."id", "type", "details", "createdAt", nv."id" IS NOT NULL as read
@@ -50,9 +53,11 @@ export async function getUserNotifications({
 export async function getUserNotificationCount({
   userId,
   unread,
+  category,
 }: {
   userId: number;
   unread: boolean;
+  category?: NotificationCategory;
 }) {
   const AND = [Prisma.sql`"userId" = ${userId}`];
   if (unread)
@@ -61,13 +66,15 @@ export async function getUserNotificationCount({
     );
   else AND.push(Prisma.sql`"createdAt" > NOW() - interval '1 month'`);
 
+  if (category) AND.push(Prisma.sql`category = ${category}::"NotificationCategory"`);
+
   const [result] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(*) as count
     FROM "Notification"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  return result.count;
+  return Number(result.count);
 }
 
 export const createUserNotificationSetting = async ({
