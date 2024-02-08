@@ -65,7 +65,6 @@ export function NotificationBell() {
       <Drawer
         position={mobile ? 'bottom' : 'right'}
         size={mobile ? 'calc(100dvh - var(--mantine-header-height))' : '700px'}
-        padding="md"
         shadow="lg"
         opened={opened}
         onClose={() => setOpened(false)}
@@ -73,7 +72,7 @@ export function NotificationBell() {
         withOverlay={mobile}
         withinPortal
       >
-        <Stack spacing="xl" h="100%">
+        <Stack spacing="xl" h="100%" pt="md" px="md">
           <Group position="apart">
             <Text size="xl" weight="bold">
               Notifications
@@ -104,7 +103,7 @@ export function NotificationBell() {
               <Loader />
             </Center>
           ) : notifications && notifications.length > 0 ? (
-            <ScrollArea>
+            <ScrollArea pb="md">
               <NotificationList
                 items={notifications}
                 onItemClick={(notification) => {

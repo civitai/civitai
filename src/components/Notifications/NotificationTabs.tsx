@@ -40,7 +40,7 @@ export function NotificationTabs({ onTabChange, ...tabsProps }: Props) {
               value={tab}
               rightSection={
                 tab !== 'all' && countValue ? (
-                  <Badge color="red" variant="filled" size="xs" radius="xl">
+                  <Badge color="red" variant="filled" size="xs" radius="xl" px={4}>
                     <Text size="xs">{abbreviateNumber(countValue)}</Text>
                   </Badge>
                 ) : undefined
