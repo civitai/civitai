@@ -12,19 +12,21 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { NotificationCategory } from '@prisma/client';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
-import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
-import { trpc } from '~/utils/trpc';
-import { InViewLoader } from '~/components/InView/InViewLoader';
-import { NotificationCategory } from '@prisma/client';
+import {
+  useMarkReadNotification,
+  useQueryNotifications,
+  useQueryNotificationsCount,
+} from '~/components/Notifications/notifications.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 export function NotificationBell() {
-  const queryUtils = trpc.useUtils();
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
@@ -32,26 +34,14 @@ export function NotificationBell() {
 
   const count = useQueryNotificationsCount();
   const {
-    data,
+    notifications,
     isLoading: loadingNotifications,
     hasNextPage,
     fetchNextPage,
     isRefetching,
-  } = trpc.notification.getAllByUser.useInfiniteQuery(
-    { limit: 5, category: selectedCategory },
-    { enabled: opened, getNextPageParam: (lastPage) => lastPage.nextCursor, keepPreviousData: true }
-  );
-  const notifications = useMemo(
-    () => data?.pages.flatMap((page) => page.items) ?? [],
-    [data?.pages]
-  );
+  } = useQueryNotifications({ limit: 20, category: selectedCategory }, { enabled: opened });
 
-  const readNotificationMutation = trpc.notification.markRead.useMutation({
-    async onSuccess() {
-      await queryUtils.user.checkNotifications.invalidate();
-      await queryUtils.notification.getAllByUser.invalidate();
-    },
-  });
+  const readNotificationMutation = useMarkReadNotification();
   const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
     readNotificationMutation.mutate({ id, all });
   };
@@ -139,20 +129,5 @@ export function NotificationBell() {
         </Stack>
       </Drawer>
     </>
-    // <Popover
-    //   position="bottom-end"
-    //   width={300}
-    //   opened={opened}
-    //   onChange={setOpened}
-    //   zIndex={constants.imageGeneration.drawerZIndex + 1}
-    //   withinPortal
-    // >
-    //   <Popover.Target>
-    //   </Popover.Target>
-
-    //   <Popover.Dropdown p={0}>
-
-    //   </Popover.Dropdown>
-    // </Popover>
   );
 }
