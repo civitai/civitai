@@ -227,8 +227,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     versionCreatedAt: version?.createdAt ?? new Date(),
   });
   const showEarlyAccessInput = version?.status !== 'Published' || atEarlyAccess;
-  const canLowerEarlyAccessValue = version?.status !== 'Published';
-  const minEarlyAccessValue = canLowerEarlyAccessValue ? 0 : version?.earlyAccessTimeFrame ?? 0;
+  const canIncreaseEarlyAccess = version?.status !== 'Published';
+  const maxEarlyAccessValue = canIncreaseEarlyAccess ? 14 : version?.earlyAccessTimeFrame ?? 0;
 
   return (
     <>
@@ -269,11 +269,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               <InputSegmentedControl
                 name="earlyAccessTimeFrame"
                 data={[
-                  { label: 'None', value: '0', disabled: minEarlyAccessValue > 0 },
-                  { label: '1 day', value: '1', disabled: minEarlyAccessValue > 1 },
-                  { label: '3 days', value: '3', disabled: minEarlyAccessValue > 3 },
-                  { label: '1 week', value: '7', disabled: minEarlyAccessValue > 7 },
-                  { label: '2 weeks', value: '14', disabled: minEarlyAccessValue > 14 },
+                  { label: 'None', value: '0', disabled: maxEarlyAccessValue < 0 },
+                  { label: '1 day', value: '1', disabled: maxEarlyAccessValue < 1 },
+                  { label: '3 days', value: '3', disabled: maxEarlyAccessValue < 3 },
+                  { label: '1 week', value: '7', disabled: maxEarlyAccessValue < 7 },
+                  { label: '2 weeks', value: '14', disabled: maxEarlyAccessValue < 14 },
                 ]}
                 color="blue"
                 size="xs"
@@ -288,9 +288,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 })}
                 fullWidth
               />
-              {!canLowerEarlyAccessValue && (
+              {!canIncreaseEarlyAccess && (
                 <Text size="xs" color="dimmed" mt="sm">
-                  You cannot lower early access value after a model has been published
+                  You cannot increase early access value after a model has been published
                 </Text>
               )}
             </Input.Wrapper>

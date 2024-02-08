@@ -203,10 +203,21 @@ export const upsertModelVersion = async ({
     if (
       existingVersion.status === ModelStatus.Published &&
       data.earlyAccessTimeFrame &&
-      data.earlyAccessTimeFrame < existingVersion.earlyAccessTimeFrame
+      existingVersion.earlyAccessTimeFrame === 0
     ) {
       throw throwBadRequestError(
-        'You cannot lower the early access time frame for a published early access model version.'
+        'You cannot add early access on a model after it has been published.'
+      );
+    }
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.earlyAccessTimeFrame &&
+      existingVersion.earlyAccessTimeFrame > 0 &&
+      data.earlyAccessTimeFrame > existingVersion.earlyAccessTimeFrame
+    ) {
+      throw throwBadRequestError(
+        'You cannot increase the early access time frame for a published early access model version.'
       );
     }
 
