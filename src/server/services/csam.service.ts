@@ -1,4 +1,4 @@
-import { CsamReport, Image, Prisma, ReportStatus } from '@prisma/client';
+import { CsamReport, Image, ReportStatus } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CsamFileOutput,

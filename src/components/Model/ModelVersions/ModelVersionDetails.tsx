@@ -84,8 +84,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
-import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
+import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { Adunit } from '~/components/Ads/AdUnit';
@@ -102,7 +101,7 @@ export function ModelVersionDetails({
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -655,19 +654,6 @@ export function ModelVersionDetails({
             deadline={version.earlyAccessDeadline}
           />
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
-
-          <DismissibleAlert
-            id="model-reporting-alert"
-            size="sm"
-            title="Reporting Resources"
-            content={
-              <Text>
-                If this resource breaks our{' '}
-                <ContentPolicyLink size="xs" color="dimmed" td="underline" inline />, remember you
-                can always report it.
-              </Text>
-            }
-          />
           <Accordion
             variant="separated"
             multiple

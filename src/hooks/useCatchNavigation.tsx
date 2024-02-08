@@ -17,7 +17,11 @@ export function useCatchNavigation({
       return (event.returnValue = message);
     }
 
-    function handleBrowsingAway() {
+    function handleBrowsingAway(url: string) {
+      const currentUrl = window.location.pathname;
+      const nextUrl = url.split('?')[0];
+
+      if (currentUrl === nextUrl) return;
       if (!unsavedChanges) return;
       if (window.confirm(message)) return;
       Router.events.emit('routeChangeError');

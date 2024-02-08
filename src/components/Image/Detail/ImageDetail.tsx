@@ -18,9 +18,10 @@ import {
   IconAlertTriangle,
   IconBrush,
   IconDotsVertical,
+  IconFlag,
   IconEye,
   IconInfoCircle,
-  IconPlaylistAdd,
+  IconBookmark,
   IconShare3,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -56,6 +57,8 @@ import { BrowsingMode } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { ReportEntity } from '~/server/schema/report.schema';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -216,8 +219,8 @@ export function ImageDetail() {
                           </Group>
                         </Button>
                       ))}
-                    <Button
-                      size="md"
+                    <ActionIcon
+                      size={30}
                       radius="xl"
                       color="gray"
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -227,54 +230,51 @@ export function ImageDetail() {
                           type: CollectionType.Image,
                         })
                       }
-                      compact
                     >
-                      <Group spacing={4}>
-                        <IconPlaylistAdd size={14} />
-                        <Text size="xs">Save</Text>
-                      </Group>
-                    </Button>
+                      <IconBookmark size={14} />
+                    </ActionIcon>
                     <ShareButton
                       url={shareUrl}
                       title={`Image by ${image.user.username}`}
                       collect={{ type: CollectionType.Image, imageId: image.id }}
                     >
-                      <Button
-                        size="md"
+                      <ActionIcon
+                        size={30}
                         radius="xl"
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        compact
                       >
-                        <Group spacing={4}>
-                          <IconShare3 size={14} />
-                          <Text size="xs">Share</Text>
-                        </Group>
-                      </Button>
+                        <IconShare3 size={14} />
+                      </ActionIcon>
                     </ShareButton>
                   </Group>
-                  <ImageDetailContextMenu>
-                    <ActionIcon
-                      size={30}
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      radius="xl"
-                    >
-                      <IconDotsVertical size={14} />
-                    </ActionIcon>
-                  </ImageDetailContextMenu>
+                  <Group spacing={8}>
+                    <LoginRedirect reason={'report-content'}>
+                      <ActionIcon
+                        size={30}
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        radius="xl"
+                        onClick={(e) => {
+                          openContext('report', {
+                            entityType: ReportEntity.Image,
+                            entityId: image.id,
+                          });
+                        }}
+                      >
+                        <IconFlag size={14} stroke={2} />
+                      </ActionIcon>
+                    </LoginRedirect>
+                    <ImageDetailContextMenu>
+                      <ActionIcon
+                        size={30}
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        radius="xl"
+                      >
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </ImageDetailContextMenu>
+                  </Group>
                 </Group>
-                <DismissibleAlert
-                  id="content-reporting-alert"
-                  size="sm"
-                  title="Reporting Content"
-                  content={
-                    <Text>
-                      If this content breaks our{' '}
-                      <ContentPolicyLink size="xs" color="dimmed" td="underline" inline />, remember
-                      you can always report it.
-                    </Text>
-                  }
-                />
               </Stack>
             </Card.Section>
             <Card.Section

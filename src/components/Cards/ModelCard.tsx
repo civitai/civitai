@@ -16,7 +16,7 @@ import {
   IconTagOff,
   IconDotsVertical,
   IconBrush,
-  IconPlaylistAdd,
+  IconBookmark,
   IconInfoCircle,
   IconBolt,
   IconArchiveFilled,
@@ -463,7 +463,7 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
                           </Group>
                           <Group spacing={2}>
-                            <IconPlaylistAdd size={14} strokeWidth={2.5} />
+                            <IconBookmark size={14} strokeWidth={2.5} />
                             <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
                           </Group>
                           <Group spacing={2}>
@@ -529,7 +529,7 @@ export function ModelCard({ data, forceInView }: Props) {
                           dropdownTrigger={
                             <IconBadge
                               className={classes.iconBadge}
-                              icon={<IconPlaylistAdd size={14} />}
+                              icon={<IconBookmark size={14} />}
                             >
                               <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
                             </IconBadge>

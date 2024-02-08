@@ -245,7 +245,7 @@ export const getModelsRaw = async ({
 
   if (!archived) {
     AND.push(
-      Prisma.sql`m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier"`
+      Prisma.sql`(m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
   }
 
@@ -1301,18 +1301,17 @@ export const publishModelById = async ({
   meta?: ModelMeta;
   republishing?: boolean;
 }) => {
+  const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
   const model = await dbWrite.$transaction(
     async (tx) => {
-      const includeVersions = versionIds && versionIds.length > 0;
-
       const model = await tx.model.update({
         where: { id },
         data: {
-          status: republishing ? ModelStatus.Published : status,
+          status,
           publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           modelVersions: includeVersions
@@ -1329,6 +1328,7 @@ export const publishModelById = async ({
           type: true,
           userId: true,
           modelVersions: { select: { id: true, baseModel: true } },
+          status: true,
         },
       });
 
@@ -1337,24 +1337,23 @@ export const publishModelById = async ({
           where: { modelVersionId: { in: versionIds } },
           data: { publishedAt },
         });
-
-        // Send to orchestrator
-        try {
-          await Promise.all(
-            model.modelVersions.map((version) =>
-              prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
-            )
-          );
-        } catch (e) {}
       }
-      if (!republishing) await updateModelLastVersionAt({ id, tx });
-
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
 
       return model;
     },
     { timeout: 10000 }
   );
+
+  if (includeVersions && status !== ModelStatus.Scheduled) {
+    // Send to orchestrator
+    Promise.all(
+      model.modelVersions.map((version) =>
+        prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
+      )
+    );
+  }
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   return model;
 };
@@ -1371,25 +1370,26 @@ export const unpublishModelById = async ({
 }) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
+      const updatedMeta = {
+        ...meta,
+        ...(reason
+          ? {
+              unpublishedReason: reason,
+              customMessage,
+            }
+          : {}),
+        unpublishedAt: new Date().toISOString(),
+        unpublishedBy: user.id,
+      };
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
-          meta: {
-            ...meta,
-            ...(reason
-              ? {
-                  unpublishedReason: reason,
-                  customMessage,
-                }
-              : {}),
-            unpublishedAt: new Date().toISOString(),
-            unpublishedBy: user.id,
-          },
+          meta: updatedMeta,
           modelVersions: {
             updateMany: {
               where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-              data: { status: ModelStatus.Unpublished },
+              data: { status: ModelStatus.Unpublished, meta: updatedMeta },
             },
           },
         },
@@ -1405,13 +1405,13 @@ export const unpublishModelById = async ({
         data: { publishedAt: null },
       });
 
-      // Remove this model from search index as it's been unpublished.
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-
       return updatedModel;
     },
     { timeout: 10000 }
   );
+
+  // Remove this model from search index as it's been unpublished.
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return model;
 };

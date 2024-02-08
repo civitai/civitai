@@ -1,4 +1,4 @@
-import { BountyType, ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { BaseModel, BaseModelType, constants } from '~/server/common/constants';
@@ -12,7 +12,7 @@ import {
   PublishVersionInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
-import { DeclineReviewSchema, ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import {
   deleteVersionById,
@@ -33,7 +33,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getClubDetailsForResource } from '~/server/services/club.service';
 import { dbRead } from '../db/client';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -278,10 +277,11 @@ export const publishModelVersionHandler = async ({
     const version = await getVersionById({ id: input.id, select: { meta: true, status: true } });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
+    const versionMeta = version.meta as ModelVersionMeta | null;
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
-      (version.meta as ModelMeta | null) || {};
+      versionMeta || {};
     const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
 
     await updateModelEarlyAccessDeadline({ id: updatedVersion.modelId }).catch((e) => {
