@@ -82,24 +82,24 @@ export const useChatNewRoomSignal = () => {
 
   const onUpdate = useCallback(
     (updated: ChatCreateChat) => {
+      if (!currentUser || updated.ownerId === currentUser.id) return;
+
       queryUtils.chat.getAllByUser.setData(undefined, (old) => {
         if (!old) return [updated];
         return [{ ...updated, createdAt: new Date(updated.createdAt) }, ...old];
       });
 
-      if (updated.ownerId !== currentUser?.id) {
-        queryUtils.chat.getUnreadCount.setData(
-          undefined,
-          produce((old) => {
-            if (!old) return old;
-            old.push({ chatId: updated.id, cnt: 1 });
-          })
-        );
+      queryUtils.chat.getUnreadCount.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+          old.push({ chatId: updated.id, cnt: 1 });
+        })
+      );
 
-        const userSettings = queryUtils.chat.getUserSettings.getData();
-        if (userSettings?.muteSounds !== true) {
-          play();
-        }
+      const userSettings = queryUtils.chat.getUserSettings.getData();
+      if (userSettings?.muteSounds !== true) {
+        play();
       }
     },
     [queryUtils, play, currentUser]

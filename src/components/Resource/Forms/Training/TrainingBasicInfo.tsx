@@ -74,7 +74,7 @@ const RadioImg = ({
 );
 
 export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const thisModelVersion = model?.modelVersions[0];
@@ -255,7 +255,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           }}
           className={classes.centerRadio} // why is this not easier to do?
           name="trainingModelType"
-          label="Choose your model type"
+          label="Choose your LoRA type"
           withAsterisk
         >
           <RadioImg

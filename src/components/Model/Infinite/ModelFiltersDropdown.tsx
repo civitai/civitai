@@ -73,6 +73,7 @@ export function ModelFiltersDropdown(props: Props) {
         earlyAccess: false,
         supportsGeneration: false,
         followed: false,
+        archived: false,
         period: MetricTimeframe.AllTime,
       }),
     [setFilters]
@@ -107,6 +108,7 @@ export function DumbModelFiltersDropdown({
   setFilters,
   filterMode = 'local',
   position = 'bottom-end',
+  isFeed,
   ...buttonProps
 }: Props & {
   filters: Partial<ModelFilterSchema>;
@@ -114,7 +116,6 @@ export function DumbModelFiltersDropdown({
 }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const isSameUser = useIsSameUser(router.query.username);
   const { classes, cx, theme } = useStyles();
   const flags = useFeatureFlags();
   const mobile = useIsMobile();
@@ -135,6 +136,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
+    (mergedFilters.archived ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
@@ -318,10 +320,10 @@ export function DumbModelFiltersDropdown({
         </Chip.Group>
       </Stack>
 
-      {currentUser && !isSameUser && (
-        <Stack spacing={0}>
-          <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
-          <Group>
+      <Stack spacing={0}>
+        <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        <Group>
+          {currentUser && isFeed && (
             <Chip
               checked={mergedFilters.followed}
               onChange={(checked) => setFilters({ followed: checked })}
@@ -329,9 +331,16 @@ export function DumbModelFiltersDropdown({
             >
               Followed Only
             </Chip>
-          </Group>
-        </Stack>
-      )}
+          )}
+          <Chip
+            checked={mergedFilters.archived}
+            onChange={(checked) => setFilters({ archived: checked })}
+            {...chipProps}
+          >
+            Include Archived
+          </Chip>
+        </Group>
+      </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
@@ -392,6 +401,7 @@ export function DumbModelFiltersDropdown({
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   filterMode?: 'local' | 'query';
   position?: PopoverProps['position'];
+  isFeed?: boolean;
 };
 
 const useStyles = createStyles((theme, _params, getRef) => ({

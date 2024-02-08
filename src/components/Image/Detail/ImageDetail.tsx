@@ -31,8 +31,10 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
@@ -58,7 +60,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
+  const { image, isLoading, active, toggleInfo, close, shareUrl } = useImageDetailContext();
   const { query } = useBrowserRouter();
   const currentUser = useCurrentUser();
 
@@ -158,27 +160,47 @@ export function ImageDetail() {
               withBorder
               inheritPadding
             >
-              <Group position="apart" spacing={8}>
-                <Group spacing={8}>
-                  {currentUser && image.meta && (
-                    <Button
-                      size="md"
-                      radius="xl"
-                      color="blue"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                      compact
-                      data-activity="remix:image"
-                    >
-                      <Group spacing={4} noWrap>
-                        <IconBrush size={14} />
-                        <Text size="xs">Remix</Text>
-                      </Group>
-                    </Button>
-                  )}
-                  {image.postId &&
-                    (!query.postId ? (
-                      <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} passHref>
+              <Stack spacing={8}>
+                <Group position="apart" spacing={8}>
+                  <Group spacing={8}>
+                    {currentUser && image.meta && (
+                      <Button
+                        size="md"
+                        radius="xl"
+                        color="blue"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                        data-activity="remix:image"
+                        compact
+                      >
+                        <Group spacing={4} noWrap>
+                          <IconBrush size={14} />
+                          <Text size="xs">Remix</Text>
+                        </Group>
+                      </Button>
+                    )}
+                    {image.postId &&
+                      (!query.postId ? (
+                        <RoutedDialogLink
+                          name="postDetail"
+                          state={{ postId: image.postId }}
+                          passHref
+                        >
+                          <Button
+                            component="a"
+                            size="md"
+                            radius="xl"
+                            color="gray"
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            compact
+                          >
+                            <Group spacing={4}>
+                              <IconEye size={14} />
+                              <Text size="xs">View post</Text>
+                            </Group>
+                          </Button>
+                        </RoutedDialogLink>
+                      ) : (
                         <Button
                           component="a"
                           size="md"
@@ -186,76 +208,74 @@ export function ImageDetail() {
                           color="gray"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                           compact
+                          onClick={close}
                         >
                           <Group spacing={4}>
                             <IconEye size={14} />
                             <Text size="xs">View post</Text>
                           </Group>
                         </Button>
-                      </RoutedDialogLink>
-                    ) : (
-                      <Button
-                        component="a"
-                        size="md"
-                        radius="xl"
-                        color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        compact
-                        onClick={close}
-                      >
-                        <Group spacing={4}>
-                          <IconEye size={14} />
-                          <Text size="xs">View post</Text>
-                        </Group>
-                      </Button>
-                    ))}
-                  <Button
-                    size="md"
-                    radius="xl"
-                    color="gray"
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    onClick={() =>
-                      openContext('addToCollection', {
-                        imageId: image.id,
-                        type: CollectionType.Image,
-                      })
-                    }
-                    compact
-                  >
-                    <Group spacing={4}>
-                      <IconPlaylistAdd size={14} />
-                      <Text size="xs">Save</Text>
-                    </Group>
-                  </Button>
-                  <ShareButton
-                    url={shareUrl}
-                    title={`Image by ${image.user.username}`}
-                    collect={{ type: CollectionType.Image, imageId: image.id }}
-                  >
+                      ))}
                     <Button
                       size="md"
                       radius="xl"
                       color="gray"
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      onClick={() =>
+                        openContext('addToCollection', {
+                          imageId: image.id,
+                          type: CollectionType.Image,
+                        })
+                      }
                       compact
                     >
                       <Group spacing={4}>
-                        <IconShare3 size={14} />
-                        <Text size="xs">Share</Text>
+                        <IconPlaylistAdd size={14} />
+                        <Text size="xs">Save</Text>
                       </Group>
                     </Button>
-                  </ShareButton>
+                    <ShareButton
+                      url={shareUrl}
+                      title={`Image by ${image.user.username}`}
+                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                    >
+                      <Button
+                        size="md"
+                        radius="xl"
+                        color="gray"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        compact
+                      >
+                        <Group spacing={4}>
+                          <IconShare3 size={14} />
+                          <Text size="xs">Share</Text>
+                        </Group>
+                      </Button>
+                    </ShareButton>
+                  </Group>
+                  <ImageDetailContextMenu>
+                    <ActionIcon
+                      size={30}
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      radius="xl"
+                    >
+                      <IconDotsVertical size={14} />
+                    </ActionIcon>
+                  </ImageDetailContextMenu>
                 </Group>
-                <ImageDetailContextMenu>
-                  <ActionIcon
-                    size={30}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    radius="xl"
-                  >
-                    <IconDotsVertical size={14} />
-                  </ActionIcon>
-                </ImageDetailContextMenu>
-              </Group>
+                <DismissibleAlert
+                  id="content-reporting-alert"
+                  size="sm"
+                  title="Reporting Content"
+                  content={
+                    <Text>
+                      If this content breaks our{' '}
+                      <ContentPolicyLink size="xs" color="dimmed" td="underline" inline />, remember
+                      you can always report it.
+                    </Text>
+                  }
+                />
+              </Stack>
             </Card.Section>
             <Card.Section
               component={ScrollArea}

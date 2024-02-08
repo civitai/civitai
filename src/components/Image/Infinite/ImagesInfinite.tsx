@@ -1,4 +1,4 @@
-import { Stack, Text, LoadingOverlay, Center, Loader, ThemeIcon } from '@mantine/core';
+import { LoadingOverlay, Center, Loader, Group, Button } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { useEffect } from 'react';
@@ -8,7 +8,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { IconCloudOff } from '@tabler/icons-react';
 import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -16,6 +15,8 @@ import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.type
 import { ImageGetInfinite } from '~/types/router';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { NoContent } from '~/components/NoContent/NoContent';
+import Link from 'next/link';
 
 type ImageFilters = {
   modelId?: number;
@@ -42,6 +43,7 @@ type ImagesInfiniteProps = {
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
   filterType?: 'images' | 'videos';
   showAds?: boolean;
+  showEmptyCta?: boolean;
 };
 
 export default function ImagesInfinite({
@@ -51,6 +53,7 @@ export default function ImagesInfinite({
   renderItem: MasonryItem,
   filterType = 'images',
   showAds,
+  showEmptyCta,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
@@ -107,17 +110,20 @@ export default function ImagesInfinite({
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
       ) : (
-        <Stack align="center" py="lg">
-          <ThemeIcon size={128} radius={100}>
-            <IconCloudOff size={80} />
-          </ThemeIcon>
-          <Text size={32} align="center">
-            No results found
-          </Text>
-          <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
-          </Text>
-        </Stack>
+        <NoContent py="lg">
+          {showEmptyCta && (
+            <Group>
+              <Link href="/posts/create">
+                <Button variant="default" radius="xl">
+                  Post Media
+                </Button>
+              </Link>
+              <Link href="/generate">
+                <Button radius="xl">Generate Images</Button>
+              </Link>
+            </Group>
+          )}
+        </NoContent>
       )}
     </IsClient>
   );

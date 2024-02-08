@@ -47,6 +47,11 @@ export const getInfiniteMessagesInput = infiniteQuerySchema.merge(
   })
 );
 
+export type GetMessageByIdInput = z.infer<typeof getMessageByIdInput>;
+export const getMessageByIdInput = z.object({
+  messageId: z.number(),
+});
+
 export type IsTypingInput = z.infer<typeof isTypingInput>;
 export const isTypingInput = z.object({
   chatId: z.number(),

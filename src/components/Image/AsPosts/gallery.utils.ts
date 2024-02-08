@@ -1,10 +1,11 @@
-import { trpc } from '~/utils/trpc';
 import produce from 'immer';
-import { showErrorNotification } from '~/utils/notifications';
 import { useMemo } from 'react';
 
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+
 export const useModelGallerySettings = ({ modelId }: { modelId: number }) => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data = { hiddenTags: [], hiddenUsers: [], hiddenImages: [] }, isLoading } =
     trpc.model.getGallerySettings.useQuery({ id: modelId });

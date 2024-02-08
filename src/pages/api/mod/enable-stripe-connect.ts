@@ -18,7 +18,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   await Promise.all(
     userIds.map(async (userId) => {
       await createUserStripeConnectAccount({ userId });
-      await addSystemPermission('creatorsProgram', [userId]);
 
       await createNotification({
         userId,

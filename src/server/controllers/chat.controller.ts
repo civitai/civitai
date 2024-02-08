@@ -11,6 +11,7 @@ import {
   CreateChatInput,
   CreateMessageInput,
   GetInfiniteMessagesInput,
+  GetMessageByIdInput,
   IsTypingInput,
   isTypingOutput,
   ModifyUserInput,
@@ -625,6 +626,65 @@ export const getInfiniteMessagesHandler = async ({
     return {
       nextCursor,
       items,
+    };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Get a single message
+ */
+export const getMessageByIdHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetMessageByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+
+    const msg = await dbWrite.chatMessage.findFirst({
+      where: { id: input.messageId },
+      select: {
+        content: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            isModerator: true,
+            deletedAt: true,
+            image: true,
+            profilePicture: {
+              select: profileImageSelect,
+            },
+          },
+        },
+        chat: {
+          select: {
+            chatMembers: {
+              select: {
+                userId: true,
+                status: true,
+                leftAt: true,
+                kickedAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // TODO fix this and above to check for the user status too (by date)
+    if (!msg || !msg.chat.chatMembers.map((cm) => cm.userId).includes(userId)) {
+      throw throwNotFoundError(`No message found for ID (${input.messageId})`);
+    }
+
+    return {
+      content: msg.content,
+      user: msg.user,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

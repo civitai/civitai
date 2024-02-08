@@ -91,7 +91,7 @@ export const modelVersionUpsertSchema = z.object({
   trainingStatus: z.nativeEnum(TrainingStatus).optional(),
   trainingDetails: trainingDetailsObj.optional(),
   files: z.array(modelFileSchema),
-  earlyAccessTimeFrame: z.number().min(0).max(5).optional(),
+  earlyAccessTimeFrame: z.number().min(0).max(14).optional(),
   // recipe: z.array(recipeSchema).optional(),
 });
 

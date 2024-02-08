@@ -55,14 +55,21 @@ export function NewChat() {
         });
       }
 
-      setIsCreating(false);
-      if (data)
+      if (data) {
+        queryUtils.chat.getAllByUser.setData(undefined, (old) => {
+          if (!old) return [data];
+          return [{ ...data, createdAt: new Date(data.createdAt) }, ...old];
+        });
+
         setState((prev) => ({
           ...prev,
           isCreating: false,
           selectedUsers: [],
           existingChatId: data.id,
         }));
+      }
+
+      setIsCreating(false);
     },
     onError(error) {
       setIsCreating(false);

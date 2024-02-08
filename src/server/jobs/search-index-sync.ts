@@ -34,7 +34,7 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
         };
       },
       {
-        lockExpiration: 30 * 60,
+        lockExpiration: 10 * 60,
       }
     ),
     createJob(

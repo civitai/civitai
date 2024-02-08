@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   Loader,
+  Menu,
   Stack,
   StackProps,
   Text,
@@ -18,12 +19,15 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
 import {
+  IconArrowBack,
   IconChevronLeft,
   IconCircleCheck,
   IconCircleMinus,
   IconCircleX,
   IconCrown,
+  IconDotsVertical,
   IconSend,
+  IconX,
 } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
@@ -59,16 +63,28 @@ const useStyles = createStyles((theme) => ({
     maxWidth: '70%',
     whiteSpace: 'pre-line',
   },
+  replyMessage: {
+    textOverflow: 'ellipsis',
+    overflow: 'hidden',
+    overflowWrap: 'normal',
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[5],
+    fontSize: theme.spacing.sm,
+  },
   myDetails: {
     flexDirection: 'row-reverse',
   },
   myMessage: {
-    // backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5),
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[4],
-    alignSelf: 'flex-end',
   },
   otherMessage: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
+  },
+  highlightRow: {
+    '&:hover': {
+      '> button': {
+        display: 'initial',
+      },
+    },
   },
   chatInput: {
     borderRadius: 0,
@@ -104,7 +120,7 @@ export function ExistingChat() {
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
   const [typingText, setTypingText] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
-  // const oldPagesLength = useRef(1);
+  const [replyId, setReplyId] = useState<number | undefined>(undefined);
 
   // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
@@ -241,6 +257,7 @@ export function ExistingChat() {
     onSuccess(data) {
       setIsSending(false);
       setChatMsg('');
+      setReplyId(undefined);
 
       if (!currentUser) return;
 
@@ -331,6 +348,7 @@ export function ExistingChat() {
     setTypingStatus({});
     setTypingText(null);
     setChatMsg('');
+    setReplyId(undefined);
   }, [state.existingChatId]);
 
   function getTypingStatus(newEntry: { [p: string]: boolean }) {
@@ -433,6 +451,7 @@ export function ExistingChat() {
     mutate({
       chatId: state.existingChatId!,
       content: strippedMessage,
+      referenceMessageId: replyId,
     });
   };
 
@@ -529,7 +548,7 @@ export function ExistingChat() {
                     </Center>
                   </InViewLoader>
                 )}
-                <DisplayMessages chats={allChats} />
+                <DisplayMessages chats={allChats} setReplyId={setReplyId} />
               </Stack>
             ) : (
               <Center h="100%">
@@ -545,35 +564,51 @@ export function ExistingChat() {
           </Box>
           <Divider />
           {myMember.status === ChatMemberStatus.Joined ? (
-            <Group spacing={0}>
-              <Textarea
-                sx={{ flexGrow: 1 }}
-                placeholder="Send message"
-                autosize
-                minRows={1}
-                maxRows={4}
-                value={chatMsg}
-                onChange={(event) => handleChatTyping(event.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    if (!e.shiftKey) {
-                      e.preventDefault();
-                      sendMessage();
+            <>
+              {!!replyId && (
+                <>
+                  <Group p="xs" noWrap>
+                    <Text size="xs">Replying:</Text>
+                    <Box sx={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                      {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
+                    </Box>
+                    <ActionIcon onClick={() => setReplyId(undefined)} ml="auto">
+                      <IconX size={14} />
+                    </ActionIcon>
+                  </Group>
+                  <Divider />
+                </>
+              )}
+              <Group spacing={0}>
+                <Textarea
+                  sx={{ flexGrow: 1 }}
+                  placeholder="Send message"
+                  autosize
+                  minRows={1}
+                  maxRows={4}
+                  value={chatMsg}
+                  onChange={(event) => handleChatTyping(event.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (!e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
                     }
-                  }
-                }}
-                classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-              />
-              <ActionIcon
-                h="100%"
-                w={60}
-                onClick={sendMessage}
-                disabled={isSending || !chatMsg.length || currentUser?.muted}
-                sx={{ borderRadius: 0 }}
-              >
-                {isSending ? <Loader /> : <IconSend />}
-              </ActionIcon>
-            </Group>
+                  }}
+                  classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
+                />
+                <ActionIcon
+                  h="100%"
+                  w={60}
+                  onClick={sendMessage}
+                  disabled={isSending || !chatMsg.length || currentUser?.muted}
+                  sx={{ borderRadius: 0 }}
+                >
+                  {isSending ? <Loader /> : <IconSend />}
+                </ActionIcon>
+              </Group>
+            </>
           ) : (
             <Center p="sm">
               <Group>
@@ -631,14 +666,29 @@ export function ExistingChat() {
   );
 }
 
-function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
+function DisplayMessages({
+  chats,
+  setReplyId,
+}: {
+  chats: ChatAllMessages;
+  setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
+}) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const { state } = useChatContext();
 
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
-
   const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
+
+  // TODO we should be checking first if this exists in `chats`
+  //      then, grab the content
+  //      then, grab the user info from chatMembers (but what if its not there?)
+  const replyIds = chats
+    .filter((c) => isDefined(c.referenceMessageId))
+    .map((c) => c.referenceMessageId as number);
+  const replyData = trpc.useQueries((t) =>
+    replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
+  );
 
   let loopMsgDate = new Date(1970);
   let loopPreviousChatter = 0;
@@ -654,6 +704,12 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
         loopPreviousChatter = c.userId;
 
         const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
+        const isMe = c.userId === currentUser?.id;
+
+        const tReplyData =
+          !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
+            ? replyData[replyIds.indexOf(c.referenceMessageId)]
+            : undefined;
 
         return (
           <PStack
@@ -685,7 +741,7 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
             ) : (
               <>
                 {shouldShowInfo && (
-                  <Group className={cx({ [classes.myDetails]: c.userId === currentUser?.id })}>
+                  <Group className={cx({ [classes.myDetails]: isMe })}>
                     {!!cachedUser ? (
                       <UserAvatar user={cachedUser} withUsername />
                     ) : (
@@ -694,26 +750,74 @@ function DisplayMessages({ chats }: { chats: ChatAllMessages }) {
                     <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
                   </Group>
                 )}
-                {/* TODO this should match the text writer, autoformatting as its entered and selecting emojis */}
-                <Tooltip
-                  label={
-                    !shouldShowInfo ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a') : undefined
-                  }
-                  disabled={shouldShowInfo}
-                  sx={{ opacity: 0.85 }}
-                  openDelay={350}
-                  position={c.userId === currentUser?.id ? 'top-end' : 'top-start'}
-                  withArrow
-                >
-                  <Text
-                    className={cx(classes.chatMessage, {
-                      [classes.otherMessage]: c.userId !== currentUser?.id,
-                      [classes.myMessage]: c.userId === currentUser?.id,
-                    })}
+                {/* TODO this needs better styling and click -> message */}
+                {!!c.referenceMessageId && (
+                  <Group
+                    spacing={6}
+                    position="right"
+                    sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                   >
-                    {c.content}
-                  </Text>
-                </Tooltip>
+                    <IconArrowBack size={14} />
+                    {!!tReplyData?.data?.user && (
+                      <Tooltip label={tReplyData.data.user.username}>
+                        <Box>
+                          <UserAvatar user={tReplyData.data.user} size="xs" />
+                        </Box>
+                      </Tooltip>
+                    )}
+                    <Text className={cx([classes.chatMessage, classes.replyMessage])}>
+                      {!tReplyData || tReplyData.isError ? (
+                        <em>Could not load message.</em>
+                      ) : tReplyData.isLoading ? (
+                        <em>Loading content...</em>
+                      ) : (
+                        tReplyData.data?.content ?? <em>Could not load message.</em>
+                      )}
+                    </Text>
+                  </Group>
+                )}
+                <Group
+                  position="right"
+                  className={classes.highlightRow}
+                  sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
+                >
+                  <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
+                    <Menu.Target>
+                      <ActionIcon sx={{ alignSelf: 'flex-start', display: 'none' }}>
+                        <IconDotsVertical />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        icon={<IconArrowBack size={14} />}
+                        onClick={() => setReplyId(c.id)}
+                      >
+                        Reply
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                  <Tooltip
+                    label={
+                      !shouldShowInfo
+                        ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')
+                        : undefined
+                    }
+                    disabled={shouldShowInfo}
+                    sx={{ opacity: 0.85 }}
+                    openDelay={350}
+                    position={isMe ? 'top-end' : 'top-start'}
+                    withArrow
+                  >
+                    <Text
+                      className={cx(classes.chatMessage, {
+                        [classes.otherMessage]: !isMe,
+                        [classes.myMessage]: isMe,
+                      })}
+                    >
+                      {c.content}
+                    </Text>
+                  </Tooltip>
+                </Group>
               </>
             )}
           </PStack>

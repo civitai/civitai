@@ -9,18 +9,8 @@ import {
   createStyles,
   Badge,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
-import {
-  IconCategory,
-  IconFileText,
-  IconHome,
-  IconLayoutList,
-  IconMoneybag,
-  IconPhoto,
-} from '@tabler/icons-react';
+import { TablerIconsProps } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import React from 'react';
 
 const useStyles = createStyles((theme, _, getRef) => ({
@@ -85,7 +75,12 @@ export function HomeStyleSegmentedControl({
               color={activePath === key ? theme.colors.dark[7] : 'transparent'}
               p={6}
             >
-              {value.icon}
+              {value.icon({
+                color:
+                  theme.colorScheme === 'dark' || activePath === key
+                    ? theme.white
+                    : theme.colors.dark[7],
+              })}
             </ThemeIcon>
             <Text size="sm" transform="capitalize" inline>
               {value.label ?? key}
@@ -115,9 +110,9 @@ export function HomeStyleSegmentedControl({
   );
 }
 
-type DataItem = {
+export type DataItem = {
   url: string;
-  icon: React.ReactNode;
+  icon: (props?: TablerIconsProps) => React.ReactNode;
   disabled?: boolean;
   count?: number | string;
   label?: string;

@@ -110,6 +110,8 @@ import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 
@@ -215,13 +217,6 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
-  const { entities } = useEntityAccessRequirement({
-    entityType: 'ModelVersion',
-    entityIds: [modelVersionId],
-  });
-
-  const [access] = entities;
-  const hasAccess = access?.hasAccess;
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -545,9 +540,7 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
-    hasAccess &&
-    !isMuted &&
-    (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
+    !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
@@ -667,200 +660,208 @@ export default function ModelDetailsV2({
                   )}
                 </Group>
 
-                <Menu position="bottom-end" transition="pop-top-right" withinPortal>
-                  <Menu.Target>
-                    <ActionIcon variant="outline">
-                      <IconDotsVertical size={16} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {currentUser && isCreator && published && (
-                      <Menu.Item
-                        icon={<IconBan size={14} stroke={1.5} />}
-                        color="yellow"
-                        onClick={() => unpublishModelMutation.mutate({ id })}
-                        disabled={unpublishModelMutation.isLoading}
-                      >
-                        Unpublish
-                      </Menu.Item>
-                    )}
-                    {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
-                      <Menu.Item
-                        icon={<IconRepeat size={14} stroke={1.5} />}
-                        color="green"
-                        onClick={handlePublishModel}
-                        disabled={publishModelMutation.isLoading}
-                      >
-                        Republish
-                      </Menu.Item>
-                    )}
-                    {currentUser && isModerator && modelDeleted && (
-                      <Menu.Item
-                        icon={<IconRecycle size={14} stroke={1.5} />}
-                        color="green"
-                        onClick={() => restoreModelMutation.mutate({ id })}
-                        disabled={restoreModelMutation.isLoading}
-                      >
-                        Restore
-                      </Menu.Item>
-                    )}
-                    {currentUser && isModerator && (
-                      <>
-                        {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
-                          <Menu.Item
-                            component="a"
-                            target="_blank"
-                            icon={<IconInfoCircle size={14} stroke={1.5} />}
-                            href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
-                          >
-                            Lookup Model
-                          </Menu.Item>
-                        )}
-                        {published && (
-                          <Menu.Item
-                            color="yellow"
-                            icon={<IconBan size={14} stroke={1.5} />}
-                            onClick={() => openContext('unpublishModel', { modelId: model.id })}
-                          >
-                            Unpublish as Violation
-                          </Menu.Item>
-                        )}
+                <Group spacing={8} noWrap>
+                  <HowToButton
+                    size={30}
+                    stroke={1.5}
+                    href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
+                    tooltip="What is this?"
+                  />
+                  <Menu position="bottom-end" transition="pop-top-right" withinPortal>
+                    <Menu.Target>
+                      <ActionIcon variant="outline">
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      {currentUser && isCreator && published && (
                         <Menu.Item
-                          color={theme.colors.red[6]}
-                          icon={<IconTrash size={14} stroke={1.5} />}
-                          onClick={() => handleDeleteModel({ permanently: true })}
+                          icon={<IconBan size={14} stroke={1.5} />}
+                          color="yellow"
+                          onClick={() => unpublishModelMutation.mutate({ id })}
+                          disabled={unpublishModelMutation.isLoading}
                         >
-                          Permanently Delete Model
+                          Unpublish
                         </Menu.Item>
-                      </>
-                    )}
-                    {currentUser && isOwner && !modelDeleted && (
-                      <>
+                                                                 )}
+          {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
+                                                                                    <Menu.Item
+                                                                                    icon={<IconRepeat size={14} stroke={1.5} />}
+                                                                                    color="green"
+                                                                                    onClick={handlePublishModel}
+                                                                                    disabled={publishModelMutation.isLoading}
+                                                                                    >
+                                                                                    Republish
+                                                                                    </Menu.Item>
+                                                                                    )}
+                      {currentUser && isModerator && modelDeleted && (
                         <Menu.Item
-                          color={theme.colors.red[6]}
-                          icon={<IconTrash size={14} stroke={1.5} />}
-                          onClick={() => handleDeleteModel()}
+                          icon={<IconRecycle size={14} stroke={1.5} />}
+                          color="green"
+                          onClick={() => restoreModelMutation.mutate({ id })}
+                          disabled={restoreModelMutation.isLoading}
                         >
-                          Delete Model
+                          Restore
                         </Menu.Item>
-                        <Menu.Item
-                          icon={<IconEdit size={14} stroke={1.5} />}
-                          component={NextLink}
-                          href={`/models/${model.id}/edit`}
-                        >
-                          Edit Model
-                        </Menu.Item>
-                        {!model.mode ? (
-                          <>
+                      )}
+                      {currentUser && isModerator && (
+                        <>
+                          {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
                             <Menu.Item
-                              icon={<IconArchive size={14} stroke={1.5} />}
-                              onClick={() => handleChangeMode(ModelModifier.Archived)}
+                              component="a"
+                              target="_blank"
+                              icon={<IconInfoCircle size={14} stroke={1.5} />}
+                              href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
                             >
-                              Archive
+                              Lookup Model
                             </Menu.Item>
-                            {isModerator && (
-                              <Menu.Item
-                                icon={<IconCircleMinus size={14} stroke={1.5} />}
-                                onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                              >
-                                Take Down
-                              </Menu.Item>
-                            )}
-                          </>
-                        ) : model.mode === ModelModifier.Archived ||
-                          (isModerator && model.mode === ModelModifier.TakenDown) ? (
+                          )}
+                          {published && (
+                            <Menu.Item
+                              color="yellow"
+                              icon={<IconBan size={14} stroke={1.5} />}
+                              onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                            >
+                              Unpublish as Violation
+                            </Menu.Item>
+                          )}
                           <Menu.Item
-                            icon={<IconReload size={14} stroke={1.5} />}
-                            onClick={() => handleChangeMode(null)}
+                            color={theme.colors.red[6]}
+                            icon={<IconTrash size={14} stroke={1.5} />}
+                            onClick={() => handleDeleteModel({ permanently: true })}
                           >
-                            Bring Back
+                            Permanently Delete Model
                           </Menu.Item>
-                        ) : null}
-                      </>
-                    )}
-                    {features.collections && (
-                      <AddToCollectionMenuItem
-                        onClick={() =>
-                          openContext('addToCollection', {
-                            modelId: model.id,
-                            type: CollectionType.Model,
-                          })
-                        }
-                      />
-                    )}
-                    {isOwner && (
-                      <AddToShowcaseMenuItem
-                        key="add-to-showcase"
-                        entityType="Model"
-                        entityId={model.id}
-                      />
-                    )}
-                    <ToggleSearchableMenuItem
-                      entityType="Model"
-                      entityId={model.id}
-                      key="toggle-searchable-menu-item"
-                    />
-                    {(!currentUser || !isOwner || isModerator) && (
-                      <LoginRedirect reason="report-model">
-                        <Menu.Item
-                          icon={<IconFlag size={14} stroke={1.5} />}
+                        </>
+                      )}
+                      {currentUser && isOwner && !modelDeleted && (
+                        <>
+                          <Menu.Item
+                            color={theme.colors.red[6]}
+                            icon={<IconTrash size={14} stroke={1.5} />}
+                            onClick={() => handleDeleteModel()}
+                          >
+                            Delete Model
+                          </Menu.Item>
+                          <Menu.Item
+                            icon={<IconEdit size={14} stroke={1.5} />}
+                            component={NextLink}
+                            href={`/models/${model.id}/edit`}
+                          >
+                            Edit Model
+                          </Menu.Item>
+                          {!model.mode ? (
+                            <>
+                              <Menu.Item
+                                icon={<IconArchive size={14} stroke={1.5} />}
+                                onClick={() => handleChangeMode(ModelModifier.Archived)}
+                              >
+                                Archive
+                              </Menu.Item>
+                              {isModerator && (
+                                <Menu.Item
+                                  icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                  onClick={() => handleChangeMode(ModelModifier.TakenDown)}
+                                >
+                                  Take Down
+                                </Menu.Item>
+                              )}
+                            </>
+                          ) : model.mode === ModelModifier.Archived ||
+                            (isModerator && model.mode === ModelModifier.TakenDown) ? (
+                            <Menu.Item
+                              icon={<IconReload size={14} stroke={1.5} />}
+                              onClick={() => handleChangeMode(null)}
+                            >
+                              Bring Back
+                            </Menu.Item>
+                          ) : null}
+                        </>
+                      )}
+                      {features.collections && (
+                        <AddToCollectionMenuItem
                           onClick={() =>
-                            openContext('report', {
-                              entityType: ReportEntity.Model,
-                              entityId: model.id,
+                            openContext('addToCollection', {
+                              modelId: model.id,
+                              type: CollectionType.Model,
                             })
                           }
-                        >
-                          Report
-                        </Menu.Item>
-                      </LoginRedirect>
-                    )}
-                    {isModerator && (
-                      <Menu.Item
-                        icon={
-                          rescanModelMutation.isLoading ? (
-                            <Loader size={14} />
-                          ) : (
-                            <IconRadar2 size={14} stroke={1.5} />
-                          )
-                        }
-                        onClick={() => handleRescanModel()}
-                      >
-                        Rescan Files
-                      </Menu.Item>
-                    )}
-                    {currentUser && (
-                      <>
-                        <HideUserButton as="menu-item" userId={model.user.id} />
-                        <HideModelButton as="menu-item" modelId={model.id} />
-                        <Menu.Item
-                          icon={<IconTagOff size={14} stroke={1.5} />}
-                          onClick={() => openContext('blockModelTags', { modelId: model.id })}
-                        >
-                          Hide content with these tags
-                        </Menu.Item>
-                      </>
-                    )}
-                    {isOwner && (
-                      <ToggleLockModel modelId={model.id} locked={model.locked}>
-                        {({ onClick }) => (
+                        />
+                      )}
+                      {isOwner && (
+                        <AddToShowcaseMenuItem
+                          key="add-to-showcase"
+                          entityType="Model"
+                          entityId={model.id}
+                        />
+                      )}
+                      <ToggleSearchableMenuItem
+                        entityType="Model"
+                        entityId={model.id}
+                        key="toggle-searchable-menu-item"
+                      />
+                      {(!currentUser || !isOwner || isModerator) && (
+                        <LoginRedirect reason="report-model">
                           <Menu.Item
-                            icon={
-                              model.locked ? (
-                                <IconLockOff size={14} stroke={1.5} />
-                              ) : (
-                                <IconLock size={14} stroke={1.5} />
-                              )
+                            icon={<IconFlag size={14} stroke={1.5} />}
+                            onClick={() =>
+                              openContext('report', {
+                                entityType: ReportEntity.Model,
+                                entityId: model.id,
+                              })
                             }
-                            onClick={onClick}
                           >
-                            {model.locked ? 'Unlock' : 'Lock'} model discussion
+                            Report
                           </Menu.Item>
-                        )}
-                      </ToggleLockModel>
-                    )}
-                  </Menu.Dropdown>
-                </Menu>
+                        </LoginRedirect>
+                      )}
+                      {isModerator && (
+                        <Menu.Item
+                          icon={
+                            rescanModelMutation.isLoading ? (
+                              <Loader size={14} />
+                            ) : (
+                              <IconRadar2 size={14} stroke={1.5} />
+                            )
+                          }
+                          onClick={() => handleRescanModel()}
+                        >
+                          Rescan Files
+                        </Menu.Item>
+                      )}
+                      {currentUser && (
+                        <>
+                          <HideUserButton as="menu-item" userId={model.user.id} />
+                          <HideModelButton as="menu-item" modelId={model.id} />
+                          <Menu.Item
+                            icon={<IconTagOff size={14} stroke={1.5} />}
+                            onClick={() => openContext('blockModelTags', { modelId: model.id })}
+                          >
+                            Hide content with these tags
+                          </Menu.Item>
+                        </>
+                      )}
+                      {isOwner && (
+                        <ToggleLockModel modelId={model.id} locked={model.locked}>
+                          {({ onClick }) => (
+                            <Menu.Item
+                              icon={
+                                model.locked ? (
+                                  <IconLockOff size={14} stroke={1.5} />
+                                ) : (
+                                  <IconLock size={14} stroke={1.5} />
+                                )
+                              }
+                              onClick={onClick}
+                            >
+                              {model.locked ? 'Unlock' : 'Lock'} model discussion
+                            </Menu.Item>
+                          )}
+                        </ToggleLockModel>
+                      )}
+                    </Menu.Dropdown>
+                  </Menu>
+                </Group>
               </Group>
               <Group spacing={4}>
                 <Text size="xs" color="dimmed">
@@ -1007,7 +1008,6 @@ export default function ModelDetailsV2({
               onBrowseClick={() => {
                 gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
-              hasAccess={hasAccess}
             />
           )}
         </Stack>
@@ -1019,7 +1019,17 @@ export default function ModelDetailsV2({
         <AssociatedModels
           fromId={model.id}
           type="Suggested"
-          label="Suggested Resources"
+          label={
+            <Group spacing={8} noWrap>
+              Suggested Resources{' '}
+              <InfoPopover>
+                <Text size="sm" weight={400}>
+                  These are resources suggested by the creator of this model. They may be related to
+                  this model or created by the same user.
+                </Text>
+              </InfoPopover>
+            </Group>
+          }
           ownerId={model.user.id}
         />
       )}
