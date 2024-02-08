@@ -10,9 +10,17 @@ import {
   Input,
   Accordion,
   ThemeIcon,
+  Divider,
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
-import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
+import {
+  IconArrowsExchange,
+  IconBolt,
+  IconBrandStripe,
+  IconCreditCard,
+  IconInfoCircle,
+  IconMoodDollar,
+} from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -21,12 +29,14 @@ import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { BuzzPaypalButton } from './BuzzPaypalButton';
+import { closeAllModals, openConfirmModal, openModal } from '@mantine/modals';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -138,11 +148,22 @@ export const BuzzPurchase = ({
     },
   });
 
+  const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
+  const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
+  const successMessage = purchaseSuccessMessage ? (
+    purchaseSuccessMessage(buzzAmount)
+  ) : (
+    <Stack>
+      <Text>Thank you for your purchase!</Text>
+      <Text>
+        <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited to
+        your account.
+      </Text>
+    </Stack>
+  );
+
   const handleSubmit = async () => {
     if (!selectedPrice && !customAmount) return setError('Please choose one option');
-
-    const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
-    const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
 
     if (unitAmount < constants.buzz.minChargeAmount)
       return setError(
@@ -175,17 +196,7 @@ export const BuzzPurchase = ({
             <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
-        successMessage: purchaseSuccessMessage ? (
-          purchaseSuccessMessage(buzzAmount)
-        ) : (
-          <Stack>
-            <Text>Thank you for your purchase!</Text>
-            <Text>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
-              to your account.
-            </Text>
-          </Stack>
-        ),
+        successMessage,
         onSuccess: async (stripePaymentIntentId) => {
           // We do it here just in case, but the webhook should also do it
           await completeStripeBuzzPurchaseMutation({
@@ -320,7 +331,6 @@ export const BuzzPurchase = ({
                       value={customAmount ? customAmount * 10 : undefined}
                       min={1000}
                       max={constants.buzz.maxChargeAmount * 10}
-                      disabled={processing}
                       onChange={(value) => {
                         setError('');
                         setCustomAmount(Math.ceil((value ?? 0) / 10));
@@ -341,7 +351,6 @@ export const BuzzPurchase = ({
                       step={100}
                       max={constants.buzz.maxChargeAmount}
                       precision={2}
-                      disabled={processing}
                       rightSection={null}
                       rightSectionWidth="auto"
                       format="currency"
@@ -365,16 +374,59 @@ export const BuzzPurchase = ({
           </Stack>
         </Input.Wrapper>
       )}
-      <Group position="right">
+      <Stack spacing="md">
+        {!!unitAmount && (
+          <>
+            <Divider mx="-lg" />
+            <Text size="sm" align="right">
+              Your total payment will be{' '}
+              <Text component="span" weight="bold">
+                ${formatCurrencyForDisplay(unitAmount)}
+              </Text>
+            </Text>
+          </>
+        )}
+        <Button disabled={!ctaEnabled} onClick={handleSubmit} leftIcon={<IconBrandStripe />}>
+          Pay with Stripe
+        </Button>
+        <BuzzPaypalButton
+          onError={(error) => setError(error.message)}
+          onSuccess={() => {
+            openModal({
+              title: 'Payment successful',
+              children: (
+                <Stack>
+                  <Divider mx="-lg" />
+                  {successMessage ? (
+                    <>{successMessage}</>
+                  ) : (
+                    <Text>Thank you for your purchase!</Text>
+                  )}
+                  <Button
+                    onClick={() => {
+                      closeAllModals();
+                    }}
+                  >
+                    Close
+                  </Button>
+                </Stack>
+              ),
+            });
+            onPurchaseSuccess?.();
+          }}
+          amount={buzzAmount}
+          disabled={!ctaEnabled}
+        />
         {onCancel && (
           <Button variant="light" color="gray" onClick={onCancel}>
             Cancel
           </Button>
         )}
-        <Button disabled={!ctaEnabled} onClick={handleSubmit} loading={processing}>
-          {processing ? 'Completing your purchase...' : 'Continue'}
-        </Button>
-      </Group>
+
+        <Text size="xs" align="center" color="dimmed">
+          Stripe supports Credit cards, Bank transfer, Google Pay, Apple Pay, and more.
+        </Text>
+      </Stack>
     </Stack>
   );
 };
