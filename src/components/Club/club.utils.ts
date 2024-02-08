@@ -15,7 +15,7 @@ import {
 } from '~/server/schema/club.schema';
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useMemo } from 'react';
 import {
   applyUserPreferencesClub,

@@ -44,7 +44,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetByCategoryModel } from '~/types/router';

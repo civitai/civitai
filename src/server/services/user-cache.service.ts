@@ -9,6 +9,7 @@ import { redis } from '~/server/redis/client';
 import { getModerationTags } from '~/server/services/system-cache';
 import { createLogger } from '~/utils/logging';
 import { EntityAccessWithKey, getUserEntityAccess } from './common.service';
+import { NsfwLevel } from '~/server/common/enums';
 
 const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
 const PRIVATE_RESOURCE_ACCESS_CACHE_EXPIRY = 60 * 60 * 4;
@@ -22,11 +23,12 @@ async function getHiddenTags(userId: number) {
     where: { userId, type: TagEngagementType.Hide },
     select: { tag: { select: { id: true } }, type: true },
   });
-  const { showNsfw } =
+  const { browsingLevel } =
     (await dbWrite.user.findUnique({
       where: { id: userId },
-      select: { showNsfw: true },
+      select: { browsingLevel: true },
     })) ?? {};
+  const showNsfw = browsingLevel && browsingLevel > NsfwLevel.PG;
 
   const moderationTags = await getModerationTags();
   const moderatedTags = new Set(

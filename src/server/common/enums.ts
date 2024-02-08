@@ -198,19 +198,17 @@ export enum ThreadSort {
 }
 
 export enum NsfwLevel {
-  Blocked = -1,
-  PG = 0,
-  PG13 = 1,
-  R = 2,
-  X = 3,
-  XXX = 4,
+  PG = 1,
+  PG13 = 2,
+  R = 4,
+  X = 8,
+  XXX = 16,
+  Blocked = 32,
 }
 
-export const NsfwLevelLabel = {
-  [NsfwLevel.Blocked]: 'Blocked',
-  [NsfwLevel.PG]: 'PG',
-  [NsfwLevel.PG13]: 'PG-13',
-  [NsfwLevel.R]: 'R',
-  [NsfwLevel.X]: 'X',
-  [NsfwLevel.XXX]: 'XXX',
-};
+export enum OnboardingSteps {
+  TOS = 1,
+  Profile = 2,
+  BrowsingLevels = 4,
+  Buzz = 8,
+}

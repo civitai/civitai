@@ -1,14 +1,4 @@
-import {
-  Box,
-  Button,
-  Center,
-  Group,
-  Loader,
-  Popover,
-  Text,
-  Title,
-  useMantineTheme,
-} from '@mantine/core';
+import { Box, Button, Center, Group, Loader, Popover, Text, Title } from '@mantine/core';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType, MetricTimeframe } from '@prisma/client';
@@ -17,13 +7,12 @@ import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeB
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { BrowsingMode, ImageSort, ModelSort } from '~/server/common/enums';
+import { ImageSort, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -33,7 +22,7 @@ import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
-import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
+import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 
@@ -63,7 +52,7 @@ export default function Home() {
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
   return (
-    <HiddenPreferencesProvider browsingMode={BrowsingMode.SFW}>
+    <HiddenPreferencesProvider browsingLevel={[NsfwLevel.PG]}>
       <Meta
         title="Civitai: The Home of Open-Source Generative AI"
         description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"

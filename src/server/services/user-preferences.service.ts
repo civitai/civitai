@@ -1,5 +1,6 @@
-import { NsfwLevel, TagEngagementType, UserEngagementType } from '@prisma/client';
+import { TagEngagementType, UserEngagementType } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
+import { NsfwLevel } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
@@ -128,7 +129,7 @@ const getVotedHideImages = async ({
   const allHidden = [...new Set([...hiddenTagIds, ...moderatedTagIds])];
   if (!allHidden.length) return [];
   const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
-    where: { userId, tagId: { in: allHidden }, vote: { gt: 0 } },
+    where: { userId, tagId: { in: allHidden }, vote: { gt: 0 }, applied: false },
     select: { imageId: true, tagId: true },
   });
 

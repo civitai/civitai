@@ -2,9 +2,9 @@ import { Session } from 'next-auth';
 import { SessionUser } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
+import { extendedSessionUser } from '~/utils/session-helpers';
 
 export type CivitaiSessionState = SessionUser & {
-  isMember: boolean;
   refresh: () => Promise<Session | null>;
 };
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
@@ -18,19 +18,12 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   const value = useMemo(() => {
     if (!data?.user) return null;
     isAuthed = true;
+
     return {
-      ...data.user,
-      isMember: data.user.tier != null,
+      ...extendedSessionUser(data.user),
       refresh: update,
-      // TODO - computed db prop for mod levels
     };
   }, [data?.user, update]);
 
   return <CivitaiSessionContext.Provider value={value}>{children}</CivitaiSessionContext.Provider>;
 }
-
-// export const reloadSession = async () => {
-//   await fetch('/api/auth/session?update');
-//   const event = new Event('visibilitychange');
-//   document.dispatchEvent(event);
-// };

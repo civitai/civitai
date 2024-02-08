@@ -69,7 +69,8 @@ import {
   setAssociatedResources,
   setModelsCategory,
 } from '~/server/services/model.service';
-import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
   guardedProcedure,
   middleware,
@@ -130,8 +131,7 @@ const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   if (_input.browsingMode !== BrowsingMode.All) {
     const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
     _input.excludedImageTagIds = [
-      ...hidden.tags.moderatedTags,
-      ...hidden.tags.hiddenTags,
+      ...hidden.tag.map((x) => x.id),
       ...(_input.excludedImageTagIds ?? []),
     ];
     _input.excludedTagIds = [...hidden.tags.hiddenTags, ...(_input.excludedTagIds ?? [])];

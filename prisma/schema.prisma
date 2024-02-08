@@ -149,10 +149,10 @@ model User {
   email               String?               @unique @db.Citext
   emailVerified       DateTime?
   image               String?
-  showNsfw            Boolean?              @default(false)
   blurNsfw            Boolean?              @default(true)
+  browsingLevel       Int                   @default(0)
+  onboarding          Int                   @default(0)
   isModerator         Boolean?              @default(false)
-  tos                 Boolean?              @default(false)
   createdAt           DateTime              @default(now())
   deletedAt           DateTime?
   customerId          String?               @unique
@@ -165,12 +165,12 @@ model User {
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
   leaderboardShowcase String?
   referral            UserReferral?
-  onboardingSteps     OnboardingStep[]      @default([Moderation, Buzz])
-  profile             UserProfile?
-  profilePictureId    Int?                  @unique
-  profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
-  settings            Json?                 @default("{}")
-  connectedAccount    UserStripeConnect?
+
+  profile          UserProfile?
+  profilePictureId Int?               @unique
+  profilePicture   Image?             @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
+  settings         Json?              @default("{}")
+  connectedAccount UserStripeConnect?
 
   accounts             Account[]
   sessions             Session[]
@@ -1148,6 +1148,7 @@ model Image {
   type              MediaType               @default(image)
   metadata          Json                    @default("{}") // file metadata
   nsfw              NsfwLevel               @default(None)
+  nsfwLevel         Int                     @default(1)
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?
@@ -1295,7 +1296,7 @@ model Tag {
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
   nsfw       NsfwLevel   @default(None)
-  nsfwLevel  Int         @default(0)
+  nsfwLevel  Int         @default(1)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)

@@ -27,18 +27,17 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { IconCheck, IconX, IconAlertCircle, IconProgressBolt } from '@tabler/icons-react';
+import { IconCheck, IconX, IconProgressBolt } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ModerationCard } from '~/components/Account/ModerationCard';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { Currency, OnboardingStep } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import {
@@ -49,6 +48,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
+import { OnboardingSteps } from '~/server/common/enums';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -101,8 +101,8 @@ export default function OnboardingModal() {
   const onboarded = {
     tos: !!user?.tos,
     profile: !!user?.username && !!user?.email,
-    content: !user?.onboardingSteps?.includes(OnboardingStep.Moderation),
-    buzz: !user?.onboardingSteps?.includes(OnboardingStep.Buzz),
+    content: !user?.onboardingSteps?.includes(OnboardingSteps.BrowsingLevels),
+    buzz: !user?.onboardingSteps?.includes(OnboardingSteps.Buzz),
   };
   const stepCount = Object.keys(onboarded).length;
   const [activeStep, setActiveStep] = useState(Object.values(onboarded).indexOf(false));

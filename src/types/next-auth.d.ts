@@ -1,17 +1,16 @@
-import { OnboardingStep } from '@prisma/client';
 import type { DefaultSession } from 'next-auth';
+import { extendedSessionUser } from '~/utils/session-helpers';
 
 interface ExtendedUser {
   id: number;
-  showNsfw: boolean;
   blurNsfw: boolean; // client only
   username: string;
-  // feedbackToken?: string;
+  browsingLevel: number;
+  onboarding: number;
   image?: string;
   email?: string;
   emailVerified?: Date;
   createdAt?: Date;
-  tos?: boolean; // client only
   isModerator?: boolean;
   customerId?: string; // could be fetched
   subscriptionId?: string; // could be fetched
@@ -19,7 +18,6 @@ interface ExtendedUser {
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting
-  onboardingSteps?: OnboardingStep[]; // client only
   permissions?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string; // client only
@@ -39,7 +37,8 @@ declare module 'next-auth' {
     image?: string | null;
   }
 
-  interface SessionUser extends ExtendedUser, DefaultSession['user'] {}
+  interface TokenUser extends ExtendedUser, DefaultSession['user'] {}
+  type SessionUser = NonNullable<ReturnType<typeof extendedSessionUser>>;
   /**
    * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
    */

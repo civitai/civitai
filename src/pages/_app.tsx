@@ -34,12 +34,12 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
-import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
+import { ParsedCookies, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
-import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
+import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { TosProvider } from '~/providers/TosProvider';
@@ -50,6 +50,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
+import { extendedSessionUser } from '~/utils/session-helpers';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -67,7 +68,7 @@ type CustomAppProps = {
 } & AppProps<{
   session: Session | null;
   colorScheme: ColorScheme;
-  cookies: CookiesContext;
+  cookies: ParsedCookies;
   filters: CookiesState;
   flags: FeatureAccess;
 }>;
@@ -284,7 +285,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
-  const flags = getFeatureFlags({ user: session?.user });
+  const flags = getFeatureFlags({
+    user: session?.user ? extendedSessionUser(session.user) : undefined,
+  });
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;

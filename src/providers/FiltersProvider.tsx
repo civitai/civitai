@@ -199,7 +199,7 @@ type StoreState = FilterState & {
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
 const cookieKeys: CookieStorageSchema = {
   browsingMode: { key: 'mode', schema: browsingModeSchema },
-};
+} as const;
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
 const localStorageSchemas: LocalStorageSchema = {

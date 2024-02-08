@@ -2,12 +2,14 @@ import { signIn, useSession } from 'next-auth/react';
 import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { Modal } from '@mantine/core';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
 );
 
 export function TosProvider({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
+  const currentUser = useCurrentUser();
 
   // https://next-auth.js.org/tutorials/refresh-token-rotation#client-side
   useEffect(() => {
@@ -17,12 +19,12 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
   }, [session]);
 
   const opened =
-    session?.user &&
-    !session.user.bannedAt &&
-    (!session?.user?.tos ||
-      !session.user.email ||
-      !session.user.username ||
-      !!session.user.onboardingSteps?.length);
+    currentUser &&
+    !currentUser.bannedAt &&
+    (!currentUser.tos ||
+      !currentUser.email ||
+      !currentUser.username ||
+      !!currentUser.onboardingSteps?.length);
 
   return (
     <>

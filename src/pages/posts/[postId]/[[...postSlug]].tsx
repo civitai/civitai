@@ -1,7 +1,6 @@
 import { InferGetServerSidePropsType } from 'next';
 
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
-import { parseBrowsingMode } from '~/server/createContext';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 
