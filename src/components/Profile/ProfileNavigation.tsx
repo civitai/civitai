@@ -14,6 +14,7 @@ import {
   DataItem,
   HomeStyleSegmentedControl,
 } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import { IconVideo } from '@tabler/icons-react';
 
 type ProfileNavigationProps = {
   username: string;
@@ -50,6 +51,11 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `${baseUrl}/images`,
       icon: (props) => <IconPhoto {...props} />,
       count: numberWithCommas(userOverview?.imageCount),
+    },
+    videos: {
+      url: `${baseUrl}/videos`,
+      icon: (props) => <IconVideo {...props} />,
+      count: numberWithCommas(userOverview?.videoCount),
     },
     articles: {
       url: `${baseUrl}/articles`,
