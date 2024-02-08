@@ -438,8 +438,9 @@ export function ExistingChat() {
     }
   };
 
-  // TODO handle replies (reference)
   const sendMessage = () => {
+    if (isSending) return;
+
     // TODO can probably handle this earlier to disable from sending blank messages
     const strippedMessage = chatMsg.trim();
     if (!strippedMessage.length) {

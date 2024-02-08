@@ -8,6 +8,7 @@ import {
   getUnreadMessagesForUserHandler,
   getUserSettingsHandler,
   isTypingHandler,
+  markAllAsReadHandler,
   modifyUserHandler,
   setUserSettingsHandler,
   updateMessageHandler,
@@ -34,6 +35,7 @@ export const chatRouter = router({
   createChat: guardedProcedure.input(createChatInput).mutation(createChatHandler),
   addUser: guardedProcedure.input(addUsersInput).mutation(addUsersHandler),
   modifyUser: protectedProcedure.input(modifyUserInput).mutation(modifyUserHandler),
+  markAllAsRead: protectedProcedure.mutation(markAllAsReadHandler),
   getInfiniteMessages: protectedProcedure
     .input(getInfiniteMessagesInput)
     .query(getInfiniteMessagesHandler),

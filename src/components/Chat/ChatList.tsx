@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Badge,
   Box,
+  Button,
   Center,
   createPolymorphicComponent,
   createStyles,
@@ -12,6 +13,7 @@ import {
   Indicator,
   Input,
   Loader,
+  Menu,
   SegmentedControl,
   Stack,
   Text,
@@ -22,13 +24,18 @@ import { ChatMemberStatus } from '@prisma/client';
 import {
   IconCirclePlus,
   IconCloudOff,
+  IconEar,
+  IconEarOff,
+  IconEye,
   IconPlugConnected,
   IconSearch,
+  IconTool,
   IconUsers,
   IconUserX,
   IconX,
 } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import produce from 'immer';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -37,6 +44,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ChatListMessage } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
@@ -77,6 +85,10 @@ export function ChatList() {
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const { connected } = useSignalContext();
   const isMobile = useIsMobile();
+  const userSettings = queryUtils.chat.getUserSettings.getData();
+  // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
+
+  const muteSounds = userSettings?.muteSounds ?? false;
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -88,6 +100,78 @@ export function ChatList() {
           ChatMemberStatus.Invited
       ).length
     : 0;
+
+  const activeIds = !!data
+    ? data
+        .filter(
+          (d) =>
+            d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status ===
+            ChatMemberStatus.Joined
+        )
+        .map((d) => d.id)
+    : [];
+
+  const activeCount = !!chatCounts
+    ? chatCounts
+        .filter((cc) => activeIds.includes(cc.chatId))
+        .map((cc) => cc.cnt)
+        .reduce((acc, val) => acc + val, 0)
+    : 0;
+
+  const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
+    onSuccess(data) {
+      queryUtils.chat.getUserSettings.setData(undefined, (old) => {
+        if (!old) return old;
+        return data;
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update settings.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
+
+  const { mutate: markAsRead } = trpc.chat.markAllAsRead.useMutation({
+    onSuccess(data) {
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          for (const changed of data) {
+            const tChat = old.find((c) => c.id === changed.chatId);
+            const tMember = tChat?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
+            if (!tMember) continue;
+
+            tMember.lastViewedMessageId = changed.lastViewedMessageId;
+          }
+        })
+      );
+      queryUtils.chat.getUnreadCount.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          for (const changed of data) {
+            const tChat = old.find((c) => c.chatId === changed.chatId);
+            if (!tChat) continue;
+
+            tChat.cnt = 0;
+          }
+        })
+      );
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to mark as read.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   useEffect(() => {
     if (!data) return;
@@ -131,11 +215,39 @@ export function ChatList() {
     setFilteredData(tabFiltered);
   }, [currentUser?.id, data, searchInput, activeTab]);
 
+  const handleMute = () => {
+    modifySettings({
+      muteSounds: !muteSounds,
+    });
+  };
+
   return (
     <Stack spacing={0} h="100%">
       <Group p="sm" position="apart" align="center">
         <Group>
           <Text>Chats</Text>
+          <Menu withArrow position="bottom">
+            <Menu.Target>
+              <ActionIcon variant="light">
+                <IconTool size={18} strokeWidth={1.5} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                icon={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
+                onClick={handleMute}
+              >
+                {`${muteSounds ? 'Play' : 'Mute'} sounds`}
+              </Menu.Item>
+              <Menu.Item
+                disabled={activeCount === 0}
+                icon={<IconEye size={18} />}
+                onClick={() => markAsRead()}
+              >
+                {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           {!connected && (
             <Tooltip label="Not connected. May not receive live messages or alerts.">
               <IconPlugConnected color="orangered" />
@@ -143,13 +255,18 @@ export function ChatList() {
           )}
         </Group>
         <Group>
-          <ActionIcon>
-            <IconCirclePlus
-              onClick={() => {
-                setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
-              }}
-            />
-          </ActionIcon>
+          <Button
+            size="xs"
+            variant="light"
+            styles={{ leftIcon: { marginRight: 6 } }}
+            leftIcon={<IconCirclePlus size={18} />}
+            onClick={() => {
+              setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
+            }}
+          >
+            New
+          </Button>
+
           {isMobile && (
             <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
               <IconX />

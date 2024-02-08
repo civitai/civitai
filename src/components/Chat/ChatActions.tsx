@@ -6,8 +6,6 @@ import {
   IconBell,
   IconBellOff,
   IconDoorExit,
-  IconEar,
-  IconEarOff,
   IconFlag,
   IconSettings,
   IconX,
@@ -28,33 +26,12 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
-  const userSettings = queryUtils.chat.getUserSettings.getData();
-  // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
-  // TODO if this works, more of this for getAllByUser
-  const muteSounds = userSettings?.muteSounds ?? false;
-
   // const isOwner = myMember?.isOwner === true;
   const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const modSender = chatObj?.chatMembers.find(
     (cm) => cm.userId !== currentUser?.id && cm.isOwner === true && cm.user.isModerator === true
   );
   const cantLeave = modSender?.status === ChatMemberStatus.Joined && !myMember?.user.isModerator;
-
-  const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
-    onSuccess(data) {
-      queryUtils.chat.getUserSettings.setData(undefined, (old) => {
-        if (!old) return old;
-        return data;
-      });
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to update settings.',
-        error: new Error(error.message),
-        autoClose: false,
-      });
-    },
-  });
 
   const { mutate: modifyMembership } = trpc.chat.modifyUser.useMutation({
     onSuccess(data, req) {
@@ -84,12 +61,6 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
       });
     },
   });
-
-  const handleMute = () => {
-    modifySettings({
-      muteSounds: !muteSounds,
-    });
-  };
 
   const toggleNotifications = () => {
     if (!myMember || !currentUser) {
@@ -143,19 +114,20 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
   return (
     <Group noWrap>
-      <Menu withArrow position="bottom-end">
-        <Menu.Target>
-          <ActionIcon>
-            <IconSettings />
-          </ActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown>
-          {!!chatObj && (
+      {!!chatObj && (
+        <Menu withArrow position="bottom-end">
+          <Menu.Target>
+            <ActionIcon>
+              <IconSettings />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
             <>
-              <Menu.Label>Chat Actions</Menu.Label>
+              {/*<Menu.Label>Owner Actions</Menu.Label>*/}
               {/*TODO enable these*/}
               {/*{isOwner && <Menu.Item icon={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
               {/*{isOwner && <Menu.Item icon={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
+              {/*<Menu.Label>Chat Actions</Menu.Label>*/}
               {myMember?.status === ChatMemberStatus.Joined && (
                 <Menu.Item
                   icon={myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />}
@@ -194,18 +166,12 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                 </Menu.Item>
               ) : undefined}
             </>
-          )}
-          <Menu.Label>Global</Menu.Label>
-          <Menu.Item
-            icon={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
-            onClick={handleMute}
-          >
-            {`${muteSounds ? 'Play' : 'Mute'} sounds`}
-          </Menu.Item>
-          {/* TODO blocklist here? */}
-          {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
-        </Menu.Dropdown>
-      </Menu>
+
+            {/* TODO blocklist here? */}
+            {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
+          </Menu.Dropdown>
+        </Menu>
+      )}
       <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
         <IconX />
       </ActionIcon>
