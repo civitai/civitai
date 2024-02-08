@@ -504,19 +504,17 @@ export function AppHeader({
         ),
       },
       {
-        href: '',
+        href: '#!',
         visible: !!currentUser,
         label: (
           <FeatureIntroduction
             feature="getting-started"
             contentSlug={['feature-introduction', 'welcome']}
             actionButton={
-              <Menu.Item>
-                <Group align="center" spacing="xs">
-                  <IconPlayerPlayFilled stroke={1.5} />
-                  Getting Started
-                </Group>
-              </Menu.Item>
+              <Group align="center" spacing="xs">
+                <IconPlayerPlayFilled stroke={1.5} />
+                Getting Started
+              </Group>
             }
           />
         ),
