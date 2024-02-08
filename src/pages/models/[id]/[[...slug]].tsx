@@ -42,7 +42,7 @@ import {
   IconArchive,
   IconCircleMinus,
   IconReload,
-  IconPlaylistAdd,
+  IconBookmark,
   IconInfoCircle,
   IconBolt,
   IconRadar2,
@@ -607,7 +607,7 @@ export default function ModelDetailsV2({
                       <IconBadge
                         radius="sm"
                         size="lg"
-                        icon={<IconPlaylistAdd size={18} />}
+                        icon={<IconBookmark size={18} />}
                         sx={{ cursor: 'pointer' }}
                         onClick={handleCollect}
                       >

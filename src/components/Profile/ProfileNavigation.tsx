@@ -5,7 +5,7 @@ import {
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
-  IconPlaylistAdd,
+  IconBookmark,
 } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
@@ -64,7 +64,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     },
     collections: {
       url: `${baseUrl}/collections`,
-      icon: (props) => <IconPlaylistAdd {...props} />,
+      icon: (props) => <IconBookmark {...props} />,
       count: numberWithCommas(userOverview?.collectionCount),
     },
   };

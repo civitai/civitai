@@ -40,7 +40,7 @@ import {
   IconPalette,
   IconPhotoUp,
   IconPlayerPlayFilled,
-  IconPlaylistAdd,
+  IconBookmarkEdit,
   IconPlus,
   IconProgressBolt,
   IconSearch,
@@ -379,7 +379,7 @@ export function AppHeader({
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconPlaylistAdd stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconBookmark stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             My collections
           </Group>
         ),
@@ -399,7 +399,7 @@ export function AppHeader({
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconBookmark stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            <IconBookmarkEdit stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
           </Group>
         ),

@@ -654,19 +654,6 @@ export function ModelVersionDetails({
             deadline={version.earlyAccessDeadline}
           />
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
-
-          <DismissibleAlert
-            id="model-reporting-alert"
-            size="sm"
-            title="Reporting Resources"
-            content={
-              <Text>
-                If this resource breaks our{' '}
-                <ContentPolicyLink size="xs" color="dimmed" td="underline" inline />, remember you
-                can always report it.
-              </Text>
-            }
-          />
           <Accordion
             variant="separated"
             multiple
