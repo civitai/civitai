@@ -19,7 +19,11 @@ import {
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
@@ -178,6 +182,9 @@ export const upsertModelVersion = async ({
       where: { id },
       select: {
         id: true,
+        status: true,
+
+        earlyAccessTimeFrame: true,
         monetization: {
           select: {
             id: true,
@@ -192,6 +199,16 @@ export const upsertModelVersion = async ({
         },
       },
     });
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.earlyAccessTimeFrame &&
+      data.earlyAccessTimeFrame < existingVersion.earlyAccessTimeFrame
+    ) {
+      throw throwBadRequestError(
+        'You cannot lower the early access time frame for a published early access model version.'
+      );
+    }
 
     const version = await dbWrite.modelVersion.update({
       where: { id },

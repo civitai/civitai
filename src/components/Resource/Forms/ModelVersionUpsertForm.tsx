@@ -40,18 +40,14 @@ import {
   generationResourceSchema,
 } from '~/server/schema/generation.schema';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
-import { parseNumericString } from '~/utils/query-string-helpers';
 import { useRouter } from 'next/router';
-import { useQueryUserContributingClubs } from '../../Club/club.utils';
 
 const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
-    earlyAccessTimeFrame: z
-      .string()
-      .refine((value) => ['0', '1', '2', '3', '4', '5'].includes(value), {
-        message: 'Invalid value',
-      }),
+    earlyAccessTimeFrame: z.string().refine((value) => ['0', '1', '3', '7', '14'].includes(value), {
+      message: 'Invalid value',
+    }),
     useMonetization: z.boolean().default(false),
     recommendedResources: generationResourceSchema.array().optional(),
   })
@@ -91,7 +87,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useContext();
-  const { hasClubs } = useQueryUserContributingClubs();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -232,6 +227,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     versionCreatedAt: version?.createdAt ?? new Date(),
   });
   const showEarlyAccessInput = version?.status !== 'Published' || atEarlyAccess;
+  const canLowerEarlyAccessValue = version?.status !== 'Published';
+  const minEarlyAccessValue = canLowerEarlyAccessValue ? 0 : version?.earlyAccessTimeFrame ?? 0;
 
   return (
     <>
@@ -272,11 +269,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               <InputSegmentedControl
                 name="earlyAccessTimeFrame"
                 data={[
-                  { label: 'None', value: '0' },
-                  { label: '1 day', value: '1' },
-                  { label: '3 days', value: '3' },
-                  { label: '1 week', value: '7' },
-                  { label: '2 weeks', value: '14' },
+                  { label: 'None', value: '0', disabled: minEarlyAccessValue > 0 },
+                  { label: '1 day', value: '1', disabled: minEarlyAccessValue > 1 },
+                  { label: '3 days', value: '3', disabled: minEarlyAccessValue > 3 },
+                  { label: '1 week', value: '7', disabled: minEarlyAccessValue > 7 },
+                  { label: '2 weeks', value: '14', disabled: minEarlyAccessValue > 14 },
                 ]}
                 color="blue"
                 size="xs"
@@ -291,6 +288,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 })}
                 fullWidth
               />
+              {!canLowerEarlyAccessValue && (
+                <Text size="xs" color="dimmed" mt="sm">
+                  You cannot lower early access value after a model has been published
+                </Text>
+              )}
             </Input.Wrapper>
           )}
           <Group spacing="xs" grow>
