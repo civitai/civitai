@@ -113,7 +113,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   };
 
   return (
-    <Group noWrap>
+    <Group noWrap spacing={6}>
       {!!chatObj && (
         <Menu withArrow position="bottom-end">
           <Menu.Target>

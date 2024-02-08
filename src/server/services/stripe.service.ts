@@ -1,5 +1,11 @@
+import { Currency } from '@prisma/client';
+import { MetadataParam } from '@stripe/stripe-js';
 import { chunk } from 'lodash-es';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { Stripe } from 'stripe';
+import { env } from '~/env/server.mjs';
+import { constants } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { playfab } from '~/server/playfab/client';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -7,21 +13,15 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import * as Schema from '../schema/stripe.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { Stripe } from 'stripe';
+import { invalidateSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
-import { playfab } from '~/server/playfab/client';
-import { Currency } from '@prisma/client';
-import { MetadataParam } from '@stripe/stripe-js';
-import { constants } from '~/server/common/constants';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
+import * as Schema from '../schema/stripe.schema';
 import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
+import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -64,7 +64,7 @@ export const getPlans = async () => {
         prices,
       };
     })
-    .sort((a, b) => a.price.unitAmount - b.price.unitAmount);
+    .sort((a, b) => (a.price?.unitAmount ?? 0) - (b.price?.unitAmount ?? 0));
 };
 export type StripePlan = Awaited<ReturnType<typeof getPlans>>[number];
 
@@ -225,7 +225,10 @@ export const createBuzzSession = async ({
   returnUrl,
   priceId,
   customAmount,
-}: Schema.CreateBuzzSessionInput & { customerId?: string; user: Schema.CreateCustomerInput }) => {
+}: Schema.CreateBuzzSessionInput & {
+  customerId?: string;
+  user: Schema.CreateCustomerInput;
+}) => {
   const stripe = await getServerStripe();
 
   if (!customerId) {

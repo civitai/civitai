@@ -7,8 +7,10 @@ import {
   createStyles,
   Divider,
   Group,
+  Image,
   Loader,
   Menu,
+  Spoiler,
   Stack,
   StackProps,
   Text,
@@ -20,7 +22,9 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
 import {
   IconArrowBack,
+  IconChevronDown,
   IconChevronLeft,
+  IconChevronUp,
   IconCircleCheck,
   IconCircleMinus,
   IconCircleX,
@@ -35,7 +39,6 @@ import { throttle } from 'lodash-es';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -462,71 +465,95 @@ export function ExistingChat() {
 
   return (
     <Stack spacing={0} h="100%">
-      <Group p="sm" position="apart" noWrap>
-        {mobile && (
-          <ActionIcon onClick={goBack}>
-            <IconChevronLeft />
-          </ActionIcon>
-        )}
-        {allChatLoading ? (
-          <Center h="100%">
-            <Loader />
-          </Center>
-        ) : (
-          <Group>
-            {/* TODO limit this to one line, then expand */}
-            {/* TODO improve useravatar to show loading */}
-            {/* TODO online status (later), blocked users, etc */}
-            {otherMembers?.map((cm) => (
-              <Button key={cm.userId} variant="light" color="gray" compact>
-                <UserAvatar
-                  user={cm.user}
-                  size="xs"
-                  withUsername
-                  linkToProfile
-                  // TODO don't do the uuid thing
-                  badge={
-                    <Group spacing={6} ml={4} align="center">
-                      {cm.user.isModerator ? (
-                        <EdgeMedia
-                          title="Moderator"
-                          src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'}
-                          width={16}
-                        />
-                      ) : undefined}
-                      {cm.isOwner === true ? (
-                        <Box title="Creator" display="flex">
-                          <IconCrown size={16} fill="currentColor" />
+      <Spoiler
+        showLabel={
+          <Button
+            mt={4}
+            size="xs"
+            variant="subtle"
+            compact
+            leftIcon={<IconChevronDown size={16} />}
+          >
+            Expand
+          </Button>
+        }
+        hideLabel={
+          <Button mt={8} size="xs" variant="subtle" compact leftIcon={<IconChevronUp size={16} />}>
+            Hide
+          </Button>
+        }
+        maxHeight={44}
+        styles={{
+          root: { textAlign: 'center' },
+        }}
+      >
+        <Group m="sm" mb={0} position="apart" noWrap align="flex-start" spacing="sm">
+          {mobile && (
+            <ActionIcon onClick={goBack}>
+              <IconChevronLeft />
+            </ActionIcon>
+          )}
+          {allChatLoading ? (
+            <Center h="100%">
+              <Loader />
+            </Center>
+          ) : (
+            <Group spacing="xs">
+              {/* TODO improve useravatar to show loading */}
+              {/* TODO online status (later), blocked users, etc */}
+
+              {otherMembers?.map((cm) => (
+                <Button key={cm.userId} variant="light" color="gray" compact>
+                  <UserAvatar
+                    user={cm.user}
+                    size="xs"
+                    withUsername
+                    linkToProfile
+                    badge={
+                      <Group spacing={6} ml={4} align="center">
+                        {cm.user.isModerator ? (
+                          <Image
+                            src="/images/civ-c.png"
+                            title="Moderator"
+                            alt="Moderator"
+                            width={16}
+                            height={16}
+                          />
+                        ) : undefined}
+                        {cm.isOwner === true ? (
+                          <Box title="Creator" display="flex">
+                            <IconCrown size={16} fill="currentColor" />
+                          </Box>
+                        ) : undefined}
+                        <Box
+                          title={
+                            cm.status === ChatMemberStatus.Invited ||
+                            cm.status === ChatMemberStatus.Ignored
+                              ? 'Invited'
+                              : cm.status
+                          }
+                          display="flex"
+                        >
+                          {cm.status === ChatMemberStatus.Joined ? (
+                            <IconCircleCheck size={16} color="green" />
+                          ) : cm.status === ChatMemberStatus.Left ||
+                            cm.status === ChatMemberStatus.Kicked ? (
+                            <IconCircleX size={16} color="orangered" />
+                          ) : (
+                            <IconCircleMinus size={16} />
+                          )}
                         </Box>
-                      ) : undefined}
-                      <Box
-                        title={
-                          cm.status === ChatMemberStatus.Invited ||
-                          cm.status === ChatMemberStatus.Ignored
-                            ? 'Invited'
-                            : cm.status
-                        }
-                        display="flex"
-                      >
-                        {cm.status === ChatMemberStatus.Joined ? (
-                          <IconCircleCheck size={16} color="green" />
-                        ) : cm.status === ChatMemberStatus.Left ||
-                          cm.status === ChatMemberStatus.Kicked ? (
-                          <IconCircleX size={16} color="orangered" />
-                        ) : (
-                          <IconCircleMinus size={16} />
-                        )}
-                      </Box>
-                    </Group>
-                  }
-                />
-              </Button>
-            ))}
-          </Group>
-        )}
-        <ChatActions chatObj={thisChat} />
-      </Group>
-      <Divider />
+                      </Group>
+                    }
+                  />
+                </Button>
+              ))}
+            </Group>
+          )}
+          <ChatActions chatObj={thisChat} />
+        </Group>
+      </Spoiler>
+      <Divider mt="sm" />
       {!myMember ? (
         <Center h="100%">
           <Loader />

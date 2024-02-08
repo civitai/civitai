@@ -12,6 +12,7 @@ import {
   Highlight,
   Indicator,
   Input,
+  Image,
   Loader,
   Menu,
   SegmentedControl,
@@ -412,11 +413,7 @@ export function ChatList() {
                           label="Moderator chat"
                           sx={{ border: '1px solid gray' }}
                         >
-                          <ThemeIcon size="xs" variant="light">
-                            {/*<IconBadge />*/}
-                            {/* TODO don't do the uuid thing */}
-                            <EdgeMedia src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'} />
-                          </ThemeIcon>
+                          <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
                         </Tooltip>
                       )}
                     </Group>
