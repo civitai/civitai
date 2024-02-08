@@ -29,12 +29,15 @@ export const BuzzPaypalButton = ({ amount, onError, onSuccess, height = 35, ...p
 
   const onApprove = useCallback(async (data: { orderID: string }) => {
     try {
-      onSuccess?.(data);
       await processBuzzOrderMutation({ orderId: data.orderID });
       showSuccessNotification({
         title: 'Payment successful',
         message:
           'Your payment has been processed successfully and buzz has been added to your account',
+      });
+      onSuccess?.({
+        ...data,
+        purchasedBuzzAmount: amount,
       });
     } catch (error) {
       onError('Error processing payment');
@@ -59,7 +62,7 @@ export const BuzzPaypalButton = ({ amount, onError, onSuccess, height = 35, ...p
         onClick={onValidate}
         onApprove={onApprove}
         onError={onError}
-        forceReRender={[amount]}
+        forceReRender={[amount, onSuccess]}
         style={{
           height,
         }}
