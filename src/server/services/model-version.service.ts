@@ -23,7 +23,6 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
-import { upsertClubResource } from '~/server/services/club.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 
@@ -121,7 +120,7 @@ export const upsertModelVersion = async ({
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
-  const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
+  // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
 
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
@@ -330,7 +329,8 @@ export const publishModelVersionById = async ({
     },
   });
 
-  if (!republishing) await updateModelLastVersionAt({ id: version.modelId });
+  if (!republishing && !meta?.unpublishedBy)
+    await updateModelLastVersionAt({ id: version.modelId });
   await prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel });
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
@@ -375,10 +375,6 @@ export const unpublishModelVersionById = async ({
         data: { publishedAt: null },
       });
 
-      await modelsSearchIndex.queueUpdate([
-        { id: updatedVersion.model.id, action: SearchIndexUpdateQueueAction.Update },
-      ]);
-      await updateModelLastVersionAt({ id: updatedVersion.model.id, tx });
       await preventReplicationLag('model', updatedVersion.model.id);
       await preventReplicationLag('modelVersion', updatedVersion.id);
 
@@ -386,6 +382,11 @@ export const unpublishModelVersionById = async ({
     },
     { timeout: 10000 }
   );
+
+  await modelsSearchIndex.queueUpdate([
+    { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+  await updateModelLastVersionAt({ id: version.model.id });
 
   return version;
 };
