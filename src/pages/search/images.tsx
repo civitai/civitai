@@ -92,9 +92,7 @@ function ImagesHitList() {
         <Center>
           <Stack spacing="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
-                {hiddenCount} images have been hidden due to your settings.
-              </Text>
+              <Text color="dimmed">{hiddenCount} images have been hidden due to your settings</Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
@@ -161,21 +159,22 @@ function ImagesHitList() {
           ))}
         </ImagesProvider>
       </div> */}
-      <ImagesProvider images={items as any}>
-        {/* TODO - fix type issues here. Problem is a type mismatch between ImageSearchIndexRecord and ImageGetInfinite  */}
-        <MasonryColumns
-          data={items as any}
-          imageDimensions={(data) => {
-            const width = data?.width ?? 450;
-            const height = data?.height ?? 450;
-            return { width, height };
-          }}
-          maxItemHeight={600}
-          render={ImagesCard}
-          itemId={(data) => data.id}
-          withAds
-        />
-      </ImagesProvider>
+      <div>
+        <ImagesProvider images={items as any}>
+          <MasonryColumns
+            data={items as any}
+            imageDimensions={(data) => {
+              const width = data?.width ?? 450;
+              const height = data?.height ?? 450;
+              return { width, height };
+            }}
+            maxItemHeight={600}
+            render={ImagesCard}
+            itemId={(data) => data.id}
+            withAds
+          />
+        </ImagesProvider>
+      </div>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}
