@@ -612,7 +612,7 @@ export function ExistingChat() {
               <Group spacing={0}>
                 <Textarea
                   sx={{ flexGrow: 1 }}
-                  disabled={isSending || isMuted}
+                  disabled={isMuted}
                   placeholder={isMuted ? 'Your account has been muted' : 'Send message'}
                   autosize
                   minRows={1}
