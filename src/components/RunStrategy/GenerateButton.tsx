@@ -38,7 +38,7 @@ export function GenerateButton({
       ) : (
         <Group spacing={8} noWrap>
           <IconBrush size={20} />
-          <Text inherit inline>
+          <Text inherit inline className="hide-mobile">
             Create
           </Text>
         </Group>
