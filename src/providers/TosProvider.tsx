@@ -3,9 +3,7 @@ import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { Modal } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-const DynamicOnboardingModal = dynamic(
-  () => import('~/components/OnboardingModal/OnboardingModal')
-);
+const DynamicOnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingModal'));
 
 export function TosProvider({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();

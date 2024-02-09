@@ -3,11 +3,11 @@ import {
   BountyEngagementType,
   MediaType,
   NsfwLevel,
-  OnboardingStep,
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
@@ -76,8 +76,6 @@ export const userUpdateSchema = z.object({
   username: usernameInputSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  tos: z.boolean().optional(),
-  onboardingStep: z.nativeEnum(OnboardingStep).array().optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),
@@ -165,7 +163,7 @@ export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
 export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
 export const completeOnboardStepSchema = z.object({
-  step: z.nativeEnum(OnboardingStep).optional(),
+  step: z.nativeEnum(OnboardingSteps),
   recaptchaToken: z.string().nullish(),
 });
 
@@ -193,3 +191,11 @@ export const setUserSettingsInput = z.object({
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
+
+export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
+export const userOnboardingSchema = z.discriminatedUnion('step', [
+  z.object({ step: z.literal(OnboardingSteps.TOS) }),
+  z.object({ step: z.literal(OnboardingSteps.Profile), username: z.string(), email: z.string() }),
+  z.object({ step: z.literal(OnboardingSteps.BrowsingLevels), browsingLevel: z.number() }),
+  z.object({ step: z.literal(OnboardingSteps.Buzz), recaptchaToken: z.string() }),
+]);

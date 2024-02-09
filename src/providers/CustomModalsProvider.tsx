@@ -18,9 +18,7 @@ import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditMod
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openGenQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 
-const DynamicOnboardingModal = dynamic(
-  () => import('~/components/OnboardingModal/OnboardingModal')
-);
+const DynamicOnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingModal'));
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));

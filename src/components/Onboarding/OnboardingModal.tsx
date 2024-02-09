@@ -54,7 +54,7 @@ const schema = z.object({
   username: usernameInputSchema,
   email: z
     .string({
-      invalid_type_error: 'Please provide an email',
+      invalid_type_error: 'Please provide a valid email',
       required_error: 'Please provide an email',
     })
     .email(),
@@ -183,8 +183,7 @@ export default function OnboardingModal() {
       },
     });
   };
-  const handleCompleteStep = (step: OnboardingStep) => {
-    console.log({ recaptchaToken });
+  const handleCompleteStep = (step: OnboardingSteps) => {
     if (!recaptchaToken) {
       showErrorNotification({
         title: 'Cannot save',
@@ -223,7 +222,7 @@ export default function OnboardingModal() {
     if (!result.success)
       return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
 
-    handleCompleteStep(OnboardingStep.Buzz);
+    handleCompleteStep(OnboardingSteps.Buzz);
   };
 
   useEffect(() => {
@@ -403,7 +402,7 @@ export default function OnboardingModal() {
                 <CancelButton size="lg">Sign Out</CancelButton>
                 <Button
                   size="lg"
-                  onClick={() => handleCompleteStep(OnboardingStep.Moderation)}
+                  onClick={() => handleCompleteStep(OnboardingSteps.BrowsingLevels)}
                   loading={completeStepLoading}
                 >
                   Save
