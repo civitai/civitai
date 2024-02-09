@@ -5,7 +5,7 @@ import {
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
-  IconPlaylistAdd,
+  IconBookmark,
 } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
@@ -14,6 +14,7 @@ import {
   DataItem,
   HomeStyleSegmentedControl,
 } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import { IconVideo } from '@tabler/icons-react';
 
 type ProfileNavigationProps = {
   username: string;
@@ -51,6 +52,11 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconPhoto {...props} />,
       count: numberWithCommas(userOverview?.imageCount),
     },
+    videos: {
+      url: `${baseUrl}/videos`,
+      icon: (props) => <IconVideo {...props} />,
+      count: numberWithCommas(userOverview?.videoCount),
+    },
     articles: {
       url: `${baseUrl}/articles`,
       icon: (props) => <IconPencilMinus {...props} />,
@@ -58,7 +64,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     },
     collections: {
       url: `${baseUrl}/collections`,
-      icon: (props) => <IconPlaylistAdd {...props} />,
+      icon: (props) => <IconBookmark {...props} />,
       count: numberWithCommas(userOverview?.collectionCount),
     },
   };

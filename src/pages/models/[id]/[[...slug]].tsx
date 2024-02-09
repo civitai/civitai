@@ -42,11 +42,12 @@ import {
   IconArchive,
   IconCircleMinus,
   IconReload,
-  IconPlaylistAdd,
+  IconBookmark,
   IconInfoCircle,
   IconBolt,
   IconRadar2,
   IconBrush,
+  IconRepeat,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -105,7 +106,6 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
@@ -117,7 +117,7 @@ import { adsRegistry } from '~/components/Ads/adsRegistry';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session = null }) => {
+  resolver: async ({ ssg, ctx }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -280,6 +280,14 @@ export default function ModelDetailsV2({
       showErrorNotification({ error: new Error(error.message) });
     },
   });
+  const publishModelMutation = trpc.model.publish.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
   const restoreModelMutation = trpc.model.restore.useMutation({
     async onSuccess() {
       await queryUtils.model.getById.invalidate({ id });
@@ -413,6 +421,27 @@ export default function ModelDetailsV2({
   const rescanModelMutation = trpc.model.rescan.useMutation();
   const handleRescanModel = async () => {
     rescanModelMutation.mutate({ id });
+  };
+
+  const handlePublishModel = () => {
+    if (model && model.status === ModelStatus.Unpublished && isCreator)
+      openConfirmModal({
+        centered: true,
+        closeOnConfirm: false,
+        title: 'Republish model',
+        children:
+          'This model and all of its versions will be publicly available. Are you sure you want to republish this model?',
+        labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
+        onConfirm: () => {
+          publishModelMutation.mutate(
+            {
+              id: model.id,
+              versionIds: model?.modelVersions.map((v) => v.id),
+            },
+            { onSuccess: () => closeAllModals() }
+          );
+        },
+      });
   };
 
   useEffect(() => {
@@ -578,7 +607,7 @@ export default function ModelDetailsV2({
                       <IconBadge
                         radius="sm"
                         size="lg"
-                        icon={<IconPlaylistAdd size={18} />}
+                        icon={<IconBookmark size={18} />}
                         sx={{ cursor: 'pointer' }}
                         onClick={handleCollect}
                       >
@@ -652,6 +681,16 @@ export default function ModelDetailsV2({
                           disabled={unpublishModelMutation.isLoading}
                         >
                           Unpublish
+                        </Menu.Item>
+                      )}
+                      {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
+                        <Menu.Item
+                          icon={<IconRepeat size={14} stroke={1.5} />}
+                          color="green"
+                          onClick={handlePublishModel}
+                          disabled={publishModelMutation.isLoading}
+                        >
+                          Republish
                         </Menu.Item>
                       )}
                       {currentUser && isModerator && modelDeleted && (

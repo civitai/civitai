@@ -69,7 +69,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   });
 
   const metadata: Metadata = {
-    nextCursor: Number(nextCursor),
+    nextCursor,
   };
   if (usingPaging) {
     metadata.currentPage = page;
@@ -106,7 +106,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 type Metadata = {
   currentPage?: number;
   pageSize?: number;
-  nextCursor?: number;
+  nextCursor?: string;
   nextPage?: string;
 };
 
@@ -116,7 +116,7 @@ function getNextPage({
   nextCursor,
 }: {
   req: NextApiRequest;
-  nextCursor?: number;
+  nextCursor?: string;
   currentPage?: number;
 }) {
   const baseUrl = new URL(

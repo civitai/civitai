@@ -14,7 +14,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { Availability, CollectionType } from '@prisma/client';
-import { IconDotsVertical, IconPlaylistAdd, IconShare3 } from '@tabler/icons-react';
+import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -176,7 +176,7 @@ export function PostDetail({ postId }: { postId: number }) {
                     radius="xl"
                     color="gray"
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    leftIcon={<IconPlaylistAdd size={14} />}
+                    leftIcon={<IconBookmark size={14} />}
                     onClick={() =>
                       openContext('addToCollection', {
                         postId: post.id,

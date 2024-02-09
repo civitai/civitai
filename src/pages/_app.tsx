@@ -50,6 +50,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
+import { PaypalProvider } from '~/providers/PaypalProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -230,28 +231,30 @@ function MyApp(props: CustomAppProps) {
                             <ReferralsProvider>
                               <FiltersProvider value={filters}>
                                 <AdsProvider>
-                                  <HiddenPreferencesProvider>
-                                    <CivitaiLinkProvider>
-                                      <NotificationsProvider zIndex={9999}>
-                                        <BrowserRouterProvider>
-                                          <RecaptchaWidgetProvider>
-                                            <ChatContextProvider>
-                                              <BaseLayout>
-                                                <CustomModalsProvider>
-                                                  <TosProvider>
-                                                    {getLayout(<Component {...pageProps} />)}
-                                                  </TosProvider>
-                                                  <StripeSetupSuccessProvider />
-                                                  <DialogProvider />
-                                                  <RoutedDialogProvider />
-                                                </CustomModalsProvider>
-                                              </BaseLayout>
-                                            </ChatContextProvider>
-                                          </RecaptchaWidgetProvider>
-                                        </BrowserRouterProvider>
-                                      </NotificationsProvider>
-                                    </CivitaiLinkProvider>
-                                  </HiddenPreferencesProvider>
+                                  <PaypalProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider zIndex={9999}>
+                                          <BrowserRouterProvider>
+                                            <RecaptchaWidgetProvider>
+                                              <ChatContextProvider>
+                                                <BaseLayout>
+                                                  <CustomModalsProvider>
+                                                    <TosProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                    </TosProvider>
+                                                    <StripeSetupSuccessProvider />
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
+                                                  </CustomModalsProvider>
+                                                </BaseLayout>
+                                              </ChatContextProvider>
+                                            </RecaptchaWidgetProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaypalProvider>
                                 </AdsProvider>
                               </FiltersProvider>
                             </ReferralsProvider>

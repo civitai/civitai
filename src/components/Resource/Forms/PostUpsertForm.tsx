@@ -107,7 +107,7 @@ type Props = { modelVersionId: number; modelId: number };
 function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVersionId: number }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 

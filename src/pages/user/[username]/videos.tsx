@@ -21,14 +21,14 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { constants } from '~/server/common/constants';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { SortFilter } from '~/components/Filters';
-import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { VideoFiltersDropdown } from '~/components/Image/Filters/VideoFiltersDropdown';
 
 const segments = [
-  { label: 'My Images', value: 'images' },
+  { label: 'My Videos', value: 'images' },
   { label: 'My Reactions', value: 'reactions' },
 ] as const;
 type Segment = (typeof segments)[number]['value'];
@@ -81,7 +81,7 @@ const useChipStyles = createStyles((theme) => ({
     },
   },
 }));
-export function UserImagesPage() {
+export function UserVideosPage() {
   const currentUser = useCurrentUser();
   const { classes } = useChipStyles();
   const features = useFeatureFlags();
@@ -93,7 +93,7 @@ export function UserImagesPage() {
       sort = ImageSort.Newest,
       username = '',
       reactions,
-      types = [MediaType.image],
+      types = [MediaType.video],
       withMeta = false,
       followed = undefined,
       ...query
@@ -112,7 +112,7 @@ export function UserImagesPage() {
         return features.profileOverhaul ? (
           <Box mt="md">{children}</Box>
         ) : (
-          <Tabs.Panel value="/images">{children}</Tabs.Panel>
+          <Tabs.Panel value="/videos">{children}</Tabs.Panel>
         );
       },
     [features.profileOverhaul]
@@ -165,12 +165,12 @@ export function UserImagesPage() {
               </Group>
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter
-                  type="images"
+                  type="videos"
                   variant="button"
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
-                <ImageFiltersDropdown
+                <VideoFiltersDropdown
                   query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
                   size="sm"
@@ -223,7 +223,7 @@ function ContentToggle({
 }
 
 // We re-use the component above in the index for old profile. Hence, we need to wrap it and export it here too.
-const UserImagesPageWrap = () => <UserImagesPage />;
-setPageOptions(UserImagesPageWrap, { innerLayout: UserProfileLayout });
+const UserVideosPageWrap = () => <UserVideosPage />;
+setPageOptions(UserVideosPageWrap, { innerLayout: UserProfileLayout });
 
-export default UserImagesPageWrap;
+export default UserVideosPageWrap;

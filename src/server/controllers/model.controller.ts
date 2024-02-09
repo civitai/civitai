@@ -352,15 +352,18 @@ export const publishModelHandler = async ({
       select: { status: true, meta: true, nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (model.status === ModelStatus.Published)
+      throw throwBadRequestError('Model is already published');
 
     const { isModerator } = ctx.user;
     if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
 
+    const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
-      (model.meta as ModelMeta | null) || {};
+      modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
     await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
@@ -368,7 +371,8 @@ export const publishModelHandler = async ({
       console.error(e);
     });
 
-    await ctx.track
+    // Track event in the background
+    ctx.track
       .modelEvent({
         type: 'Publish',
         modelId: input.id,
