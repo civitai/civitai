@@ -643,9 +643,12 @@ export const getModelsRaw = async ({
     LIMIT ${(take ?? 100) + 1}
   `;
 
-  const { rows: models } = await pgDbRead.query<ModelRaw & { cursorId: string | bigint | null }>(
+  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
   );
+  // const { rows: models } = await pgDbRead.query<ModelRaw & { cursorId: string | bigint | null }>(
+  //   modelQuery
+  // );
 
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },

@@ -1302,7 +1302,8 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
+  // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
+  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   if (include.includes('tags')) {
     const tags = await dbRead.tagsOnImage.findMany({
