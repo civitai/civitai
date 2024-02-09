@@ -466,7 +466,7 @@ type GetAllImagesRaw = {
   collectedCount: number;
   tippedAmountCount: number;
   viewCount: number;
-  cursorId?: bigint;
+  cursorId?: string;
   type: MediaType;
   metadata: Prisma.JsonValue;
   baseModel?: string;
@@ -851,7 +851,7 @@ export const getAllImages = async ({
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  let nextCursor: bigint | undefined;
+  let nextCursor: string | undefined;
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
@@ -1302,7 +1302,8 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
+  // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
+  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   if (include.includes('tags')) {
     const tags = await dbRead.tagsOnImage.findMany({

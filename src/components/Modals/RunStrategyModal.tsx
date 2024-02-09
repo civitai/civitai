@@ -212,38 +212,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
         ) : !!partnersWithStrategies?.length ? (
           <ScrollArea.Autosize maxHeight="55vh">
             <Stack>
-              {renderPartners(
-                availablePartners,
-                <tr>
-                  <td>
-                    <Group position="apart" p="sm">
-                      <Group spacing="xs">
-                        <Text>Automatic 1111 Web UI (Local)</Text>
-                      </Group>
-                      <Group spacing="xs" position="apart">
-                        <Group spacing="xs" noWrap>
-                          <Badge {...defaultBadgeProps}>Coming Soon</Badge>
-                          <Badge {...defaultBadgeProps} color="yellow">
-                            Help Wanted
-                          </Badge>
-                        </Group>
-                        <Button
-                          color="blue"
-                          compact
-                          size="xs"
-                          px="md"
-                          component="a"
-                          href={`https://github.com/civitai/sd_civitai_extension`}
-                          target="_blank"
-                          rel="nofollow noreferrer"
-                        >
-                          <IconArrowBigRight size={20} />
-                        </Button>
-                      </Group>
-                    </Group>
-                  </td>
-                </tr>
-              )}
+              {renderPartners(availablePartners)}
               {unavailablePartners.length > 0 && (
                 <>
                   <Divider

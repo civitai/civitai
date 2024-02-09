@@ -8,12 +8,20 @@ import { trpc } from '~/utils/trpc';
 type Props = {
   amount: number;
   onError: (error: any) => void;
-  onSuccess?: (data: any) => void;
+  onSuccess?: (data: Record<string, unknown>) => void;
+  onValidate?: () => boolean | Promise<boolean>;
   disabled?: boolean;
   height?: number;
 };
 
-export const BuzzPaypalButton = ({ amount, onError, onSuccess, height = 35, ...props }: Props) => {
+export const BuzzPaypalButton = ({
+  amount,
+  onError,
+  onSuccess,
+  onValidate,
+  height = 35,
+  ...props
+}: Props) => {
   const { mutateAsync: createBuzzOrderMutation } = trpc.paypal.createBuzzOrder.useMutation();
   const { mutateAsync: processBuzzOrderMutation } = trpc.paypal.processBuzzOrder.useMutation();
 
@@ -45,11 +53,24 @@ export const BuzzPaypalButton = ({ amount, onError, onSuccess, height = 35, ...p
     }
   }, []);
 
-  const onValidate = () => {
-    if (amount <= 0) {
-      throw new Error('Invalid buzz amount');
-    }
-  };
+  const onClick = useCallback(
+    (
+      data: Record<string, unknown>,
+      actions: {
+        reject: () => Promise<void>;
+        resolve: () => Promise<void>;
+      }
+    ) => {
+      if (onValidate) {
+        if (!onValidate()) {
+          actions.reject();
+        }
+      } else {
+        actions.resolve();
+      }
+    },
+    [onValidate]
+  );
 
   if (!env.NEXT_PUBLIC_PAYPAL_CLIENT_ID) {
     return null;
@@ -59,10 +80,10 @@ export const BuzzPaypalButton = ({ amount, onError, onSuccess, height = 35, ...p
     <Box style={{ colorScheme: 'none' }}>
       <PayPalButtons
         createOrder={createOrder}
-        onClick={onValidate}
+        onClick={onClick}
         onApprove={onApprove}
         onError={onError}
-        forceReRender={[amount, onSuccess]}
+        forceReRender={[amount, onClick, onApprove, createOrder]}
         style={{
           height,
         }}

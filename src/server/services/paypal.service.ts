@@ -14,6 +14,12 @@ const log = (data: MixedObject) => {
 };
 
 export const createBuzzOrder = async ({ amount, userId }: PaypalPurchaseBuzzSchema) => {
+  if (amount / constants.buzz.buzzDollarRatio < constants.buzz.minChargeAmount / 100) {
+    throw throwBadRequestError(
+      `Minimum purchase amount is $${(constants.buzz.minChargeAmount / 100).toFixed(2)} USD`
+    );
+  }
+
   const response = await fetch(`${env.PAYPAL_API_URL}/v2/checkout/orders`, {
     method: 'POST',
     headers: {
