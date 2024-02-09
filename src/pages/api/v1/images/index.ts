@@ -116,7 +116,7 @@ function getNextPage({
   nextCursor,
 }: {
   req: NextApiRequest;
-  nextCursor?: number;
+  nextCursor?: string;
   currentPage?: number;
 }) {
   const baseUrl = new URL(

@@ -466,7 +466,7 @@ type GetAllImagesRaw = {
   collectedCount: number;
   tippedAmountCount: number;
   viewCount: number;
-  cursorId?: bigint;
+  cursorId?: string;
   type: MediaType;
   metadata: Prisma.JsonValue;
   baseModel?: string;
@@ -851,7 +851,7 @@ export const getAllImages = async ({
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  let nextCursor: bigint | undefined;
+  let nextCursor: string | undefined;
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
