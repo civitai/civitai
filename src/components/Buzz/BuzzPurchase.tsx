@@ -165,6 +165,31 @@ export const BuzzPurchase = ({
     [buzzAmount, purchaseSuccessMessage]
   );
 
+  const onValidate = () => {
+    if (!selectedPrice && !customAmount) {
+      setError('Please choose one option');
+      return false;
+    }
+
+    if (unitAmount < constants.buzz.minChargeAmount) {
+      setError(`Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`);
+
+      return false;
+    }
+
+    if (!currentUser) {
+      setError('Please log in to continue');
+      return false;
+    }
+
+    if (!unitAmount) {
+      setError('Please enter the amount you wish to buy');
+      return false;
+    }
+
+    return true;
+  };
+
   const onPaypalSuccess = useCallback(() => {
     dialogStore.trigger({
       component: AlertDialog,
@@ -190,18 +215,9 @@ export const BuzzPurchase = ({
   }, [buzzAmount, successMessage]);
 
   const handleSubmit = async () => {
-    if (!selectedPrice && !customAmount) return setError('Please choose one option');
-
-    if (unitAmount < constants.buzz.minChargeAmount)
-      return setError(
-        `Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`
-      );
-
-    if (!currentUser) {
-      return setError('Please log in to continue');
+    if (!onValidate()) {
+      return;
     }
-
-    if (!unitAmount) return setError('Please enter the amount you wish to buy');
 
     const metadata: PaymentIntentMetadataSchema = {
       type: 'buzzPurchase',
@@ -421,6 +437,7 @@ export const BuzzPurchase = ({
           onSuccess={onPaypalSuccess}
           amount={buzzAmount}
           disabled={!ctaEnabled}
+          onValidate={onValidate}
         />
         {onCancel && (
           <Button variant="light" color="gray" onClick={onCancel}>
