@@ -470,20 +470,19 @@ export function ExistingChat() {
 
   return (
     <Stack spacing={0} h="100%">
+      {/* TODO this component stinks, it is hardcoded as a button */}
       <Spoiler
         showLabel={
-          <Box mt={4}>
-            <Button size="xs" variant="subtle" compact leftIcon={<IconChevronDown size={16} />}>
-              Expand
-            </Button>
-          </Box>
+          <Group mt={4} spacing={8}>
+            <IconChevronDown size={16} />
+            <Text size="xs">Expand</Text>
+          </Group>
         }
         hideLabel={
-          <Box mt={8}>
-            <Button size="xs" variant="subtle" compact leftIcon={<IconChevronUp size={16} />}>
-              Hide
-            </Button>
-          </Box>
+          <Group mt={8} spacing={8}>
+            <IconChevronUp size={16} />
+            <Text size="xs">Hide</Text>
+          </Group>
         }
         maxHeight={44}
         styles={{
