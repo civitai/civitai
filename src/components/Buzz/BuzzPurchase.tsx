@@ -219,6 +219,10 @@ export const BuzzPurchase = ({
       return;
     }
 
+    if (!currentUser) {
+      return;
+    }
+
     const metadata: PaymentIntentMetadataSchema = {
       type: 'buzzPurchase',
       unitAmount,
