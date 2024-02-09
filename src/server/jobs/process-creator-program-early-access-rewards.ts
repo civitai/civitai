@@ -8,13 +8,14 @@ import { Prisma } from '@prisma/client';
 import { isEarlyAccess } from '../utils/early-access-helpers';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 type ModelVersionForEarlyAccessReward = {
   id: number;
   createdAt: Date;
   publishedAt: Date;
   earlyAccessTimeFrame: number;
-  meta: MixedObject;
+  meta: ModelVersionMeta;
   modelName: string;
   modelVersionName: string;
   userId: number;
@@ -108,7 +109,7 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
           )
           .map((d) => ({
             date: d.createdDate,
-            downloads: d.downloads,
+            downloads: Number(d.downloads ?? '0'),
           }));
 
         if (downloadData.length === 0) {

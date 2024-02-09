@@ -13,9 +13,9 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency, StripeConnectStatus } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
@@ -26,6 +26,28 @@ import { trpc } from '~/utils/trpc';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
 import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
+import { Line } from 'react-chartjs-2';
+import {
+  CategoryScale,
+  Chart as ChartJS,
+  LinearScale,
+  LineElement,
+  PointElement,
+  Tooltip as ChartTooltip,
+  Colors,
+  Legend,
+} from 'chart.js';
+import dayjs from 'dayjs';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ChartTooltip,
+  Colors,
+  Legend
+);
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -41,6 +63,84 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
   },
 }));
+
+const EarlyAccessRewards = () => {
+  const { data: modelVersions = [], isLoading } =
+    trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery({ timeframe: 14 });
+  const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
+
+  const { classes, theme } = useStyles();
+
+  const options = useMemo(
+    () => ({
+      aspectRatio: 3,
+      plugins: {
+        legend: {
+          // position: 'bottom',
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            borderRadius: 5,
+            useBorderRadius: true,
+            color: theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5],
+          },
+        },
+        title: {
+          display: false,
+        },
+      },
+    }),
+    [theme.colorScheme]
+  );
+
+  const labels = useMemo(() => {
+    const data = [];
+    const today = dayjs().startOf('day');
+    let day = today.subtract(14, 'day');
+    while (day.isBefore(today)) {
+      data.push(day.format('YYYY-MM-DD'));
+      day = day.add(1, 'day');
+    }
+
+    return data;
+  }, []);
+
+  const datasets = useMemo(() => {
+    return modelVersions.map((modelVersion) => {
+      return {
+        label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
+        data: (modelVersion.meta?.earlyAccessDownloadData ?? []).map((data) => ({
+          x: data.date,
+          y: data.downloads,
+        })),
+      };
+    });
+  }, [modelVersions]);
+
+  if (
+    isLoading ||
+    modelVersions.length === 0 ||
+    !modelVersions.some((mv) => (mv.meta?.earlyAccessDownloadData?.length ?? 0) > 0) ||
+    userStripeConnect?.status !== StripeConnectStatus.Approved
+  ) {
+    return null;
+  }
+
+  return (
+    <Paper withBorder className={classes.tileCard} h="100%">
+      <Stack p="md">
+        <Title order={3}>Your early access models</Title>
+        <Line
+          options={options}
+          data={{
+            labels,
+            datasets,
+          }}
+        />
+      </Stack>
+    </Paper>
+  );
+};
 
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
@@ -131,7 +231,7 @@ export default function UserBuzzDashboard() {
               )}
             </Stack>
           </Paper>
-
+          <EarlyAccessRewards />
           <SpendingBuzz withCTA />
         </Stack>
       </Container>
