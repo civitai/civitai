@@ -103,6 +103,36 @@ export const processBuzzOrder = async (orderId: string) => {
         ]),
       });
 
+      // Capture the transaction:
+      const capture = await fetch(`${env.PAYPAL_API_URL}/v2/checkout/orders/${orderId}/capture`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization,
+        },
+      });
+
+      if (capture.status !== 201 && capture.status !== 200) {
+        log({
+          message: 'Failed to capture PayPal order',
+          response: await capture.text(),
+          orderId,
+        });
+
+        // Refund buzz to us:
+        await createBuzzTransaction({
+          fromAccountId: userId,
+          toAccountId: 0,
+          amount: buzzAmount,
+          type: TransactionType.Refund,
+          externalTransactionId: transactionId,
+          description: `Failed to capture payment on Paypal order: ${orderId}`,
+          details: { paypalOrderId: orderId },
+        });
+
+        throw new Error('Failed to capture PayPal order.');
+      }
+
       return true;
     } else {
       log({

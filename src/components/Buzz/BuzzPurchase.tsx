@@ -21,7 +21,7 @@ import {
   IconInfoCircle,
   IconMoodDollar,
 } from '@tabler/icons-react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
@@ -37,6 +37,8 @@ import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { closeAllModals, openConfirmModal, openModal } from '@mantine/modals';
+import { dialogStore } from '../Dialog/dialogStore';
+import { AlertDialog } from '../Dialog/Common/AlertDialog';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -150,17 +152,42 @@ export const BuzzPurchase = ({
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
   const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
-  const successMessage = purchaseSuccessMessage ? (
-    purchaseSuccessMessage(buzzAmount)
-  ) : (
-    <Stack>
-      <Text>Thank you for your purchase!</Text>
-      <Text>
-        <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited to
-        your account.
-      </Text>
-    </Stack>
+  const successMessage = useMemo(
+    () =>
+      purchaseSuccessMessage ? (
+        purchaseSuccessMessage(buzzAmount)
+      ) : (
+        <Stack>
+          <Text>Thank you for your purchase!</Text>
+          <Text>Purchased buzz has been credited to your account.</Text>
+        </Stack>
+      ),
+    [buzzAmount, purchaseSuccessMessage]
   );
+
+  const onPaypalSuccess = useCallback(() => {
+    dialogStore.trigger({
+      component: AlertDialog,
+      props: {
+        type: 'success',
+        title: 'Payment successful!',
+        children: ({ handleClose }: { handleClose: () => void }) => (
+          <>
+            {successMessage}
+            <Button
+              onClick={() => {
+                handleClose();
+              }}
+            >
+              Close
+            </Button>
+          </>
+        ),
+      },
+    });
+
+    onPurchaseSuccess?.();
+  }, [buzzAmount, successMessage]);
 
   const handleSubmit = async () => {
     if (!selectedPrice && !customAmount) return setError('Please choose one option');
@@ -391,29 +418,7 @@ export const BuzzPurchase = ({
         </Button>
         <BuzzPaypalButton
           onError={(error) => setError(error.message)}
-          onSuccess={() => {
-            openModal({
-              title: 'Payment successful',
-              children: (
-                <Stack>
-                  <Divider mx="-lg" />
-                  {successMessage ? (
-                    <>{successMessage}</>
-                  ) : (
-                    <Text>Thank you for your purchase!</Text>
-                  )}
-                  <Button
-                    onClick={() => {
-                      closeAllModals();
-                    }}
-                  >
-                    Close
-                  </Button>
-                </Stack>
-              ),
-            });
-            onPurchaseSuccess?.();
-          }}
+          onSuccess={onPaypalSuccess}
           amount={buzzAmount}
           disabled={!ctaEnabled}
         />
