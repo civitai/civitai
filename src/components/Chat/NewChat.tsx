@@ -58,6 +58,7 @@ export function NewChat() {
       if (data) {
         queryUtils.chat.getAllByUser.setData(undefined, (old) => {
           if (!old) return [data];
+          if (old.find((o) => o.id === data.id)) return old;
           return [{ ...data, createdAt: new Date(data.createdAt) }, ...old];
         });
 
