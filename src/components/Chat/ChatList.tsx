@@ -10,15 +10,14 @@ import {
   Group,
   GroupProps,
   Highlight,
+  Image,
   Indicator,
   Input,
-  Image,
   Loader,
   Menu,
   SegmentedControl,
   Stack,
   Text,
-  ThemeIcon,
   Tooltip,
 } from '@mantine/core';
 import { ChatMemberStatus } from '@prisma/client';
@@ -39,7 +38,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -113,10 +111,10 @@ export function ChatList() {
     : [];
 
   const activeCount = !!chatCounts
-    ? chatCounts
-        .filter((cc) => activeIds.includes(cc.chatId))
-        .map((cc) => cc.cnt)
-        .reduce((acc, val) => acc + val, 0)
+    ? chatCounts.reduce((acc, val) => {
+        if (activeIds.includes(val.chatId)) return acc + val.cnt;
+        return acc;
+      }, 0)
     : 0;
 
   const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
