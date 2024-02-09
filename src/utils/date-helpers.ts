@@ -1,4 +1,6 @@
 import dayjs from 'dayjs';
+import minMax from 'dayjs/plugin/minMax';
+dayjs.extend(minMax);
 
 export function formatDate(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc = false) {
   if (utc) return dayjs.utc(value).format(format);

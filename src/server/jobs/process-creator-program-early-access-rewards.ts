@@ -31,8 +31,6 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
       // Creator program start date:
       new Date('2024-02-02')
     );
-    const now = new Date();
-    const chLastUpdate = dayjs(lastUpdate).toISOString();
 
     // This may not be 100% accurate as a parameter, but it's good enough for our purposes
     const creatorProgramUsers = await dbWrite.userStripeConnect.findMany({
@@ -43,12 +41,13 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
     const creatorProgramUserIds = creatorProgramUsers.map((x) => x.userId);
 
     if (creatorProgramUserIds.length === 0) {
+      await setLastUpdate();
       return;
     }
 
     const modelVersions = await dbWrite.$queryRaw<ModelVersionForEarlyAccessReward[]>`
       SELECT
-        id,
+        mv.id,
         mv."createdAt",
         mv."publishedAt",
         mv."earlyAccessTimeFrame",
@@ -63,8 +62,13 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
         AND m."userId" IN (${Prisma.join(creatorProgramUserIds, ',')})
         AND GREATEST(mv."createdAt", mv."publishedAt") 
           + (mv."earlyAccessTimeFrame" || ' day')::INTERVAL
-          > ${chLastUpdate};
+          >= ${lastUpdate};
     `;
+
+    if (modelVersions.length === 0) {
+      await setLastUpdate();
+      return; // No records to process
+    }
 
     // Get all records that need to be processed
     const modelVersionData = await clickhouse
@@ -84,8 +88,6 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
       })
       .then((x) => x.json<{ modelVersionId: number; createdDate: Date; downloads: number }[]>());
 
-    console.log(modelVersionData);
-
     await Promise.all(
       modelVersions.map(async (version) => {
         // First, check that it's still early access:
@@ -96,7 +98,14 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
         });
 
         const downloadData = modelVersionData
-          .filter((x) => x.modelVersionId === version.id && x.createdDate >= version.publishedAt)
+          .filter(
+            (x) =>
+              x.modelVersionId === version.id &&
+              dayjs(x.createdDate).endOf('day').isAfter(version.publishedAt) &&
+              dayjs(x.createdDate)
+                .startOf('day')
+                .isBefore(dayjs(version.publishedAt).add(version.earlyAccessTimeFrame, 'day'))
+          )
           .map((d) => ({
             date: d.createdDate,
             downloads: d.downloads,
@@ -108,13 +117,13 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
 
         if (!isEarlyAccessBool) {
           // apply the reward:
-          const totalDownloads = downloadData.reduce((acc, x) => acc + x.downloads, 0);
+          const totalDownloads = downloadData.reduce((acc, x) => acc + Number(x.downloads), 0);
 
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: version.userId,
             amount: totalDownloads * 10, // 10 buzz per download
-            description: `Early access reward - ${version.modelName} v${version.modelVersionName}`,
+            description: `Early access reward - ${version.modelName} - ${version.modelVersionName}`,
             type: TransactionType.Reward,
             externalTransactionId: `model-version-${version.id}-early-access-reward`,
           });
@@ -131,5 +140,7 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
         });
       })
     );
+
+    await setLastUpdate();
   }
 );
