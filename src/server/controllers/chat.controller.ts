@@ -725,9 +725,11 @@ export const getMessageByIdHandler = async ({
 export const createMessageFn = async ({
   input,
   userId,
+  muted,
 }: {
   input: CreateMessageInput;
   userId: number;
+  muted?: boolean;
 }) => {
   const chat = await dbWrite.chat.findFirst({
     where: {
@@ -739,6 +741,12 @@ export const createMessageFn = async ({
         select: {
           userId: true,
           status: true,
+          isOwner: true,
+          user: {
+            select: {
+              isModerator: true,
+            },
+          },
         },
       },
     },
@@ -755,6 +763,14 @@ export const createMessageFn = async ({
     }
     if (!['Invited', 'Joined'].includes(thisMember.status)) {
       throw throwBadRequestError(`Unable to post in this chat`);
+    }
+
+    if (muted) {
+      const owner = chat.chatMembers.find((cm) => cm.isOwner === true);
+      const isModeratorChat = owner?.user?.isModerator === true;
+      if (!isModeratorChat) {
+        throw throwBadRequestError(`Unable to post in this chat`);
+      }
     }
   }
 
@@ -794,8 +810,8 @@ export const createMessageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId } = ctx.user;
-    return await createMessageFn({ input, userId });
+    const { id: userId, muted } = ctx.user;
+    return await createMessageFn({ input, userId, muted });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -850,7 +866,7 @@ export const isTypingHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { id: userId, muted } = ctx.user;
 
     const { chatId, isTyping } = input;
 
@@ -860,9 +876,11 @@ export const isTypingHandler = async ({
         chatMembers: {
           select: {
             userId: true,
+            isOwner: true,
             user: {
               select: {
                 username: true,
+                isModerator: true,
               },
             },
           },
@@ -870,8 +888,17 @@ export const isTypingHandler = async ({
       },
     });
 
-    const existingUser = existing?.chatMembers.find((cm) => cm.userId === userId);
+    if (!existing) return;
+    const existingUser = existing.chatMembers.find((cm) => cm.userId === userId);
     if (!existingUser) return;
+
+    if (muted) {
+      const owner = existing.chatMembers.find((cm) => cm.isOwner === true);
+      const isModeratorChat = owner?.user?.isModerator === true;
+      if (!isModeratorChat) {
+        return;
+      }
+    }
 
     fetch(
       `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,

@@ -146,6 +146,10 @@ export function ExistingChat() {
   const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
   // const lastViewed = myMember?.lastViewedMessageId;
+  const modSender = thisChat?.chatMembers.find(
+    (cm) => cm.isOwner === true && cm.user.isModerator === true
+  );
+  const isMuted = currentUser?.muted && !modSender;
 
   const { mutateAsync: changeLastViewed } = trpc.chat.modifyUser.useMutation({
     onMutate(data) {
@@ -310,7 +314,7 @@ export function ExistingChat() {
     onSettled() {
       throttledTyping.cancel();
 
-      if (!currentUser) return;
+      if (!currentUser || isMuted) return;
 
       doIsTyping({
         chatId: state.existingChatId!,
@@ -404,7 +408,7 @@ export function ExistingChat() {
   }, [connected, worker, handleIsTyping]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || isMuted) return;
 
     doIsTyping({
       chatId: state.existingChatId!,
@@ -418,7 +422,8 @@ export function ExistingChat() {
     () =>
       throttle(
         () => {
-          if (!currentUser) return;
+          if (!currentUser || isMuted) return;
+
           doIsTyping({
             chatId: state.existingChatId!,
             userId: currentUser.id,
@@ -428,7 +433,7 @@ export function ExistingChat() {
         2000,
         { leading: true, trailing: true }
       ),
-    [currentUser, doIsTyping, state.existingChatId]
+    [currentUser, doIsTyping, isMuted, state.existingChatId]
   );
 
   const handleChatTyping = (value: string) => {
@@ -467,20 +472,18 @@ export function ExistingChat() {
     <Stack spacing={0} h="100%">
       <Spoiler
         showLabel={
-          <Button
-            mt={4}
-            size="xs"
-            variant="subtle"
-            compact
-            leftIcon={<IconChevronDown size={16} />}
-          >
-            Expand
-          </Button>
+          <Box mt={4}>
+            <Button size="xs" variant="subtle" compact leftIcon={<IconChevronDown size={16} />}>
+              Expand
+            </Button>
+          </Box>
         }
         hideLabel={
-          <Button mt={8} size="xs" variant="subtle" compact leftIcon={<IconChevronUp size={16} />}>
-            Hide
-          </Button>
+          <Box mt={8}>
+            <Button size="xs" variant="subtle" compact leftIcon={<IconChevronUp size={16} />}>
+              Hide
+            </Button>
+          </Box>
         }
         maxHeight={44}
         styles={{
@@ -499,7 +502,7 @@ export function ExistingChat() {
             </Center>
           ) : (
             <Group spacing="xs">
-              {/* TODO improve useravatar to show loading */}
+              {/* TODO improve useravatar to show loading (if necessary) */}
               {/* TODO online status (later), blocked users, etc */}
 
               {otherMembers?.map((cm) => (
@@ -610,7 +613,8 @@ export function ExistingChat() {
               <Group spacing={0}>
                 <Textarea
                   sx={{ flexGrow: 1 }}
-                  placeholder="Send message"
+                  disabled={isSending || isMuted}
+                  placeholder={isMuted ? 'Your account has been muted' : 'Send message'}
                   autosize
                   minRows={1}
                   maxRows={4}
@@ -630,7 +634,7 @@ export function ExistingChat() {
                   h="100%"
                   w={60}
                   onClick={sendMessage}
-                  disabled={isSending || !chatMsg.length || currentUser?.muted}
+                  disabled={isSending || !chatMsg.length || isMuted}
                   sx={{ borderRadius: 0 }}
                 >
                   {isSending ? <Loader /> : <IconSend />}
