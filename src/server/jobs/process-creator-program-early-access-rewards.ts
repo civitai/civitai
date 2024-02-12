@@ -1,7 +1,5 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { BuzzEventLog } from '~/server/rewards/base.reward';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { Prisma } from '@prisma/client';
@@ -130,15 +128,15 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
           });
         }
 
-        await dbWrite.modelVersion.update({
-          where: { id: version.id },
-          data: {
-            meta: {
-              ...version.meta,
-              earlyAccessDownloadData: downloadData,
-            },
-          },
-        });
+        const meta = {
+          earlyAccessDownloadData: downloadData,
+        };
+
+        await dbWrite.$executeRaw`
+          UPDATE "ModelVersion" SET meta = (COALESCE(meta, '{}') || ${JSON.stringify(
+            meta
+          )}::jsonb) WHERE id = ${version.id}
+        `;
       })
     );
 
