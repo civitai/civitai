@@ -1599,13 +1599,22 @@ model Log {
   createdAt DateTime @default(now())
 }
 
+enum NotificationCategory {
+  Comment
+  Update
+  Milestone
+  Bounty
+  Other
+}
+
 model Notification {
-  id        String   @id @default(cuid())
+  id        String               @id @default(cuid())
   userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String
+  category  NotificationCategory @default(Other)
   details   Json?
-  createdAt DateTime @default(now())
+  createdAt DateTime             @default(now())
 
   @@index([userId, createdAt])
 }

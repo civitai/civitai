@@ -8,7 +8,9 @@ export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model download milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} model has received ${details.downloadCount} downloads`,
+      message: `Congrats! Your ${
+        details.modelName
+      } model has received ${details.downloadCount.toLocaleString()} downloads`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: async ({ lastSent, clickhouse }) => {
@@ -58,12 +60,13 @@ export const modelNotifications = createNotificationProcessor({
           LEFT JOIN prior_milestones pm ON pm.download_count >= ms.value AND pm.model_id = mval.model_id
           WHERE pm.model_id IS NULL
         )
-        INSERT INTO "Notification"("id", "userId", "type", "details")
+        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
           REPLACE(gen_random_uuid()::text, '-', ''),
           "ownerId"    "userId",
           'model-download-milestone' "type",
-          details
+          details,
+          'Milestone'::"NotificationCategory" "category"
         FROM model_milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
       `;
@@ -72,7 +75,9 @@ export const modelNotifications = createNotificationProcessor({
   'model-like-milestone': {
     displayName: 'Model like milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} model has received ${details.favoriteCount} likes`,
+      message: `Congrats! Your ${
+        details.modelName
+      } model has received ${details.favoriteCount.toLocaleString()} likes`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -113,12 +118,13 @@ export const modelNotifications = createNotificationProcessor({
         LEFT JOIN prior_milestones pm ON pm.favorite_count >= ms.value AND pm.model_id = mval.model_id
         WHERE pm.model_id IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'model-like-milestone' "type",
-        details
+        details,
+        'Milestone'::"NotificationCategory" "category"
       FROM model_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone');
     `,
@@ -151,12 +157,13 @@ export const modelNotifications = createNotificationProcessor({
               OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
             )
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-model-version' "type",
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM new_model_version
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-version');
     `,
@@ -186,12 +193,13 @@ export const modelNotifications = createNotificationProcessor({
           (m."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND m.status = 'Published')
         OR (m."publishedAt" <= '${lastSent}' AND m.status = 'Scheduled')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-model-from-following' "type",
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM new_model_from_following
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following');
     `,

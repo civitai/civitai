@@ -2,6 +2,7 @@ import {
   CosmeticType,
   ModelEngagementType,
   ModelVersionEngagementType,
+  NotificationCategory,
   OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -190,8 +191,19 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   const { id } = ctx.user;
 
   try {
-    const count = await getUserNotificationCount({ userId: id, unread: true });
-    return { count };
+    const unreadCount = await getUserNotificationCount({
+      userId: id,
+      unread: true,
+    });
+
+    const reduced = unreadCount.reduce((acc, { category, count }) => {
+      const key = category.toLowerCase() as Lowercase<NotificationCategory>;
+      acc[key] = count;
+      acc['all'] += count;
+      return acc;
+    }, {} as Record<Lowercase<NotificationCategory> | 'all', number>);
+
+    return reduced;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

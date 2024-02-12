@@ -212,6 +212,7 @@ export async function createBuzzTransaction({
       details: {
         amount: amount,
         user: fromUser?.username,
+        fromUserId: payload.fromAccountId,
         message: payload.description,
         entityId,
         entityType,
