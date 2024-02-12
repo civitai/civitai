@@ -190,30 +190,19 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   const { id } = ctx.user;
 
   try {
-    const [comment, milestone, update, bounty, other] = await Promise.all([
-      getUserNotificationCount({
-        userId: id,
-        unread: true,
-        category: NotificationCategory.Comment,
-      }),
-      getUserNotificationCount({
-        userId: id,
-        unread: true,
-        category: NotificationCategory.Milestone,
-      }),
-      getUserNotificationCount({ userId: id, unread: true, category: NotificationCategory.Update }),
-      getUserNotificationCount({ userId: id, unread: true, category: NotificationCategory.Bounty }),
-      getUserNotificationCount({ userId: id, unread: true, category: NotificationCategory.Other }),
-    ]);
+    const unreadCount = await getUserNotificationCount({
+      userId: id,
+      unread: true,
+    });
 
-    return {
-      all: comment + milestone + update + bounty + other,
-      comment,
-      milestone,
-      update,
-      bounty,
-      other,
-    };
+    const reduced = unreadCount.reduce((acc, { category, count }) => {
+      const key = category.toLowerCase() as Lowercase<NotificationCategory>;
+      acc[key] = count;
+      acc['all'] += count;
+      return acc;
+    }, {} as Record<Lowercase<NotificationCategory> | 'all', number>);
+
+    return reduced;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

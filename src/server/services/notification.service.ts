@@ -68,13 +68,14 @@ export async function getUserNotificationCount({
 
   if (category) AND.push(Prisma.sql`category = ${category}::"NotificationCategory"`);
 
-  const [result] = await dbRead.$queryRaw<{ count: number }[]>`
+  const result = await dbRead.$queryRaw<{ category: NotificationCategory; count: number }[]>`
     SELECT COUNT(*) as count
     FROM "Notification"
     WHERE ${Prisma.join(AND, ' AND ')}
+    GROUP BY category
   `;
 
-  return Number(result.count);
+  return result;
 }
 
 export const createUserNotificationSetting = async ({
