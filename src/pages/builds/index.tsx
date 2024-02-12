@@ -67,6 +67,13 @@ const useStyles = createStyles((theme) => ({
     },
   },
 
+  componentTitleWrapper: {
+    [theme.fn.smallerThan('sm')]: {
+      flexDirection: 'row-reverse',
+      width: '100%',
+    },
+  },
+
   // Chip styles
   chipLabel: {
     '&[data-variant="filled"]': {
@@ -236,15 +243,15 @@ export default function BuildPage() {
                   {data?.components.map((component) => (
                     <Stack key={component.productId} className={classes.component}>
                       <Group spacing={80} position="apart" w="100%" noWrap>
-                        <Group spacing="lg" noWrap>
+                        <Group className={classes.componentTitleWrapper} spacing="lg" noWrap>
                           <Image
                             src={component.imageUrl}
                             alt={component.name}
                             width={72}
                             radius="sm"
                           />
-                          <Stack spacing={8} align="flex-start">
-                            <Badge color="orange" radius="md">
+                          <Stack spacing={8} align="flex-start" style={{ flex: 1 }}>
+                            <Badge color="orange" radius="md" tt="capitalize">
                               {component.type}
                             </Badge>
                             <Text size="lg" weight={600} lineClamp={2}>
@@ -267,17 +274,17 @@ export default function BuildPage() {
                         </Group>
                       </Group>
 
+                      <PriceTag className={classes.hideDesktop} price={component.price} size={32} />
                       <Button
                         component="a"
                         className={classes.hideDesktop}
                         href={component.link}
                         rel="nofollow noreferrer"
                         target="_blank"
+                        tt="uppercase"
                         rightIcon={<IconArrowUpRight size={16} />}
                       >
-                        <Group spacing={4} noWrap>
-                          Buy for <PriceTag price={component.price} size={16} color="white" />
-                        </Group>
+                        Buy
                       </Button>
                     </Stack>
                   ))}
