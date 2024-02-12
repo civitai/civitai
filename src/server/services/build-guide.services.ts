@@ -6,9 +6,9 @@ import {
 } from '~/server/schema/build-guide.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
-export async function getBuildGuideByBudget({ budget }: GetBuildGuideByBudgetSchema) {
+export async function getBuildGuideByBudget({ budget, processor }: GetBuildGuideByBudgetSchema) {
   const result = await dbRead.buildGuide.findFirst({
-    where: { name: { contains: budget, mode: 'insensitive' } },
+    where: { name: { equals: `${budget}_${processor}`, mode: 'insensitive' } },
     select: {
       id: true,
       name: true,

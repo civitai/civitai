@@ -13,19 +13,20 @@ import {
   Progress,
   Stack,
   Text,
-  ThemeIcon,
   Title,
   createStyles,
 } from '@mantine/core';
+import { Currency } from '@prisma/client';
 import { IconBrandSpeedtest } from '@tabler/icons-react';
 import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
-import { IconBomb } from '@tabler/icons-react';
 import { useState } from 'react';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuildBudget, GetBuildGuideByBudgetSchema } from '~/server/schema/build-guide.schema';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
@@ -39,7 +40,7 @@ const useQueryBuildGuide = (filters: GetBuildGuideByBudgetSchema) => {
 
 type State = {
   selectedBudget: BuildBudget;
-  selectedProcessor: (typeof processors)[number] | undefined;
+  selectedProcessor: (typeof processors)[number];
 };
 
 const useStyles = createStyles((theme) => ({
@@ -75,7 +76,10 @@ const useStyles = createStyles((theme) => ({
 export default function BuildPage() {
   const { classes } = useStyles();
   const [state, setState] = useState<State>({ selectedBudget: 'Low', selectedProcessor: 'AMD' });
-  const { data, isLoading } = useQueryBuildGuide({ budget: 'Low' });
+  const { data, isLoading } = useQueryBuildGuide({
+    budget: state.selectedBudget,
+    processor: state.selectedProcessor,
+  });
 
   return (
     <Container py="xl">
@@ -136,7 +140,7 @@ export default function BuildPage() {
           <Center p="xl">
             <Loader />
           </Center>
-        ) : (
+        ) : data ? (
           <>
             <Paper className={classes.section} p="xl" radius="md" withBorder>
               <Stack>
@@ -154,14 +158,7 @@ export default function BuildPage() {
                       value={(data?.capabilities?.speed ?? 0) * 10}
                     />
                   </Stack>
-                  <Group spacing={4} align="start">
-                    <Text size={48} weight={600} inline>
-                      ${numberWithCommas(data?.totalPrice ?? 0)}
-                    </Text>
-                    <Text size="xl" color="dimmed" weight={600} span>
-                      86
-                    </Text>
-                  </Group>
+                  <PriceTag price={data?.totalPrice ?? 0} size={48} />
                 </Group>
                 <Group spacing={4}>
                   {data?.capabilities?.features.map((feature) => (
@@ -194,7 +191,14 @@ export default function BuildPage() {
                       <Text size="lg" weight="bold">
                         {data?.user.username}
                       </Text>
-                      {data?.message && <Text size="sm">{data?.message}</Text>}
+                      {data?.message && (
+                        // Three lines of text
+                        <ContentClamp maxHeight={60}>
+                          <Text size="sm" lh="20px">
+                            {data.message}
+                          </Text>
+                        </ContentClamp>
+                      )}
                     </Stack>
                   </Group>
                 </Card>
@@ -222,10 +226,8 @@ export default function BuildPage() {
                         </Text>
                       </Stack>
                     </Group>
-                    <Group noWrap>
-                      <Text size="xl" weight={600}>
-                        ${numberWithCommas(component.price)}
-                      </Text>
+                    <Group spacing={40} noWrap>
+                      <PriceTag price={component.price} size={24} />
                       <Button
                         component="a"
                         href={component.link}
@@ -250,8 +252,28 @@ export default function BuildPage() {
               </Stack>
             </Paper>
           </>
+        ) : (
+          <NoContent message="We couldn't match what you're looking for. Please try again later." />
         )}
       </Stack>
     </Container>
+  );
+}
+
+const PRICE_FONT_SIZE_COEFFICIENT = 1.71;
+function PriceTag({ price, size }: { price: number; size: number }) {
+  const priceString = formatPriceForDisplay(price, Currency.USD);
+  const [intPart, decimalPart] = priceString.split('.');
+  const decimalFontSize = size / PRICE_FONT_SIZE_COEFFICIENT;
+
+  return (
+    <Group spacing={4} align="start">
+      <Text size={size} weight={600} inline>
+        ${intPart}
+      </Text>
+      <Text size={decimalFontSize} weight={600} color="dimmed" inline>
+        {decimalPart}
+      </Text>
+    </Group>
   );
 }

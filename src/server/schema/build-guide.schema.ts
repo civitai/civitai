@@ -11,7 +11,7 @@ export const BuildBudget = {
 export type GetBuildGuideByBudgetSchema = z.infer<typeof getBuildGuideByBudgetInputSchema>;
 export const getBuildGuideByBudgetInputSchema = z.object({
   budget: z.nativeEnum(BuildBudget),
-  processor: z.string().optional(),
+  processor: z.string(),
 });
 
 export type BuildComponent = z.infer<typeof BuildComponentSchema>;
