@@ -244,6 +244,7 @@ model User {
   chatMembers                ChatMember[]
   chatMessages               ChatMessage[]
   chatOwners                 Chat[]
+  builds                     BuildGuide[]
 }
 
 enum OnboardingStep {
@@ -2703,6 +2704,18 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+}
+
+model BuildGuide {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  name         String
+  message      String
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  components   Json
+  capabilities Json
 }
 
 /// @view
