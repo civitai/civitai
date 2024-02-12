@@ -30,6 +30,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuildBudget, GetBuildGuideByBudgetSchema } from '~/server/schema/build-guide.schema';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { env } from '~/env/client.mjs';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
@@ -103,7 +104,11 @@ export default function BuildPage() {
 
   return (
     <>
-      <Meta title="Builds" description="Builds page" />
+      <Meta
+        title="Civitai Build Guides | Hardware We Love"
+        description="Find the best hardware for your budget and needs to build your own AI Generation machine. We love these components and we think you will too."
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
+      />
       <Container size={800} py="xl">
         <Stack spacing="xl">
           <Title>Hardware we love</Title>
