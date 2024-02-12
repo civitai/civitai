@@ -13,7 +13,7 @@ const log = createLogger('leaderboard', 'blue');
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
-  await setModelCoverImageNsfwLevel();
+  await setCoverImageNsfwLevel();
 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
@@ -110,25 +110,38 @@ const updateUserDiscordLeaderboardRoles = createJob(
   }
 );
 
-async function setModelCoverImageNsfwLevel() {
+async function setCoverImageNsfwLevel() {
   await dbWrite.$executeRaw`
-    -- set model nsfw image level based on post nsfw level
-    WITH model_nsfw_level AS (
-      SELECT DISTINCT ON (m.id) m.id, p.metadata->>'imageNsfw' nsfw
-      FROM "Model" m
-      JOIN "ModelVersion" mv ON mv."modelId" = m.id AND mv.status = 'Published'
+    -- set version nsfw image level based on post nsfw level
+    WITH model_version_nsfw_level AS (
+      SELECT DISTINCT ON (mv.id) mv.id, p.metadata->>'imageNsfw' nsfw
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
       JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
-      WHERE m.status = 'Published'
-      ORDER BY m.id, mv.index, p.id
+      WHERE mv.status = 'Published'
+      ORDER BY mv.id, mv.index, p.id
+    )
+    UPDATE "ModelVersion" mv
+    SET
+      meta = jsonb_set(meta, '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+    FROM model_version_nsfw_level level
+    WHERE level.id = mv.id;
+  `;
+
+  await dbWrite.$executeRaw`
+    -- set model nsfw image level based on version nsfw level
+    WITH model_nsfw_level AS (
+      SELECT DISTINCT ON (mv."modelId")
+        mv."modelId" as "id",
+        mv.meta->>'imageNsfw' nsfw
+      FROM "ModelVersion" mv
+      ORDER BY mv."modelId", mv.index
     )
     UPDATE "Model" m
     SET
-      meta = CASE
-        WHEN jsonb_typeof(meta) = 'null' THEN jsonb_build_object('imageNsfw', COALESCE(mnl.nsfw, 'None'))
-        ELSE m.meta || jsonb_build_object('imageNsfw', COALESCE(mnl.nsfw, 'None'))
-      END
-    FROM model_nsfw_level mnl
-    WHERE mnl.id = m.id;
+      meta = jsonb_set(meta, '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+    FROM model_nsfw_level level
+    WHERE level.id = m.id;
   `;
 }
 
