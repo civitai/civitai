@@ -9,6 +9,7 @@ import {
   Group,
   Image,
   Loader,
+  MantineColor,
   Paper,
   Progress,
   Stack,
@@ -33,7 +34,10 @@ const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
 
 const useQueryBuildGuide = (filters: GetBuildGuideByBudgetSchema) => {
-  const { data, isLoading } = trpc.buildGuide.getByBudget.useQuery(filters);
+  const { data, isLoading } = trpc.buildGuide.getByBudget.useQuery(filters, {
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
 
   return { data, isLoading };
 };
@@ -46,6 +50,10 @@ type State = {
 const useStyles = createStyles((theme) => ({
   section: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
+
+    [theme.fn.smallerThan('sm')]: {
+      padding: theme.spacing.md,
+    },
   },
 
   component: {
@@ -71,6 +79,17 @@ const useStyles = createStyles((theme) => ({
   },
 
   chipIconWrapper: { display: 'none' },
+
+  hideMobile: {
+    [theme.fn.smallerThan('sm')]: {
+      display: 'none',
+    },
+  },
+  hideDesktop: {
+    [theme.fn.largerThan('sm')]: {
+      display: 'none',
+    },
+  },
 }));
 
 export default function BuildPage() {
@@ -82,7 +101,7 @@ export default function BuildPage() {
   });
 
   return (
-    <Container py="xl">
+    <Container size={800} py="xl">
       <Stack spacing="xl">
         <Title>Hardware we love</Title>
         <Group position="apart" spacing={8}>
@@ -207,39 +226,52 @@ export default function BuildPage() {
             <Paper className={classes.section} p="xl" radius="md" withBorder>
               <Stack>
                 {data?.components.map((component) => (
-                  <Group
-                    key={component.productId}
-                    className={classes.component}
-                    spacing={80}
-                    position="apart"
-                    w="100%"
-                    noWrap
-                  >
-                    <Group spacing="lg" noWrap>
-                      <Image src={component.imageUrl} alt={component.name} width={72} radius="sm" />
-                      <Stack spacing={8} align="flex-start">
-                        <Badge color="orange" radius="md">
-                          {component.type}
-                        </Badge>
-                        <Text size="lg" weight={600} lineClamp={2}>
-                          {component.name}
-                        </Text>
-                      </Stack>
+                  <Stack key={component.productId} className={classes.component}>
+                    <Group spacing={80} position="apart" w="100%" noWrap>
+                      <Group spacing="lg" noWrap>
+                        <Image
+                          src={component.imageUrl}
+                          alt={component.name}
+                          width={72}
+                          radius="sm"
+                        />
+                        <Stack spacing={8} align="flex-start">
+                          <Badge color="orange" radius="md">
+                            {component.type}
+                          </Badge>
+                          <Text size="lg" weight={600} lineClamp={2}>
+                            {component.name}
+                          </Text>
+                        </Stack>
+                      </Group>
+                      <Group className={classes.hideMobile} spacing={40} noWrap>
+                        <PriceTag price={component.price} size={24} />
+                        <Button
+                          component="a"
+                          href={component.link}
+                          rel="nofollow noreferrer"
+                          target="_blank"
+                          tt="uppercase"
+                          rightIcon={<IconArrowUpRight size={16} />}
+                        >
+                          Buy
+                        </Button>
+                      </Group>
                     </Group>
-                    <Group spacing={40} noWrap>
-                      <PriceTag price={component.price} size={24} />
-                      <Button
-                        component="a"
-                        href={component.link}
-                        rel="nofollow noreferrer"
-                        target="_blank"
-                        tt="uppercase"
-                        rightIcon={<IconArrowUpRight size={16} />}
-                      >
-                        Buy
-                      </Button>
-                    </Group>
-                  </Group>
+
+                    <Button
+                      component="a"
+                      className={classes.hideDesktop}
+                      href={component.link}
+                      rel="nofollow noreferrer"
+                      target="_blank"
+                      rightIcon={<IconArrowUpRight size={16} />}
+                    >
+                      <Group spacing={4} noWrap>
+                        Buy for <PriceTag price={component.price} size={16} color="white" />
+                      </Group>
+                    </Button>
+                  </Stack>
                 ))}
                 {data && data.updatedAt && (
                   <Stack spacing="xs">
@@ -261,17 +293,27 @@ export default function BuildPage() {
 }
 
 const PRICE_FONT_SIZE_COEFFICIENT = 1.71;
-function PriceTag({ price, size }: { price: number; size: number }) {
+function PriceTag({
+  price,
+  size,
+  className,
+  color,
+}: {
+  price: number;
+  size: number;
+  className?: string;
+  color?: MantineColor;
+}) {
   const priceString = formatPriceForDisplay(price, Currency.USD);
   const [intPart, decimalPart] = priceString.split('.');
   const decimalFontSize = size / PRICE_FONT_SIZE_COEFFICIENT;
 
   return (
-    <Group spacing={4} align="start">
-      <Text size={size} weight={600} inline>
+    <Group className={className} spacing={4} align="start" noWrap>
+      <Text size={size} weight={600} color={color} inline>
         ${intPart}
       </Text>
-      <Text size={decimalFontSize} weight={600} color="dimmed" inline>
+      <Text size={decimalFontSize} weight={600} color={color ?? 'dimmed'} inline>
         {decimalPart}
       </Text>
     </Group>
