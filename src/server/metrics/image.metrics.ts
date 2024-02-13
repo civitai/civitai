@@ -4,12 +4,14 @@ import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { pgDbWrite } from '~/server/db/pgDb';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
   async update({ db, ch, lastUpdate }) {
     const recentEngagementSubquery = Prisma.sql`
-    WITH recent_engagements AS
+      WITH recent_engagements AS
       (
         SELECT
           "imageId" AS id
@@ -43,10 +45,10 @@ export const imageMetrics = createMetricProcessor({
         FROM "MetricUpdateQueue"
         WHERE type = 'Image'
       )
-      `;
+    `;
 
     await db.$executeRaw`
-    ${recentEngagementSubquery},
+      ${recentEngagementSubquery},
       -- Get all affected users
       affected AS
       (
@@ -176,6 +178,7 @@ export const imageMetrics = createMetricProcessor({
           COALESCE(bt.week_tipped_amount_count, 0) AS week_tipped_amount_count,
           COALESCE(bt.day_tipped_amount_count, 0) AS day_tipped_amount_count
         FROM affected q
+        JOIN "Image" i ON i.id = q.id
         LEFT JOIN (
           SELECT
             ic."imageId" AS id,
@@ -283,6 +286,7 @@ export const imageMetrics = createMetricProcessor({
       `,
       format: 'JSONEachRow',
     });
+
     const viewedImages = (await imageViews?.json()) as [
       {
         imageId: number;
@@ -293,11 +297,11 @@ export const imageMetrics = createMetricProcessor({
         all_time: number;
       }
     ];
-    const batches = chunk(viewedImages, 1000);
-    for (const batch of batches) {
+    const tasks = chunk(viewedImages, 1000).map((batch, i) => async () => {
+      // console.log(`Posting batch ${i} of ${batches.length}`);
       try {
         const batchJson = JSON.stringify(batch);
-        await db.$executeRaw`
+        await pgDbWrite.query(Prisma.sql`
           INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
           SELECT
             imageId,
@@ -326,11 +330,14 @@ export const imageMetrics = createMetricProcessor({
           AND im.imageId IN (SELECT id FROM "Image")
           ON CONFLICT ("imageId", timeframe) DO UPDATE
             SET "viewCount" = EXCLUDED."viewCount";
-        `;
+        `);
       } catch (err) {
         throw err;
       }
-    }
+    });
+
+    await limitConcurrency(tasks, 3);
+
     //---------------------------------------
 
     const affectedImages: Array<{ id: number }> = await db.$queryRaw`
