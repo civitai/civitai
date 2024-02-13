@@ -179,6 +179,7 @@ export const deleteExplorationPromptSchema = z.object({
 export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
+  generationImagesCount?: { date: string; generations: number }[];
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

@@ -270,6 +270,7 @@ export const constants = {
   creatorsProgram: {
     rewards: {
       earlyAccessUniqueDownload: 10,
+      generatedImageWithResource: 10,
     },
   },
 } as const;
