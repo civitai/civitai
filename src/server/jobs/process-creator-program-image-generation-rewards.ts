@@ -3,11 +3,16 @@ import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { Prisma } from '@prisma/client';
-import { createBuzzTransaction } from '../services/buzz.service';
+import { createBuzzTransaction, createBuzzTransactionMany } from '../services/buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { constants } from '~/server/common/constants';
-import { uniqBy } from 'lodash-es';
+import { chunk, uniqBy } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { withRetries } from '~/server/utils/errorHandling';
+
+const CONCURRENCY = 5;
 
 type ModelVersionForGeneratedImagesReward = {
   id: number;
@@ -19,7 +24,8 @@ type ModelVersionForGeneratedImagesReward = {
 
 export const processCreatorProgramImageGenerationRewards = createJob(
   'creator-program-image-generation-reward-process',
-  '0 0 * * *',
+  // Job runs once a month.
+  '0 0 1 * *',
   async () => {
     if (!clickhouse) return;
 
@@ -41,7 +47,7 @@ export const processCreatorProgramImageGenerationRewards = createJob(
     const creatorProgramUserIds = creatorProgramUsers.map((x) => x.userId);
 
     if (creatorProgramUserIds.length === 0) {
-      // await setLastUpdate();
+      await setLastUpdate();
       return;
     }
 
@@ -58,21 +64,16 @@ export const processCreatorProgramImageGenerationRewards = createJob(
         AND m."userId" IN (${Prisma.join(creatorProgramUserIds, ',')})
     `;
 
-    console.log({ modelVersions });
-
     if (modelVersions.length === 0) {
-      // await setLastUpdate();
+      await setLastUpdate();
       return; // No records to process
     }
 
     const date = dayjs();
     // We grant buzz for the previous month on start of month.
-    const isStartOfMonth = date.isSame(date.startOf('month'), 'day');
-    const lastMonth = date.subtract(1, 'month').startOf('month');
+    // Extract 7 days in case 1 month  = 30 days and may break february.
+    const lastMonth = date.subtract(7, 'day').startOf('month');
     const chLastUpdate = dayjs(lastUpdate).toISOString();
-    const dateFormat = 'YYYY-MM-DD';
-
-    console.log(chLastUpdate);
 
     // Get all records that need to be processed
     const modelVersionData = await clickhouse
@@ -97,67 +98,56 @@ export const processCreatorProgramImageGenerationRewards = createJob(
       })
       .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
 
-    console.log({ modelVersionData });
-
-    await Promise.all(
-      modelVersions.map(async (version) => {
-        let generationData = modelVersionData
+    const transactions = modelVersions
+      .map((version) => {
+        const prevMonthGenerationCount = modelVersionData
           .filter(
-            // Ensure we only record this month's data
-            (x) => x.modelVersionId === version.id && dayjs(x.createdAt).isSame(date, 'month')
+            // only take last month records to grant that buzz.
+            (x) => x.modelVersionId === version.id && dayjs(x.createdAt).isSame(lastMonth, 'month')
           )
-          .map((d) => ({
-            date: dayjs(d.createdAt).format(dateFormat),
-            generations: Number(d.generations ?? '0'),
-          }));
+          .reduce((acc, x) => acc + Number(x.generations), 0);
 
-        if (generationData.length === 0) {
-          generationData = [
-            {
-              date: date.format(dateFormat),
-              generations: 0,
-            },
-          ];
+        const amount = Math.ceil(
+          prevMonthGenerationCount * constants.creatorsProgram.rewards.generatedImageWithResource
+        );
+
+        if (amount === 0) {
+          return null;
         }
 
-        const existingGenerationData = version.meta?.generationImagesCount ?? [];
-
-        if (isStartOfMonth) {
-          // apply the reward:
-          const lastMonthGenerations = existingGenerationData
-            // Ensures we only grant people with last month stuff.
-            .filter((data) => lastMonth.isSame(dayjs(data.date, 'month')))
-            .reduce((acc, x) => acc + Number(x.generations), 0);
-
-          if (lastMonthGenerations > 0) {
-            await createBuzzTransaction({
-              fromAccountId: 0,
-              toAccountId: version.userId,
-              amount:
-                lastMonthGenerations * constants.creatorsProgram.rewards.generatedImageWithResource, // 10 buzz per download
-              description: `Early access reward - ${version.modelName} - ${version.modelVersionName}`,
-              type: TransactionType.Reward,
-              externalTransactionId: `model-version-${
-                version.id
-              }-generated-images-reward-${lastMonth.format('YYYY-MM')}`,
-            });
-          }
+        if (version.userId === 18085) {
+          console.log('You getting reward', amount);
         }
 
-        const meta = {
-          generationImagesCount: isStartOfMonth
-            ? generationData
-            : uniqBy([...generationData, ...existingGenerationData], 'date'),
+        return {
+          fromAccountId: 0,
+          toAccountId: version.userId,
+          amount,
+          description: `(${lastMonth.format('MMM, YYYY')}) Monthly generation reward for - ${
+            version.modelName
+          } - ${version.modelVersionName}`,
+          type: TransactionType.Reward,
+          externalTransactionId: `model-version-${
+            version.id
+          }-generated-images-reward-${lastMonth.format('YYYY-MM')}`,
         };
-
-        await dbWrite.$executeRaw`
-          UPDATE "ModelVersion" SET meta = (COALESCE(meta, '{}') || ${JSON.stringify(
-            meta
-          )}::jsonb) WHERE id = ${version.id}
-        `;
       })
-    );
+      .filter(isDefined);
 
-    // await setLastUpdate();
+    // Batch those up:
+    const batchSize = 250;
+    const batches = chunk(transactions, batchSize);
+    let i = 0;
+    for (const batch of batches) {
+      console.log(
+        `Creating rewards ${i} to ${Math.min(i + batchSize, transactions.length)} of ${
+          transactions.length
+        }`
+      );
+      await withRetries(() => createBuzzTransactionMany(batch), 1);
+      i += batchSize;
+    }
+
+    await setLastUpdate();
   }
 );
