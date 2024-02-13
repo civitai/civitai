@@ -17,7 +17,7 @@ import {
 import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpdateImageInput } from '~/server/schema/image.schema';
 import {
@@ -31,7 +31,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { isDefined } from '../../utils/type-guards';
@@ -165,8 +165,16 @@ export const setTosViolationHandler = async ({
       console.error(error);
     });
 
-    // Delete image
-    await deleteImageById({ id });
+    // Block image
+    // This used to be a delete, but the mod team prefers to have the clean up happen later
+    await dbWrite.image.updateMany({
+      where: { id },
+      data: {
+        needsReview: null,
+        nsfw: NsfwLevel.Blocked,
+        blockedFor: BlockedReason.Moderated,
+      },
+    });
 
     await ctx.track.image({
       type: 'DeleteTOS',
