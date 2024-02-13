@@ -88,14 +88,7 @@ export function ModerationCard({
     </Stack>
   );
 
-  const tagSection = (
-    <Card key="tags" withBorder>
-      <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Tags</Text>
-      </Card.Section>
-      <HiddenTagsSection />
-    </Card>
-  );
+  const tagSection = <HiddenTagsSection key="tags" />;
 
   const userSection = (
     <Card key="users" withBorder>

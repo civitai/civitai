@@ -34,7 +34,10 @@ export function HiddenTagsSection() {
   };
 
   return (
-    <>
+    <Card withBorder>
+      <Card.Section withBorder inheritPadding py="xs">
+        <Text weight={500}>Hidden Tags</Text>
+      </Card.Section>
       <Card.Section withBorder sx={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
@@ -52,7 +55,7 @@ export function HiddenTagsSection() {
           variant="unstyled"
         />
       </Card.Section>
-      <Card.Section inheritPadding pt="md">
+      <Card.Section inheritPadding py="md">
         <Stack spacing={5}>
           {blockedTags.length > 0 && (
             <Group spacing={4}>
@@ -82,6 +85,6 @@ export function HiddenTagsSection() {
           </Text>
         </Stack>
       </Card.Section>
-    </>
+    </Card>
   );
 }

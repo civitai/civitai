@@ -3,6 +3,7 @@ import { extendedSessionUser } from '~/utils/session-helpers';
 
 interface ExtendedUser {
   id: number;
+  showNsfw: boolean;
   blurNsfw: boolean; // client only
   username: string;
   browsingLevel: number;

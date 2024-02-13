@@ -1,5 +1,7 @@
-import { useContext, createContext, ReactNode, useMemo } from 'react';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
+import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
+import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsPublicBrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
+
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/utils/flags';
@@ -11,6 +13,7 @@ type HiddenPreferencesState = {
   images: Map<number, boolean>;
   isLoading: boolean;
   browsingLevel: number;
+  isSfw: boolean;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -37,7 +40,12 @@ export const HiddenPreferencesProvider = ({
   const hidden = useMemo(() => {
     const tags = new Map(
       data.tag
-        .filter((x) => !x.nsfwLevel || Flags.hasFlag(browsingLevel, x.nsfwLevel))
+        .filter(
+          (x) =>
+            !x.nsfwLevel ||
+            !Flags.hasFlag(browsingLevel, x.nsfwLevel) ||
+            x.nsfwLevel === NsfwLevel.Blocked
+        )
         .map((x) => [x.id, true])
     );
 
@@ -51,11 +59,15 @@ export const HiddenPreferencesProvider = ({
       tags,
       images,
       isLoading,
+      browsingLevel,
+      isSfw: getIsPublicBrowsingLevel(browsingLevel),
     };
   }, [data, browsingLevel, isLoading]);
 
+  const hiddenDeferred = useDeferredValue(hidden);
+
   return (
-    <HiddenPreferencesContext.Provider value={{ ...hidden, browsingLevel }}>
+    <HiddenPreferencesContext.Provider value={hiddenDeferred}>
       {children}
     </HiddenPreferencesContext.Provider>
   );

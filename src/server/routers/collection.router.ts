@@ -15,7 +15,6 @@ import {
   upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
 import { dbRead } from '~/server/db/client';
-import { applyUserPreferences } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addSimpleImagePostInput,

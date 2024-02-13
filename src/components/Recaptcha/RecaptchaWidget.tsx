@@ -1,4 +1,4 @@
-import { createContext, useState } from 'react';
+import { createContext, useEffect, useState } from 'react';
 import Script from 'next/script';
 import { env } from '../../env/client.mjs';
 import { Anchor, Text, TextProps } from '@mantine/core';
@@ -23,6 +23,12 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
     setTokens((prev) => ({ ...prev, [action]: token }));
   };
 
+  useEffect(() => {
+    if (window.grecaptcha) {
+      window.grecaptcha.enterprise.ready(() => setReady(true));
+    }
+  }, []);
+
   return (
     <RecaptchaContext.Provider
       value={{
@@ -33,11 +39,7 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
     >
       <Script
         src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
-        onLoad={() => {
-          window.grecaptcha.enterprise.ready(() => {
-            setReady(true);
-          });
-        }}
+        onLoad={() => window.grecaptcha.enterprise.ready(() => setReady(true))}
       />
       {children}
     </RecaptchaContext.Provider>

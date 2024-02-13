@@ -57,6 +57,7 @@ import {
   toggleFeatureInputSchema,
   dismissAlertSchema,
   setUserSettingsInput,
+  userOnboardingSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -104,10 +105,8 @@ export const userRouter = router({
   //   .mutation(toggleHideModelHandler),
   acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
   completeOnboardingStep: protectedProcedure
-    .input(completeOnboardStepSchema)
+    .input(userOnboardingSchema)
     .mutation(completeOnboardingHandler),
-  completeOnboarding: protectedProcedure // HACK: this is a hack to deal with people having clients behind...
-    .mutation(({ ctx }) => completeOnboardingHandler({ ctx, input: { step: undefined } })),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
   // toggleBlockedTag: protectedProcedure

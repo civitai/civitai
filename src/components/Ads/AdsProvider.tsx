@@ -7,7 +7,7 @@ import { env } from '~/env/client.mjs';
 import { isProd } from '~/env/other';
 import Script from 'next/script';
 import { useConsentManager } from '~/components/Ads/ads.utils';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
+import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
 const adProviders: AdProvider[] = ['ascendeum'];

@@ -9,7 +9,6 @@ import {
   ActionIcon,
   Indicator,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import {
   IconEye,
   IconEyeOff,
@@ -17,6 +16,7 @@ import {
   IconShieldOff,
   TablerIconsProps,
 } from '@tabler/icons-react';
+import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -91,10 +91,10 @@ export function BrowsingModeMenu() {
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const setBrowsingMode = useFiltersContext((state) => state.setBrowsingMode);
 
-  const [showDecorations, setShowDecorations] = useLocalStorage({
-    key: 'showDecorations',
-    defaultValue: true,
-  });
+  // const [showDecorations, setShowDecorations] = useLocalStorage({
+  //   key: 'showDecorations',
+  //   defaultValue: true,
+  // });
 
   const handleChange = (mode: BrowsingMode) => {
     setBrowsingMode(mode);
@@ -132,6 +132,7 @@ export function BrowsingModeMenu() {
               },
             })}
           />
+          <BrowsingLevelsGrouped />
         </>
       )}
       {showBlurToggle && (
@@ -146,7 +147,7 @@ export function BrowsingModeMenu() {
           )}
         </BlurToggle>
       )}
-      <Group spacing="xs">
+      {/* <Group spacing="xs">
         <Text size="xs" weight={500}>
           Event Cosmetics
         </Text>
@@ -155,7 +156,7 @@ export function BrowsingModeMenu() {
           checked={showDecorations}
           onChange={() => setShowDecorations((show) => !show)}
         />
-      </Group>
+      </Group> */}
     </Stack>
   );
 }

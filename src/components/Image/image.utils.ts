@@ -104,7 +104,6 @@ export const useQueryImageCategories = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  // const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.image.getImagesByCategory.useInfiniteQuery(
     { ...filters },
     {

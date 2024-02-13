@@ -1,14 +1,15 @@
 import { TokenUser } from 'next-auth';
+import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/utils/flags';
 
 export function extendedSessionUser(user: TokenUser) {
+  const steps = Flags.instanceToArray(user.onboarding) as OnboardingSteps[];
   return {
     ...user,
     isMember: user.tier != null,
-    showNsfw: user.browsingLevel > 0,
     tos: Flags.hasFlag(user.onboarding, OnboardingSteps.TOS),
-    onboardingSteps: Flags.instanceToArray(user.onboarding) as OnboardingSteps[],
+    onboardingSteps: steps,
     // TODO - computed db prop for mod levels
   };
 }

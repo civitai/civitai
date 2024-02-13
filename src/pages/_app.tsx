@@ -42,7 +42,6 @@ import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/F
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
-import { TosProvider } from '~/providers/TosProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
@@ -52,6 +51,7 @@ import '~/styles/globals.css';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { extendedSessionUser } from '~/utils/session-helpers';
 import { PaypalProvider } from '~/providers/PaypalProvider';
+import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -229,36 +229,36 @@ function MyApp(props: CustomAppProps) {
                       <ActivityReportingProvider>
                         <CivitaiPosthogProvider>
                           <CookiesProvider value={cookies}>
-                            <ReferralsProvider>
-                              <FiltersProvider value={filters}>
-                                <AdsProvider>
-                                  <PaypalProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider zIndex={9999}>
-                                          <BrowserRouterProvider>
-                                            <RecaptchaWidgetProvider>
-                                              <ChatContextProvider>
-                                                <BaseLayout>
-                                                  <CustomModalsProvider>
-                                                    <TosProvider>
+                            <BrowsingModeProvider>
+                              <ReferralsProvider>
+                                <FiltersProvider value={filters}>
+                                  <AdsProvider>
+                                    <PaypalProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider zIndex={9999}>
+                                            <BrowserRouterProvider>
+                                              <RecaptchaWidgetProvider>
+                                                <ChatContextProvider>
+                                                  <BaseLayout>
+                                                    <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
-                                                    </TosProvider>
-                                                    <StripeSetupSuccessProvider />
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </BaseLayout>
-                                              </ChatContextProvider>
-                                            </RecaptchaWidgetProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaypalProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
+                                                      <StripeSetupSuccessProvider />
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </BaseLayout>
+                                                </ChatContextProvider>
+                                              </RecaptchaWidgetProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaypalProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </BrowsingModeProvider>
                           </CookiesProvider>
                         </CivitaiPosthogProvider>
                       </ActivityReportingProvider>
@@ -291,11 +291,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const flags = getFeatureFlags({
     user: session?.user ? extendedSessionUser(session.user) : undefined,
   });
+
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
     (appContext.ctx.req as any)['flags'] = flags;
   }
+
   return {
     pageProps: {
       ...pageProps,

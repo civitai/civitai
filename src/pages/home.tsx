@@ -12,7 +12,7 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ImageSort, ModelSort, NsfwLevel } from '~/server/common/enums';
+import { ImageSort, ModelSort } from '~/server/common/enums';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -25,6 +25,7 @@ import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { publicBrowsingLevelsArray } from '~/components/BrowsingLevel/browsingLevel.utils';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -52,7 +53,7 @@ export default function Home() {
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
   return (
-    <HiddenPreferencesProvider browsingLevel={[NsfwLevel.PG]}>
+    <HiddenPreferencesProvider browsingLevel={publicBrowsingLevelsArray}>
       <Meta
         title="Civitai: The Home of Open-Source Generative AI"
         description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"

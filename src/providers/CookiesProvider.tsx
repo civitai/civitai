@@ -16,16 +16,20 @@ export const CookiesProvider = ({
   children: React.ReactNode;
   value: ParsedCookies;
 }) => {
-  const [value] = useState(() => {
-    const result = cookiesSchema.safeParse(initialValue);
-    if (result.success) return result.data;
-    return cookiesSchema.parse({});
-  });
+  const [cookies] = useState(handleParseCookies(initialValue));
 
-  return <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
+  return <CookiesCtx.Provider value={cookies}>{children}</CookiesCtx.Provider>;
+};
+
+const handleParseCookies = (data: Record<string, unknown>) => {
+  const result = cookiesSchema.safeParse(data);
+  if (result.success) return result.data;
+  return cookiesSchema.parse({});
 };
 
 const cookiesSchema = z.object({
+  showNsfw: z.coerce.boolean().optional(),
+  blurNsfw: z.coerce.boolean().optional(),
   browsingLevel: z.coerce.number().optional(),
   referrals: z
     .object({
@@ -41,6 +45,8 @@ export type CookiesContext = z.infer<typeof cookiesSchema>;
 export type ParsedCookies = ReturnType<typeof parseCookies>;
 export function parseCookies(cookies: TmpCookiesObj) {
   return {
+    showNsfw: cookies?.['nsfw'],
+    blurNsfw: cookies?.['blur'],
     browsingLevel: cookies?.['level'],
     referrals: {
       code: cookies?.['ref_code'],

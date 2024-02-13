@@ -149,8 +149,10 @@ model User {
   email               String?               @unique @db.Citext
   emailVerified       DateTime?
   image               String?
-  blurNsfw            Boolean?              @default(true)
-  browsingLevel       Int                   @default(0)
+  showNsfw            Boolean               @default(false)
+  blurNsfw            Boolean               @default(true)
+  blurLevel           Int                   @default(0)
+  browsingLevel       Int                   @default(3)
   onboarding          Int                   @default(0)
   isModerator         Boolean?              @default(false)
   createdAt           DateTime              @default(now())
@@ -617,6 +619,7 @@ model ModelVersion {
   requireAuth          Boolean         @default(false)
   settings             Json?
   availability         Availability    @default(Public)
+  nsfwLevel            Int             @default(1)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1069,6 +1072,7 @@ model Post {
   collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
+  nsfwLevel      Int           @default(1)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -1962,6 +1966,7 @@ model Article {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   availability Availability @default(Public)
   unlisted     Boolean      @default(false)
+  nsfwLevel    Int          @default(1)
 
   thread          Thread?
   reactions       ArticleReaction[]
@@ -2142,6 +2147,7 @@ model Collection {
   mode         CollectionMode?
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
+  nsfwLevel    Int                          @default(1)
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -2305,6 +2311,7 @@ model Bounty {
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
   availability            Availability    @default(Public)
+  nsfwLevel               Int             @default(1)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -2331,6 +2338,7 @@ model BountyEntry {
   updatedAt   DateTime @updatedAt
   locked      Boolean  @default(false)
   description String?
+  nsfwLevel   Int      @default(1)
 
   benefactors BountyBenefactor[]
   thread      Thread?

@@ -1,9 +1,4 @@
-import {
-  CosmeticType,
-  ModelEngagementType,
-  ModelVersionEngagementType,
-  OnboardingStep,
-} from '@prisma/client';
+import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -239,10 +234,16 @@ export const completeOnboardingHandler = async ({
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
       case OnboardingSteps.Profile:
-        await dbWrite.user.update({ where: { id }, data: { onboarding, ...input } });
+        await dbWrite.user.update({
+          where: { id },
+          data: { onboarding, username: input.username, email: input.email },
+        });
         break;
       case OnboardingSteps.BrowsingLevels:
-        await dbWrite.user.update({ where: { id }, data: { onboarding, ...input } });
+        await dbWrite.user.update({
+          where: { id },
+          data: { onboarding },
+        });
         break;
       case OnboardingSteps.Buzz:
         const { recaptchaToken } = input;
@@ -259,6 +260,14 @@ export const completeOnboardingHandler = async ({
           );
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        if (input.userReferralCode || input.source) {
+          await createUserReferral({
+            id,
+            userReferralCode,
+            source,
+            ip: ctx.ip,
+          });
+        }
 
         await withRetries(() =>
           createBuzzTransaction({
@@ -379,6 +388,7 @@ export const updateUserHandler = async ({
         ip: ctx.ip,
       });
     }
+    // TODO.Briant.remove - this shouldn't need to be here after nsfwLevels updates
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;

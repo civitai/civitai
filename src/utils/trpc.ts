@@ -11,7 +11,6 @@ import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
-import { isAuthed } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { env } from '~/env/client.mjs';
 
 const url = '/api/trpc';
@@ -28,6 +27,7 @@ export const queryClient = new QueryClient({
 
 const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
+    const isAuthed = typeof window !== undefined ? window.isAuthed : false;
     if (isAuthed && op.input) (op.input as any).authed = true;
     return next(op);
   };
