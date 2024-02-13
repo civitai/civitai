@@ -8,6 +8,7 @@ import {
   Tooltip as ChartTooltip,
   Colors,
   Legend,
+  ChartOptions,
 } from 'chart.js';
 import dayjs from 'dayjs';
 import { trpc } from '~/utils/trpc';
@@ -36,9 +37,8 @@ export const EarlyAccessRewards = () => {
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
-  const options = useMemo(
+  const options = useMemo<ChartOptions<'line'>>(
     () => ({
-      type: 'line',
       aspectRatio: 3,
       responsive: true,
       scales: {
