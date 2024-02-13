@@ -267,7 +267,7 @@ const waysToEarnBuzz: { text: string; value: number }[] = [
     text: 'For every 1,000 ad or member views on your content',
   },
   {
-    value: 10,
+    value: constants.creatorsProgram.rewards.earlyAccessUniqueDownload,
     text: 'For every unique user that downloads your early access resource',
   },
   {

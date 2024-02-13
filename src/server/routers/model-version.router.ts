@@ -1,6 +1,7 @@
 import {
   declineReviewHandler,
   deleteModelVersionHandler,
+  earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
   publishModelVersionHandler,
@@ -12,6 +13,7 @@ import {
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteExplorationPromptSchema,
+  earlyAccessModelVersionsOnTimeframeSchema,
   getModelVersionByModelTypeSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
@@ -97,4 +99,7 @@ export const modelVersionRouter = router({
   getModelVersionsByModelType: protectedProcedure
     .input(getModelVersionByModelTypeSchema)
     .query(({ input }) => getModelVersionsByModelType(input)),
+  earlyAccessModelVersionsOnTimeframe: protectedProcedure
+    .input(earlyAccessModelVersionsOnTimeframeSchema)
+    .query(earlyAccessModelVersionsOnTimeframeHandler),
 });

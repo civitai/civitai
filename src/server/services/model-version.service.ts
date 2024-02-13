@@ -19,12 +19,17 @@ import {
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import dayjs from 'dayjs';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -178,6 +183,9 @@ export const upsertModelVersion = async ({
       where: { id },
       select: {
         id: true,
+        status: true,
+
+        earlyAccessTimeFrame: true,
         monetization: {
           select: {
             id: true,
@@ -192,6 +200,27 @@ export const upsertModelVersion = async ({
         },
       },
     });
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.earlyAccessTimeFrame &&
+      existingVersion.earlyAccessTimeFrame === 0
+    ) {
+      throw throwBadRequestError(
+        'You cannot add early access on a model after it has been published.'
+      );
+    }
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.earlyAccessTimeFrame &&
+      existingVersion.earlyAccessTimeFrame > 0 &&
+      data.earlyAccessTimeFrame > existingVersion.earlyAccessTimeFrame
+    ) {
+      throw throwBadRequestError(
+        'You cannot increase the early access time frame for a published early access model version.'
+      );
+    }
 
     const version = await dbWrite.modelVersion.update({
       where: { id },
@@ -475,4 +504,48 @@ export const getModelVersionsByModelType = async ({
   `;
 
   return results;
+};
+
+export const earlyAccessModelVersionsOnTimeframe = async ({
+  userId,
+  // Timeframe is on days
+  timeframe = 14,
+}: {
+  userId: number;
+  timeframe?: number;
+}) => {
+  type ModelVersionForEarlyAccess = {
+    id: number;
+    modelId: number;
+    createdAt: Date;
+    publishedAt: Date;
+    earlyAccessTimeFrame: number;
+    meta: ModelVersionMeta;
+    modelName: string;
+    modelVersionName: string;
+    userId: number;
+  };
+
+  const modelVersions = await dbRead.$queryRaw<ModelVersionForEarlyAccess[]>`
+    SELECT
+      mv.id,
+      mv."modelId",
+      mv."createdAt",
+      mv."publishedAt",
+      mv."earlyAccessTimeFrame",
+      mv."meta",
+      m.name as "modelName",
+      mv.name as "modelVersionName",
+      m."userId"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON mv."modelId" = m.id
+    WHERE mv."status" = 'Published'
+      AND mv."earlyAccessTimeFrame" > 0
+      AND m."userId" = ${userId}
+      AND GREATEST(mv."createdAt", mv."publishedAt") 
+        + (mv."earlyAccessTimeFrame" || ' day')::INTERVAL
+        >= ${dayjs().subtract(timeframe, 'day').toDate()};
+  `;
+
+  return modelVersions;
 };
