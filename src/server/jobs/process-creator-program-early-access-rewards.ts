@@ -34,6 +34,8 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
     // This may not be 100% accurate as a parameter, but it's good enough for our purposes
     const creatorProgramUsers = await dbWrite.userStripeConnect.findMany({
       where: {
+        // Note: It is possible that non-approved users might miss some sort of window here.
+        // In all fairness, only approved users should be able to receive rewards.
         status: 'Approved',
       },
     });
