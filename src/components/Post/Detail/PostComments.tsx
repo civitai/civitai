@@ -29,7 +29,6 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
       entityId={postId}
       limit={3}
       badges={[{ userId, label: 'op', color: 'violet' }]}
-      forceLocked={!hasAccess}
     >
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
