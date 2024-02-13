@@ -97,7 +97,7 @@ export const PaymentMethodItem = ({
         <Group {...groupProps}>
           <Stack spacing={0}>
             <Text size="xs" transform="capitalize" color="dimmed">
-              {type.replace('_', ' ')}
+              {type.replace(/_/gi, ' ')}
             </Text>
             <Text size="sm">Created on: {formatDate(new Date(paymentMethod.created * 1000))}</Text>
           </Stack>
