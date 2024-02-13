@@ -33,7 +33,8 @@ export function NotificationBell() {
   const [opened, setOpened] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<NotificationCategory | null>(null);
   const [toggle, setToggle] = useState<HTMLDivElement | null>(null);
-  const ref = useClickOutside(() => setOpened(false), null, [toggle]);
+  const [drawer, setDrawer] = useState<HTMLDivElement | null>(null);
+  useClickOutside(() => setOpened(false), null, [toggle, drawer]);
 
   const count = useQueryNotificationsCount();
   const {
@@ -110,7 +111,7 @@ export function NotificationBell() {
         withOverlay={mobile}
         withinPortal
       >
-        <Stack spacing="xl" h="100%" pt="md" px="md" ref={ref}>
+        <Stack spacing="xl" h="100%" pt="md" px="md" ref={setDrawer}>
           <Group position="apart">
             <Text size="xl" weight="bold">
               Notifications

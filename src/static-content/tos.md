@@ -88,6 +88,8 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
   For additional information about how content is moderated, please review our Content Moderation Policy.
 
+  Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
+
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
 1.   **Communications**
