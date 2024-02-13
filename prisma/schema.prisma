@@ -110,6 +110,7 @@ enum BuzzWithdrawalRequestStatus {
   Approved // Different than transferred in that a 3rd party can say it's a valid request, and the owners can reject after the fact.
   Reverted
   Transferred
+  ExternallyResolved
 }
 
 model BuzzWithdrawalRequestHistory {
