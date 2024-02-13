@@ -20,14 +20,12 @@ import { NotificationList } from '~/components/Notifications/NotificationList';
 import { trpc } from '~/utils/trpc';
 
 export default function Notifications() {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.notification.getAllByUser.useInfiniteQuery(
       { limit: 100 },
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
+      { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const notifications = useMemo(
     () => data?.pages.flatMap((page) => page.items) ?? [],

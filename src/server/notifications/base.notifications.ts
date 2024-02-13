@@ -5,10 +5,12 @@ export type NotificationProcessor = {
   priority?: number;
   toggleable?: boolean;
   prepareQuery?: (input: NotificationProcessorRunInput) => Promise<string> | string;
-  prepareMessage: (notification: BareNotification) => NotificationMessage | undefined;
+  prepareMessage: (notification: Omit<BareNotification, 'id'>) => NotificationMessage | undefined;
+  getDetails?: (notifications: BareNotification[]) => BareNotification[];
 };
 
 export type BareNotification = {
+  id: string;
   type: string;
   details: MixedObject;
 };

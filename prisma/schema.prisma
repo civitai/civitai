@@ -244,6 +244,7 @@ model User {
   chatMembers                ChatMember[]
   chatMessages               ChatMessage[]
   chatOwners                 Chat[]
+  builds                     BuildGuide[]
 }
 
 enum OnboardingStep {
@@ -1598,13 +1599,22 @@ model Log {
   createdAt DateTime @default(now())
 }
 
+enum NotificationCategory {
+  Comment
+  Update
+  Milestone
+  Bounty
+  Other
+}
+
 model Notification {
-  id        String   @id @default(cuid())
+  id        String               @id @default(cuid())
   userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String
+  category  NotificationCategory @default(Other)
   details   Json?
-  createdAt DateTime @default(now())
+  createdAt DateTime             @default(now())
 
   @@index([userId, createdAt])
 }
@@ -2703,6 +2713,18 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+}
+
+model BuildGuide {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  name         String
+  message      String
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  components   Json
+  capabilities Json
 }
 
 /// @view
