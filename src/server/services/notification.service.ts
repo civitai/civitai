@@ -69,13 +69,15 @@ export async function getUserNotificationCount({
   if (category) AND.push(Prisma.sql`category = ${category}::"NotificationCategory"`);
 
   const result = await dbRead.$queryRaw<{ category: NotificationCategory; count: number }[]>`
-    SELECT COUNT(*) as count
+    SELECT
+      category,
+      COUNT(*) as count
     FROM "Notification"
     WHERE ${Prisma.join(AND, ' AND ')}
     GROUP BY category
   `;
 
-  return result;
+  return result.map(({ category, count }) => ({ category, count: Number(count) }));
 }
 
 export const createUserNotificationSetting = async ({
@@ -120,12 +122,13 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
 
   if (data.id) {
     return dbWrite.$executeRaw`
-      INSERT INTO "Notification" ("id", "userId", "type", "details")
+      INSERT INTO "Notification" ("id", "userId", "type", "details", "category")
       VALUES (
         ${data.id},
         ${data.userId},
         ${data.type},
-        ${JSON.stringify(data.details)}::jsonb
+        ${JSON.stringify(data.details)}::jsonb,
+        ${data.category}::"NotificationCategory"
       )
       ON CONFLICT ("id") DO NOTHING
     `;

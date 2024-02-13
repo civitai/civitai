@@ -12,16 +12,17 @@ export const imageNotifications = createNotificationProcessor({
         SELECT
           i.id "imageId",
           u.id "userId"
-        FROM "Image" i 
+        FROM "Image" i
         JOIN "User" u ON i.id = u."profilePictureId"
         WHERE i."updatedAt" > '${lastSent}' AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
           CONCAT("userId",':','profile-picture-blocked',':',"imageId"),
           "userId",
           'profile-picture-blocked' "type",
-          jsonb_build_object()
+          jsonb_build_object(),
+          'System'::"NotificationCategory" "category"
         FROM data
       ON CONFLICT("id") DO NOTHING;
     `,

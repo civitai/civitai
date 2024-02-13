@@ -1161,6 +1161,7 @@ export const updateCollectionItemsStatus = async ({
         await createNotification({
           type: 'contest-collection-item-status-change',
           userId: item.addedById,
+          category: 'Update',
           details: {
             status,
             collectionId: collection.id,

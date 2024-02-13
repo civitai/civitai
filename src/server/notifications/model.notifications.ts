@@ -150,8 +150,8 @@ export const modelNotifications = createNotificationProcessor({
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Favorite'
-        WHERE 
-            mv."availability" = 'Public'::"Availability" 
+        WHERE
+            mv."availability" = 'Public'::"Availability"
             AND (
               (mv."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND mv.status = 'Published')
               OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
@@ -239,12 +239,13 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
         WHERE ev.early_access_deadline > '${lastSent}' AND ev.early_access_deadline < now()
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         owner_id,
         'early-access-complete',
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM early_access_complete;
     `,
   },
@@ -268,12 +269,13 @@ export const modelNotifications = createNotificationProcessor({
         WHERE m.status IN ('Draft')
         AND m."updatedAt" < now() - INTERVAL '23 days'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "userId",
         'old-draft',
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM to_add
       WHERE NOT EXISTS (SELECT 1 FROM "Notification" no WHERE no."userId" = to_add."userId" AND type = 'old-draft' AND no.details->>'modelId' = to_add.details->>'modelId');
     `,

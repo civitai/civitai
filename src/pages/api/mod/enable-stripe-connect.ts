@@ -22,6 +22,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       await createNotification({
         userId,
         type: 'creators-program-enabled',
+        category: 'System',
       }).catch();
     })
   );

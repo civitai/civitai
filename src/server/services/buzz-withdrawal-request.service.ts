@@ -393,24 +393,28 @@ export const updateBuzzWithdrawalRequest = async ({
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-approved',
+          category: 'System',
         }).catch();
         break;
       case BuzzWithdrawalRequestStatus.Rejected:
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-rejected',
+          category: 'System',
         }).catch();
         break;
       case BuzzWithdrawalRequestStatus.Transferred:
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-transferred',
+          category: 'System',
         }).catch();
         break;
       case BuzzWithdrawalRequestStatus.Reverted:
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-reverted',
+          category: 'System',
         }).catch();
         break;
     }

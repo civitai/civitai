@@ -10,12 +10,13 @@ export const userJourneyNotifications = createNotificationProcessor({
       target: '_blank',
     }),
     prepareQuery: ({ lastSent }) => `
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         id "userId",
         'join-community' "type",
-        jsonb_build_object()
+        jsonb_build_object(),
+        'System'::"NotificationCategory" "category"
       FROM "User"
       WHERE "createdAt" > '${lastSent}';`,
   },

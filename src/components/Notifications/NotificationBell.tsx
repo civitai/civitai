@@ -25,12 +25,15 @@ import {
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useClickOutside } from '@mantine/hooks';
 
 export function NotificationBell() {
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<NotificationCategory | null>(null);
+  const [toggle, setToggle] = useState<HTMLDivElement | null>(null);
+  const ref = useClickOutside(() => setOpened(false), null, [toggle]);
 
   const count = useQueryNotificationsCount();
   const {
@@ -48,31 +51,66 @@ export function NotificationBell() {
 
   return (
     <>
-      <Indicator
-        color="red"
-        overflowCount={999}
-        label={count.all}
-        size={16}
-        offset={2}
-        showZero={false}
-        dot={false}
-        inline
-      >
-        <ActionIcon onClick={() => setOpened((val) => !val)}>
-          <IconBell />
-        </ActionIcon>
-      </Indicator>
+      <div onClick={() => setOpened((val) => !val)} ref={setToggle}>
+        <Indicator
+          color="red"
+          overflowCount={99}
+          label={count.all}
+          size={16}
+          offset={4}
+          showZero={false}
+          dot={false}
+          withBorder
+          inline
+          styles={{
+            indicator: {
+              height: '20px !important',
+              cursor: 'pointer',
+            },
+            common: {
+              fontWeight: 500,
+              fontSize: 12,
+            },
+          }}
+        >
+          <ActionIcon>
+            <IconBell />
+          </ActionIcon>
+        </Indicator>
+      </div>
       <Drawer
         position={mobile ? 'bottom' : 'right'}
         size={mobile ? 'calc(100dvh - var(--mantine-header-height))' : '700px'}
+        styles={(theme) => ({
+          root: {
+            [theme.fn.largerThan('xs')]: {
+              top: 'var(--mantine-header-height)',
+              height: `calc(100% - var(--mantine-header-height))`,
+            },
+          },
+          drawer: {
+            [theme.fn.largerThan('xs')]: {
+              top: 'var(--mantine-header-height)',
+              height: `calc(100% - var(--mantine-header-height))`,
+            },
+          },
+          overlay: {
+            [theme.fn.largerThan('xs')]: {
+              // top: 'var(--mantine-header-height)',
+              // height: `calc(100% - var(--mantine-header-height))`,
+              // background: 'transparent',
+            },
+          },
+        })}
         shadow="lg"
         opened={opened}
         onClose={() => setOpened(false)}
+        closeOnClickOutside={false}
         withCloseButton={false}
         withOverlay={mobile}
         withinPortal
       >
-        <Stack spacing="xl" h="100%" pt="md" px="md">
+        <Stack spacing="xl" h="100%" pt="md" px="md" ref={ref}>
           <Group position="apart">
             <Text size="xl" weight="bold">
               Notifications

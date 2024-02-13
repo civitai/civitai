@@ -110,6 +110,7 @@ export async function updateByStripeConnectAccount({
     await createNotification({
       userId: userStripeConnect.userId,
       type: 'creators-program-payments-enabled',
+      category: 'System',
     }).catch();
   } else if (
     stripeAccount.requirements?.disabled_reason &&
@@ -127,6 +128,7 @@ export async function updateByStripeConnectAccount({
     await createNotification({
       userId: userStripeConnect.userId,
       type: 'creators-program-rejected-stripe',
+      category: 'System',
     }).catch();
   } else {
     updated = await dbWrite.userStripeConnect.update({

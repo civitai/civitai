@@ -24,12 +24,13 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-model',':',"modelId"),
         "userId",
         'featured-model' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,
@@ -56,12 +57,13 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-image',':',"imageId"),
         "userId",
         'featured-image' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,
@@ -89,12 +91,13 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-post',':',"postId"),
         "userId",
         'featured-post' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,
@@ -122,12 +125,13 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-article',':',"articleId"),
         "userId",
         'featured-article' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,

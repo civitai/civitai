@@ -1605,6 +1605,8 @@ enum NotificationCategory {
   Update
   Milestone
   Bounty
+  Buzz
+  System
   Other
 }
 

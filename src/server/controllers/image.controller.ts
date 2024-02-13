@@ -155,6 +155,7 @@ export const setTosViolationHandler = async ({
     createNotification({
       userId: image.userId,
       type: 'tos-violation',
+      category: 'System',
       details: {
         modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',

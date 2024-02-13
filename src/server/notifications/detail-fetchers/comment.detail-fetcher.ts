@@ -1,6 +1,8 @@
+import { truncate } from 'lodash-es';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export const commentDetailFetcher = createDetailFetcher({
@@ -33,12 +35,12 @@ export const commentDetailFetcher = createDetailFetcher({
       const commentV2 = commentsV2.find((c) => c.id === n.details.commentId);
 
       if (comment) {
-        n.details.content = comment.content;
+        n.details.content = truncate(removeTags(comment.content ?? ''), { length: 150 });
         n.details.actor = comment.user;
       }
 
       if (commentV2) {
-        n.details.content = commentV2.content;
+        n.details.content = truncate(removeTags(commentV2.content ?? ''), { length: 150 });
         n.details.actor = commentV2.user;
       }
     }

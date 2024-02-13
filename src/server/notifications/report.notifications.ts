@@ -38,12 +38,13 @@ export const reportNotifications = createNotificationProcessor({
           r."statusSetAt" > '${lastSent}' AND
           r.status = 'Actioned'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'report-actioned' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM actioned r
       WHERE NOT EXISTS (
         SELECT 1
