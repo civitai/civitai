@@ -226,15 +226,18 @@ const BuzzWithdrawalStatusStateMap: Record<
     BuzzWithdrawalRequestStatus.Canceled,
     BuzzWithdrawalRequestStatus.Rejected,
     BuzzWithdrawalRequestStatus.Transferred,
+    BuzzWithdrawalRequestStatus.ExternallyResolved,
   ],
   [BuzzWithdrawalRequestStatus.Approved]: [
     BuzzWithdrawalRequestStatus.Rejected,
     BuzzWithdrawalRequestStatus.Transferred,
+    BuzzWithdrawalRequestStatus.ExternallyResolved,
   ],
   [BuzzWithdrawalRequestStatus.Transferred]: [BuzzWithdrawalRequestStatus.Reverted],
   [BuzzWithdrawalRequestStatus.Canceled]: [],
   [BuzzWithdrawalRequestStatus.Rejected]: [], //  Because buzz gets refunded, we don't want to allow any other state.
   [BuzzWithdrawalRequestStatus.Reverted]: [], // Because buzz gets refunded, we don't want to allow any other state.
+  [BuzzWithdrawalRequestStatus.ExternallyResolved]: [], // Because buzz gets refunded, we don't want to allow any other state.
 };
 
 export const updateBuzzWithdrawalRequest = async ({
@@ -281,6 +284,12 @@ export const updateBuzzWithdrawalRequest = async ({
     request.requestedBuzzAmount,
     request.platformFeeRate
   );
+
+  if (status === BuzzWithdrawalRequestStatus.ExternallyResolved && !note) {
+    throw throwBadRequestError(
+      'You must provide a note when resolving a withdrawal request externally'
+    );
+  }
 
   if (status === BuzzWithdrawalRequestStatus.Transferred) {
     if (!request.userId) {
