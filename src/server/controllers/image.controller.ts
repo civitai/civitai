@@ -81,6 +81,7 @@ export const deleteImageHandler = async ({
     const imageTags = await dbRead.imageTag.findMany({
       where: {
         imageId: input.id,
+        concrete: true,
       },
       select: {
         tagName: true,
