@@ -132,7 +132,7 @@ const StripeTransactionModal = ({
         {(supportedUserPaymentMethods?.length ?? 0) > 0 && (
           <Stack>
             <Divider mx="-lg" />
-            <Text weight="bold">Supported saved payment methods</Text>
+            <Text weight="bold">Saved payment methods</Text>
             <Stack spacing="sm">
               {supportedUserPaymentMethods.map((paymentMethod) => (
                 <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
