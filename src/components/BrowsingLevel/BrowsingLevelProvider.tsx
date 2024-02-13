@@ -11,11 +11,8 @@ import { setCookie } from '~/utils/cookies-helpers';
 import { createStore, useStore } from 'zustand';
 import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
-import { getCookie } from 'cookies-next';
 import { useSession } from 'next-auth/react';
 import { useDidUpdate } from '@mantine/hooks';
-import { useCookies2 } from '~/hooks/useCookies';
-import { z } from 'zod';
 
 type StoreState = {
   showNsfw: boolean;
