@@ -3,7 +3,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
-import { Flags } from '~/utils/flags';
+import { Flags } from '~/shared/utils';
 
 export const onboardingSteps = [
   OnboardingSteps.TOS,

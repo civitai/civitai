@@ -4,7 +4,7 @@ import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo, useEffect } from 'react';
 import { extendedSessionUser } from '~/utils/session-helpers';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
-import { Flags } from '~/utils/flags';
+import { Flags } from '~/shared/utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));

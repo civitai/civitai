@@ -3,7 +3,7 @@ import { SessionUser } from 'next-auth';
 import superjson from 'superjson';
 import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { Context } from './createContext';
-import { Flags } from '~/utils/flags';
+import { Flags } from '~/shared/utils';
 import { OnboardingSteps } from '~/server/common/enums';
 
 const t = initTRPC.context<Context>().create({

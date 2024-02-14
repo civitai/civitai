@@ -4,7 +4,7 @@ import { getIsPublicBrowsingLevel } from '~/components/BrowsingLevel/browsingLev
 
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { NsfwLevel } from '~/server/common/enums';
-import { Flags } from '~/utils/flags';
+import { Flags } from '~/shared/utils';
 
 type HiddenPreferencesState = {
   users: Map<number, boolean>;

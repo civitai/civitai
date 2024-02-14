@@ -95,7 +95,7 @@ import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { isDefined } from '~/utils/type-guards';
 import { OnboardingSteps } from '~/server/common/enums';
-import { Flags } from '~/utils/flags';
+import { Flags } from '~/shared/utils';
 
 export const getAllUsersHandler = async ({
   input,

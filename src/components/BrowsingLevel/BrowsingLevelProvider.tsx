@@ -6,7 +6,7 @@ import {
 } from '~/components/BrowsingLevel/browsingLevel.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCookies } from '~/providers/CookiesProvider';
-import { Flags } from '~/utils/flags';
+import { Flags } from '~/shared/utils';
 import { setCookie } from '~/utils/cookies-helpers';
 import { createStore, useStore } from 'zustand';
 import { trpc } from '~/utils/trpc';
