@@ -617,7 +617,7 @@ export const createGenerationRequest = async ({
   generationLimiter.increment(userId.toString(), params.quantity);
 
   const data: Generation.Api.RequestProps = await response.json();
-  const [formatted] = await formatGenerationRequests([resourceData]);
+  const [formatted] = await formatGenerationRequests([data]);
   return formatted;
 };
 

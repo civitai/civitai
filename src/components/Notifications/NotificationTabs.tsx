@@ -1,6 +1,7 @@
 import { Badge, Tabs, TabsProps, Text, createStyles } from '@mantine/core';
 import { NotificationCategory } from '@prisma/client';
 import {
+  getCategoryDisplayName,
   useNotificationSettings,
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
@@ -14,14 +15,6 @@ const useStyles = createStyles(() => ({
     padding: '8px 12px',
   },
 }));
-
-const mapTabName: Partial<Record<NotificationCategory, string>> = {
-  [NotificationCategory.Comment]: 'Comments',
-  [NotificationCategory.Milestone]: 'Milestones',
-  [NotificationCategory.Update]: 'Updates',
-  [NotificationCategory.Bounty]: 'Bounties',
-  [NotificationCategory.Other]: 'Others',
-};
 
 export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: Props) {
   const { classes } = useStyles();
@@ -63,7 +56,7 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                 }
               >
                 <Text tt="capitalize" weight={590} inline>
-                  {mapTabName[tab as NotificationCategory] ?? getDisplayName(tab)}
+                  {getCategoryDisplayName(tab as NotificationCategory)}
                 </Text>
               </Tabs.Tab>
             );

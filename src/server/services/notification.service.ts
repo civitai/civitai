@@ -97,14 +97,19 @@ export const markNotificationsRead = ({
   id,
   userId,
   all = false,
+  category,
 }: MarkReadNotificationInput & { userId: number }) => {
   if (all) {
+    const AND = [
+      Prisma.sql`"userId" = ${userId}`,
+      Prisma.sql`"id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})`,
+    ];
+    if (category) AND.push(Prisma.sql`"category" = ${category}::"NotificationCategory"`);
     return dbWrite.$executeRaw`
       INSERT INTO "NotificationViewed" ("id", "userId")
       SELECT "id", ${userId}
       FROM "Notification"
-      WHERE "userId" = ${userId}
-        AND "id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})
+      WHERE ${Prisma.join(AND, ' AND ')}
     `;
   } else {
     return dbWrite.$executeRaw`
