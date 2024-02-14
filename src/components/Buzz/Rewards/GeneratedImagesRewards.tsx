@@ -13,11 +13,12 @@ import {
 import dayjs from 'dayjs';
 import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Currency, StripeConnectStatus } from '@prisma/client';
-import { Paper, Stack, Title, Text, Center, Loader } from '@mantine/core';
+import { Paper, Stack, Title, Text, MultiSelect, Loader, Center } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { maxDate } from '~/utils/date-helpers';
 
 ChartJS.register(
   CategoryScale,
@@ -28,12 +29,13 @@ ChartJS.register(
   Colors,
   Legend
 );
-
-export const EarlyAccessRewards = () => {
+export const GeneratedImagesReward = () => {
+  const [timeframe, setTimeframe] = useState(30);
+  const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
   const { data: modelVersions = [], isLoading } =
-    trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(
-      { timeframe: 14 },
+    trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery(
+      { timeframe },
       {
         enabled: userStripeConnect?.status === StripeConnectStatus.Approved,
       }
@@ -50,12 +52,12 @@ export const EarlyAccessRewards = () => {
         y: {
           title: {
             display: true,
-            text: 'Unique downloads',
+            text: 'Images generated',
             color: labelColor,
           },
           suggestedMin: 0,
           ticks: {
-            stepSize: 1,
+            stepSize: 1000,
             color: labelColor,
           },
         },
@@ -86,7 +88,9 @@ export const EarlyAccessRewards = () => {
   const labels = useMemo(() => {
     const data = [];
     const today = dayjs().startOf('day');
-    let day = today.subtract(14, 'day');
+    let day = dayjs(
+      maxDate(today.subtract(timeframe, 'day').toDate(), today.startOf('month').toDate())
+    );
     while (day.isBefore(today)) {
       data.push(day.format('YYYY-MM-DD'));
       day = day.add(1, 'day');
@@ -96,17 +100,27 @@ export const EarlyAccessRewards = () => {
   }, []);
 
   const datasets = useMemo(() => {
-    return modelVersions
-      .filter((mv) => (mv.meta?.earlyAccessDownloadData ?? []).length > 0)
-      .map((modelVersion) => {
-        return {
-          label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
-          data: (modelVersion.meta?.earlyAccessDownloadData ?? []).map((data) => ({
-            x: data.date,
-            y: data.downloads,
-          })),
-        };
-      });
+    const data =
+      filteredVersionIds.length > 0
+        ? modelVersions.filter((v) => filteredVersionIds.includes(v.id))
+        : modelVersions.slice(0, 10);
+
+    return data.map((modelVersion) => {
+      return {
+        label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
+        data: (modelVersion.data ?? []).map((data) => ({
+          x: data.createdAt,
+          y: data.generations,
+        })),
+      };
+    });
+  }, [modelVersions, filteredVersionIds]);
+
+  const multiselectItems = useMemo(() => {
+    return modelVersions.map((version) => ({
+      label: `${version.modelName} - ${version.modelVersionName}`,
+      value: version.id.toString(),
+    }));
   }, [modelVersions]);
 
   if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
@@ -116,39 +130,54 @@ export const EarlyAccessRewards = () => {
   return (
     <Paper withBorder className={classes.tileCard} h="100%">
       <Stack p="md">
-        <Title order={3}>Your early access models</Title>
+        <Title order={3}>Images generated with your models</Title>
         <Stack spacing={0}>
           <Text>
             As a member of the Civitai Creators Program, your models in early access will award you
             buzz per unique download.
           </Text>
           <Text>
-            Each unique download will award you{' '}
+            For every 1,000 images generated with your resource, you will receive{' '}
             <CurrencyBadge
               currency={Currency.BUZZ}
-              unitAmount={constants.creatorsProgram.rewards.earlyAccessUniqueDownload}
-            />
+              unitAmount={constants.creatorsProgram.rewards.generatedImageWithResource * 1000}
+            />{' '}
+            at the end of the month.
           </Text>
         </Stack>
-        {isLoading ? (
-          <Center py="xl">
+        {!isLoading && modelVersions.length > 0 ? (
+          <Stack>
+            <MultiSelect
+              data={multiselectItems}
+              value={filteredVersionIds.map((id) => id.toString())}
+              onChange={(data) => setFilteredVersionIds(data.map((x) => Number(x)))}
+              searchable
+              placeholder="Search models"
+              nothingFound="No models found..."
+              label="Filter models. "
+              description="By default, we only show you your 10 most performant models. Only models with generated images are shown."
+              limit={50}
+            />
+            <Line
+              key={filteredVersionIds.join('-')}
+              options={options}
+              data={{
+                labels,
+                datasets,
+              }}
+            />
+          </Stack>
+        ) : isLoading ? (
+          <Center>
             <Loader />
           </Center>
-        ) : datasets.length === 0 ? (
+        ) : (
           <Center>
             <Text color="dimmed">
-              Whoops! Looks like we are still collecting data on your early access models on these
-              past 14 days. Please check back later.
+              Whoops! Looks like we are still collecting data on your models for this month. Come
+              back later
             </Text>
           </Center>
-        ) : (
-          <Line
-            options={options}
-            data={{
-              labels,
-              datasets,
-            }}
-          />
         )}
       </Stack>
     </Paper>
