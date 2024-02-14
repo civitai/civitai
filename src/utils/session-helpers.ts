@@ -1,5 +1,4 @@
 import { TokenUser } from 'next-auth';
-import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/utils/flags';
 

@@ -3,6 +3,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { Flags } from '~/utils/flags';
 
 export const onboardingSteps = [
   OnboardingSteps.TOS,
@@ -14,7 +15,7 @@ export const onboardingSteps = [
 export const useGetRequiredOnboardingSteps = () => {
   const currentUser = useCurrentUser();
   if (!currentUser) return [];
-  return onboardingSteps.filter((step) => !currentUser.onboardingSteps.includes(step));
+  return onboardingSteps.filter((step) => !Flags.hasFlag(currentUser.onboarding, step));
 };
 
 export const useOnboardingStepCompleteMutation = () => {

@@ -16,7 +16,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCheck, IconX, IconProgressBolt } from '@tabler/icons-react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
@@ -25,8 +25,6 @@ import {
   checkUserCreatedAfterBuzzLaunch,
   getUserBuzzBonusAmount,
 } from '~/server/common/user-helpers';
-import { showErrorNotification } from '~/utils/notifications';
-import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { OnboardingSteps } from '~/server/common/enums';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
@@ -61,9 +59,6 @@ export function OnboardingBuzz() {
       : { code: '', source: '', showInput: false }
   );
   const [debouncedUserReferralCode] = useDebouncedValue(userReferral.code, 300);
-  const { token: recaptchaToken, loading: isLoadingRecaptcha } = useRecaptchaToken(
-    RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING
-  );
 
   const {
     data: referrer,
@@ -88,17 +83,9 @@ export function OnboardingBuzz() {
     if (!result.success)
       return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
 
-    if (!recaptchaToken) {
-      showErrorNotification({
-        title: 'Cannot save',
-        error: new Error('Recaptcha token is missing'),
-      });
-      return;
-    }
     mutate(
       {
         step: OnboardingSteps.Buzz,
-        recaptchaToken,
         userReferralCode: showReferral ? userReferral.code : undefined,
         source: showReferral ? userReferral.source : undefined,
       },
@@ -153,7 +140,6 @@ export function OnboardingBuzz() {
             <Button
               size="lg"
               onClick={handleStepComplete}
-              disabled={isLoadingRecaptcha || !recaptchaToken}
               loading={isLoading || referrerRefetching}
             >
               Done

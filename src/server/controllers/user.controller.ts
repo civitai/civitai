@@ -248,6 +248,19 @@ export const completeOnboardingHandler = async ({
 
     switch (input.step) {
       case OnboardingSteps.TOS:
+        const { recaptchaToken } = input;
+        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+
+        const riskScore = await createRecaptchaAssesment({
+          token: recaptchaToken,
+          recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
+        });
+
+        if (!riskScore || riskScore < 0.5)
+          throw throwAuthorizationError(
+            'We are unable to complete onboarding right now. Please try again later'
+          );
+
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
       case OnboardingSteps.Profile:
@@ -263,25 +276,12 @@ export const completeOnboardingHandler = async ({
         });
         break;
       case OnboardingSteps.Buzz:
-        const { recaptchaToken } = input;
-        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
-
-        const riskScore = await createRecaptchaAssesment({
-          token: recaptchaToken,
-          recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
-        });
-
-        if (!riskScore || riskScore < 0.5)
-          throw throwAuthorizationError(
-            'We are unable to complete onboarding right now. Please try again later'
-          );
-
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {
           await createUserReferral({
             id,
-            userReferralCode,
-            source,
+            userReferralCode: input.userReferralCode,
+            source: input.source,
             ip: ctx.ip,
           });
         }
