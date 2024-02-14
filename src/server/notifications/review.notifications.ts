@@ -46,12 +46,13 @@ export const reviewNotifications = createNotificationProcessor({
           m."userId" != r."userId" AND
           r."createdAt" > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId" "userId",
         'new-review' "type",
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM new_reviews
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review');`,
   },
@@ -77,16 +78,17 @@ export const reviewNotifications = createNotificationProcessor({
         JOIN "ModelVersion" mv ON mv.id = ua."modelVersionId" AND mv.status = 'Published'
         JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
         WHERE ua."userId" IS NOT NULL
-          AND ua."downloadAt" >= ${lastSent} - INTERVAL '72 hour'
-          AND ua."downloadAt" <= NOW() - INTERVAL '72 hour'
+          AND ua."downloadAt" BETWEEN
+            '${lastSent}'::timestamp - INTERVAL '72 hour' AND NOW() - INTERVAL '72 hour'
           AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("ownerId",':','review-reminder',':',"modelVersionId") "id",
         "ownerId"    "userId",
         'review-reminder' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM pending_reviews
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder')
       ON CONFLICT("id") DO NOTHING;

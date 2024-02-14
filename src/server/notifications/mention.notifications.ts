@@ -141,12 +141,13 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-mention' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')

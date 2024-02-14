@@ -86,6 +86,11 @@ export function createLimiter({
   async function getCount(userKey: string) {
     const countStr = await redis.get(`${counterKey}:${userKey}`);
     if (!countStr) return fetchOnUnknown ? await populateCount(userKey) : undefined;
+
+    // Handle missing TTL
+    const ttl = await redis.ttl(`${counterKey}:${userKey}`);
+    if (ttl < 0) return await populateCount(userKey);
+
     return Number(countStr);
   }
 

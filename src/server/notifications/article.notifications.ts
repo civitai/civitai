@@ -7,7 +7,9 @@ export const articleNotifications = createNotificationProcessor({
   'article-view-milestone': {
     displayName: 'Article view milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your article, "${details.articleTitle}" has received ${details.viewCount} views`,
+      message: `Congrats! Your article, "${
+        details.articleTitle
+      }" has received ${details.viewCount.toLocaleString()} views`,
       url: `/articles/${details.articleId}`,
     }),
     prepareQuery: async ({ lastSent, clickhouse }) => {
@@ -58,12 +60,13 @@ export const articleNotifications = createNotificationProcessor({
           LEFT JOIN prior_milestones pm ON pm.view_count >= ms.value AND pm.article_id = val.article_id
           WHERE pm.article_id IS NULL
         )
-        INSERT INTO "Notification"("id", "userId", "type", "details")
+        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
           REPLACE(gen_random_uuid()::text, '-', ''),
           "ownerId"    "userId",
           'article-view-milestone' "type",
-          details
+          details,
+          'Milestone'::"NotificationCategory" "category"
         FROM milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-view-milestone');
       `;
@@ -72,7 +75,9 @@ export const articleNotifications = createNotificationProcessor({
   'article-like-milestone': {
     displayName: 'Article like milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your article, "${details.articleTitle}" has received ${details.favoriteCount} likes`,
+      message: `Congrats! Your article, "${
+        details.articleTitle
+      }" has received ${details.favoriteCount.toLocaleString()} likes`,
       url: `/articles/${details.articleId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -115,12 +120,13 @@ export const articleNotifications = createNotificationProcessor({
         LEFT JOIN prior_milestones pm ON pm.favorite_count >= ms.value AND pm.article_id = val.article_id
         WHERE pm.article_id IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'article-like-milestone' "type",
-        details
+        details,
+        'Milestone'::"NotificationCategory" "category"
       FROM milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-like-milestone');
     `,
@@ -162,12 +168,13 @@ export const articleNotifications = createNotificationProcessor({
         JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE a."publishedAt" > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-article-from-following' "type",
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM new_article
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-from-following');
     `,

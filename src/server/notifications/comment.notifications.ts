@@ -48,12 +48,13 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != m."userId"
       )
       INSERT
-      INTO "Notification"("id", "userId", "type", "details")
+      INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-comment' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_comments r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment')
@@ -94,12 +95,13 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != p."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-comment-response' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_comment_response r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-response')
@@ -139,12 +141,13 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-comment-nested' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_comments_nested r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-nested')
@@ -209,12 +212,13 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "Thread" root ON root.id = t."rootThreadId"
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-comment-reply' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_comment_reply r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-reply')
@@ -328,12 +332,13 @@ export const commentNotifications = createNotificationProcessor({
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-thread-response' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_thread_response r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-thread-response')
@@ -383,12 +388,13 @@ export const commentNotifications = createNotificationProcessor({
         AND c."createdAt" > '${lastSent}'
         AND c."userId" != r."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
       REPLACE(gen_random_uuid()::text, '-', ''),
       "ownerId"    "userId",
       'new-review-response' "type",
-      details
+      details,
+      'Comment'::"NotificationCategory" "category"
       FROM new_review_response r
       WHERE
       NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
@@ -461,12 +467,13 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != i."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-image-comment' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_image_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
@@ -483,6 +490,7 @@ export const commentNotifications = createNotificationProcessor({
         SELECT DISTINCT
           a."userId" "ownerId",
           JSONB_BUILD_OBJECT(
+            'version', 2,
             'articleId', a.id,
             'articleTitle', a.title,
             'commentId', c.id,
@@ -496,12 +504,13 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != a."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-article-comment' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_article_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-comment');
@@ -518,6 +527,7 @@ export const commentNotifications = createNotificationProcessor({
         SELECT DISTINCT
           b."userId" "ownerId",
           JSONB_BUILD_OBJECT(
+            'version', 2,
             'bountyId', b.id,
             'bountyTitle', b.title,
             'commentId', c.id,
@@ -531,12 +541,13 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != b."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-bounty-comment' "type",
-        details
+        details,
+        'Comment'::"NotificationCategory" "category"
       FROM new_bounty_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');

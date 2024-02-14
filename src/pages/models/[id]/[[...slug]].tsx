@@ -542,6 +542,10 @@ export default function ModelDetailsV2({
     !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
+  const versionIsEarlyAccess =
+    selectedVersion &&
+    !!selectedVersion.earlyAccessDeadline &&
+    isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
@@ -1099,6 +1103,7 @@ export default function ModelDetailsV2({
               generationModelId: selectedVersion?.meta.picFinderModelId,
               includeEditingActions: isOwner,
             }}
+            canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
           />
         </Box>
       )}

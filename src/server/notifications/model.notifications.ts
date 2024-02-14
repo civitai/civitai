@@ -8,7 +8,9 @@ export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model download milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} model has received ${details.downloadCount} downloads`,
+      message: `Congrats! Your ${
+        details.modelName
+      } model has received ${details.downloadCount.toLocaleString()} downloads`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: async ({ lastSent, clickhouse }) => {
@@ -58,12 +60,13 @@ export const modelNotifications = createNotificationProcessor({
           LEFT JOIN prior_milestones pm ON pm.download_count >= ms.value AND pm.model_id = mval.model_id
           WHERE pm.model_id IS NULL
         )
-        INSERT INTO "Notification"("id", "userId", "type", "details")
+        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
           REPLACE(gen_random_uuid()::text, '-', ''),
           "ownerId"    "userId",
           'model-download-milestone' "type",
-          details
+          details,
+          'Milestone'::"NotificationCategory" "category"
         FROM model_milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
       `;
@@ -72,7 +75,9 @@ export const modelNotifications = createNotificationProcessor({
   'model-like-milestone': {
     displayName: 'Model like milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} model has received ${details.favoriteCount} likes`,
+      message: `Congrats! Your ${
+        details.modelName
+      } model has received ${details.favoriteCount.toLocaleString()} likes`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -113,12 +118,13 @@ export const modelNotifications = createNotificationProcessor({
         LEFT JOIN prior_milestones pm ON pm.favorite_count >= ms.value AND pm.model_id = mval.model_id
         WHERE pm.model_id IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'model-like-milestone' "type",
-        details
+        details,
+        'Milestone'::"NotificationCategory" "category"
       FROM model_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone');
     `,
@@ -144,19 +150,20 @@ export const modelNotifications = createNotificationProcessor({
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Favorite'
-        WHERE 
-            mv."availability" = 'Public'::"Availability" 
+        WHERE
+            mv."availability" = 'Public'::"Availability"
             AND (
               (mv."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND mv.status = 'Published')
               OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
             )
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-model-version' "type",
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM new_model_version
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-version');
     `,
@@ -186,12 +193,13 @@ export const modelNotifications = createNotificationProcessor({
           (m."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND m.status = 'Published')
         OR (m."publishedAt" <= '${lastSent}' AND m.status = 'Scheduled')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-model-from-following' "type",
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM new_model_from_following
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following');
     `,
@@ -231,12 +239,13 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
         WHERE ev.early_access_deadline > '${lastSent}' AND ev.early_access_deadline < now()
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         owner_id,
         'early-access-complete',
-        details
+        details,
+        'Update'::"NotificationCategory" "category"
       FROM early_access_complete;
     `,
   },
@@ -260,12 +269,13 @@ export const modelNotifications = createNotificationProcessor({
         WHERE m.status IN ('Draft')
         AND m."updatedAt" < now() - INTERVAL '23 days'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "userId",
         'old-draft',
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM to_add
       WHERE NOT EXISTS (SELECT 1 FROM "Notification" no WHERE no."userId" = to_add."userId" AND type = 'old-draft' AND no.details->>'modelId' = to_add.details->>'modelId');
     `,

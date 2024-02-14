@@ -76,7 +76,7 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
-  setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
+  setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
   update: protectedProcedure
     .input(updateImageSchema)
     .use(isOwnerOrModerator)

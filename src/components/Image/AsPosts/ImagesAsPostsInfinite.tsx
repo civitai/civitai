@@ -76,6 +76,7 @@ type ImagesAsPostsInfiniteProps = {
   generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
   showModerationOptions?: boolean;
   showPOIWarning?: boolean;
+  canReview?: boolean;
 };
 
 const LIMIT = 50;
@@ -87,6 +88,7 @@ export default function ImagesAsPostsInfinite({
   generationOptions,
   showModerationOptions,
   showPOIWarning,
+  canReview,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -273,13 +275,15 @@ export default function ImagesAsPostsInfinite({
                           </Button>
                         </Link>
                       </LoginRedirect>
-                      <LoginRedirect reason="create-review">
-                        <Link href={addPostLink + '&reviewing=true'}>
-                          <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
-                            Add Review
-                          </Button>
-                        </Link>
-                      </LoginRedirect>
+                      {canReview && (
+                        <LoginRedirect reason="create-review">
+                          <Link href={addPostLink + '&reviewing=true'}>
+                            <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
+                              Add Review
+                            </Button>
+                          </Link>
+                        </LoginRedirect>
+                      )}
                     </Group>
                   </ResourceAccessWrap>
                 )}

@@ -79,6 +79,7 @@ export const holiday2023 = createEvent('holiday2023', {
       userId,
       id: `holiday2023:${userId}:${milestone}lights`,
       type: 'system-announcement',
+      category: 'System',
       details: {
         message: `You've earned the ${milestone} lights badge! Claim it now.`,
         url: `/claim/cosmetic/${milestoneCosmeticId}`,
@@ -147,6 +148,7 @@ async function handleDonationMilestones(buzzEvent: BuzzEventContext) {
       userId: buzzEvent.userId,
       id: `holiday2023:${buzzEvent.userId}:${milestone}donated`,
       type: 'system-announcement',
+      category: 'System',
       details: {
         message: `You've earned the ${key} badge! Claim it now.`,
         url: `/claim/cosmetic/${milestoneCosmeticId}`,

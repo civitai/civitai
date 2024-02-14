@@ -139,10 +139,13 @@ export default function ModelReviews() {
     />
   ) : null;
 
+  const version = versions?.find((v) => v.id === modelVersionId);
   const UserReview = !currentUser ? (
     <Alert>You must be logged in to leave a review</Alert>
   ) : !modelVersionId ? (
     <Alert>Select a model version to leave a review</Alert>
+  ) : version?.isEarlyAccess && !currentUser.isMember ? (
+    <Alert>{`Only Supporters can review this while it's in early access.`}</Alert>
   ) : loadingCurrentUserReview || refetchingCurrentUserReview ? (
     <Center p="xl">
       <Loader />

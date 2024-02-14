@@ -7,8 +7,10 @@ import {
   createStyles,
   Divider,
   Group,
+  Image,
   Loader,
   Menu,
+  Spoiler,
   Stack,
   StackProps,
   Text,
@@ -20,7 +22,9 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { ChatMemberStatus } from '@prisma/client';
 import {
   IconArrowBack,
+  IconChevronDown,
   IconChevronLeft,
+  IconChevronUp,
   IconCircleCheck,
   IconCircleMinus,
   IconCircleX,
@@ -35,7 +39,6 @@ import { throttle } from 'lodash-es';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -143,6 +146,10 @@ export function ExistingChat() {
   const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
   // const lastViewed = myMember?.lastViewedMessageId;
+  const modSender = thisChat?.chatMembers.find(
+    (cm) => cm.isOwner === true && cm.user.isModerator === true
+  );
+  const isMuted = currentUser?.muted && !modSender;
 
   const { mutateAsync: changeLastViewed } = trpc.chat.modifyUser.useMutation({
     onMutate(data) {
@@ -307,7 +314,7 @@ export function ExistingChat() {
     onSettled() {
       throttledTyping.cancel();
 
-      if (!currentUser) return;
+      if (!currentUser || isMuted) return;
 
       doIsTyping({
         chatId: state.existingChatId!,
@@ -401,7 +408,7 @@ export function ExistingChat() {
   }, [connected, worker, handleIsTyping]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || isMuted) return;
 
     doIsTyping({
       chatId: state.existingChatId!,
@@ -415,7 +422,8 @@ export function ExistingChat() {
     () =>
       throttle(
         () => {
-          if (!currentUser) return;
+          if (!currentUser || isMuted) return;
+
           doIsTyping({
             chatId: state.existingChatId!,
             userId: currentUser.id,
@@ -425,7 +433,7 @@ export function ExistingChat() {
         2000,
         { leading: true, trailing: true }
       ),
-    [currentUser, doIsTyping, state.existingChatId]
+    [currentUser, doIsTyping, isMuted, state.existingChatId]
   );
 
   const handleChatTyping = (value: string) => {
@@ -438,8 +446,9 @@ export function ExistingChat() {
     }
   };
 
-  // TODO handle replies (reference)
   const sendMessage = () => {
+    if (isSending) return;
+
     // TODO can probably handle this earlier to disable from sending blank messages
     const strippedMessage = chatMsg.trim();
     if (!strippedMessage.length) {
@@ -461,71 +470,92 @@ export function ExistingChat() {
 
   return (
     <Stack spacing={0} h="100%">
-      <Group p="sm" position="apart" noWrap>
-        {mobile && (
-          <ActionIcon onClick={goBack}>
-            <IconChevronLeft />
-          </ActionIcon>
-        )}
-        {allChatLoading ? (
-          <Center h="100%">
-            <Loader />
-          </Center>
-        ) : (
-          <Group>
-            {/* TODO limit this to one line, then expand */}
-            {/* TODO improve useravatar to show loading */}
-            {/* TODO online status (later), blocked users, etc */}
-            {otherMembers?.map((cm) => (
-              <Button key={cm.userId} variant="light" color="gray" compact>
-                <UserAvatar
-                  user={cm.user}
-                  size="xs"
-                  withUsername
-                  linkToProfile
-                  // TODO don't do the uuid thing
-                  badge={
-                    <Group spacing={6} ml={4} align="center">
-                      {cm.user.isModerator ? (
-                        <EdgeMedia
-                          title="Moderator"
-                          src={'c8f81b5d-b271-4ad4-0eeb-64c42621e300'}
-                          width={16}
-                        />
-                      ) : undefined}
-                      {cm.isOwner === true ? (
-                        <Box title="Creator" display="flex">
-                          <IconCrown size={16} fill="currentColor" />
-                        </Box>
-                      ) : undefined}
-                      <Box
-                        title={
-                          cm.status === ChatMemberStatus.Invited ||
-                          cm.status === ChatMemberStatus.Ignored
-                            ? 'Invited'
-                            : cm.status
-                        }
-                        display="flex"
-                      >
-                        {cm.status === ChatMemberStatus.Joined ? (
-                          <IconCircleCheck size={16} color="green" />
-                        ) : cm.status === ChatMemberStatus.Left ||
-                          cm.status === ChatMemberStatus.Kicked ? (
-                          <IconCircleX size={16} color="orangered" />
-                        ) : (
-                          <IconCircleMinus size={16} />
-                        )}
-                      </Box>
-                    </Group>
-                  }
-                />
-              </Button>
-            ))}
+      {/* TODO this component stinks, it is hardcoded as a button */}
+      <Spoiler
+        showLabel={
+          <Group mt={4} spacing={8}>
+            <IconChevronDown size={16} />
+            <Text size="xs">Expand</Text>
           </Group>
-        )}
-        <ChatActions chatObj={thisChat} />
-      </Group>
-      <Divider />
+        }
+        hideLabel={
+          <Group mt={8} spacing={8}>
+            <IconChevronUp size={16} />
+            <Text size="xs">Hide</Text>
+          </Group>
+        }
+        maxHeight={44}
+        styles={{
+          root: { textAlign: 'center' },
+        }}
+      >
+        <Group m="sm" mb={0} position="apart" noWrap align="flex-start" spacing="sm">
+          {mobile && (
+            <ActionIcon onClick={goBack}>
+              <IconChevronLeft />
+            </ActionIcon>
+          )}
+          {allChatLoading ? (
+            <Center h="100%">
+              <Loader />
+            </Center>
+          ) : (
+            <Group spacing="xs">
+              {/* TODO improve useravatar to show loading (if necessary) */}
+              {/* TODO online status (later), blocked users, etc */}
+
+              {otherMembers?.map((cm) => (
+                <Button key={cm.userId} variant="light" color="gray" compact>
+                  <UserAvatar
+                    user={cm.user}
+                    size="xs"
+                    withUsername
+                    linkToProfile
+                    badge={
+                      <Group spacing={6} ml={4} align="center">
+                        {cm.user.isModerator ? (
+                          <Image
+                            src="/images/civ-c.png"
+                            title="Moderator"
+                            alt="Moderator"
+                            width={16}
+                            height={16}
+                          />
+                        ) : undefined}
+                        {cm.isOwner === true ? (
+                          <Box title="Creator" display="flex">
+                            <IconCrown size={16} fill="currentColor" />
+                          </Box>
+                        ) : undefined}
+                        <Box
+                          title={
+                            cm.status === ChatMemberStatus.Invited ||
+                            cm.status === ChatMemberStatus.Ignored
+                              ? 'Invited'
+                              : cm.status
+                          }
+                          display="flex"
+                        >
+                          {cm.status === ChatMemberStatus.Joined ? (
+                            <IconCircleCheck size={16} color="green" />
+                          ) : cm.status === ChatMemberStatus.Left ||
+                            cm.status === ChatMemberStatus.Kicked ? (
+                            <IconCircleX size={16} color="orangered" />
+                          ) : (
+                            <IconCircleMinus size={16} />
+                          )}
+                        </Box>
+                      </Group>
+                    }
+                  />
+                </Button>
+              ))}
+            </Group>
+          )}
+          <ChatActions chatObj={thisChat} />
+        </Group>
+      </Spoiler>
+      <Divider mt="sm" />
       {!myMember ? (
         <Center h="100%">
           <Loader />
@@ -582,7 +612,8 @@ export function ExistingChat() {
               <Group spacing={0}>
                 <Textarea
                   sx={{ flexGrow: 1 }}
-                  placeholder="Send message"
+                  disabled={isMuted}
+                  placeholder={isMuted ? 'Your account has been muted' : 'Send message'}
                   autosize
                   minRows={1}
                   maxRows={4}
@@ -602,7 +633,7 @@ export function ExistingChat() {
                   h="100%"
                   w={60}
                   onClick={sendMessage}
-                  disabled={isSending || !chatMsg.length || currentUser?.muted}
+                  disabled={isSending || !chatMsg.length || isMuted}
                   sx={{ borderRadius: 0 }}
                 >
                   {isSending ? <Loader /> : <IconSend />}

@@ -267,6 +267,11 @@ export const constants = {
   system: {
     user: { id: -1, username: 'civitai' },
   },
+  creatorsProgram: {
+    rewards: {
+      earlyAccessUniqueDownload: 10,
+    },
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

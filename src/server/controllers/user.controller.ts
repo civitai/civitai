@@ -1,10 +1,16 @@
-import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
+import {
+  CosmeticType,
+  ModelEngagementType,
+  ModelVersionEngagementType,
+  NotificationCategory,
+  OnboardingStep,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -170,14 +176,12 @@ export const getNotificationSettingsHandler = async ({
   const { id } = ctx.user;
 
   try {
-    const user = await getUserById({
-      id,
-      select: { notificationSettings: { select: { id: true, type: true, disabledAt: true } } },
+    const notificationsSettings = await dbRead.userNotificationSettings.findMany({
+      where: { userId: id },
+      select: { id: true, type: true, disabledAt: true },
     });
 
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-    return user.notificationSettings;
+    return notificationsSettings;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -188,8 +192,21 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   const { id } = ctx.user;
 
   try {
-    const count = await getUserNotificationCount({ userId: id, unread: true });
-    return { count };
+    const unreadCount = await getUserNotificationCount({
+      userId: id,
+      unread: true,
+    });
+
+    const reduced = unreadCount.reduce(
+      (acc, { category, count }) => {
+        const key = category.toLowerCase() as Lowercase<NotificationCategory>;
+        acc[key] = count;
+        acc['all'] += count;
+        return acc;
+      },
+      { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
+    );
+    return reduced;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

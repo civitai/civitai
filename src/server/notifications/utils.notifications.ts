@@ -56,7 +56,7 @@ for (const notification of notifications) {
 }
 export { notificationBatches };
 
-export function getNotificationMessage(notification: BareNotification) {
+export function getNotificationMessage(notification: Omit<BareNotification, 'id'>) {
   const { prepareMessage } = notificationProcessors[notification.type] ?? {};
   if (!prepareMessage) return null;
   return prepareMessage(notification);

@@ -29,12 +29,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "BountyBenefactor" bo ON bo."bountyId" = bb."bountyId" AND bo."createdAt" < bb."createdAt"
         WHERE bb."createdAt" > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','benefactor-joined',':',"bountyId",':',"benefactorUserId"),
         "ownerId" "userId",
         'benefactor-joined' "type",
-        details
+        details,
+        'Bounty'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'benefactor-joined')
       ON CONFLICT("id") DO NOTHING;
@@ -87,12 +88,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "Bounty" b ON b.id = a.id
         JOIN target_users tu ON tu.id = b.id
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-ending',':',"bountyId"),
         "ownerId" "userId",
         'bounty-ending' "type",
-        details
+        details,
+        'Bounty'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-ending')
       ON CONFLICT("id") DO NOTHING;
@@ -124,12 +126,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "BountyEntry" be ON be.id = bb."awardedToId"
         WHERE bb."awardedAt" > '${lastSent}' AND bb."userId" != be."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-awarded',':',"bountyId",':',"benefactorUserId"),
         "ownerId" "userId",
         'bounty-awarded' "type",
-        details
+        details,
+        'Bounty'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-awarded')
       ON CONFLICT("id") DO NOTHING;
@@ -138,7 +141,9 @@ export const bountyNotifications = createNotificationProcessor({
   'bounty-reaction-milestone': {
     displayName: 'Bounty entry reaction milestones',
     prepareMessage: ({ details }) => ({
-      message: `Your bounty entry on "${details.bountyName}" has reached ${details.reactionCount} reactions`,
+      message: `Your bounty entry on "${
+        details.bountyName
+      }" has reached ${details.reactionCount.toLocaleString()} reactions`,
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
     prepareQuery: async ({ lastSent }) => `
@@ -172,12 +177,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "Bounty" b ON b.id = be."bountyId"
         JOIN milestones ms ON ms.value <= a.reaction_count
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-reaction-milestone',':',"bountyEntryId",':',milestone),
         "ownerId" "userId",
         'bounty-reaction-milestone' "type",
-        details
+        details,
+        'Milestone'::NotificationCategory "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-reaction-milestone')
       ON CONFLICT("id") DO NOTHING;
@@ -228,12 +234,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = be."userId"
         WHERE be."userId" != tu."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-entry',':',"bountyEntryId"),
         "ownerId" "userId",
         'bounty-entry' "type",
-        details
+        details,
+        'Bounty'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-entry')
       ON CONFLICT("id") DO NOTHING;

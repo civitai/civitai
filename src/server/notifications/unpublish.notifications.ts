@@ -36,12 +36,13 @@ export const unpublishNotifications = createNotificationProcessor({
         WHERE jsonb_typeof(mv.meta->'unpublishedReason') = 'string'
           AND (mv.meta->>'unpublishedAt')::timestamp > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "userId",
         'model-version-unpublished' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM unpublished;
     `,
   },
@@ -71,12 +72,13 @@ export const unpublishNotifications = createNotificationProcessor({
         WHERE jsonb_typeof(m.meta->'unpublishedReason') = 'string'
           AND (m.meta->>'unpublishedAt')::timestamp > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "userId",
         'model-unpublished' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM unpublished;
     `,
   },
@@ -104,12 +106,13 @@ export const unpublishNotifications = createNotificationProcessor({
         WHERE jsonb_typeof(m.meta->'declinedReason') = 'string'
           AND (m.meta->>'declinedAt')::timestamp > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "userId",
         'model-republish-declined' "type",
-        details
+        details,
+        'System'::"NotificationCategory" "category"
       FROM declined;
     `,
   },

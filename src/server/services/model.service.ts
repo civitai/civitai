@@ -1067,15 +1067,31 @@ export const getModelsWithImagesAndModelVersions = async ({
   return result;
 };
 
-export const getModelVersionsMicro = ({
+export const getModelVersionsMicro = async ({
   id,
   excludeUnpublished: excludeDrafts,
 }: GetModelVersionsSchema) => {
-  return dbRead.modelVersion.findMany({
+  const versions = await dbRead.modelVersion.findMany({
     where: { modelId: id, status: excludeDrafts ? ModelStatus.Published : undefined },
     orderBy: { index: 'asc' },
-    select: { id: true, name: true, index: true },
+    select: {
+      id: true,
+      name: true,
+      index: true,
+      earlyAccessTimeFrame: true,
+      createdAt: true,
+      publishedAt: true,
+    },
   });
+
+  return versions.map(({ earlyAccessTimeFrame, createdAt, publishedAt, ...v }) => ({
+    ...v,
+    isEarlyAccess: isEarlyAccess({
+      earlyAccessTimeframe: earlyAccessTimeFrame,
+      publishedAt,
+      versionCreatedAt: createdAt,
+    }),
+  }));
 };
 
 export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUpdateInput }) => {

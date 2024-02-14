@@ -25,7 +25,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
-import { IconCashBanknote } from '@tabler/icons-react';
+import { IconCashBanknote, IconExternalLink } from '@tabler/icons-react';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -208,7 +208,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
         onClick={() => {
           handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Approved);
         }}
-        color="blue"
+        color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
       >
         <IconCheck />
       </ActionIcon>
@@ -220,7 +220,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
         onClick={() => {
           handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Rejected);
         }}
-        color="red"
+        color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
       >
         <IconX />
       </ActionIcon>
@@ -234,13 +234,14 @@ export default function ModeratorBuzzWithdrawalRequests() {
           onClick={() => {
             handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Reverted);
           }}
-          color="orange"
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Reverted]}
           key="revert-btn"
         >
           <IconCashBanknoteOff />
         </ActionIcon>
       </Tooltip>
     ) : null;
+
   const transferBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
       <Tooltip label="Send requested money through stripe" key="transfer-btn" {...tooltipProps}>
@@ -248,9 +249,23 @@ export default function ModeratorBuzzWithdrawalRequests() {
           onClick={() => {
             handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Transferred);
           }}
-          color="green"
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Transferred]}
         >
           <IconCashBanknote />
+        </ActionIcon>
+      </Tooltip>
+    ) : null;
+
+  const externallyResolvedBtn = (requestId: string) =>
+    features.buzzWithdrawalTransfer ? (
+      <Tooltip label="Resolved externally" key="externally-resolved-btn" {...tooltipProps}>
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.ExternallyResolved);
+          }}
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.ExternallyResolved]}
+        >
+          <IconExternalLink size={22} />
         </ActionIcon>
       </Tooltip>
     ) : null;
@@ -311,14 +326,24 @@ export default function ModeratorBuzzWithdrawalRequests() {
               {requests.map((request) => {
                 const buttons = (
                   request.status === BuzzWithdrawalRequestStatus.Requested
-                    ? [approveBtn(request.id), rejectBtn(request.id), transferBtn(request.id)]
+                    ? [
+                        approveBtn(request.id),
+                        rejectBtn(request.id),
+                        transferBtn(request.id),
+                        externallyResolvedBtn(request.id),
+                      ]
                     : request.status === BuzzWithdrawalRequestStatus.Approved
-                    ? [rejectBtn(request.id), transferBtn(request.id)]
+                    ? [
+                        rejectBtn(request.id),
+                        transferBtn(request.id),
+                        externallyResolvedBtn(request.id),
+                      ]
                     : request.status === BuzzWithdrawalRequestStatus.Transferred
                     ? [revertBtn(request.id)]
                     : // Reverted,
                       // Rejected,
-                      // Canceled
+                      // Canceled,
+                      // Externally resolved
                       []
                 ).filter(isDefined);
 

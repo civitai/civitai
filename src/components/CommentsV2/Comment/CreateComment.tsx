@@ -47,11 +47,8 @@ export function CreateComment({
 
   if (forceLocked) {
     return (
-      <Alert color="yellow" icon={<IconClubs />}>
-        <Center>
-          You cannot add comments because you are not a member of any of the clubs that own this
-          resource
-        </Center>
+      <Alert color="yellow">
+        <Center>You do not have permissions to add comments.</Center>
       </Alert>
     );
   }

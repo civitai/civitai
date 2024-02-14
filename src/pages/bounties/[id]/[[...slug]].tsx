@@ -99,9 +99,8 @@ import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { ScrollArea as ScrollAreaMain } from '~/components/ScrollArea/ScrollArea';
-import { SubNav } from '~/components/AppLayout/SubNav';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -1069,10 +1068,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 setPageOptions(BountyDetailsPage, {
   innerLayout: ({ children }: { children: React.ReactNode }) => (
     <ImageViewer>
-      <ScrollAreaMain style={{ paddingTop: 0 }}>
-        <SubNav />
-        {children}
-      </ScrollAreaMain>
+      <ScrollAreaMain>{children}</ScrollAreaMain>
     </ImageViewer>
   ),
 });

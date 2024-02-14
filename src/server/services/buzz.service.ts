@@ -209,9 +209,11 @@ export async function createBuzzTransaction({
     await createNotification({
       type: 'tip-received',
       userId: toAccountId,
+      category: 'Buzz',
       details: {
         amount: amount,
         user: fromUser?.username,
+        fromUserId: payload.fromAccountId,
         message: payload.description,
         entityId,
         entityType,

@@ -9,11 +9,10 @@ import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
-import { SubNav } from './SubNav';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
@@ -57,10 +56,7 @@ export function AppLayout({
   const content = InnerLayout ? (
     <InnerLayout>{children}</InnerLayout>
   ) : withScrollArea ? (
-    <ScrollArea>
-      <SubNav />
-      {children}
-    </ScrollArea>
+    <ScrollAreaMain>{children}</ScrollAreaMain>
   ) : (
     children
   );

@@ -53,6 +53,7 @@ import { userStripeConnectRouter } from './user-stripe-connect.router';
 import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
 import { integrationRouter } from './integration.router';
 import { paypalRouter } from './paypal.router';
+import { buildGuideRouter } from './build-guide.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -108,6 +109,7 @@ export const appRouter = router({
   buzzWithdrawalRequest: buzzWithdrawalRequestRouter,
   integration: integrationRouter,
   paypal: paypalRouter,
+  buildGuide: buildGuideRouter,
 });
 
 // export type definition of API
