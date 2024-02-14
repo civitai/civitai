@@ -3,6 +3,9 @@ import { trpc } from '~/utils/trpc';
 import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
+import { useQueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import produce from 'immer';
 
 export const useQueryNotifications = (
   filters?: Partial<GetUserNotificationsSchema>,
@@ -35,13 +38,48 @@ export const useQueryNotificationsCount = () => {
 
 export const useMarkReadNotification = () => {
   const queryUtils = trpc.useUtils();
+  const queryClient = useQueryClient();
 
-  return trpc.notification.markRead.useMutation({
-    async onSuccess() {
-      await queryUtils.user.checkNotifications.invalidate();
-      await queryUtils.notification.getAllByUser.invalidate();
-    },
-  });
+  const mutation = trpc.notification.markRead.useMutation();
+
+  function wrappedMutate({
+    category,
+    ...input
+  }: Parameters<typeof mutation.mutate>[0] & { category?: string }) {
+    // Lower notification count
+    category = category?.toLowerCase();
+    queryUtils.user.checkNotifications.cancel();
+    queryUtils.user.checkNotifications.setData(undefined, (old) => {
+      const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
+      for (const key of Object.keys(newCounts)) {
+        if (input.all) newCounts[key] = 0;
+        else if (key === 'all' || key === category) newCounts[key]--;
+
+        if (newCounts[key] < 0) newCounts[key] = 0;
+      }
+      return newCounts;
+    });
+
+    // Mark as read in notification feed
+    const queryKey = getQueryKey(trpc.notification.getAllByUser);
+    queryClient.setQueriesData(
+      { queryKey, exact: false },
+      produce((old: any) => {
+        console.log(Object.keys(old), input.id);
+        for (const page of old?.pages ?? []) {
+          const item = page.items?.find((x: any) => x.id == input.id);
+          if (item) item.read = true;
+        }
+      })
+    );
+
+    return mutation.mutate(input);
+  }
+
+  return {
+    ...mutation,
+    mutate: wrappedMutate,
+  };
 };
 
 export const useNotificationSettings = (enabled = true) => {

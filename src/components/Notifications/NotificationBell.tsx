@@ -46,9 +46,6 @@ export function NotificationBell() {
   } = useQueryNotifications({ limit: 20, category: selectedCategory }, { enabled: opened });
 
   const readNotificationMutation = useMarkReadNotification();
-  const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-    readNotificationMutation.mutate({ id, all });
-  };
 
   return (
     <>
@@ -118,7 +115,10 @@ export function NotificationBell() {
             </Text>
             <Group spacing={8}>
               <Tooltip label="Mark all as read" position="bottom">
-                <ActionIcon size="lg" onClick={() => handleMarkAsRead({ all: true })}>
+                <ActionIcon
+                  size="lg"
+                  onClick={() => readNotificationMutation.mutate({ all: true })}
+                >
                   <IconListCheck />
                 </ActionIcon>
               </Tooltip>
@@ -146,7 +146,10 @@ export function NotificationBell() {
               <NotificationList
                 items={notifications}
                 onItemClick={(notification) => {
-                  handleMarkAsRead({ id: notification.id });
+                  readNotificationMutation.mutate({
+                    id: notification.id,
+                    category: notification.category,
+                  });
                   setOpened(false);
                 }}
                 withDivider

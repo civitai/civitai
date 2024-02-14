@@ -15,6 +15,7 @@ type NotificationsRaw = {
   details: MixedObject;
   createdAt: Date;
   read: boolean;
+  category: NotificationCategory;
 };
 export async function getUserNotifications({
   limit = DEFAULT_PAGE_SIZE,
@@ -35,7 +36,7 @@ export async function getUserNotifications({
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
   const items = await dbRead.$queryRaw<NotificationsRaw[]>`
-    SELECT n."id", "type", "details", "createdAt", nv."id" IS NOT NULL as read
+    SELECT n."id", "type", "category", "details", "createdAt", nv."id" IS NOT NULL as read
     FROM "Notification" n
     LEFT JOIN "NotificationViewed" nv ON n."id" = nv."id" AND nv."userId" = ${userId}
     WHERE ${Prisma.join(AND, ' AND ')}
