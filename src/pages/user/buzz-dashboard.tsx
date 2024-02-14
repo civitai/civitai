@@ -13,9 +13,9 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency, StripeConnectStatus } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
@@ -26,6 +26,8 @@ import { trpc } from '~/utils/trpc';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
 import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
+import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
+import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -131,7 +133,8 @@ export default function UserBuzzDashboard() {
               )}
             </Stack>
           </Paper>
-
+          <EarlyAccessRewards />
+          <GeneratedImagesReward />
           <SpendingBuzz withCTA />
         </Stack>
       </Container>

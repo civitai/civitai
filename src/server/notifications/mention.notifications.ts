@@ -4,6 +4,7 @@ import { threadUrlMap } from '~/server/notifications/comment.notifications';
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
+    category: 'Comment',
     priority: -1,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
@@ -28,7 +29,7 @@ export const mentionNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}`,
       };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_mentions AS (
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
@@ -97,7 +98,7 @@ export const mentionNotifications = createNotificationProcessor({
         FROM "CommentV2" c
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId"
-        LEFT JOIN "Thread" root ON root.id = t."rootThreadId" 
+        LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
         WHERE (c."createdAt" > '${lastSent}')
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
@@ -141,12 +142,13 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'new-mention' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')

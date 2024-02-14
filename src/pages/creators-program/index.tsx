@@ -263,15 +263,11 @@ const ExclusivePerksSection = () => {
 
 const waysToEarnBuzz: { text: string; value: number }[] = [
   {
-    value: 10,
-    text: 'For every 1,000 ad or member views on your content',
-  },
-  {
-    value: 10,
+    value: constants.creatorsProgram.rewards.earlyAccessUniqueDownload,
     text: 'For every unique user that downloads your early access resource',
   },
   {
-    value: 10,
+    value: 1000 * constants.creatorsProgram.rewards.generatedImageWithResource,
     text: 'For every 1,000 images generated on-site using one of your resources',
   },
 ];
@@ -298,7 +294,7 @@ const EarnBuzzSection = () => {
       </Stack>
       <Grid>
         {waysToEarnBuzz.map(({ text, value }, index) => (
-          <Grid.Col xs={6} sm={4} key={index}>
+          <Grid.Col xs={6} key={index}>
             <Paper withBorder className={cx(classes.card)} h="100%">
               <Group spacing={0}>
                 <CurrencyIcon currency={Currency.BUZZ} stroke={0} size={sizing.earnBuzz.value} />{' '}

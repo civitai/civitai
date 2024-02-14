@@ -275,9 +275,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate(prompt, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
-    else if (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
-      reviewKey = 'minor';
-    } else if (nsfw) {
+    if (!reviewKey && nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
         WITH to_check AS (
           -- Check based on associated resources
@@ -308,6 +306,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
         SELECT bool_or(poi) "poi" FROM to_check;
       `;
       if (poi) reviewKey = 'poi';
+    }
+    if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
+      reviewKey = 'minor';
     }
 
     const data: Prisma.ImageUpdateInput = {};

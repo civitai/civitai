@@ -1,8 +1,10 @@
 import {
   declineReviewHandler,
   deleteModelVersionHandler,
+  earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
+  modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
   requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
@@ -12,9 +14,11 @@ import {
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteExplorationPromptSchema,
+  earlyAccessModelVersionsOnTimeframeSchema,
   getModelVersionByModelTypeSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
+  modelVersionsGeneratedImagesOnTimeframeSchema,
   publishVersionSchema,
   upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
@@ -97,4 +101,10 @@ export const modelVersionRouter = router({
   getModelVersionsByModelType: protectedProcedure
     .input(getModelVersionByModelTypeSchema)
     .query(({ input }) => getModelVersionsByModelType(input)),
+  earlyAccessModelVersionsOnTimeframe: protectedProcedure
+    .input(earlyAccessModelVersionsOnTimeframeSchema)
+    .query(earlyAccessModelVersionsOnTimeframeHandler),
+  modelVersionsGeneratedImagesOnTimeframe: protectedProcedure
+    .input(modelVersionsGeneratedImagesOnTimeframeSchema)
+    .query(modelVersionGeneratedImagesOnTimeframeHandler),
 });

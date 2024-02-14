@@ -299,6 +299,7 @@ export const setTosViolationHandler = async ({
     createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',
+      category: 'System',
       details: { modelName: updatedComment.model.name, entity: 'comment' },
     }).catch((error) => {
       // Print out any errors

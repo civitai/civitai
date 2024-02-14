@@ -55,4 +55,5 @@ export const WithdrawalRequestBadgeColor = {
   [BuzzWithdrawalRequestStatus.Canceled]: 'gray',
   [BuzzWithdrawalRequestStatus.Rejected]: 'red',
   [BuzzWithdrawalRequestStatus.Reverted]: 'orange',
+  [BuzzWithdrawalRequestStatus.ExternallyResolved]: 'lime',
 };

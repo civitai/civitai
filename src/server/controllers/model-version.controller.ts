@@ -6,9 +6,11 @@ import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   ModelVersionMeta,
   ModelVersionUpsertInput,
+  ModelVersionsGeneratedImagesOnTimeframeSchema,
   PublishVersionInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -16,8 +18,10 @@ import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import {
   deleteVersionById,
+  earlyAccessModelVersionsOnTimeframe,
   getModelVersionRunStrategies,
   getVersionById,
+  modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
   toggleNotifyModelVersion,
   unpublishModelVersionById,
@@ -426,6 +430,42 @@ export const declineReviewHandler = async ({
     });
 
     return updatedModel;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const earlyAccessModelVersionsOnTimeframeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: EarlyAccessModelVersionsOnTimeframeSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return earlyAccessModelVersionsOnTimeframe({
+      ...input,
+      userId: ctx.user.id,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelVersionsGeneratedImagesOnTimeframeSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return modelVersionGeneratedImagesOnTimeframe({
+      ...input,
+      userId: ctx.user.id,
+    });
   } catch (error) {
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);

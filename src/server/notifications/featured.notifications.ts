@@ -3,12 +3,13 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const featuredNotifications = createNotificationProcessor({
   'featured-model': {
     displayName: 'Model featured',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${details.modelName} model has been featured on the homepage`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT
           m."userId",
@@ -24,24 +25,26 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-model',':',"modelId"),
         "userId",
         'featured-model' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,
   },
   'featured-image': {
     displayName: 'Image featured',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your image has been featured on the homepage`,
       url: `/images/${details.imageId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT
           i."userId",
@@ -56,24 +59,26 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-image',':',"imageId"),
         "userId",
         'featured-image' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,
   },
   'featured-post': {
     displayName: 'Post featured',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your post "${details.postTitle}" has been featured on the homepage`,
       url: `/posts/${details.postId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT
           p."userId",
@@ -89,24 +94,26 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-post',':',"postId"),
         "userId",
         'featured-post' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,
   },
   'featured-article': {
     displayName: 'Article featured',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your article "${details.articleTitle}" has been featured on the homepage`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT
           a."userId",
@@ -122,12 +129,13 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','featured-article',':',"articleId"),
         "userId",
         'featured-article' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       ON CONFLICT("id") DO NOTHING;
     `,

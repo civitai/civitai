@@ -382,6 +382,7 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SD2: undefined,
   SDXL: 'SDXL',
   SDXLDistilled: 'SDXL_Distilled',
+  SCascade: 'SCascade',
 };
 
 async function checkGenerationAvailability(resources: CreateGenerationRequestInput['resources']) {

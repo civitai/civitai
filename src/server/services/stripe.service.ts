@@ -551,6 +551,7 @@ export const getPaymentIntent = async ({
 
   return {
     clientSecret: paymentIntent.client_secret,
+    paymentMethodTypes: paymentIntent.payment_method_types,
   };
 };
 

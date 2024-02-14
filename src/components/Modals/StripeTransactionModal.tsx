@@ -10,7 +10,7 @@ import {
   Title,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
@@ -59,9 +59,13 @@ const StripeTransactionModal = ({
   metadata,
   clientSecret,
   successMessage,
-}: Props & { clientSecret: string; onClose: () => void }) => {
+  paymentMethodTypes = [],
+}: Props & { clientSecret: string; onClose: () => void; paymentMethodTypes?: string[] }) => {
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const [success, setSuccess] = useState<boolean>(false);
+  const supportedUserPaymentMethods = useMemo(() => {
+    return userPaymentMethods?.filter((method) => paymentMethodTypes.includes(method.type)) ?? [];
+  }, [userPaymentMethods, paymentMethodTypes]);
 
   const { trackAction } = useTrackEvent();
 
@@ -125,12 +129,12 @@ const StripeTransactionModal = ({
         <Divider mx="-lg" />
         {message && <>{message}</>}
 
-        {(userPaymentMethods?.length ?? 0) > 0 && (
+        {(supportedUserPaymentMethods?.length ?? 0) > 0 && (
           <Stack>
             <Divider mx="-lg" />
             <Text weight="bold">Saved payment methods</Text>
             <Stack spacing="sm">
-              {userPaymentMethods.map((paymentMethod) => (
+              {supportedUserPaymentMethods.map((paymentMethod) => (
                 <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
                   <Button
                     color="blue"
@@ -212,7 +216,13 @@ const { openModal, Modal } = createContextModal<Props>({
   zIndex: 400,
   Element: ({
     context,
-    props: { unitAmount, currency = Currency.USD, metadata, paymentMethodTypes, ...props },
+    props: {
+      unitAmount,
+      currency = Currency.USD,
+      metadata,
+      paymentMethodTypes: desiredPaymentMethodTypes,
+      ...props
+    },
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
@@ -229,7 +239,7 @@ const { openModal, Modal } = createContextModal<Props>({
         unitAmount,
         currency,
         metadata,
-        paymentMethodTypes,
+        paymentMethodTypes: desiredPaymentMethodTypes,
         recaptchaToken: recaptchaToken as string,
       },
       {
@@ -241,6 +251,7 @@ const { openModal, Modal } = createContextModal<Props>({
     );
 
     const clientSecret = data?.clientSecret;
+    const paymentMethodTypes = data?.paymentMethodTypes;
 
     if (isLoading || isFetching || isLoadingPaymentMethods || isLoadingRecaptcha) {
       return (
@@ -287,6 +298,9 @@ const { openModal, Modal } = createContextModal<Props>({
           unitAmount={unitAmount}
           currency={currency}
           metadata={metadata}
+          // This is the payment methods we will end up supporting based off of
+          // the payment intent instead of the ones we "wish" to support.
+          paymentMethodTypes={paymentMethodTypes}
           {...props}
         />
       </Elements>

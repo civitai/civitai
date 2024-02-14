@@ -12,19 +12,28 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteExplorationPromptInput,
+  EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
   ModelVersionMeta,
   ModelVersionUpsertInput,
+  ModelVersionsGeneratedImagesOnTimeframeSchema,
   PublishVersionInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import dayjs from 'dayjs';
+import { clickhouse } from '~/server/clickhouse/client';
+import { maxDate } from '~/utils/date-helpers';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -178,6 +187,9 @@ export const upsertModelVersion = async ({
       where: { id },
       select: {
         id: true,
+        status: true,
+
+        earlyAccessTimeFrame: true,
         monetization: {
           select: {
             id: true,
@@ -192,6 +204,27 @@ export const upsertModelVersion = async ({
         },
       },
     });
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.earlyAccessTimeFrame &&
+      existingVersion.earlyAccessTimeFrame === 0
+    ) {
+      throw throwBadRequestError(
+        'You cannot add early access on a model after it has been published.'
+      );
+    }
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.earlyAccessTimeFrame &&
+      existingVersion.earlyAccessTimeFrame > 0 &&
+      data.earlyAccessTimeFrame > existingVersion.earlyAccessTimeFrame
+    ) {
+      throw throwBadRequestError(
+        'You cannot increase the early access time frame for a published early access model version.'
+      );
+    }
 
     const version = await dbWrite.modelVersion.update({
       where: { id },
@@ -475,4 +508,122 @@ export const getModelVersionsByModelType = async ({
   `;
 
   return results;
+};
+
+export const earlyAccessModelVersionsOnTimeframe = async ({
+  userId,
+  // Timeframe is on days
+  timeframe = 14,
+}: EarlyAccessModelVersionsOnTimeframeSchema & {
+  userId: number;
+}) => {
+  type ModelVersionForEarlyAccess = {
+    id: number;
+    modelId: number;
+    createdAt: Date;
+    publishedAt: Date;
+    earlyAccessTimeFrame: number;
+    meta: ModelVersionMeta;
+    modelName: string;
+    modelVersionName: string;
+    userId: number;
+  };
+
+  const modelVersions = await dbRead.$queryRaw<ModelVersionForEarlyAccess[]>`
+    SELECT
+      mv.id,
+      mv."modelId",
+      mv."createdAt",
+      mv."publishedAt",
+      mv."earlyAccessTimeFrame",
+      mv."meta",
+      m.name as "modelName",
+      mv.name as "modelVersionName",
+      m."userId"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON mv."modelId" = m.id
+    WHERE mv."status" = 'Published'
+      AND mv."earlyAccessTimeFrame" > 0
+      AND m."userId" = ${userId}
+      AND GREATEST(mv."createdAt", mv."publishedAt") 
+        + (mv."earlyAccessTimeFrame" || ' day')::INTERVAL
+        >= ${dayjs().subtract(timeframe, 'day').toDate()};
+  `;
+
+  return modelVersions;
+};
+
+export const modelVersionGeneratedImagesOnTimeframe = async ({
+  userId,
+  // Timeframe is on days
+  timeframe = 30,
+}: ModelVersionsGeneratedImagesOnTimeframeSchema & {
+  userId: number;
+}) => {
+  type ModelVersionForGeneratedImages = {
+    id: number;
+    modelName: string;
+    modelVersionName: string;
+    userId: number;
+  };
+
+  const modelVersions = await dbRead.$queryRaw<ModelVersionForGeneratedImages[]>`
+      SELECT
+        mv.id,
+        m."userId",
+        m.name as "modelName",
+        mv.name as "modelVersionName"
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON mv."modelId" = m.id
+      WHERE mv."status" = 'Published' 
+        AND m."userId" = ${userId}
+    `;
+
+  if (!clickhouse || modelVersions.length === 0) return [];
+
+  const date = maxDate(
+    dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
+    dayjs().startOf('month').toDate()
+  ).toISOString();
+
+  const generationData = await clickhouse
+    .query({
+      query: `
+          SELECT 
+              resourceId as modelVersionId,
+              createdAt,
+              SUM(1) as generations
+          FROM (
+              SELECT 
+                  arrayJoin(resourcesUsed) as resourceId,
+                  createdAt::date as createdAt 
+              FROM orchestration.textToImageJobs
+              WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
+          )
+          WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
+          GROUP BY resourceId, createdAt 
+          ORDER BY createdAt DESC;
+    `,
+      format: 'JSONEachRow',
+    })
+    .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
+
+  const versions = modelVersions
+    .map((version) => {
+      const versionData = generationData
+        .filter((x) => x.modelVersionId === version.id)
+        .map((x) => ({
+          createdAt: dayjs(x.createdAt).format('YYYY-MM-DD'),
+          generations: x.generations,
+        }));
+
+      const generations = versionData.reduce((acc, curr) => acc + curr.generations, 0);
+
+      return { ...version, data: versionData, generations };
+    })
+    .filter((v) => v.data.length > 0)
+    // Pre-sort by most generations.
+    .sort((a, b) => b.generations - a.generations);
+
+  return versions;
 };

@@ -15,6 +15,7 @@ import { useState, useMemo } from 'react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
+import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderationCategories, ModerationCategory } from '~/libs/moderation';
@@ -204,11 +205,3 @@ export function ModerationCard({
     </Card>
   );
 }
-
-const SkeletonSwitch = ({ loading, ...props }: { loading: boolean } & SwitchProps) => {
-  return (
-    <Skeleton height={20} width={40} radius="lg" visible={loading}>
-      <Switch {...props} />
-    </Skeleton>
-  );
-};

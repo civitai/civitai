@@ -176,7 +176,11 @@ export const deleteExplorationPromptSchema = z.object({
   name: z.string().trim().min(1, 'Name cannot be empty.'),
 });
 
-export type ModelVersionMeta = ModelMeta & { picFinderModelId?: number };
+export type ModelVersionMeta = ModelMeta & {
+  picFinderModelId?: number;
+  earlyAccessDownloadData?: { date: string; downloads: number }[];
+  generationImagesCount?: { date: string; generations: number }[];
+};
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
 export const publishVersionSchema = z.object({
@@ -209,3 +213,17 @@ export const imageModelVersionDetailSchema = z.object({
 export const characterModelVersionDetailSchema = z.object({});
 export const textModelVersionDetailSchema = z.object({});
 export const audioModelVersionDetailSchema = z.object({});
+
+export type EarlyAccessModelVersionsOnTimeframeSchema = z.infer<
+  typeof earlyAccessModelVersionsOnTimeframeSchema
+>;
+export const earlyAccessModelVersionsOnTimeframeSchema = z.object({
+  timeframe: z.number().optional(),
+});
+
+export type ModelVersionsGeneratedImagesOnTimeframeSchema = z.infer<
+  typeof modelVersionsGeneratedImagesOnTimeframeSchema
+>;
+export const modelVersionsGeneratedImagesOnTimeframeSchema = z.object({
+  timeframe: z.number().optional(),
+});

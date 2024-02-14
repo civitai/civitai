@@ -5,12 +5,13 @@ const reactionMilestones = [5, 10, 20, 50, 100] as const;
 export const bountyNotifications = createNotificationProcessor({
   'benefactor-joined': {
     displayName: 'Supporter joined bounty',
+    category: 'Bounty',
     toggleable: false, // Disabling since we've disabled split bounties
     prepareMessage: ({ details }) => ({
       message: `${details.benefactorUsername} added ${details.amount} to your bounty "${details.bountyName}"`,
       url: `/bounties/${details.bountyId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT
           bo."userId" "ownerId",
@@ -29,12 +30,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "BountyBenefactor" bo ON bo."bountyId" = bb."bountyId" AND bo."createdAt" < bb."createdAt"
         WHERE bb."createdAt" > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','benefactor-joined',':',"bountyId",':',"benefactorUserId"),
         "ownerId" "userId",
         'benefactor-joined' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'benefactor-joined')
       ON CONFLICT("id") DO NOTHING;
@@ -42,11 +44,12 @@ export const bountyNotifications = createNotificationProcessor({
   },
   'bounty-ending': {
     displayName: 'Bounty you are involved in is ending',
+    category: 'Bounty',
     prepareMessage: ({ details }) => ({
       message: `The bounty "${details.bountyName}" is ending in 24 hours`,
       url: `/bounties/${details.bountyId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH affected AS (
         SELECT DISTINCT b.id
         FROM "Bounty" b
@@ -87,12 +90,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "Bounty" b ON b.id = a.id
         JOIN target_users tu ON tu.id = b.id
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-ending',':',"bountyId"),
         "ownerId" "userId",
         'bounty-ending' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-ending')
       ON CONFLICT("id") DO NOTHING;
@@ -100,11 +104,12 @@ export const bountyNotifications = createNotificationProcessor({
   },
   'bounty-awarded': {
     displayName: 'Bounty awarded to you',
+    category: 'Bounty',
     prepareMessage: ({ details }) => ({
       message: `Congrats! You have been awarded ${details.awardAmount} by ${details.benefactorUsername} for your work on "${details.bountyName}"`,
       url: `/bounties/${details.bountyId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT
           be."userId" "ownerId",
@@ -124,12 +129,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "BountyEntry" be ON be.id = bb."awardedToId"
         WHERE bb."awardedAt" > '${lastSent}' AND bb."userId" != be."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-awarded',':',"bountyId",':',"benefactorUserId"),
         "ownerId" "userId",
         'bounty-awarded' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-awarded')
       ON CONFLICT("id") DO NOTHING;
@@ -137,11 +143,14 @@ export const bountyNotifications = createNotificationProcessor({
   },
   'bounty-reaction-milestone': {
     displayName: 'Bounty entry reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => ({
-      message: `Your bounty entry on "${details.bountyName}" has reached ${details.reactionCount} reactions`,
+      message: `Your bounty entry on "${
+        details.bountyName
+      }" has reached ${details.reactionCount.toLocaleString()} reactions`,
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${reactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -172,12 +181,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "Bounty" b ON b.id = be."bountyId"
         JOIN milestones ms ON ms.value <= a.reaction_count
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-reaction-milestone',':',"bountyEntryId",':',milestone),
         "ownerId" "userId",
         'bounty-reaction-milestone' "type",
-        details
+        details,
+        '${category}'::NotificationCategory "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-reaction-milestone')
       ON CONFLICT("id") DO NOTHING;
@@ -185,11 +195,12 @@ export const bountyNotifications = createNotificationProcessor({
   },
   'bounty-entry': {
     displayName: 'New entry on bounty you are involved in',
+    category: 'Bounty',
     prepareMessage: ({ details }) => ({
       message: `${details.hunterUsername} has submitted an entry to the bounty "${details.bountyName}"`,
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH affected AS (
         SELECT DISTINCT
           "bountyId"
@@ -228,12 +239,13 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = be."userId"
         WHERE be."userId" != tu."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         CONCAT("userId",':','bounty-entry',':',"bountyEntryId"),
         "ownerId" "userId",
         'bounty-entry' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-entry')
       ON CONFLICT("id") DO NOTHING;

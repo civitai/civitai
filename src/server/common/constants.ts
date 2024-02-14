@@ -68,6 +68,7 @@ export const constants = {
     'SDXL 1.0 LCM',
     'SDXL Distilled',
     'SDXL Turbo',
+    'Stable Cascade',
     'SVD',
     'SVD XT',
     'Playground v2',
@@ -267,6 +268,12 @@ export const constants = {
   system: {
     user: { id: -1, username: 'civitai' },
   },
+  creatorsProgram: {
+    rewards: {
+      earlyAccessUniqueDownload: 10,
+      generatedImageWithResource: 10 / 1000, // 10 buzz for every 1000 images.
+    },
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
@@ -280,13 +287,14 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled'] as const;
+export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled', 'SCascade'] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
   SDXLDistilled: ['SDXL Distilled'],
+  SCascade: ['Stable Cascade'],
 };
 
 type LicenseDetails = {
@@ -322,6 +330,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://github.com/PixArt-alpha/PixArt-alpha/blob/master/LICENSE',
     name: 'agpl-3.0',
   },
+  'SAI NC RC': {
+    url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
+    name: 'SAI NC RC',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -342,6 +354,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SVD XT': baseLicenses['svd'],
   'Playground v2': baseLicenses['playground v2'],
   'PixArt a': baseLicenses['agpl'],
+  'Stable Cascade': baseLicenses['SAI NCRC'],
   Other: undefined,
 };
 

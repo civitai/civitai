@@ -1,6 +1,7 @@
-import { Prisma } from '@prisma/client';
+import { NotificationCategory, Prisma } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
+import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
@@ -11,14 +12,16 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 type NotificationsRaw = {
   id: string;
   type: string;
-  details: Prisma.JsonValue;
+  details: MixedObject;
   createdAt: Date;
   read: boolean;
+  category: NotificationCategory;
 };
 export async function getUserNotifications({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
   userId,
+  category,
   count = false,
   unread = false,
 }: Partial<GetUserNotificationsSchema> & {
@@ -30,14 +33,18 @@ export async function getUserNotifications({
   if (cursor) AND.push(Prisma.sql`n."createdAt" < ${cursor}`);
   else AND.push(Prisma.sql`n."createdAt" > NOW() - interval '1 month'`);
 
+  if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
+
   const items = await dbRead.$queryRaw<NotificationsRaw[]>`
-    SELECT n."id", "type", "details", "createdAt", nv."id" IS NOT NULL as read
+    SELECT n."id", "type", "category", "details", "createdAt", nv."id" IS NOT NULL as read
     FROM "Notification" n
     LEFT JOIN "NotificationViewed" nv ON n."id" = nv."id" AND nv."userId" = ${userId}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY "createdAt" DESC
     LIMIT ${limit}
   `;
+
+  await populateNotificationDetails(items);
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
@@ -47,9 +54,11 @@ export async function getUserNotifications({
 export async function getUserNotificationCount({
   userId,
   unread,
+  category,
 }: {
   userId: number;
   unread: boolean;
+  category?: NotificationCategory;
 }) {
   const AND = [Prisma.sql`"userId" = ${userId}`];
   if (unread)
@@ -58,20 +67,30 @@ export async function getUserNotificationCount({
     );
   else AND.push(Prisma.sql`"createdAt" > NOW() - interval '1 month'`);
 
-  const [result] = await dbRead.$queryRaw<{ count: number }[]>`
-    SELECT COUNT(*) as count
+  if (category) AND.push(Prisma.sql`category = ${category}::"NotificationCategory"`);
+
+  const result = await dbRead.$queryRaw<{ category: NotificationCategory; count: number }[]>`
+    SELECT
+      category,
+      COUNT(*) as count
     FROM "Notification"
     WHERE ${Prisma.join(AND, ' AND ')}
+    GROUP BY category
   `;
 
-  return result.count;
+  return result.map(({ category, count }) => ({ category, count: Number(count) }));
 }
 
 export const createUserNotificationSetting = async ({
-  toggle,
-  ...data
-}: ToggleNotificationSettingInput) => {
-  return dbWrite.userNotificationSettings.create({ data });
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  const values = type.map((t) => Prisma.sql`(${t}, ${userId})`);
+  return dbWrite.$executeRaw`
+    INSERT INTO "UserNotificationSettings" ("type", "userId") VALUES
+    ${Prisma.join(values)}
+    ON CONFLICT DO NOTHING
+  `;
 };
 
 export const markNotificationsRead = ({
@@ -96,8 +115,11 @@ export const markNotificationsRead = ({
   }
 };
 
-export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
-  return dbWrite.userNotificationSettings.deleteMany({ where: { type, userId } });
+export const deleteUserNotificationSetting = ({
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  return dbWrite.userNotificationSettings.deleteMany({ where: { type: { in: type }, userId } });
 };
 
 export const createNotification = async (data: Prisma.NotificationCreateArgs['data']) => {
@@ -109,12 +131,13 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
 
   if (data.id) {
     return dbWrite.$executeRaw`
-      INSERT INTO "Notification" ("id", "userId", "type", "details")
+      INSERT INTO "Notification" ("id", "userId", "type", "details", "category")
       VALUES (
         ${data.id},
         ${data.userId},
         ${data.type},
-        ${JSON.stringify(data.details)}::jsonb
+        ${JSON.stringify(data.details)}::jsonb,
+        ${data.category}::"NotificationCategory"
       )
       ON CONFLICT ("id") DO NOTHING
     `;

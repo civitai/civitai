@@ -2,26 +2,28 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const imageNotifications = createNotificationProcessor({
   'profile-picture-blocked': {
     displayName: 'Profile picture blocked',
+    category: 'System',
     toggleable: false,
     prepareMessage: () => ({
       message: 'Your profile picture has been blocked.',
       url: '/user/account',
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT
           i.id "imageId",
           u.id "userId"
-        FROM "Image" i 
+        FROM "Image" i
         JOIN "User" u ON i.id = u."profilePictureId"
         WHERE i."updatedAt" > '${lastSent}' AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
           CONCAT("userId",':','profile-picture-blocked',':',"imageId"),
           "userId",
           'profile-picture-blocked' "type",
-          jsonb_build_object()
+          jsonb_build_object(),
+          '${category}'::"NotificationCategory" "category"
         FROM data
       ON CONFLICT("id") DO NOTHING;
     `,

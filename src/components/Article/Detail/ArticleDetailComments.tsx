@@ -35,7 +35,6 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
         entityId={articleId}
         limit={20}
         badges={[{ userId, label: 'op', color: 'violet' }]}
-        forceLocked={!hasAccess}
       >
         {({
           data,

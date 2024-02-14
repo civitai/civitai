@@ -1,3 +1,4 @@
+import { NotificationCategory } from '@prisma/client';
 import { z } from 'zod';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
@@ -5,13 +6,13 @@ import { getAllQuerySchema } from '~/server/schema/base.schema';
 export const getUserNotificationsSchema = getAllQuerySchema.extend({
   cursor: z.date(),
   unread: z.boolean().default(false),
+  category: z.nativeEnum(NotificationCategory).nullish(),
 });
 export type GetUserNotificationsSchema = z.infer<typeof getUserNotificationsSchema>;
 
 export const toggleNotificationSettingInput = z.object({
   toggle: z.boolean(),
-  type: z.string(),
-  userId: z.number(),
+  type: z.string().array(),
 });
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
