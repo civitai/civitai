@@ -3,7 +3,6 @@ import {
   ModelEngagementType,
   ModelVersionEngagementType,
   NotificationCategory,
-  OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
@@ -16,7 +15,6 @@ import * as rewards from '~/server/rewards';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   BatchBlockTagsSchema,
-  CompleteOnboardingStepInput,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -39,7 +37,6 @@ import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.se
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
-  acceptTOS,
   claimCosmetic,
   createUserReferral,
   deleteUser,
@@ -62,7 +59,6 @@ import {
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
   updateLeaderboardRank,
-  updateOnboardingSteps,
   updateUserById,
   userByReferralCode,
   equipCosmetic,
@@ -224,15 +220,6 @@ const verifyAvatar = (avatar: string) => {
     return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
   } else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
-};
-
-export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
-  try {
-    const { id } = ctx.user;
-    await acceptTOS({ id });
-  } catch (e) {
-    throw throwDbError(e);
-  }
 };
 
 export const completeOnboardingHandler = async ({

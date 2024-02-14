@@ -14,10 +14,10 @@ import Image from 'next/image';
 import { useStackingContext } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
-import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
+import { BrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
 
 const useStyles = createStyles((theme) => ({
   root: { display: 'flex', flexDirection: 'column', background: 'none' },
@@ -32,7 +32,7 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   className,
   ...paperProps
 }: {
-  browsingLevelOverride?: NsfwLevel;
+  browsingLevelOverride?: BrowsingLevel[];
   sfw: AscendeumAdUnit<TAscendeum>;
   nsfw?: ExoclickAdUnit;
   children?: (Ad: JSX.Element) => React.ReactElement;
@@ -41,13 +41,11 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   const { classes, cx } = useStyles();
   const [ref, inView] = useInView({ rootMargin: '200%' });
   const { isCurrentStack } = useStackingContext();
-  // const { browsingLevel } = useHiddenPreferencesContext();
   const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent, username } =
     useAdsContext();
   const containerWidth = useContainerWidth();
 
   // TODO - maybe consider the priority of each nsfw override flag. Which flags have the most priority?
-  // const showNsfw = nsfwOverride ?? (browsingLevelOverride ?? browsingLevel) !== BrowsingMode.SFW;
   const showNsfw = false; // temporary until we come back to ads and nsfw levels
   const renderTypeMap = { sfw, nsfw };
   const renderType = !showNsfw ? 'sfw' : 'nsfw';

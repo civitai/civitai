@@ -1,4 +1,15 @@
-import { Container, Modal, StepProps, Stepper, createStyles } from '@mantine/core';
+import {
+  Center,
+  Container,
+  Group,
+  Modal,
+  Stack,
+  StepProps,
+  Stepper,
+  Text,
+  Title,
+  createStyles,
+} from '@mantine/core';
 import { createContext, useContext, useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
@@ -8,6 +19,7 @@ import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboardin
 import { OnboardingSteps } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { LogoBadge } from '~/components/Logo/LogoBadge';
 
 type StepPropsCustom = StepProps & {
   Component: React.FC;
@@ -64,6 +76,15 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
       closeOnClickOutside={false}
       fullScreen
     >
+      <Center>
+        <Group spacing="xs">
+          <LogoBadge w={86} />
+          <Stack spacing={0} mt={-5}>
+            <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
+            <Text>{`Let's setup your account`}</Text>
+          </Stack>
+        </Group>
+      </Center>
       <OnboardingWizardCtx.Provider value={{ next }}>
         <Container size="lg" px="0" h="100%">
           {steps.length > 1 ? (

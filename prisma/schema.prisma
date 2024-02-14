@@ -250,11 +250,6 @@ model User {
   builds                     BuildGuide[]
 }
 
-enum OnboardingStep {
-  Moderation
-  Buzz
-}
-
 model CustomerSubscription {
   id                 String    @id
   userId             Int       @unique

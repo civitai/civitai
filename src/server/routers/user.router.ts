@@ -13,7 +13,6 @@ import {
   toggleMuteHandler,
   getUserCosmeticsHandler,
   getUsernameAvailableHandler,
-  acceptTOSHandler,
   completeOnboardingHandler,
   toggleArticleEngagementHandler,
   toggleBountyEngagementHandler,
@@ -53,7 +52,6 @@ import {
   toggleUserBountyEngagementSchema,
   reportProhibitedRequestSchema,
   userByReferralCodeSchema,
-  completeOnboardStepSchema,
   toggleFeatureInputSchema,
   dismissAlertSchema,
   setUserSettingsInput,
@@ -100,19 +98,10 @@ export const userRouter = router({
   toggleFavoriteModel: protectedProcedure
     .input(toggleModelEngagementInput)
     .mutation(toggleFavoriteModelHandler),
-  // toggleHideModel: protectedProcedure
-  //   .input(toggleModelEngagementInput)
-  //   .mutation(toggleHideModelHandler),
-  acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
   completeOnboardingStep: protectedProcedure
     .input(userOnboardingSchema)
     .mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
-  // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
-  // toggleBlockedTag: protectedProcedure
-  //   .input(toggleBlockedTagSchema)
-  //   .mutation(toggleBlockedTagHandler),
-  // batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
   getToken: protectedProcedure.query(({ ctx }) => ({ token: createToken(ctx.user.id) })),

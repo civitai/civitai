@@ -15,7 +15,6 @@ import {
   CosmeticType,
   ModelEngagementType,
   NsfwLevel,
-  OnboardingStep,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagEngagementType,
@@ -257,33 +256,6 @@ export async function getUserSettings(userId: number) {
   `;
   return settings[0]?.settings ?? {};
 }
-
-export const acceptTOS = ({ id }: { id: number }) => {
-  return dbWrite.user.update({
-    where: { id },
-    data: { tos: true },
-  });
-};
-
-// export const completeOnboarding = async ({ id }: { id: number }) => {
-//   return dbWrite.user.update({
-//     where: { id },
-//     data: { onboarded: true },
-//   });
-// };
-
-export const updateOnboardingSteps = async ({
-  id,
-  steps,
-}: {
-  id: number;
-  steps: OnboardingStep[];
-}) => {
-  return dbWrite.user.update({
-    where: { id },
-    data: { onboardingSteps: steps },
-  });
-};
 
 export const getUserEngagedModels = ({ id }: { id: number }) => {
   return dbRead.modelEngagement.findMany({

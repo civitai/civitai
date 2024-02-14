@@ -67,7 +67,6 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   const currentUser = useCurrentUser();
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
-  const storeRef = useRef<BrowsingModeStore>();
   const { mutate } = trpc.user.update.useMutation();
   const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
 
@@ -81,7 +80,6 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
         };
   }
 
-  if (!storeRef.current) storeRef.current = createBrowsingModeStore(getStoreInitialValues());
   useDidUpdate(() => {
     if (status === 'authenticated' && currentUser) {
       setStore(createBrowsingModeStore(getStoreInitialValues()));
@@ -91,14 +89,13 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   // update the cookie to reflect the browsingLevel state of the current tab
   useEffect(() => {
     const handleVisibilityChange = () => {
-      const store = storeRef.current;
       if (store && document.visibilityState === 'visible') updateCookieValues(store.getState());
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [store]);
 
   useEffect(() => {
     if (store && currentUser) {

@@ -162,12 +162,6 @@ export const reportProhibitedRequestSchema = z.object({
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
-export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
-export const completeOnboardStepSchema = z.object({
-  step: z.nativeEnum(OnboardingSteps),
-  recaptchaToken: z.string().nullish(),
-});
-
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
