@@ -2,12 +2,13 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const imageNotifications = createNotificationProcessor({
   'profile-picture-blocked': {
     displayName: 'Profile picture blocked',
+    category: 'System',
     toggleable: false,
     prepareMessage: () => ({
       message: 'Your profile picture has been blocked.',
       url: '/user/account',
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT
           i.id "imageId",
@@ -22,7 +23,7 @@ export const imageNotifications = createNotificationProcessor({
           "userId",
           'profile-picture-blocked' "type",
           jsonb_build_object(),
-          'System'::"NotificationCategory" "category"
+          '${category}'::"NotificationCategory" "category"
         FROM data
       ON CONFLICT("id") DO NOTHING;
     `,

@@ -12,7 +12,8 @@ export const articleNotifications = createNotificationProcessor({
       }" has received ${details.viewCount.toLocaleString()} views`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: async ({ lastSent, clickhouse }) => {
+    category: 'Milestone',
+    prepareQuery: async ({ lastSent, clickhouse, category }) => {
       const affected = (await clickhouse
         ?.query({
           query: `
@@ -66,7 +67,7 @@ export const articleNotifications = createNotificationProcessor({
           "ownerId"    "userId",
           'article-view-milestone' "type",
           details,
-          'Milestone'::"NotificationCategory" "category"
+          '${category}'::"NotificationCategory" "category"
         FROM milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-view-milestone');
       `;
@@ -74,13 +75,14 @@ export const articleNotifications = createNotificationProcessor({
   },
   'article-like-milestone': {
     displayName: 'Article like milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your article, "${
         details.articleTitle
       }" has received ${details.favoriteCount.toLocaleString()} likes`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -126,18 +128,19 @@ export const articleNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'article-like-milestone' "type",
         details,
-        'Milestone'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-like-milestone');
     `,
   },
   'new-article-from-following': {
     displayName: 'New articles from followed users',
+    category: 'Update',
     prepareMessage: ({ details }) => ({
       message: `${details.username} published a new ${details.articleCategory}: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH article_categories AS (
         SELECT
           t.id,
@@ -174,7 +177,7 @@ export const articleNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-article-from-following' "type",
         details,
-        'Update'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_article
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-from-following');
     `,

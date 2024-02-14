@@ -3,6 +3,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const reviewNotifications = createNotificationProcessor({
   'new-review': {
     displayName: 'New reviews',
+    category: 'Update',
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         let message = `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`;
@@ -18,7 +19,7 @@ export const reviewNotifications = createNotificationProcessor({
         url: `/redirect?to=review&reviewId=${details.reviewId}`,
       };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_reviews AS (
         SELECT DISTINCT
           m."userId" "ownerId",
@@ -52,17 +53,18 @@ export const reviewNotifications = createNotificationProcessor({
         "ownerId" "userId",
         'new-review' "type",
         details,
-        'Update'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_reviews
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review');`,
   },
   'review-reminder': {
     displayName: 'Review reminders',
+    category: 'System',
     prepareMessage: ({ details }) => ({
       message: `Remember to review "${details.modelName} - ${details.modelVersionName}"`,
       url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH pending_reviews AS (
         SELECT DISTINCT
           ua."userId" "ownerId",
@@ -88,7 +90,7 @@ export const reviewNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'review-reminder' "type",
         details,
-        'System'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM pending_reviews
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder')
       ON CONFLICT("id") DO NOTHING;

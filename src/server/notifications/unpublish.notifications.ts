@@ -5,6 +5,7 @@ import { slugit } from '~/utils/string-helpers';
 export const unpublishNotifications = createNotificationProcessor({
   'model-version-unpublished': {
     displayName: 'Model version unpublished',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message:
@@ -19,7 +20,7 @@ export const unpublishNotifications = createNotificationProcessor({
         details.modelVersionId
       }`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH unpublished AS (
         SELECT DISTINCT
           m."userId",
@@ -42,12 +43,13 @@ export const unpublishNotifications = createNotificationProcessor({
         "userId",
         'model-version-unpublished' "type",
         details,
-        'System'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM unpublished;
     `,
   },
   'model-unpublished': {
     displayName: 'Model unpublished',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message:
@@ -58,7 +60,7 @@ export const unpublishNotifications = createNotificationProcessor({
           : `Your ${details.modelName} model has been unpublished: ${details.customMessage ?? ''}`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH unpublished AS (
         SELECT DISTINCT
           m."userId",
@@ -78,12 +80,13 @@ export const unpublishNotifications = createNotificationProcessor({
         "userId",
         'model-unpublished' "type",
         details,
-        'System'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM unpublished;
     `,
   },
   'model-republish-declined': {
     displayName: 'Model republish declined',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => {
       let message = `Your republish request for ${details.modelName} has been declined`;
@@ -93,7 +96,7 @@ export const unpublishNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}/${slugit(details.modelName)}`,
       };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH declined AS (
         SELECT DISTINCT
           m."userId",
@@ -112,7 +115,7 @@ export const unpublishNotifications = createNotificationProcessor({
         "userId",
         'model-republish-declined' "type",
         details,
-        'System'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM declined;
     `,
   },

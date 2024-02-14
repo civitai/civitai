@@ -81,10 +81,15 @@ export async function getUserNotificationCount({
 }
 
 export const createUserNotificationSetting = async ({
-  toggle,
-  ...data
-}: ToggleNotificationSettingInput) => {
-  return dbWrite.userNotificationSettings.create({ data });
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  const values = type.map((t) => Prisma.sql`(${t}, ${userId})`);
+  return dbWrite.$executeRaw`
+    INSERT INTO "UserNotificationSettings" ("type", "userId") VALUES
+    ${Prisma.join(values)}
+    ON CONFLICT DO NOTHING
+  `;
 };
 
 export const markNotificationsRead = ({
@@ -109,8 +114,11 @@ export const markNotificationsRead = ({
   }
 };
 
-export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
-  return dbWrite.userNotificationSettings.deleteMany({ where: { type, userId } });
+export const deleteUserNotificationSetting = ({
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  return dbWrite.userNotificationSettings.deleteMany({ where: { type: { in: type }, userId } });
 };
 
 export const createNotification = async (data: Prisma.NotificationCreateArgs['data']) => {

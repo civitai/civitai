@@ -3,13 +3,14 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const reportNotifications = createNotificationProcessor({
   'report-actioned': {
     displayName: 'Report actioned',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `The ${
         details.reportType ?? 'item'
       } you reported has been actioned. Thanks for helping keep the community safe!`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, category }) => `
       WITH actioned AS (
         SELECT DISTINCT
           u."id" "ownerId",
@@ -44,7 +45,7 @@ export const reportNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'report-actioned' "type",
         details,
-        'System'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM actioned r
       WHERE NOT EXISTS (
         SELECT 1

@@ -12,8 +12,7 @@ export type GetUserNotificationsSchema = z.infer<typeof getUserNotificationsSche
 
 export const toggleNotificationSettingInput = z.object({
   toggle: z.boolean(),
-  type: z.string(),
-  userId: z.number(),
+  type: z.string().array(),
 });
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 

@@ -7,13 +7,14 @@ const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
 export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model download milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${
         details.modelName
       } model has received ${details.downloadCount.toLocaleString()} downloads`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: async ({ lastSent, clickhouse }) => {
+    prepareQuery: async ({ lastSent, clickhouse, category }) => {
       const affected = (await clickhouse
         ?.query({
           query: `
@@ -66,7 +67,7 @@ export const modelNotifications = createNotificationProcessor({
           "ownerId"    "userId",
           'model-download-milestone' "type",
           details,
-          'Milestone'::"NotificationCategory" "category"
+          '${category}'::"NotificationCategory" "category"
         FROM model_milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
       `;
@@ -74,13 +75,14 @@ export const modelNotifications = createNotificationProcessor({
   },
   'model-like-milestone': {
     displayName: 'Model like milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${
         details.modelName
       } model has received ${details.favoriteCount.toLocaleString()} likes`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${modelLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected_models AS (
@@ -124,20 +126,21 @@ export const modelNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'model-like-milestone' "type",
         details,
-        'Milestone'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM model_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone');
     `,
   },
   'new-model-version': {
     displayName: 'New versions of liked models',
+    category: 'Update',
     prepareMessage: ({ details }) => ({
       message: `The ${details.modelName} model you liked has a new version: ${details.versionName}`,
       url: `/models/${details.modelId}${
         details.modelVersionId ? `?modelVersionId=${details.modelVersionId}` : ''
       }`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_model_version AS (
         SELECT DISTINCT
           fm."userId" "ownerId",
@@ -163,20 +166,21 @@ export const modelNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-model-version' "type",
         details,
-        'Update'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_model_version
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-version');
     `,
   },
   'new-model-from-following': {
     displayName: 'New models from followed users',
+    category: 'Update',
     prepareMessage: ({ details }) => ({
       message: `${details.username} released a new ${getDisplayName(
         details.modelType
       ).toLowerCase()}: ${details.modelName}`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_model_from_following AS (
         SELECT DISTINCT
           ue."userId" "ownerId",
@@ -199,7 +203,7 @@ export const modelNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-model-from-following' "type",
         details,
-        'Update'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_model_from_following
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following');
     `,
@@ -207,11 +211,12 @@ export const modelNotifications = createNotificationProcessor({
   'early-access-complete': {
     toggleable: false,
     displayName: 'Early Access Complete',
+    category: 'Update',
     prepareMessage: ({ details }) => ({
       message: `${details.modelName}: ${details.versionName} has left Early Access!`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       -- early access complete
       WITH early_access_versions AS (
         SELECT
@@ -245,18 +250,19 @@ export const modelNotifications = createNotificationProcessor({
         owner_id,
         'early-access-complete',
         details,
-        'Update'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM early_access_complete;
     `,
   },
   'old-draft': {
     displayName: 'Old Model Draft Deletion Reminder',
+    category: 'System',
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
-    prepareQuery: () => `
+    prepareQuery: ({ category }) => `
       with to_add AS (
         SELECT DISTINCT
           m."userId",
@@ -275,7 +281,7 @@ export const modelNotifications = createNotificationProcessor({
         "userId",
         'old-draft',
         details,
-        'System'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM to_add
       WHERE NOT EXISTS (SELECT 1 FROM "Notification" no WHERE no."userId" = to_add."userId" AND type = 'old-draft' AND no.details->>'modelId' = to_add.details->>'modelId');
     `,

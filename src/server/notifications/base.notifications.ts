@@ -1,4 +1,5 @@
 import { ClickHouseClient } from '@clickhouse/client';
+import { NotificationCategory } from '@prisma/client';
 
 export type NotificationProcessor = {
   displayName: string;
@@ -7,6 +8,7 @@ export type NotificationProcessor = {
   prepareQuery?: (input: NotificationProcessorRunInput) => Promise<string> | string;
   prepareMessage: (notification: Omit<BareNotification, 'id'>) => NotificationMessage | undefined;
   getDetails?: (notifications: BareNotification[]) => BareNotification[];
+  category: NotificationCategory;
 };
 
 export type BareNotification = {
@@ -22,6 +24,7 @@ type NotificationMessage = {
 export type NotificationProcessorRunInput = {
   lastSent: string;
   clickhouse: ClickHouseClient | undefined;
+  category: NotificationCategory;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {
