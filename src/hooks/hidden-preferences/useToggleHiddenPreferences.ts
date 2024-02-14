@@ -45,18 +45,17 @@ export const useToggleHiddenPreferences = () => {
 export const useUpdateHiddenPreferences = () => {
   const queryUtils = trpc.useContext();
   const updateHiddenPreferences = ({ kind, data, hidden }: ToggleHiddenSchemaOutput) => {
-    const type = kind === 'tag' ? 'hidden' : 'always';
     queryUtils.hiddenPreferences.getHidden.setData(
       undefined,
       (old = { image: [], model: [], user: [], tag: [] }) =>
         produce(old, (draft) => {
           for (const item of data) {
             const index = draft[kind].findIndex((x) => x.id === item.id && x.hidden);
-            if (hidden === true && index === -1) draft[kind].push({ ...item, type } as any);
+            if (hidden === true && index === -1) draft[kind].push({ ...item, hidden: true } as any);
             else if (hidden === false && index > -1) draft[kind].splice(index, 1);
             else if (hidden === undefined) {
               if (index > -1) draft[kind].splice(index, 1);
-              else draft[kind].push({ ...item, type } as any);
+              else draft[kind].push({ ...item, hidden: true } as any);
             }
           }
         })

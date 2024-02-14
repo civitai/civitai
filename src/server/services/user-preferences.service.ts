@@ -550,12 +550,12 @@ async function toggleHideModel({
   await HiddenModels.refreshCache({ userId });
   await refreshHiddenModelsForUser({ userId }); // TODO - remove this once front end filtering is finished
 
-  const addedOrUpdated = !engagement || engagement.type !== 'Hide';
-  const toReturn = { id: modelId, kind: 'model' } as HiddenPreferencesKind;
+  // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
+  // const toReturn = { id: modelId, kind: 'model' } as HiddenPreferencesKind;
 
   return {
-    added: addedOrUpdated ? [toReturn] : [],
-    removed: !addedOrUpdated ? [toReturn] : [],
+    added: [],
+    removed: [],
   };
 }
 
@@ -584,20 +584,20 @@ async function toggleHideUser({
       data: { type: 'Hide' },
     });
 
-  const addedOrUpdated = !engagement || engagement.type !== 'Hide';
-  const user = await dbRead.user.findUnique({
-    where: { id: targetUserId },
-    select: { id: true, username: true },
-  });
+  // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
+  // const user = await dbRead.user.findUnique({
+  //   where: { id: targetUserId },
+  //   select: { id: true, username: true },
+  // });
 
-  const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
+  // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
 
   await HiddenUsers.refreshCache({ userId });
   await refreshHiddenUsersForUser({ userId }); // TODO - remove this once front end filtering is finished
 
   return {
-    added: addedOrUpdated ? [toReturn].filter(isDefined) : [],
-    removed: !addedOrUpdated ? [toReturn].filter(isDefined) : [],
+    added: [],
+    removed: [],
   };
 }
 
@@ -627,11 +627,11 @@ async function toggleHideImage({
   await HiddenImages.refreshCache({ userId });
   await refreshHiddenImagesForUser({ userId }); // TODO - remove this once front end filtering is finished
 
-  const addedOrUpdated = !engagement || engagement.type !== 'Hide';
-  const toReturn = { id: imageId, kind: 'image' } as HiddenPreferencesKind;
+  // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
+  // const toReturn = { id: imageId, kind: 'image' } as HiddenPreferencesKind;
 
   return {
-    added: addedOrUpdated ? [toReturn] : [],
-    removed: !addedOrUpdated ? [toReturn] : [],
+    added: [],
+    removed: [],
   };
 }

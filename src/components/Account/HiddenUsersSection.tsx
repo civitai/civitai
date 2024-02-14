@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Autocomplete,
-  Badge,
-  Card,
-  Group,
-  Loader,
-  Skeleton,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Autocomplete, Badge, Card, Group, Loader, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
@@ -45,7 +35,10 @@ export function HiddenUsersSection() {
   };
 
   return (
-    <>
+    <Card withBorder>
+      <Card.Section withBorder inheritPadding py="xs">
+        <Text weight={500}>Hidden Users</Text>
+      </Card.Section>
       <Card.Section withBorder sx={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
@@ -63,7 +56,7 @@ export function HiddenUsersSection() {
           variant="unstyled"
         />
       </Card.Section>
-      <Card.Section inheritPadding pt="md">
+      <Card.Section inheritPadding py="md">
         <Stack spacing={5}>
           {blockedUsers.length > 0 && (
             <Group spacing={4}>
@@ -93,6 +86,6 @@ export function HiddenUsersSection() {
           </Text>
         </Stack>
       </Card.Section>
-    </>
+    </Card>
   );
 }

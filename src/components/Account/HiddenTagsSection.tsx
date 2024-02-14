@@ -13,9 +13,6 @@ export function HiddenTagsSection() {
 
   const tags = useHiddenPreferencesData().tag;
   const hiddenTags = tags.filter((x) => x.hidden);
-  const moderationTags = tags.filter((x) => x.nsfwLevel !== undefined).map((x) => x.id);
-
-  const blockedTags = hiddenTags.filter((x) => !moderationTags.includes(x.id));
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     entityType: ['Model'],
@@ -57,9 +54,9 @@ export function HiddenTagsSection() {
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack spacing={5}>
-          {blockedTags.length > 0 && (
+          {hiddenTags.length > 0 && (
             <Group spacing={4}>
-              {blockedTags.map((tag) => (
+              {hiddenTags.map((tag) => (
                 <Badge
                   key={tag.id}
                   sx={{ paddingRight: 3 }}
