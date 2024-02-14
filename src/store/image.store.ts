@@ -24,6 +24,13 @@ export const imageStore = {
 };
 
 export const useImageStore = <T extends { id: number } & ImageProps>(image: T) => {
-  const storedImage = useStore(useCallback((state) => state[image.id] ?? {}, [image.id]));
-  return { ...image, ...removeEmpty(storedImage) };
+  return useStore(
+    useCallback(
+      (state) => {
+        const storeImage = state[image.id] ?? {};
+        return { ...image, ...removeEmpty(storeImage) };
+      },
+      [image]
+    )
+  );
 };

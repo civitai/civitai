@@ -32,10 +32,8 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
@@ -53,7 +51,6 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { BrowsingMode } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -340,11 +337,7 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
-                <Adunit
-                  browsingModeOverride={!nsfw ? BrowsingMode.SFW : undefined}
-                  showRemoveAds
-                  {...adsRegistry.imageDetail}
-                />
+                <Adunit showRemoveAds {...adsRegistry.imageDetail} />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

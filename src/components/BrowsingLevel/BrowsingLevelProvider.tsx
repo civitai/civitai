@@ -115,8 +115,10 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
 /** returns the user selected browsing level or the system default browsing level */
 export function useBrowsingLevel() {
+  const currentUser = useCurrentUser();
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
+  if (!currentUser) return publicBrowsingLevelsFlag;
   return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
 }
 

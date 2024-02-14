@@ -42,7 +42,6 @@ export function BrowsingModeMenu() {
 
   const isMobile = useIsMobile();
 
-  const showBlurToggle = !isMobile;
   return (
     <Stack spacing="md">
       {/* <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} mb={-4} /> */}

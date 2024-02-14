@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
-import { deleteCookies, setCookie } from '~/utils/cookies-helpers';
+import { setCookie } from '~/utils/cookies-helpers';
 import dayjs from 'dayjs';
 import { useCookies } from '~/providers/CookiesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

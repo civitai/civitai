@@ -14,7 +14,6 @@ import Image from 'next/image';
 import { useStackingContext } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
-import { NsfwLevel } from '~/server/common/enums';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
 import { BrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
