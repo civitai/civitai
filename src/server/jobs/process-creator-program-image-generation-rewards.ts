@@ -3,16 +3,13 @@ import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { Prisma } from '@prisma/client';
-import { createBuzzTransaction, createBuzzTransactionMany } from '../services/buzz.service';
+import { createBuzzTransactionMany } from '../services/buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { constants } from '~/server/common/constants';
-import { chunk, uniqBy } from 'lodash-es';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { chunk } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { withRetries } from '~/server/utils/errorHandling';
-
-const CONCURRENCY = 5;
 
 type ModelVersionForGeneratedImagesReward = {
   id: number;

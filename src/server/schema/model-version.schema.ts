@@ -220,3 +220,10 @@ export type EarlyAccessModelVersionsOnTimeframeSchema = z.infer<
 export const earlyAccessModelVersionsOnTimeframeSchema = z.object({
   timeframe: z.number().optional(),
 });
+
+export type ModelVersionsGeneratedImagesOnTimeframeSchema = z.infer<
+  typeof modelVersionsGeneratedImagesOnTimeframeSchema
+>;
+export const modelVersionsGeneratedImagesOnTimeframeSchema = z.object({
+  timeframe: z.number().optional(),
+});

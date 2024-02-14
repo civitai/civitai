@@ -10,6 +10,7 @@ import {
   GetModelVersionSchema,
   ModelVersionMeta,
   ModelVersionUpsertInput,
+  ModelVersionsGeneratedImagesOnTimeframeSchema,
   PublishVersionInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -20,6 +21,7 @@ import {
   earlyAccessModelVersionsOnTimeframe,
   getModelVersionRunStrategies,
   getVersionById,
+  modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
   toggleNotifyModelVersion,
   unpublishModelVersionById,
@@ -443,6 +445,24 @@ export const earlyAccessModelVersionsOnTimeframeHandler = async ({
 }) => {
   try {
     return earlyAccessModelVersionsOnTimeframe({
+      ...input,
+      userId: ctx.user.id,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelVersionsGeneratedImagesOnTimeframeSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return modelVersionGeneratedImagesOnTimeframe({
       ...input,
       userId: ctx.user.id,
     });

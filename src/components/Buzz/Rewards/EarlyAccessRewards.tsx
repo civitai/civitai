@@ -30,9 +30,14 @@ ChartJS.register(
 );
 
 export const EarlyAccessRewards = () => {
-  const { data: modelVersions = [], isLoading } =
-    trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery({ timeframe: 14 });
   const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
+  const { data: modelVersions = [], isLoading } =
+    trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(
+      { timeframe: 14 },
+      {
+        enabled: userStripeConnect?.status === StripeConnectStatus.Approved,
+      }
+    );
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
