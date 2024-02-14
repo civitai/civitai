@@ -93,7 +93,7 @@ const { openModal, Modal } = createContextModal<{
               type: UploadType.TrainingImagesTemp,
               meta: {},
             },
-            async ({ url, ...other }) => {
+            async ({ url }) => {
               setAutoCaptioning(modelId, { maxTags, threshold, overwrite, url, isRunning: false });
               handleClose();
               setLoading(false);
