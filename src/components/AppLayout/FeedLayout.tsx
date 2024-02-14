@@ -3,13 +3,12 @@ import React from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { constants } from '~/server/common/constants';
-import { SubNav } from './SubNav';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { BrowsingMode } from '~/server/common/enums';
 import { useMantineTheme } from '@mantine/core';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
 export function FeedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -21,8 +20,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
   const browsingModeOverride = nsfw ? BrowsingMode.All : undefined;
 
   return (
-    <ScrollArea>
-      <SubNav />
+    <ScrollAreaMain>
       <IsClient>
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
@@ -39,6 +37,6 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           <MasonryContainer>{children}</MasonryContainer>
         </MasonryProvider>
       </IsClient>
-    </ScrollArea>
+    </ScrollAreaMain>
   );
 }
