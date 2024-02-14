@@ -1,4 +1,4 @@
-import { Card, Divider, Stack, Switch, Title, Group, Text } from '@mantine/core';
+import { Card, Divider, Stack, Switch, Title, Group, Text, Checkbox } from '@mantine/core';
 import { IconBellOff } from '@tabler/icons-react';
 import React from 'react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
@@ -101,7 +101,7 @@ export function NotificationsCard() {
                     <Card.Section inheritPadding py="md">
                       <Stack>
                         {settings.map(({ type, displayName }) => (
-                          <Switch
+                          <Checkbox
                             key={type}
                             label={displayName}
                             checked={notificationSettings[type]}
