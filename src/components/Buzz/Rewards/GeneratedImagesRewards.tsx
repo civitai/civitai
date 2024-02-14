@@ -172,10 +172,12 @@ export const GeneratedImagesReward = () => {
             <Loader />
           </Center>
         ) : (
-          <Text color="dimmed">
-            Whoops! Looks like we are still collecting data on your models for this month. Come back
-            later
-          </Text>
+          <Center>
+            <Text color="dimmed">
+              Whoops! Looks like we are still collecting data on your models for this month. Come
+              back later
+            </Text>
+          </Center>
         )}
       </Stack>
     </Paper>

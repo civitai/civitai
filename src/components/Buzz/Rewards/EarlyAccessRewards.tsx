@@ -15,7 +15,7 @@ import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useMemo } from 'react';
 import { Currency, StripeConnectStatus } from '@prisma/client';
-import { Paper, Stack, Title, Text } from '@mantine/core';
+import { Paper, Stack, Title, Text, Center, Loader } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
@@ -96,23 +96,20 @@ export const EarlyAccessRewards = () => {
   }, []);
 
   const datasets = useMemo(() => {
-    return modelVersions.map((modelVersion) => {
-      return {
-        label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
-        data: (modelVersion.meta?.earlyAccessDownloadData ?? []).map((data) => ({
-          x: data.date,
-          y: data.downloads,
-        })),
-      };
-    });
+    return modelVersions
+      .filter((mv) => mv.meta?.earlyAccessDownloadData?.length > 0)
+      .map((modelVersion) => {
+        return {
+          label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
+          data: (modelVersion.meta?.earlyAccessDownloadData ?? []).map((data) => ({
+            x: data.date,
+            y: data.downloads,
+          })),
+        };
+      });
   }, [modelVersions]);
 
-  if (
-    isLoading ||
-    modelVersions.length === 0 ||
-    !modelVersions.some((mv) => (mv.meta?.earlyAccessDownloadData?.length ?? 0) > 0) ||
-    userStripeConnect?.status !== StripeConnectStatus.Approved
-  ) {
+  if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
     return null;
   }
 
@@ -133,13 +130,26 @@ export const EarlyAccessRewards = () => {
             />
           </Text>
         </Stack>
-        <Line
-          options={options}
-          data={{
-            labels,
-            datasets,
-          }}
-        />
+        {isLoading ? (
+          <Center py="xl">
+            <Loader />
+          </Center>
+        ) : datasets.length === 0 ? (
+          <Center>
+            <Text color="dimmed">
+              Whoops! Looks like we are still collecting data on your early access models on these
+              past 14 days. Please check back later.
+            </Text>
+          </Center>
+        ) : (
+          <Line
+            options={options}
+            data={{
+              labels,
+              datasets,
+            }}
+          />
+        )}
       </Stack>
     </Paper>
   );
