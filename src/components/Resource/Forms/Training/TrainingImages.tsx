@@ -21,13 +21,19 @@ import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { ModelFileVisibility } from '@prisma/client';
-import { IconAlertTriangle, IconCheck, IconTrash, IconX } from '@tabler/icons-react'; // import { saveAs } from 'file-saver';
+import { IconAlertTriangle, IconCheck, IconTags, IconTrash, IconX } from '@tabler/icons-react';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import {
+  AutoTagSchemaType,
+  MAX_TAGS,
+  MIN_THRESHOLD,
+  openAutoTagModal,
+} from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
@@ -39,14 +45,21 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-type ImageDataType = {
+export type ImageDataType = {
   url: string;
   name: string;
   type: string;
   caption: string;
 };
 
-type UpdateImageDataType = Partial<Omit<ImageDataType, 'url'>> & { url: string };
+type UpdateImageDataType = Partial<Omit<ImageDataType, 'name'>> & {
+  name: string;
+  appendCaption?: boolean;
+};
+export type AutoCaptionType = Nullable<AutoTagSchemaType> & {
+  url: string | null;
+  isRunning: boolean;
+};
 
 type TrainingDataState = {
   imageList: ImageDataType[];
@@ -55,6 +68,7 @@ type TrainingDataState = {
   initialOwnRights: boolean;
   shareDataset: boolean;
   initialShareDataset: boolean;
+  autoCaptioning: AutoCaptionType;
 };
 
 type ImageStore = {
@@ -66,29 +80,38 @@ type ImageStore = {
   setShareDataset: (modelId: number, data: boolean) => void;
   setInitialOwnRights: (modelId: number, data: boolean) => void;
   setInitialShareDataset: (modelId: number, data: boolean) => void;
+  setAutoCaptioning: (modelId: number, data: AutoCaptionType) => void;
+};
+
+const defaultState: TrainingDataState = {
+  imageList: [] as ImageDataType[],
+  initialImageList: [] as ImageDataType[],
+  ownRights: false,
+  shareDataset: false,
+  initialOwnRights: false,
+  initialShareDataset: false,
+  autoCaptioning: { maxTags: null, threshold: null, overwrite: null, url: null, isRunning: false },
 };
 
 export const useImageStore = create<ImageStore>()(
   immer((set) => ({
-    updateImage: (modelId, { url, name, type, caption }) => {
+    updateImage: (modelId, { url, name, type, caption, appendCaption }) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         // TODO [bw] why is this not understanding the override I just did above?
         state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
-          if (i.url === url) {
+          // TODO this *may* break if they somehow upload files with identical names, but we need it for tagging
+          if (i.name === name) {
             return {
-              url,
-              name: name ?? i.name,
+              url: url ?? i.url,
+              name,
               type: type ?? i.type,
-              caption: caption ?? i.caption,
+              caption:
+                caption !== undefined
+                  ? appendCaption && i.caption.length > 0
+                    ? `${i.caption}, ${caption}`
+                    : caption
+                  : i.caption,
             };
           }
           return i;
@@ -97,86 +120,44 @@ export const useImageStore = create<ImageStore>()(
     },
     setImageList: (modelId, imgData) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         state[modelId]!.imageList = imgData;
       });
     },
     setInitialImageList: (modelId, imgData) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         state[modelId]!.initialImageList = imgData;
       });
     },
     setOwnRights: (modelId, v) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         state[modelId]!.ownRights = v;
       });
     },
     setShareDataset: (modelId, v) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         state[modelId]!.shareDataset = v;
       });
     },
     setInitialOwnRights: (modelId, v) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         state[modelId]!.initialOwnRights = v;
       });
     },
     setInitialShareDataset: (modelId, v) => {
       set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
+        if (!state[modelId]) state[modelId] = { ...defaultState };
         state[modelId]!.initialShareDataset = v;
+      });
+    },
+    setAutoCaptioning: (modelId, captionData) => {
+      set((state) => {
+        if (!state[modelId]) state[modelId] = { ...defaultState };
+        state[modelId]!.autoCaptioning = captionData;
       });
     },
   }))
@@ -199,12 +180,12 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-// TODO [bw] is this enough? do we want jfif and webp?
+// TODO [bw] is this enough? do we want jfif?
 const imageExts: { [key: string]: string } = {
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
-  // webp: 'image/webp',
+  webp: 'image/webp',
 };
 
 const maxWidth = 1024;
@@ -227,6 +208,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setShareDataset,
     setInitialOwnRights,
     setInitialShareDataset,
+    setAutoCaptioning,
   } = useImageStore();
 
   const {
@@ -236,17 +218,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     shareDataset,
     initialOwnRights,
     initialShareDataset,
-  } = useImageStore(
-    (state) =>
-      state[model.id] ?? {
-        imageList: [],
-        initialImageList: [],
-        ownRights: false,
-        shareDataset: false,
-        initialOwnRights: false,
-        initialShareDataset: false,
-      }
-  );
+    autoCaptioning,
+  } = useImageStore((state) => state[model.id] ?? { ...defaultState });
 
   const [page, setPage] = useState(1);
   const [zipping, setZipping] = useState<boolean>(false);
@@ -254,7 +227,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
 
   const thisModelVersion = model.modelVersions[0];
@@ -264,6 +237,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
+
+  const thisStep = 2;
+  const maxImgPerPage = 9;
 
   useEffect(() => {
     // is there any way to generate a file download url given the one we already have?
@@ -317,9 +293,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const thisStep = 2;
-  const maxImgPerPage = 9;
 
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
     const imgUrl = URL.createObjectURL(data);
@@ -509,6 +482,46 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
   });
 
+  const submitTagMutation = trpc.training.autoTag.useMutation({
+    async onSuccess(response) {
+      Object.entries(response).forEach(([k, v]) => {
+        const tags = Object.entries(v)
+          .sort(([, a], [, b]) => b - a)
+          .filter((t) => t[1] >= (autoCaptioning.threshold ?? MIN_THRESHOLD))
+          .slice(0, autoCaptioning.maxTags ?? MAX_TAGS)
+          .map((t) => t[0]);
+
+        updateImage(model.id, {
+          name: k,
+          caption: tags.join(', '),
+          appendCaption: autoCaptioning.overwrite === 'append',
+        });
+      });
+
+      const imageLen = Object.keys(response).length;
+      showSuccessNotification({
+        title: 'Images auto-tagged successfully!',
+        message: `Tagged ${imageLen} image${imageLen === 1 ? '' : 's'}.`,
+      });
+      setAutoCaptioning(model.id, { ...defaultState.autoCaptioning });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Failed to auto-tag',
+        autoClose: false,
+      });
+      setAutoCaptioning(model.id, { ...defaultState.autoCaptioning });
+    },
+  });
+
+  useEffect(() => {
+    if (autoCaptioning.isRunning || !autoCaptioning.url) return;
+    setAutoCaptioning(model.id, { ...autoCaptioning, isRunning: true });
+    submitTagMutation.mutate({ url: autoCaptioning.url });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCaptioning.url]);
+
   const handleNextAfterCheck = async () => {
     setZipping(true);
     const zip = new JSZip();
@@ -546,7 +559,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await upload(
           {
             file: blobFile,
-            type: UploadType.TrainingImages, // TODO [bw] maybe use UploadType.TrainingImagesTemp
+            type: UploadType.TrainingImages,
             meta: {
               versionId: thisModelVersion.id,
               ownRights,
@@ -692,24 +705,52 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         {imageList.length > 0 && (
           <Group mt="md" position="apart">
             <Group>
+              <Paper
+                shadow="xs"
+                radius="sm"
+                px={8}
+                py={2}
+                sx={{
+                  backgroundColor:
+                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                }}
+              >
+                <Text
+                  sx={{ lineHeight: '22px' }}
+                  color={
+                    totalCaptioned === 0
+                      ? theme.colors.red[5]
+                      : totalCaptioned < imageList.length
+                      ? theme.colors.orange[5]
+                      : theme.colors.green[5]
+                  }
+                >
+                  {`${totalCaptioned} / ${imageList.length} captioned`}
+                </Text>
+              </Paper>
+              <Button
+                compact
+                disabled={autoCaptioning.isRunning}
+                onClick={() =>
+                  openAutoTagModal({
+                    imageList,
+                    modelId: model.id,
+                    setAutoCaptioning,
+                  })
+                }
+              >
+                <IconTags size={16} />
+                <Text inline ml={4}>
+                  Auto Tag
+                </Text>
+              </Button>
               {/*perhaps open a modal here to confirm*/}
               <Button compact color="red" onClick={() => setImageList(model.id, [])}>
                 <IconTrash size={16} />
                 <Text inline ml={4}>
-                  Clear All
+                  Reset
                 </Text>
               </Button>
-              <Text
-                color={
-                  totalCaptioned === 0
-                    ? theme.colors.red[5]
-                    : totalCaptioned < imageList.length
-                    ? theme.colors.orange[5]
-                    : theme.colors.green[5]
-                }
-              >
-                {`${totalCaptioned} / ${imageList.length} captioned`}
-              </Text>
             </Group>
 
             {imageList.length > maxImgPerPage && (
@@ -720,6 +761,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               />
             )}
           </Group>
+        )}
+
+        {autoCaptioning.isRunning === true && (
+          <Paper
+            my="lg"
+            p="md"
+            withBorder
+            sx={{
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+            }}
+          >
+            <Group>
+              <Text>Running auto-tagging...</Text>
+              <Loader size="sm" variant="bars" />
+            </Group>
+          </Paper>
         )}
 
         {loadingZip ? (
@@ -779,12 +837,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     <Textarea
                       placeholder="Enter caption data..."
                       autosize
+                      disabled={autoCaptioning.isRunning}
                       minRows={1}
                       maxRows={4}
                       value={imgData.caption}
                       onChange={(event) => {
                         updateImage(model.id, {
-                          url: imgData.url,
+                          name: imgData.name,
                           caption: event.currentTarget.value,
                         });
                       }}

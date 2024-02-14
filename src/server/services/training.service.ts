@@ -5,7 +5,11 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { CreateTrainingRequestInput, MoveAssetInput } from '~/server/schema/training.schema';
+import {
+  AutoTagInput,
+  CreateTrainingRequestInput,
+  MoveAssetInput,
+} from '~/server/schema/training.schema';
 import {
   createBuzzTransaction,
   getUserBuzzAccount,
@@ -44,9 +48,10 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
   const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
     SELECT mf.metadata, mv."updatedAt"
     FROM "ModelVersion" mv
-    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId} AND m."userId" = ${userId}
+           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+           JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId}
+      AND m."userId" = ${userId}
   `;
 
   if (!modelFile) throw throwBadRequestError('Invalid model version');
@@ -276,4 +281,42 @@ export const createTrainingRequest = async ({
 
   // const [formatted] = await formatGenerationRequests([data]);
   return data;
+};
+
+type tagDataResponse = {
+  [key: string]: {
+    wdTagger: {
+      tags: {
+        [key: string]: number;
+      };
+    };
+  };
+};
+type autoTagResponse = {
+  [key: string]: {
+    [key: string]: number;
+  };
+};
+
+export const autoTagHandler = async ({ url }: AutoTagInput) => {
+  const { url: getUrl } = await getGetUrl(url);
+
+  const response = await fetch(`${env.MEDIA_TAGGER_ENDPOINT}/tagzip/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ zip_path: getUrl }),
+  });
+
+  if (!response.ok) {
+    throwBadRequestError('Could not complete auto-tagging - please try again.');
+  }
+
+  const tagData: tagDataResponse = await response.json();
+
+  const tagList = Object.entries(tagData).map(([f, t]) => ({
+    [f]: t.wdTagger.tags,
+  }));
+  const returnData: autoTagResponse = Object.assign({}, ...tagList);
+
+  return returnData;
 };
