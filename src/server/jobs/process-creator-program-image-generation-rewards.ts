@@ -112,9 +112,6 @@ export const processCreatorProgramImageGenerationRewards = createJob(
           return null;
         }
 
-        if (version.userId === 18085) {
-          console.log('You getting reward', amount);
-        }
 
         return {
           fromAccountId: 0,
