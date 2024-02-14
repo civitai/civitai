@@ -222,37 +222,37 @@ export function ModelCarousel({
                 {({ safe }) => (
                   <Center style={{ height: '100%', width: '100%' }}>
                     <div style={{ width: '100%', position: 'relative' }}>
-                      <Group
-                        position="apart"
-                        align="start"
-                        spacing={4}
-                        className={cx(classes.contentOverlay, classes.top)}
-                      >
-                        <ImageGuard.ToggleConnect position="top-left" />
-                        <Stack spacing="xs" ml="auto">
-                          <ImageGuard.Report context="image" position="static" withinPortal />
-                          {features.imageGeneration && image.meta && (
-                            <HoverActionButton
-                              label="Remix"
-                              size={30}
-                              color="white"
-                              variant="filled"
-                              data-activity="remix:model-carousel"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                generationPanel.open({
-                                  type: 'image',
-                                  id: image.id,
-                                });
-                              }}
-                            >
-                              <IconBrush stroke={2.5} size={16} />
-                            </HoverActionButton>
-                          )}
-                        </Stack>
-                      </Group>
                       <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                        <Group
+                          position="apart"
+                          align="start"
+                          spacing={4}
+                          className={cx(classes.contentOverlay, classes.top)}
+                        >
+                          <ImageGuard.ToggleConnect position="top-left" />
+                          <Stack spacing="xs" ml="auto">
+                            <ImageGuard.Report context="image" position="static" withinPortal />
+                            {features.imageGeneration && image.meta && (
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
+                                color="white"
+                                variant="filled"
+                                data-activity="remix:model-carousel"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({
+                                    type: 'image',
+                                    id: image.id,
+                                  });
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                          </Stack>
+                        </Group>
                         {!safe ? (
                           <AspectRatio
                             ratio={(image.width ?? 1) / (image.height ?? 1)}
