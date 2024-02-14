@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
 import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 
 export const useQueryNotifications = (
   filters?: Partial<GetUserNotificationsSchema>,
@@ -41,4 +42,26 @@ export const useMarkReadNotification = () => {
       await queryUtils.notification.getAllByUser.invalidate();
     },
   });
+};
+
+export const useNotificationSettings = (enabled = true) => {
+  const { data: userNotificationSettings = [], isLoading } =
+    trpc.user.getNotificationSettings.useQuery(undefined, { enabled });
+  const { hasNotifications, hasCategory, notificationSettings } = useMemo(() => {
+    let hasNotifications = false;
+    const notificationSettings: Record<string, boolean> = {};
+    const hasCategory: Record<string, boolean> = {};
+    for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
+      hasCategory[category] = false;
+      for (const { type } of settings) {
+        const isEnabled = !userNotificationSettings.some((setting) => setting.type === type);
+        notificationSettings[type] = isEnabled;
+        if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
+        if (!hasNotifications && isEnabled) hasNotifications = true;
+      }
+    }
+    return { hasNotifications, hasCategory, notificationSettings };
+  }, [userNotificationSettings]);
+
+  return { hasNotifications, hasCategory, notificationSettings, isLoading };
 };

@@ -1,8 +1,8 @@
 import { Card, Divider, Stack, Switch, Title, Group, Text } from '@mantine/core';
 import { IconBellOff } from '@tabler/icons-react';
 import React from 'react';
-import { useMemo } from 'react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
+import { useNotificationSettings } from '~/components/Notifications/notifications.utils';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import {
   notificationCategoryTypes,
@@ -15,23 +15,8 @@ import { trpc } from '~/utils/trpc';
 export function NotificationsCard() {
   const queryUtils = trpc.useContext();
 
-  const { data: userNotificationSettings = [], isLoading } =
-    trpc.user.getNotificationSettings.useQuery();
-  const { hasNotifications, hasCategory, notificationSettings } = useMemo(() => {
-    let hasNotifications = false;
-    const notificationSettings: Record<string, boolean> = {};
-    const hasCategory: Record<string, boolean> = {};
-    for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
-      hasCategory[category] = false;
-      for (const { type } of settings) {
-        const isEnabled = !userNotificationSettings.some((setting) => setting.type === type);
-        notificationSettings[type] = isEnabled;
-        if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
-        if (!hasNotifications && isEnabled) hasNotifications = true;
-      }
-    }
-    return { hasNotifications, hasCategory, notificationSettings };
-  }, [userNotificationSettings]);
+  const { hasNotifications, hasCategory, notificationSettings, isLoading } =
+    useNotificationSettings();
 
   const updateNotificationSettingMutation = trpc.notification.updateUserSettings.useMutation({
     async onMutate({ toggle, type }) {

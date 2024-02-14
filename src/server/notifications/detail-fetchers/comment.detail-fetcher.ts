@@ -1,12 +1,13 @@
 import { truncate } from 'lodash-es';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
+import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export const commentDetailFetcher = createDetailFetcher({
-  types: [...Object.keys(commentNotifications)],
+  types: [...Object.keys(commentNotifications), ...Object.keys(mentionNotifications)],
   fetcher: async (notifications, { db }) => {
     const commentIds = notifications
       .map((n) => (n.details.version !== 2 ? (n.details.commentId as number | undefined) : null))
