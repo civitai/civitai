@@ -21,7 +21,7 @@ import {
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
+import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
@@ -306,6 +306,9 @@ export const autoTagHandler = async ({ url }: AutoTagInput) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ zip_path: getUrl }),
   });
+
+  const { key, bucket } = parseKey(url);
+  deleteObject(bucket, key).catch();
 
   if (!response.ok) {
     throwBadRequestError('Could not complete auto-tagging - please try again.');
