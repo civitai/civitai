@@ -15,6 +15,14 @@ const useStyles = createStyles(() => ({
   },
 }));
 
+const mapTabName: Record<NotificationCategory, string> = {
+  [NotificationCategory.Comment]: 'Comments',
+  [NotificationCategory.Milestone]: 'Milestones',
+  [NotificationCategory.Update]: 'Updates',
+  [NotificationCategory.Bounty]: 'Bounties',
+  [NotificationCategory.Other]: 'Others',
+};
+
 export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: Props) {
   const { classes } = useStyles();
   const count = useQueryNotificationsCount();
@@ -55,7 +63,7 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                 }
               >
                 <Text tt="capitalize" weight={590} inline>
-                  {getDisplayName(tab)}
+                  {mapTabName[tab as NotificationCategory] ?? getDisplayName(tab)}
                 </Text>
               </Tabs.Tab>
             );
