@@ -401,7 +401,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const updateFileMutation = trpc.modelFile.update.useMutation({
-    async onSuccess(response, request) {
+    async onSuccess(_response, request) {
       setInitialOwnRights(model.id, ownRights);
       setInitialShareDataset(model.id, shareDataset);
 
@@ -763,7 +763,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </Group>
         )}
 
-        {autoCaptioning.isRunning === true && (
+        {autoCaptioning.isRunning && (
           <Paper
             my="lg"
             p="md"
