@@ -97,7 +97,7 @@ export const EarlyAccessRewards = () => {
 
   const datasets = useMemo(() => {
     return modelVersions
-      .filter((mv) => mv.meta?.earlyAccessDownloadData?.length > 0)
+      .filter((mv) => (mv.meta?.earlyAccessDownloadData ?? []).length > 0)
       .map((modelVersion) => {
         return {
           label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
