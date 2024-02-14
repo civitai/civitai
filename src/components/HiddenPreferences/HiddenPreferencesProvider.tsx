@@ -40,12 +40,7 @@ export const HiddenPreferencesProvider = ({
   const hidden = useMemo(() => {
     const tags = new Map(
       data.tag
-        .filter(
-          (x) =>
-            !x.nsfwLevel ||
-            !Flags.hasFlag(browsingLevel, x.nsfwLevel) ||
-            x.nsfwLevel === NsfwLevel.Blocked
-        )
+        .filter((x) => !x.nsfwLevel || !Flags.hasFlag(browsingLevel, x.nsfwLevel))
         .map((x) => [x.id, true])
     );
 

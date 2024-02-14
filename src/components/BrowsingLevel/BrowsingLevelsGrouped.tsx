@@ -11,7 +11,7 @@ import {
 
 export function BrowsingLevelsGrouped(props: GroupProps) {
   return (
-    <Group spacing={4} {...props}>
+    <Group spacing="xs" noWrap {...props}>
       {browsingLevels.map((level) => (
         <BrowsingLevelLabel key={level} level={level} />
       ))}
@@ -31,7 +31,13 @@ function BrowsingLevelLabel({ level }: { level: BrowsingLevel }) {
 }
 
 const useStyles = createStyles((theme, _params, getRef) => ({
+  root: {
+    flex: 1,
+  },
   label: {
+    width: '100%',
+    display: 'inline-flex',
+    justifyContent: 'center',
     '&[data-checked]': {
       '&, &:hover': {
         backgroundColor: theme.colors.blue[theme.fn.primaryShade()],

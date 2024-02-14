@@ -1,14 +1,12 @@
-import { Group, Skeleton, Switch, SwitchProps, Text, Stack, Title } from '@mantine/core';
+import { Group, Switch, Text, Stack, Title } from '@mantine/core';
 import {
   useBrowsingModeContext,
   useShowNsfw,
   useBlurNsfw,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function MatureContentSettings() {
-  const currentUser = useCurrentUser();
   const { toggleBlurNsfw, toggleShowNsfw } = useBrowsingModeContext();
   const showNsfw = useShowNsfw();
   const blurNsfw = useBlurNsfw();
@@ -22,20 +20,15 @@ export function MatureContentSettings() {
             {`By enabling Mature Content, you confirm you are over the age of 18.`}
           </Text>
         </div>
-        <SkeletonSwitch
-          loading={!currentUser}
-          checked={showNsfw}
-          onChange={(e) => toggleShowNsfw(e.target.checked)}
-        />
+        <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
       </Group>
       <Group position="apart" noWrap>
         <Text color={!showNsfw ? 'dimmed' : undefined}>
           <Text weight={500}>Blur mature content</Text>
           <Text size="sm">Blur images and videos that are marked as mature</Text>
         </Text>
-        <SkeletonSwitch
+        <Switch
           disabled={!showNsfw}
-          loading={!currentUser}
           checked={showNsfw && blurNsfw}
           onChange={(e) => toggleBlurNsfw(e.target.checked)}
         />
@@ -55,11 +48,3 @@ export function MatureContentSettings() {
     </Stack>
   );
 }
-
-const SkeletonSwitch = ({ loading, ...props }: { loading: boolean } & SwitchProps) => {
-  return (
-    <Skeleton height={20} width={40} radius="lg" visible={loading}>
-      <Switch {...props} />
-    </Skeleton>
-  );
-};

@@ -13,6 +13,7 @@ import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
 import { useDidUpdate } from '@mantine/hooks';
+import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 
 type StoreState = {
   showNsfw: boolean;
@@ -61,6 +62,7 @@ function updateCookieValues({ browsingLevel, blurNsfw, showNsfw }: StoreState) {
 }
 
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
+  const queryUtils = trpc.useContext();
   const { status } = useSession();
   const currentUser = useCurrentUser();
   const debouncer = useDebouncer(1000);
@@ -81,16 +83,16 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
   if (!storeRef.current) storeRef.current = createBrowsingModeStore(getStoreInitialValues());
   useDidUpdate(() => {
-    if (status === 'authenticated') setStore(createBrowsingModeStore(store.getState()));
-  }, [status]);
+    if (status === 'authenticated' && currentUser) {
+      setStore(createBrowsingModeStore(getStoreInitialValues()));
+    }
+  }, [currentUser, status]);
 
   // update the cookie to reflect the browsingLevel state of the current tab
   useEffect(() => {
     const handleVisibilityChange = () => {
       const store = storeRef.current;
-      if (store && document.visibilityState === 'visible') {
-        updateCookieValues(store.getState());
-      }
+      if (store && document.visibilityState === 'visible') updateCookieValues(store.getState());
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
@@ -102,7 +104,11 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
     if (store && currentUser) {
       return store.subscribe((state) => {
         updateCookieValues(state);
-        if (currentUser) debouncer(() => mutate({ id: currentUser.id, ...state }));
+        if (currentUser)
+          debouncer(() => {
+            mutate({ id: currentUser.id, ...state });
+            invalidateModeratedContent(queryUtils);
+          });
       });
     }
   }, [store, currentUser]);

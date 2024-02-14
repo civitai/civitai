@@ -1,7 +1,10 @@
+import { getCookies } from 'cookies-next';
 import { TmpCookiesObj } from 'cookies-next/lib/types';
 
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 const CookiesCtx = createContext<CookiesContext | null>(null);
 export const useCookies = () => {
@@ -16,7 +19,25 @@ export const CookiesProvider = ({
   children: React.ReactNode;
   value: ParsedCookies;
 }) => {
-  const [cookies] = useState(handleParseCookies(initialValue));
+  const currentUser = useCurrentUser();
+  const isClient = useIsClient();
+  const cookies = useMemo(() => {
+    if (!isClient) return handleParseCookies(initialValue);
+    else {
+      const cookies = parseCookies(getCookies());
+      const zodCookies = handleParseCookies(cookies);
+      return zodCookies;
+    }
+  }, [isClient, currentUser]);
+  // const [cookies, setCookies] = useState(handleParseCookies(initialValue));
+  // console.log({ initialValue });
+
+  // useEffect(() => {
+  //   const cookies = parseCookies(getCookies());
+  //   const zodCookies = handleParseCookies(cookies);
+  //   console.log('zodCookies', zodCookies);
+  //   setCookies(zodCookies);
+  // }, [currentUser]);
 
   return <CookiesCtx.Provider value={cookies}>{children}</CookiesCtx.Provider>;
 };

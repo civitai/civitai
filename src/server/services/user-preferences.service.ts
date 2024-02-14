@@ -88,7 +88,7 @@ const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
 };
 
 const HiddenTags = createUserCache({
-  key: 'hidden-tags-2',
+  key: 'hidden-tags-3',
   callback: async ({ userId }) => {
     const tagEngagment = (
       await dbWrite.tagEngagement.findMany({
@@ -106,7 +106,7 @@ const HiddenTags = createUserCache({
 
 // images hidden by toggling 'hide image'
 const HiddenImages = createUserCache({
-  key: 'hidden-images-2',
+  key: 'hidden-images-3',
   callback: async ({ userId }) =>
     (
       await dbWrite.imageEngagement.findMany({
@@ -164,7 +164,7 @@ const ImplicitHiddenImages = createUserCache({
 });
 
 const HiddenModels = createUserCache({
-  key: 'hidden-models-2',
+  key: 'hidden-models-3',
   callback: async ({ userId }) =>
     (
       await dbWrite.modelEngagement.findMany({
@@ -175,7 +175,7 @@ const HiddenModels = createUserCache({
 });
 
 const HiddenUsers = createUserCache({
-  key: 'hidden-users-2',
+  key: 'hidden-users-3',
   callback: async ({ userId }) =>
     await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
