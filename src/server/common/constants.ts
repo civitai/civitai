@@ -271,6 +271,7 @@ export const constants = {
   creatorsProgram: {
     rewards: {
       earlyAccessUniqueDownload: 10,
+      generatedImageWithResource: 10 / 1000, // 10 buzz for every 1000 images.
     },
   },
 } as const;
