@@ -7,7 +7,7 @@ import {
   browsingLevels,
   browsingLevelLabels,
   BrowsingLevel,
-} from '~/components/BrowsingLevel/browsingLevel.utils';
+} from '~/shared/constants/browsingLevel.constants';
 
 export function BrowsingLevelsGrouped(props: GroupProps) {
   return (

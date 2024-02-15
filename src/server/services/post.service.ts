@@ -45,9 +45,7 @@ import {
 } from './../schema/post.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { profileImageSelect } from '../selectors/image.selector';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { getClubDetailsForResource, upsertClubResource } from './club.service';
 import { hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';

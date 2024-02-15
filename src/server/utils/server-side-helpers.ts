@@ -4,21 +4,44 @@ import { Session } from 'next-auth';
 import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
 
-import { parseBrowsingMode } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { parseCookies } from '~/shared/utils';
+import { extendedSessionUser } from '~/utils/session-helpers';
+
+export function parseBrowsingMode(
+  cookies: Partial<{ [key: string]: string }>,
+  session: Session | null
+) {
+  if (!session?.user) {
+    return {
+      browsingLevel: publicBrowsingLevelsFlag,
+      showNsfw: false,
+    };
+  }
+
+  const { browsingLevel, showNsfw } = parseCookies(cookies);
+  return {
+    browsingLevel: browsingLevel ?? session.user.browsingLevel,
+    showNsfw: showNsfw ?? session.user.showNsfw,
+  };
+}
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
   session: Session | null
 ) => {
+  const { browsingLevel, showNsfw } = parseBrowsingMode(ctx.req.cookies, session);
+
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      user: session?.user,
+      user: session?.user ? extendedSessionUser(session.user) : undefined,
       acceptableOrigin: true,
-      browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+      browsingLevel,
+      showNsfw,
       track: new Tracker(),
       ip: null as any,
       res: null as any,

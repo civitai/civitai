@@ -1,6 +1,5 @@
 import { Availability } from '@prisma/client';
 import { z } from 'zod';
-import { BrowsingMode } from '~/server/common/enums';
 import { parseNumericString } from '~/utils/query-string-helpers';
 
 export const getByIdSchema = z.object({ id: z.number() });
@@ -44,7 +43,7 @@ export const infiniteQuerySchema = z.object({
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 export const userPreferencesSchema = z
   .object({
-    browsingMode: z.nativeEnum(BrowsingMode).default(BrowsingMode.SFW),
+    browsingLevel: z.number(),
     excludedTagIds: z.array(z.number()),
     excludedUserIds: z.array(z.number()),
     excludedImageIds: z.array(z.number()),

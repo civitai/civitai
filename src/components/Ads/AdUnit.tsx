@@ -16,7 +16,7 @@ import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
-import { BrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
+import { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const useStyles = createStyles((theme) => ({
   root: { display: 'flex', flexDirection: 'column', background: 'none' },

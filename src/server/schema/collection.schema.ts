@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import { imageSchema } from '~/server/schema/image.schema';
 import { infiniteQuerySchema, userPreferencesSchema } from '~/server/schema/base.schema';
-import { BrowsingMode, CollectionReviewSort, CollectionSort } from '~/server/common/enums';
+import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -191,9 +191,6 @@ export const addSimpleImagePostInput = z.object({
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;
 export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
   .extend({
-    browsingMode: z
-      .nativeEnum(BrowsingMode)
-      .default(constants.collectionFilterDefaults.browsingMode),
     userId: z.number(),
     types: z.array(z.nativeEnum(CollectionType)),
     privacy: z.array(z.nativeEnum(CollectionReadConfiguration)),

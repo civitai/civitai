@@ -25,7 +25,7 @@ import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { publicBrowsingLevelsArray } from '~/components/BrowsingLevel/browsingLevel.utils';
+import { publicBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {

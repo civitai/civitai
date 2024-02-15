@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { BrowsingMode, ImageSort } from './../common/enums';
+import { ImageSort } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
 
@@ -221,7 +221,6 @@ export const getInfiniteImagesSchema = z
     tags: z.array(z.number()).optional(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
     withTags: z.boolean().optional(),
-    // browsingMode: z.nativeEnum(BrowsingMode).optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
@@ -252,7 +251,6 @@ export const getImagesByCategorySchema = z.object({
   sort: z.nativeEnum(ImageSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   periodMode: periodModeSchema,
-  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
@@ -271,7 +269,6 @@ export const getImageSchema = z.object({
   withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
-  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion
 

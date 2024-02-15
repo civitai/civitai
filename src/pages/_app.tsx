@@ -34,7 +34,7 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
-import { ParsedCookies, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
+import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
@@ -52,6 +52,7 @@ import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider
 import { extendedSessionUser } from '~/utils/session-helpers';
 import { PaypalProvider } from '~/providers/PaypalProvider';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ParsedCookies, parseCookies } from '~/shared/utils';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);

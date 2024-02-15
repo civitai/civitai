@@ -9,7 +9,7 @@ import {
   browsingLevelDescriptions,
   browsingLevelLabels,
   browsingLevels,
-} from '~/components/BrowsingLevel/browsingLevel.utils';
+} from '~/shared/constants/browsingLevel.constants';
 
 export function BrowsingLevelsStacked() {
   const { classes } = useStyles();

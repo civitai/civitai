@@ -1,23 +1,16 @@
 import { TagEngagementType, UserEngagementType } from '@prisma/client';
-import { uniqBy } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
 
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
-import {
-  SystemModerationTag,
-  getModerationTags,
-  getModerationTags2,
-  getSystemHiddenTags,
-} from '~/server/services/system-cache';
+import { getModerationTags2, getSystemHiddenTags } from '~/server/services/system-cache';
 import {
   refreshHiddenImagesForUser,
   refreshHiddenModelsForUser,
   refreshHiddenTagsForUser,
   refreshHiddenUsersForUser,
 } from '~/server/services/user-cache.service';
-import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
@@ -372,73 +365,6 @@ export async function toggleHidden({
       throw new Error('unsupported hidden toggle kind');
   }
 }
-
-// export async function toggleHiddenTags2({
-//   addedIds,
-//   removedIds,
-//   userId,
-// }: {
-//   addedIds?: number[];
-//   removedIds?: number[];
-//   userId: number;
-// }) {
-//   if (!removedIds?.length || !addedIds?.length)
-//     throw new Error('must include tagIds to toggle hidden tags');
-//   if (!!removedIds?.length) {
-//     await dbWrite.tagEngagement.deleteMany({
-//       where: { userId, tagId: { in: removedIds }, type: 'Hide' },
-//     });
-//   }
-//   if (!!addedIds?.length) {
-//     const matchedTags = await dbWrite.tagEngagement.findMany({
-//       where: { userId, tagId: { in: addedIds } },
-//       select: { tagId: true, type: true },
-//     });
-
-//     const toUpdate = matchedTags.map((x) => x.tagId);
-//     const toCreate = addedIds.filter((id) => !toUpdate.includes(id));
-//     if (toUpdate.length) {
-//       await dbWrite.tagEngagement.updateMany({
-//         where: { userId, tagId: { in: toUpdate } },
-//         data: { type: 'Hide' },
-//       });
-//     }
-//     if (toCreate.length) {
-//       await dbWrite.tagEngagement.createMany({
-//         data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
-//       });
-//     }
-//   }
-
-//   const hiddenChangedIds = [...addedIds, ...removedIds];
-
-//   const [votedHideImages, changedHiddenTagsOfHiddenTags] = await Promise.all([
-//     getVotedHideImages({ hiddenTagIds: hiddenChangedIds, userId }),
-//     getHiddenTagsOfHiddenTags(hiddenChangedIds),
-//     HiddenTags.refreshCache({ userId }),
-//     ImplicitHiddenImages.refreshCache({ userId }),
-//     refreshHiddenTagsForUser({ userId }), // TODO - remove this once front end filtering is finished
-//     refreshHiddenImagesForUser({ userId }), // TODO - remove this once front end filtering is finished
-//   ]);
-
-//   const addedFn = <T extends { tagId?: number }>({ tagId }: T) => tagId && addedIds.includes(tagId);
-//   const removeFn = <T extends { tagId?: number }>({ tagId }: T) =>
-//     tagId && removedIds.includes(tagId);
-
-//   const imageMap = (image: HiddenImage): HiddenPreferencesKind => ({ ...image, kind: 'image' });
-//   const tagMap = (tag: HiddenTag): HiddenPreferencesKind => ({ ...tag, kind: 'tag' });
-
-//   return {
-//     added: [
-//       ...votedHideImages.filter(addedFn).map(imageMap),
-//       ...changedHiddenTagsOfHiddenTags.filter((x) => addedIds.includes(x.parentId)).map(tagMap),
-//     ],
-//     removed: [
-//       ...votedHideImages.filter(removeFn).map(imageMap),
-//       ...changedHiddenTagsOfHiddenTags.filter((x) => removedIds.includes(x.parentId)).map(tagMap),
-//     ],
-//   };
-// }
 
 async function toggleHiddenTags({
   tagIds,

@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
@@ -32,7 +32,6 @@ type ImageFilters = {
   types?: MediaType[];
   withMeta?: boolean;
   followed?: boolean;
-  browsingMode?: BrowsingMode;
   hidden?: boolean;
 };
 

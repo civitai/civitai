@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   BrowsingLevel,
   getIsPublicBrowsingLevel,
   publicBrowsingLevelsFlag,
-} from '~/components/BrowsingLevel/browsingLevel.utils';
+} from '~/shared/constants/browsingLevel.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';

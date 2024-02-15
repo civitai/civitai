@@ -1,6 +1,6 @@
 import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
 import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { getIsPublicBrowsingLevel } from '~/components/BrowsingLevel/browsingLevel.utils';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { NsfwLevel } from '~/server/common/enums';

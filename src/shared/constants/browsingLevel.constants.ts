@@ -37,6 +37,7 @@ export const browsingLevelDescriptions = {
 
 export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.PG13];
 export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
+export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 
 export function getIsPublicBrowsingLevel(level: number) {
   const levels = parseBitwiseBrowsingLevel(level);

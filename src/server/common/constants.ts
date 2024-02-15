@@ -12,14 +12,7 @@ import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
 import { MantineTheme } from '@mantine/core';
-import {
-  ArticleSort,
-  BrowsingMode,
-  CollectionSort,
-  ImageSort,
-  PostSort,
-  QuestionSort,
-} from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { Generation } from '~/server/services/generation/generation.types';
 
 export const constants = {
@@ -40,18 +33,15 @@ export const constants = {
   postFilterDefaults: {
     sort: PostSort.MostReactions,
     period: MetricTimeframe.AllTime,
-    browsingMode: BrowsingMode.All,
     limit: 50,
   },
   articleFilterDefaults: {
     sort: ArticleSort.Newest,
     period: MetricTimeframe.AllTime,
-    browsingMode: BrowsingMode.SFW,
     limit: 50,
   },
   collectionFilterDefaults: {
     sort: CollectionSort.Newest,
-    browsingMode: BrowsingMode.SFW,
     limit: 50,
   },
   baseModels: [

@@ -46,7 +46,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { ArticleSort, BrowsingMode, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
@@ -239,7 +239,6 @@ const ImageCollection = ({
                 hidden: undefined,
                 withMeta: undefined,
                 followed: undefined,
-                browsingMode: currentUser ? undefined : BrowsingMode.All,
               }}
             />
           </ReactionSettingsProvider>

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { purgeCache } from '~/server/cloudflare/client';
-import { BrowsingMode } from '~/server/common/enums';
+
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -14,8 +14,7 @@ import { hashifyObject, slugit } from '~/utils/string-helpers';
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
     const _input = input as TInput;
-    let browsingMode = _input.browsingMode;
-    if (!browsingMode) browsingMode = ctx.browsingMode;
+    const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
 
     if (browsingMode !== BrowsingMode.All) {
       const { hidden } = userCache(ctx.user?.id);

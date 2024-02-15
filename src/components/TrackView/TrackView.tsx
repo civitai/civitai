@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { BrowsingMode } from '~/server/common/enums';
+import { useBrowsingLevel, useShowNsfw } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -11,14 +10,14 @@ export function TrackView({
   entityId,
   details,
   nsfw: nsfwOverride,
+  nsfwLevel,
 }: AddViewSchema) {
   const trackMutation = trpc.track.addView.useMutation();
   const observedEntityId = useRef<number | null>(null);
 
   const status = useAdViewSatus();
-  const nsfw = useFiltersContext(
-    (state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW
-  );
+  const nsfw = useShowNsfw();
+  const browsingLevel = useBrowsingLevel();
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -30,7 +29,9 @@ export function TrackView({
           entityId,
           details,
           ads: status,
-          nsfw,
+          nsfw: nsfwOverride ?? nsfw,
+          browsingLevel,
+          nsfwLevel,
         });
       }
     }, 1000);

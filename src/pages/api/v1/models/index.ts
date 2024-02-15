@@ -1,3 +1,4 @@
+import { extendedSessionUser } from '~/utils/session-helpers';
 import { ModelHashType, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -5,7 +6,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { BrowsingMode } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -13,6 +13,10 @@ import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 export const config = {
   api: {
@@ -30,8 +34,15 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  const browsingMode = req.query.nsfw === 'false' ? BrowsingMode.SFW : BrowsingMode.All;
-  const apiCaller = appRouter.createCaller({ ...publicApiContext(req, res), user, browsingMode });
+  const showNsfw = req.query.nsfw === 'false' ? false : true;
+  const browsingLevel = !showNsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
+
+  const apiCaller = appRouter.createCaller({
+    ...publicApiContext(req, res),
+    user: user ? extendedSessionUser(user) : undefined,
+    browsingLevel,
+    showNsfw,
+  });
   try {
     if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
       return res.status(401).json({ error: 'Unauthorized' });

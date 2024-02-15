@@ -1,16 +1,14 @@
 import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { PostSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { clubResourceSchema } from './club.schema';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
-  browsingMode: z.nativeEnum(BrowsingMode).default(constants.postFilterDefaults.browsingMode),
   period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
@@ -73,7 +71,6 @@ export const getPostsByCategorySchema = z.object({
   sort: z.nativeEnum(PostSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   periodMode: periodModeSchema,
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),

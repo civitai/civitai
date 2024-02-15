@@ -82,15 +82,9 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(updateImageHandler),
   getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
-  getInfinite: publicProcedure
-    .input(getInfiniteImagesSchema)
-    // .use(applyUserPreferences())
-    // .use(applyBrowsingMode())
-    .query(getInfiniteImagesHandler),
+  getInfinite: publicProcedure.input(getInfiniteImagesSchema).query(getInfiniteImagesHandler),
   getImagesAsPostsInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
-    // .use(applyUserPreferences())
-    // .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getImageSchema).query(getImageHandler),
   getResources: publicProcedure
