@@ -57,7 +57,6 @@ export function useApplyHiddenPreferences<
               })
               .filter(isDefined);
           case 'images':
-            console.log({ value, hiddenTags });
             return value.filter((image) => {
               const userId = image.userId ?? image.user?.id;
               if (userId === currentUser?.id && isSfw) return true;
