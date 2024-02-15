@@ -1,6 +1,17 @@
-import { createStyles, UnstyledButton, Center, Button, Group, Box } from '@mantine/core';
+import {
+  createStyles,
+  UnstyledButton,
+  Center,
+  Button,
+  Group,
+  Box,
+  CloseButton,
+  ActionIcon,
+  Text,
+} from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { IconBrush } from '@tabler/icons-react';
+import { CollectionType } from '@prisma/client';
+import { IconBrush, IconShare3 } from '@tabler/icons-react';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 
@@ -8,10 +19,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type GalleryCarouselProps = {
   className?: string;
@@ -23,7 +36,7 @@ type GalleryCarouselProps = {
 const maxIndicators = 20;
 export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const {
     images,
     image: current,
@@ -32,6 +45,8 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
     navigate,
     canNavigate,
     connect,
+    close,
+    shareUrl,
   } = useImageDetailContext();
 
   const { setRef, height, width } = useAspectRatioFit({
@@ -79,76 +94,132 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
         connect={connect}
         render={(image) => {
           return (
-            <Center
-              sx={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-              }}
-            >
+            <>
+              <Group
+                position="apart"
+                spacing="sm"
+                px={15}
+                style={{ position: 'absolute', top: 15, width: '100%', zIndex: 10 }}
+              >
+                <Group>Test</Group>
+                <Group spacing="xs">
+                  <ImageGuard.ToggleConnect
+                    position="static"
+                    sx={(theme) => ({ height: 30, borderRadius: theme.radius.xl })}
+                    size="lg"
+                  />
+                  <ImageGuard.ToggleImage
+                    position="static"
+                    sx={(theme) => ({ height: 30, borderRadius: theme.radius.xl })}
+                    size="lg"
+                  />
+                  {currentUser && image.meta && (
+                    <Button
+                      size="md"
+                      radius="xl"
+                      color="blue"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                      data-activity="remix:image"
+                      compact
+                    >
+                      <Group spacing={4} noWrap>
+                        <IconBrush size={14} />
+                        <Text size="xs">Remix</Text>
+                      </Group>
+                    </Button>
+                  )}
+                  <ShareButton
+                    url={shareUrl}
+                    title={`Image by ${image.user.username}`}
+                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                  >
+                    <ActionIcon
+                      size={30}
+                      radius="xl"
+                      color="gray"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    >
+                      <IconShare3 size={14} />
+                    </ActionIcon>
+                  </ShareButton>
+                  <CloseButton
+                    size="lg"
+                    variant="default"
+                    onClick={close}
+                    className={classes.mobileOnly}
+                    radius="xl"
+                  />
+                  <ImageGuard.Report
+                    position="static"
+                    actionIconProps={{
+                      radius: 'xl',
+                      color: 'gray',
+                      variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+                    }}
+                  />
+                </Group>
+              </Group>
               <Center
-                style={{
-                  position: 'relative',
-                  height: height,
-                  width: width,
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
                 }}
               >
-                <ImageGuard.ToggleConnect
-                  position="top-left"
-                  sx={(theme) => ({ borderRadius: theme.radius.sm })}
-                  size="lg"
-                />
-                <ImageGuard.ToggleImage
-                  position="top-left"
-                  sx={(theme) => ({ borderRadius: theme.radius.sm })}
-                  size="lg"
-                />
-                <ImageGuard.Report />
-                <ImageGuard.Unsafe>
-                  <MediaHash {...image} />
-                </ImageGuard.Unsafe>
-                <ImageGuard.Safe>
-                  <EdgeMedia
-                    src={image.url}
-                    name={image.name ?? image.id.toString()}
-                    alt={
-                      image.meta
-                        ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                        : image.name ?? undefined
-                    }
-                    type={image.type}
-                    style={{ maxHeight: '100%', maxWidth: '100%' }}
-                    width="original"
-                    anim
-                    controls
-                    fadeIn
-                  />
-                  {showGenerateButton && (
-                    <Box
-                      sx={(theme) => ({
-                        position: 'absolute',
-                        bottom: hasMultipleImages ? theme.spacing.xl + 8 : theme.spacing.md,
-                        left: '50%',
-                        transform: 'translate(-50%)',
-                      })}
-                    >
-                      <Button
-                        className={classes.generateButton}
-                        variant="default"
-                        radius="xl"
-                        onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                <Center
+                  style={{
+                    position: 'relative',
+                    height: height,
+                    width: width,
+                  }}
+                >
+                  <ImageGuard.Unsafe>
+                    <MediaHash {...image} />
+                  </ImageGuard.Unsafe>
+                  <ImageGuard.Safe>
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={
+                        image.meta
+                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                          : image.name ?? undefined
+                      }
+                      type={image.type}
+                      style={{ maxHeight: '100%', maxWidth: '100%' }}
+                      width="original"
+                      anim
+                      controls
+                      fadeIn
+                    />
+                    {showGenerateButton && (
+                      <Box
+                        sx={(theme) => ({
+                          position: 'absolute',
+                          bottom: hasMultipleImages ? theme.spacing.xl + 8 : theme.spacing.md,
+                          left: '50%',
+                          transform: 'translate(-50%)',
+                        })}
                       >
-                        <Group spacing={4} noWrap>
-                          <IconBrush size={20} /> Create images like this!
-                        </Group>
-                      </Button>
-                    </Box>
-                  )}
-                </ImageGuard.Safe>
+                        <Button
+                          className={classes.generateButton}
+                          variant="default"
+                          radius="xl"
+                          onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                        >
+                          <Group spacing={4} noWrap>
+                            <IconBrush size={20} /> Create images like this!
+                          </Group>
+                        </Button>
+                      </Box>
+                    )}
+                  </ImageGuard.Safe>
+                </Center>
               </Center>
-            </Center>
+            </>
           );
         }}
       />
@@ -160,7 +231,12 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
+  const isMobile = containerQuery.smallerThan('md');
+  const isDesktop = containerQuery.largerThan('md');
+
   return {
+    mobileOnly: { [isDesktop]: { display: 'none' } },
+    desktopOnly: { [isMobile]: { display: 'none' } },
     root: {
       position: 'relative',
     },

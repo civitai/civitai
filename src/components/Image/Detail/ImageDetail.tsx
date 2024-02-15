@@ -93,22 +93,53 @@ export function ImageDetail() {
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
         <Paper className={classes.root}>
-          <CloseButton
-            style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-            size="lg"
-            variant="default"
-            onClick={close}
-            className={classes.mobileOnly}
-          />
-          <ImageDetailCarousel className={classes.carousel} />
-          <ActionIcon
-            size="lg"
-            className={cx(classes.info, classes.mobileOnly)}
-            onClick={toggleInfo}
-            variant="default"
-          >
-            <IconInfoCircle />
-          </ActionIcon>
+          <div className={classes.carouselWrapper}>
+            <Group
+              position="apart"
+              spacing="sm"
+              px={15}
+              style={{ position: 'absolute', bottom: 30, width: '100%', zIndex: 10 }}
+            >
+              <Group spacing="xs">
+                <Stack spacing={2}>
+                  <Text size="sm" align="center" weight={500} lh={1.1}>
+                    {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                  </Text>
+                  <Group spacing={4}>
+                    <IconEye size={14} stroke={1.5} />
+                    <Text color="dimmed" size="xs" lh={1} mt={-2}>
+                      total views
+                    </Text>
+                  </Group>
+                </Stack>
+                <Reactions
+                  entityId={image.id}
+                  entityType="image"
+                  reactions={image.reactions}
+                  metrics={{
+                    likeCount: image.stats?.likeCountAllTime,
+                    dislikeCount: image.stats?.dislikeCountAllTime,
+                    heartCount: image.stats?.heartCountAllTime,
+                    laughCount: image.stats?.laughCountAllTime,
+                    cryCount: image.stats?.cryCountAllTime,
+                    tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                  }}
+                  targetUserId={image.user.id}
+                />
+              </Group>
+
+              <ActionIcon
+                size="lg"
+                className={cx(classes.mobileOnly)}
+                onClick={toggleInfo}
+                variant="default"
+                radius="xl"
+              >
+                <IconInfoCircle />
+              </ActionIcon>
+            </Group>
+            <ImageDetailCarousel className={classes.carousel} />
+          </div>
           <Card
             className={cx(classes.sidebar, {
               [classes.active]: active,
@@ -166,22 +197,6 @@ export function ImageDetail() {
               <Stack spacing={8}>
                 <Group position="apart" spacing={8}>
                   <Group spacing={8}>
-                    {currentUser && image.meta && (
-                      <Button
-                        size="md"
-                        radius="xl"
-                        color="blue"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                        data-activity="remix:image"
-                        compact
-                      >
-                        <Group spacing={4} noWrap>
-                          <IconBrush size={14} />
-                          <Text size="xs">Remix</Text>
-                        </Group>
-                      </Button>
-                    )}
                     {image.postId &&
                       (!query.postId ? (
                         <RoutedDialogLink
@@ -233,20 +248,6 @@ export function ImageDetail() {
                     >
                       <IconBookmark size={14} />
                     </ActionIcon>
-                    <ShareButton
-                      url={shareUrl}
-                      title={`Image by ${image.user.username}`}
-                      collect={{ type: CollectionType.Image, imageId: image.id }}
-                    >
-                      <ActionIcon
-                        size={30}
-                        radius="xl"
-                        color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      >
-                        <IconShare3 size={14} />
-                      </ActionIcon>
-                    </ShareButton>
                   </Group>
                   <Group spacing={8}>
                     <LoginRedirect reason={'report-content'}>
@@ -309,33 +310,6 @@ export function ImageDetail() {
                   />
                   <Paper p="sm" radius={0}>
                     <Stack spacing={8}>
-                      <Group position="apart">
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                            tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                          }}
-                          targetUserId={image.user.id}
-                        />
-                        <Stack spacing={2}>
-                          <Text size="sm" align="center" weight={500} lh={1.1}>
-                            {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                          </Text>
-                          <Group spacing={4}>
-                            <IconEye size={14} stroke={1.5} />
-                            <Text color="dimmed" size="xs" lh={1} mt={-2}>
-                              total views
-                            </Text>
-                          </Group>
-                        </Stack>
-                      </Group>
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Stack>
                   </Paper>
@@ -380,9 +354,14 @@ const useStyles = createStyles((theme, _props, getRef) => {
       overflow: 'hidden',
       zIndex: 200,
     },
-    carousel: {
+    carouselWrapper: {
       flex: 1,
       alignItems: 'stretch',
+      position: 'relative',
+    },
+    carousel: {
+      width: '100%',
+      height: '100%',
     },
     active: { ref: getRef('active') },
     sidebar: {

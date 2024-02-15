@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  ActionIconProps,
   Alert,
   Badge,
   Box,
@@ -314,6 +315,7 @@ ImageGuard.Report = function ReportImage({
   withinPortal = false,
   context = 'image',
   additionalMenuItems,
+  actionIconProps,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
@@ -321,6 +323,7 @@ ImageGuard.Report = function ReportImage({
   additionalMenuItems?:
     | React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[]
     | null;
+  actionIconProps?: Omit<ActionIconProps, 'onClick'>;
 }) {
   const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();
@@ -614,6 +617,7 @@ ImageGuard.Report = function ReportImage({
                 e.stopPropagation();
               }}
               sx={{ width: 30 }}
+              {...actionIconProps}
             >
               <IconDotsVertical
                 size={26}
