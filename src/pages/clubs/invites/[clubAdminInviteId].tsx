@@ -28,12 +28,12 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: false,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: false,
+    //   },
+    // };
 
     return { props: { clubAdminInviteId } };
   },
