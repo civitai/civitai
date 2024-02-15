@@ -12,13 +12,14 @@ import {
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   getByIdSchema,
   infiniteQuerySchema,
   paginationSchema,
   periodModeSchema,
+  userPreferencesSchema,
 } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -33,16 +34,7 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
-export type UserPreferencesForModelsInput = z.infer<typeof userPreferencesForModelsSchema>;
-export const userPreferencesForModelsSchema = z.object({
-  excludedIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageTagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-});
-
-export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModelsSchema).extend({
+export const getAllModelsSchema = licensingSchema.merge(userPreferencesSchema).extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
@@ -73,7 +65,6 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
@@ -259,7 +250,6 @@ export const getModelsByCategorySchema = z.object({
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,

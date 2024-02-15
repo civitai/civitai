@@ -7,11 +7,11 @@ import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 
 type HiddenPreferencesState = {
-  users: Map<number, boolean>;
-  tags: Map<number, boolean>;
-  models: Map<number, boolean>;
-  images: Map<number, boolean>;
-  isLoading: boolean;
+  hiddenUsers: Map<number, boolean>;
+  hiddenTags: Map<number, boolean>;
+  hiddenModels: Map<number, boolean>;
+  hiddenImages: Map<number, boolean>;
+  hiddenLoading: boolean;
   browsingLevel: number;
   isSfw: boolean;
 };
@@ -49,11 +49,11 @@ export const HiddenPreferencesProvider = ({
     );
 
     return {
-      users: new Map(data.hiddenUsers.map((x) => [x.id, true])),
-      models: new Map(data.hiddenModels.map((x) => [x.id, true])),
-      tags,
-      images,
-      isLoading,
+      hiddenUsers: new Map(data.hiddenUsers.map((x) => [x.id, true])),
+      hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
+      hiddenTags: tags,
+      hiddenImages: images,
+      hiddenLoading: isLoading,
       browsingLevel,
       isSfw: getIsPublicBrowsingLevel(browsingLevel),
     };

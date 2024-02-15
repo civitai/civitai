@@ -1,68 +1,40 @@
 import superjson from 'superjson';
-import { z } from 'zod';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
 import { purgeCache } from '~/server/cloudflare/client';
 
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
-import { getHiddenTagsForUser, userCache } from '~/server/services/user-cache.service';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
+import { Flags } from '~/shared/utils';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 
-export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
-  middleware(async ({ input, ctx, next }) => {
-    const _input = input as TInput;
-    const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
+export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
+  const _input = input as UserPreferencesInput;
+  const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
 
-    if (browsingMode !== BrowsingMode.All) {
-      const { hidden } = userCache(ctx.user?.id);
-      const [hiddenTags, hiddenUsers, hiddenImages] = await Promise.all([
-        hidden.tags.get(),
-        hidden.users.get(),
-        hidden.images.get(),
-      ]);
-
-      _input.excludedTagIds = [
-        ...hiddenTags.hiddenTags,
-        ...hiddenTags.moderatedTags,
-        ...(_input.excludedTagIds ?? []),
-      ];
-      _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
-      _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
-
-      if (browsingMode === BrowsingMode.SFW) {
-        const systemHidden = await getHiddenTagsForUser({ userId: -1 });
-        _input.excludedTagIds = [
-          ...systemHidden.hiddenTags,
-          ...systemHidden.moderatedTags,
-          ...(_input.excludedTagIds ?? []),
-        ];
-      }
-    }
-
-    return next({
-      ctx: { user: ctx.user },
-    });
+  const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
+    userId: ctx.user?.id,
   });
 
-type BrowsingModeInput = z.infer<typeof browsingModeSchema>;
-const browsingModeSchema = z.object({
-  browsingMode: z.nativeEnum(BrowsingMode).default(BrowsingMode.All),
+  const tagsToHide = hiddenTags
+    .filter((x) => !x.nsfwLevel || !Flags.hasFlag(browsingLevel, x.nsfwLevel))
+    .map((x) => x.id);
+
+  const imagesToHide = hiddenImages
+    .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
+    .map((x) => x.id);
+
+  _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
+  _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
+  _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];
+  _input.excludedModelIds = [...(_input.excludedModelIds ?? []), ...hiddenModels.map((x) => x.id)];
+
+  return next({
+    ctx: { user: ctx.user },
+  });
 });
-
-export const applyBrowsingMode = <TInput extends BrowsingModeInput>() =>
-  middleware(async ({ input, ctx, next }) => {
-    const _input = input as TInput;
-    const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
-    if (canViewNsfw && !_input.browsingMode) _input.browsingMode = BrowsingMode.All;
-    else if (!canViewNsfw) _input.browsingMode = BrowsingMode.SFW;
-
-    return next({
-      ctx: { user: ctx.user },
-    });
-  });
 
 type CacheItProps<TInput extends object> = {
   key?: string;

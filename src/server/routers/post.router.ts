@@ -1,4 +1,4 @@
-import { applyUserPreferences, applyBrowsingMode, cacheIt } from './../middleware.trpc';
+import { applyUserPreferences, cacheIt } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
 import { guardedProcedure, publicProcedure } from './../trpc';
 import {
@@ -79,8 +79,7 @@ const isImageOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => 
 export const postRouter = router({
   getInfinite: publicProcedure
     .input(postsQuerySchema)
-    .use(applyUserPreferences())
-    .use(applyBrowsingMode())
+    .use(applyUserPreferences)
     .query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
@@ -107,7 +106,7 @@ export const postRouter = router({
     .mutation(reorderPostImagesHandler),
   getTags: publicProcedure
     .input(getPostTagsSchema)
-    .use(applyUserPreferences())
+    .use(applyUserPreferences)
     .query(getPostTagsHandler),
   addTag: protectedProcedure
     .input(addPostTagSchema)
@@ -120,7 +119,7 @@ export const postRouter = router({
   getResources: publicProcedure.input(getByIdSchema).query(getPostResourcesHandler),
   getPostsByCategory: publicProcedure
     .input(getPostsByCategorySchema)
-    .use(applyUserPreferences())
+    .use(applyUserPreferences)
     // .use(cacheIt())
     .query(({ input }) => getPostsByCategory(input)),
 });

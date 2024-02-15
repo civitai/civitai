@@ -38,7 +38,7 @@ import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
-import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
+import { FiltersProvider } from '~/providers/FiltersProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
@@ -71,14 +71,13 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: ParsedCookies;
-  filters: CookiesState;
   flags: FeatureAccess;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme: initialColorScheme, cookies, filters, flags, ...pageProps },
+    pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme | undefined>(initialColorScheme);
   const toggleColorScheme = useCallback(
@@ -232,7 +231,7 @@ function MyApp(props: CustomAppProps) {
                           <CookiesProvider value={cookies}>
                             <BrowsingModeProvider>
                               <ReferralsProvider>
-                                <FiltersProvider value={filters}>
+                                <FiltersProvider>
                                   <AdsProvider>
                                     <PaypalProvider>
                                       <HiddenPreferencesProvider>
@@ -285,7 +284,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
-  const filters = parseFilterCookies(cookies);
 
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
@@ -306,7 +304,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       cookies: parsedCookies,
       session,
       flags,
-      filters,
     },
     ...appProps,
   };

@@ -20,19 +20,14 @@ export function useApplyHiddenPreferences<
 }) {
   const currentUser = useCurrentUser();
 
-  const {
-    models: hiddenModels,
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingPreferences,
-    isSfw,
-  } = useHiddenPreferencesContext();
+  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading, isSfw } =
+    useHiddenPreferencesContext();
+  console.log({ hiddenTags });
 
   const items = useMemo(
     () => {
       if (disabled) return data ?? [];
-      if (loadingPreferences || !data) return [];
+      if (hiddenLoading || !data) return [];
       const { key, value } = paired<BaseDataTypeMap>(type, data);
 
       function filter() {
@@ -180,14 +175,14 @@ export function useApplyHiddenPreferences<
       hiddenImages,
       hiddenTags,
       hiddenUsers,
-      loadingPreferences,
+      hiddenLoading,
       isSfw,
       disabled,
     ]
   );
 
   return {
-    loadingPreferences,
+    loadingPreferences: hiddenLoading,
     items: items as TData,
     hiddenCount: !!data?.length ? data.length - items.length : 0,
   };

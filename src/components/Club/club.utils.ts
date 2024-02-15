@@ -644,10 +644,10 @@ export const useQueryClubPosts = (
   );
   const currentUser = useCurrentUser();
   const {
-    users: hiddenUsers,
-    images: hiddenImages,
-    tags: hiddenTags,
-    isLoading: isLoadingHidden,
+    hiddenUsers: hiddenUsers,
+    hiddenImages: hiddenImages,
+    hiddenTags: hiddenTags,
+    hiddenLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
 
   const clubPosts = useMemo(() => {
@@ -765,10 +765,10 @@ export const useQueryClubs = (
   const showNsfw = useShowNsfw();
 
   const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: isLoadingHidden,
+    hiddenImages: hiddenImages,
+    hiddenTags: hiddenTags,
+    hiddenUsers: hiddenUsers,
+    hiddenLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
 
   const clubs = useMemo(() => {

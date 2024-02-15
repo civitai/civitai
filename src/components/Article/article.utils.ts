@@ -55,9 +55,8 @@ export const useQueryArticles = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
@@ -75,9 +74,8 @@ export const useQueryArticleCategories = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.article.getByCategory.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

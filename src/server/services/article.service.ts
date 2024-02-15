@@ -116,7 +116,6 @@ export const getArticles = async ({
   includeDrafts,
   ids,
   collectionId,
-  browsingMode,
   followed,
   clubId,
 }: GetInfiniteArticlesSchema & {

@@ -75,7 +75,7 @@ export const getTags = async ({
   entityType,
   query,
   modelId,
-  not,
+  excludedTagIds,
   unlisted = false,
   categories,
   sort,
@@ -100,12 +100,12 @@ export const getTags = async ({
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."tagId" = t."id" AND tom."modelId" = ${modelId})`
     );
-  if (not && not.length > 0 && !query) {
-    AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(not)})`);
+  if (excludedTagIds && excludedTagIds.length > 0 && !query) {
+    AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(excludedTagIds)})`);
     AND.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnTags" tot
       WHERE tot."toTagId" = t."id"
-      AND tot."fromTagId" IN (${Prisma.join(not)})
+      AND tot."fromTagId" IN (${Prisma.join(excludedTagIds)})
       AND tot.type = 'Parent'
     )`);
   }

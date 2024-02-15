@@ -84,7 +84,7 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; hei
       staleTime: Infinity,
     });
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
-  const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
+  const { hiddenUsers: hiddenUsers, hiddenModels: hiddenModels } = useHiddenPreferencesContext();
   const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
 
   const modelText = (

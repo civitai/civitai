@@ -4,7 +4,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
-import { getModerationTags2, getSystemHiddenTags } from '~/server/services/system-cache';
+import { getModerationTags2 } from '~/server/services/system-cache';
 import {
   refreshHiddenImagesForUser,
   refreshHiddenModelsForUser,
@@ -253,8 +253,8 @@ const getAllHiddenForUsersCached = async ({
 
   const getModeratedTags = async () =>
     cachedSystemHiddenTags
-      ? (JSON.parse(cachedSystemHiddenTags) as AsyncReturnType<typeof getSystemHiddenTags>)
-      : await getSystemHiddenTags();
+      ? (JSON.parse(cachedSystemHiddenTags) as AsyncReturnType<typeof getModerationTags2>)
+      : await getModerationTags2();
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
     cachedHiddenTags ? HiddenTags.parseJson(cachedHiddenTags) : await HiddenTags.get({ userId });

@@ -8,7 +8,6 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
-  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -20,7 +19,7 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, ModelFileType, CacheTTL } from '~/server/common/constants';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
@@ -718,14 +717,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     hidden,
     excludedTagIds,
     excludedUserIds,
-    excludedIds,
+    excludedModelIds,
     checkpointType,
     status,
     allowNoCredit,
     allowDifferentLicense,
     allowDerivatives,
     allowCommercialUse,
-    browsingMode,
     ids,
     needsReview,
     earlyAccess,
@@ -808,8 +806,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
     });
   }
-  if (excludedIds && !hidden && !username) {
-    AND.push({ id: { notIn: excludedIds } });
+  if (excludedModelIds && !hidden && !username) {
+    AND.push({ id: { notIn: excludedModelIds } });
   }
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     const TypeOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ checkpointType }];
@@ -896,12 +894,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
   }
 
-  const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
+  // TODO - filter by browsingLevel
   const where: Prisma.ModelWhereInput = {
     tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw: hideNSFWModels ? false : undefined,
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
@@ -1014,7 +1011,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     ? await getImagesForModelVersion({
         modelVersionIds,
         imagesPerVersion: 10,
-        excludedTagIds: input.excludedImageTagIds,
+        excludedTagIds: input.excludedTagIds,
         include: ['tags'],
         currentUserId: user?.id,
       })
@@ -1681,7 +1678,7 @@ export const getModelsByCategory = async ({
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
         modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
+        excludedTagIds: input.excludedTagIds,
         excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
         excludedUserIds: input.excludedUserIds,
         currentUserId: user?.id,

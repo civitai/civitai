@@ -102,7 +102,7 @@ export const imageRouter = router({
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
   getImagesByCategory: publicProcedure
     .input(getImagesByCategorySchema)
-    .use(applyUserPreferences())
+    .use(applyUserPreferences)
     // .use(cacheIt())
     .query(({ input, ctx }) => getImagesByCategory({ ...input, userId: ctx.user?.id })),
   getEntitiesCoverImage: publicProcedure

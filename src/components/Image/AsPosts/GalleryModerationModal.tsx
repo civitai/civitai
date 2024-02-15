@@ -50,7 +50,7 @@ export function HiddenTagsSection() {
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     entityType: ['Image'],
     query: debouncedSearch.toLowerCase().trim(),
-    not: gallerySettings?.hiddenTags.map((x) => x.id),
+    excludedTagIds: gallerySettings?.hiddenTags.map((x) => x.id),
   });
   const options =
     data?.items

@@ -18,7 +18,7 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   ModelVersionMeta,
   RecommendedSettingsSchema,
@@ -42,7 +42,6 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
-  UserPreferencesForModelsInput,
   getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
@@ -482,7 +481,7 @@ export const getModelsWithVersionsHandler = async ({
       modelVersionIds,
       imagesPerVersion: 10,
       include: ['meta'],
-      excludedTagIds: input.excludedImageTagIds,
+      excludedTagIds: input.excludedTagIds,
       excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
       excludedUserIds: input.excludedUserIds,
       currentUserId: ctx.user?.id,
@@ -1044,7 +1043,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
 }: {
-  input: GetAssociatedResourcesInput & UserPreferencesForModelsInput;
+  input: GetAssociatedResourcesInput & UserPreferencesInput;
   ctx: Context;
 }) => {
   try {
@@ -1150,7 +1149,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       const images = !!modelVersionIds.length
         ? await getImagesForModelVersion({
             modelVersionIds,
-            excludedTagIds: modelInput.excludedImageTagIds,
+            excludedTagIds: modelInput.excludedTagIds,
             excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
             excludedUserIds: modelInput.excludedUserIds,
             currentUserId: user?.id,

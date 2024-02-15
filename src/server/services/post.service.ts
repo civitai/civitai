@@ -94,9 +94,8 @@ export const getPostsInfinite = async ({
   draftOnly,
   followed,
   clubId,
-  browsingMode,
 }: Omit<PostsQueryInput, 'include'> & {
-  user?: { id: number; isModerator?: boolean; username?: string };
+  user?: SessionUser;
   include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
