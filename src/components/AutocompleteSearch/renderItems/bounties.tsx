@@ -1,7 +1,6 @@
 import { AutocompleteItem, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { Currency } from '@prisma/client';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
-import { Hit } from 'instantsearch.js';
 import { truncate } from 'lodash-es';
 import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
@@ -13,15 +12,15 @@ import {
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export const BountiesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<BountySearchIndexRecord> }
+  AutocompleteItem & { hit: SearchIndexDataMap['bounties'][number] }
 >(({ value, hit, ...props }, ref) => {
   const { classes } = useSearchItemStyles();
 

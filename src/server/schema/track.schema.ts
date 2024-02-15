@@ -23,6 +23,8 @@ export const addViewSchema = z.object({
     'BountyEntry',
   ]),
   entityId: z.number(),
+  ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
+  nsfw: z.boolean().optional(),
   details: z.object({}).passthrough().optional(),
 });
 

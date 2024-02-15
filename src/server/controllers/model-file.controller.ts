@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   ModelFileCreateInput,
@@ -11,7 +12,7 @@ import {
   getByVersionId,
   updateFile,
 } from '~/server/services/model-file.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
@@ -21,10 +22,18 @@ export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInpu
   }
 };
 
-export const createFileHandler = async ({ input }: { input: ModelFileCreateInput }) => {
+export const createFileHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelFileCreateInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const file = await createFile({
       ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
       select: {
         id: true,
         name: true,
@@ -37,6 +46,9 @@ export const createFileHandler = async ({ input }: { input: ModelFileCreateInput
         },
       },
     });
+    ctx.track
+      .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
+      .catch(handleLogError);
 
     return file;
   } catch (error) {
@@ -45,30 +57,65 @@ export const createFileHandler = async ({ input }: { input: ModelFileCreateInput
   }
 };
 
-export const updateFileHandler = async ({ input }: { input: ModelFileUpdateInput }) => {
+export const updateFileHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelFileUpdateInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    return await updateFile(input);
+    const result = await updateFile({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+    ctx.track
+      .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
+      .catch(handleLogError);
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const upsertFileHandler = async ({ input }: { input: ModelFileUpsertInput }) => {
+export const upsertFileHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelFileUpsertInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     if (input.id !== undefined) {
-      return await updateFileHandler({ input });
+      return await updateFileHandler({ input, ctx });
     } else {
-      return await createFileHandler({ input });
+      return await createFileHandler({ input, ctx });
     }
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const deleteFileHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteFileHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    const deleted = await deleteFile(input);
+    const deleted = await deleteFile({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     if (!deleted) throw throwNotFoundError(`No file with id ${input.id}`);
+
+    ctx.track
+      .modelFile({ type: 'Delete', id: input.id, modelVersionId: deleted.modelVersionId })
+      .catch(handleLogError);
 
     return deleted;
   } catch (error) {

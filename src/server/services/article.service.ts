@@ -421,7 +421,6 @@ export const getArticles = async ({
       .filter((a) => {
         // This take prio over mod status just so mods can see the same as users.
         if (hidePrivateArticles && a.availability === Availability.Private) return false;
-
         if (sessionUser?.isModerator || a.userId === sessionUser?.id) return true;
 
         return true;

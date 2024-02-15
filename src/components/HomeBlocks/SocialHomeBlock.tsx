@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { SocialBlock, SocialBlockProps } from '~/components/HomeBlocks/components/SocialBlock';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsLive } from '~/hooks/useIsLive';
@@ -94,11 +94,11 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
   })
 );
 
-export const SocialHomeBlock = ({ ...props }: Props) => {
+export const SocialHomeBlock = ({ showAds, ...props }: Props) => {
   if (!props.metadata.socials?.length) return null;
 
   return (
-    <HomeBlockWrapper py={32}>
+    <HomeBlockWrapper py={32} showAds={showAds}>
       <SocialHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -111,7 +111,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   const socialData = metadata.socials ?? [];
   const itemCount = socialData.length;
   const isLive = useIsLive();
-  const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
+  const { columnWidth, columnGap, columnCount } = useMasonryContext();
   const { classes, cx } = useStyles({ columnWidth, columnGap });
 
   // ---------------------
@@ -256,4 +256,4 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   );
 };
 
-type Props = { metadata: HomeBlockMetaSchema };
+type Props = { metadata: HomeBlockMetaSchema; showAds?: boolean };

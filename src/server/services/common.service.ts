@@ -2,14 +2,16 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { Availability, Prisma } from '@prisma/client';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { isDefined } from '~/utils/type-guards';
+import { SupportedAvailabilityResources } from '../schema/base.schema';
 
 const entityAccessOwnerTypes = ['User', 'Club', 'ClubTier'] as const;
 type EntityAccessOwnerType = (typeof entityAccessOwnerTypes)[number];
 
 type UserEntityAccessStatus = {
   entityId: number;
-  entityType: SupportedClubEntities;
+  entityType: SupportedAvailabilityResources;
   hasAccess: boolean;
+  availability: Availability;
 };
 
 type EntityAccessRaw = {
@@ -17,13 +19,15 @@ type EntityAccessRaw = {
   hasAccess: boolean;
 };
 
+const OPEN_ACCESS_AVAILABILITY = [Availability.Public, Availability.Unsearchable] as const;
+
 export const hasEntityAccess = async ({
   entityType,
   entityIds,
   isModerator,
   userId,
 }: {
-  entityType: SupportedClubEntities;
+  entityType: SupportedAvailabilityResources;
   entityIds: number[];
   userId?: number;
   isModerator?: boolean;
@@ -32,68 +36,77 @@ export const hasEntityAccess = async ({
     return [];
   }
 
-  const res: UserEntityAccessStatus[] = entityIds.map((entityId) => ({
-    entityId,
-    entityType,
-    hasAccess: false,
-  }));
-
-  if (isModerator) {
-    return res.map((r) => ({ ...r, hasAccess: true }));
-  }
-
-  // TODO: Remove LEFT JOINs to make this more efficient
-  const data = await dbRead.$queryRaw<
-    { availability: Availability; userId: number; entityId: number }[]
-  >`
+  const query: Prisma.Sql =
+    entityType === 'ModelVersion'
+      ? Prisma.sql`
      SELECT
-    ${
-      entityType === 'ModelVersion'
-        ? Prisma.raw(`
-      mv.id as "entityId",
-      mmv."userId" as "userId",
-      mv."availability" as "availability"
-    `)
-        : entityType === 'Article'
-        ? Prisma.raw(`
+       mv.id as "entityId",
+       mmv."userId" as "userId",
+       mv."availability" as "availability"
+     FROM "ModelVersion" mv
+     JOIN "Model" mmv ON mv."modelId" = mmv.id
+     WHERE mv.id IN (${Prisma.join(entityIds, ',')})
+  `
+      : entityType === 'Article'
+      ? Prisma.sql`
+    SELECT
       a."id" as "entityId",
       a."userId" as "userId",
       a."availability" as "availability"
-    `)
-        : entityType === 'Post'
-        ? Prisma.raw(`
+    FROM "Article" a
+    WHERE id IN (${Prisma.join(entityIds, ',')})
+  `
+      : entityType === 'Post'
+      ? Prisma.sql`
+    SELECT
       p."id" as "entityId",
       p."userId" as "userId",
       p."availability" as "availability"
-    `)
-        : ''
-    }
-    ${
-      entityType === 'ModelVersion'
-        ? Prisma.raw(`
-        FROM "ModelVersion" mv 
-        JOIN "Model" mmv ON mv."modelId" = mmv.id
-        WHERE mv.id IN (${entityIds.join(', ')})
-    `)
-        : entityType === 'Article'
-        ? Prisma.raw(`
-        FROM "Article" a
-        WHERE id IN (${entityIds.join(', ')})
-    `)
-        : entityType === 'Post'
-        ? Prisma.raw(`
-        FROM "Post" p
-        WHERE id IN (${entityIds.join(', ')})
-    `)
-        : ''
-    }
+    FROM "Post" p
+    WHERE id IN (${Prisma.join(entityIds, ',')})
+  `
+      : entityType === 'Model'
+      ? Prisma.sql`
+    SELECT
+      m."id" as "entityId",
+      m."userId" as "userId",
+      m."availability" as "availability"
+    FROM "Model" m
+    WHERE id IN (${Prisma.join(entityIds, ',')})
+  `
+      : entityType === 'Collection'
+      ? Prisma.sql`
+    SELECT
+      c."id" as "entityId",
+      c."userId" as "userId",
+      c."availability" as "availability"
+    FROM "Collection" c
+    WHERE id IN (${Prisma.join(entityIds, ',')})
+  `
+      : // Bounty
+        Prisma.sql`
+    SELECT
+      b."id" as "entityId",
+      b."userId" as "userId",
+      b."availability" as "availability"
+    FROM "Bounty" b
+    WHERE id IN (${Prisma.join(entityIds, ',')})
   `;
+
+  const data = await dbRead.$queryRaw<
+    { availability: Availability; userId: number; entityId: number }[]
+  >(query);
 
   const privateRecords = data.filter((d) => d.availability === Availability.Private);
 
   // All entities are public. Access granted to everyone.
-  if (privateRecords.length === 0) {
-    return res.map((r) => ({ ...r, hasAccess: true }));
+  if (privateRecords.length === 0 || isModerator) {
+    return data.map((d) => ({
+      entityId: d.entityId,
+      entityType,
+      hasAccess: true,
+      availability: d.availability,
+    }));
   }
 
   const ownedRecords = data.filter((d) => d.userId === userId);
@@ -101,7 +114,12 @@ export const hasEntityAccess = async ({
   // Owners always have access.
   if (userId && ownedRecords.length === data.length) {
     // Access to all records since all are owned by the user.
-    return res.map((r) => ({ ...r, hasAccess: true }));
+    return data.map((d) => ({
+      entityId: d.entityId,
+      entityType,
+      hasAccess: true,
+      availability: d.availability,
+    }));
   }
 
   if (!userId) {
@@ -109,13 +127,14 @@ export const hasEntityAccess = async ({
     return data.map((d) => ({
       entityType,
       entityId: d.entityId,
-      hasAccess: d.availability === Availability.Public,
+      hasAccess: OPEN_ACCESS_AVAILABILITY.some((a) => a === d.availability),
+      availability: d.availability,
     }));
   }
 
   // TODO: Add userId index to Club, ClubMemberhsip and ClubAdmin.
   const entityAccess = await dbRead.$queryRaw<EntityAccessRaw[]>`
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       true as "hasAccess"
     FROM "EntityAccess" ea
@@ -124,12 +143,12 @@ export const hasEntityAccess = async ({
       AND (
         -- ClubTier check
         (
-          ea."accessorType" = 'ClubTier' AND 
+          ea."accessorType" = 'ClubTier' AND
           (
             -- User is a member of the club tier
             ea."accessorId" IN (
               SELECT cm."clubTierId"
-              FROM "ClubMembership" cm 
+              FROM "ClubMembership" cm
               WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
             )
             -- User is a admin of the club tier
@@ -150,7 +169,7 @@ export const hasEntityAccess = async ({
         ) OR
         -- Club check
         (
-          ea."accessorType" = 'Club' AND 
+          ea."accessorType" = 'Club' AND
           (
             -- User is the owner of the club
             ea."accessorId" IN (
@@ -171,7 +190,7 @@ export const hasEntityAccess = async ({
               WHERE ca."userId" = ${userId}
             )
           )
-        ) OR 
+        ) OR
         -- User check
         (
           ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
@@ -181,15 +200,18 @@ export const hasEntityAccess = async ({
 
   // Complex scenario - we have mixed entities with public/private access.
   return entityIds.map((entityId) => {
-    const publicEntityAccess = data.find(
-      (entity) => entity.entityId === entityId && entity.availability === Availability.Public
+    const openAccess = data.find(
+      (entity) =>
+        entity.entityId === entityId &&
+        OPEN_ACCESS_AVAILABILITY.some((a) => a === entity.availability)
     );
     // If the entity is public, we're ok to assume the user has access.
-    if (publicEntityAccess) {
+    if (openAccess) {
       return {
         entityId,
         entityType,
         hasAccess: true,
+        availability: openAccess.availability,
       };
     }
 
@@ -201,6 +223,7 @@ export const hasEntityAccess = async ({
         entityId,
         entityType,
         hasAccess: false,
+        availability: Availability.Private,
       };
     }
 
@@ -209,6 +232,7 @@ export const hasEntityAccess = async ({
       entityId,
       entityType,
       hasAccess,
+      availability: Availability.Private,
     };
   });
 };
@@ -250,7 +274,7 @@ export const entityRequiresClub = async ({
         SELECT
           mv.id as "entityId",
           mv."availability" as "availability"
-        FROM "ModelVersion" mv 
+        FROM "ModelVersion" mv
         WHERE mv.id IN (${Prisma.join(entityIds, ', ')})
         `;
 
@@ -263,6 +287,15 @@ export const entityRequiresClub = async ({
         FROM "Article" a
         WHERE id IN (${Prisma.join(entityIds, ', ')})
         `;
+      break;
+    case 'Post':
+      query = Prisma.sql`
+        SELECT
+          p."id" as "entityId",
+          p."availability" as "availability"
+        FROM "Post" p
+        WHERE id IN (${Prisma.join(entityIds, ', ')})
+          `;
       break;
     case 'Post':
       query = Prisma.sql`
@@ -321,12 +354,12 @@ export const entityRequiresClub = async ({
       clubTierId: number | null;
     }[]
   >`
-    SELECT 
-      ea."accessToId" "entityId", 
-      ea."accessToType" "entityType", 
+    SELECT
+      ea."accessToId" "entityId",
+      ea."accessToType" "entityType",
       COALESCE(c.id, ct."clubId") as "clubId",
       ct."id" as "clubTierId"
-    FROM "EntityAccess" ea 
+    FROM "EntityAccess" ea
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${getClubFilter(
       'c.id'
     )}
@@ -388,10 +421,12 @@ export const entityOwnership = async ({
   entityIds,
   userId,
 }: {
-  entityType: SupportedClubEntities;
+  entityType: SupportedAvailabilityResources;
   entityIds: number[];
   userId: number;
-}): Promise<{ entityId: number; entityType: SupportedClubEntities; isOwner: boolean }[]> => {
+}): Promise<
+  { entityId: number; entityType: SupportedAvailabilityResources; isOwner: boolean }[]
+> => {
   if (entityIds.length === 0) {
     return [];
   }
@@ -417,14 +452,14 @@ export const entityOwnership = async ({
         : entityType === 'Post'
         ? Prisma.raw(`
       p."id" as "entityId",
-      p."userId" = ${userId} as "isOwner" 
+      p."userId" = ${userId} as "isOwner"
     `)
         : ''
     }
     ${
       entityType === 'ModelVersion'
         ? Prisma.raw(`
-        FROM "ModelVersion" mv 
+        FROM "ModelVersion" mv
         JOIN "Model" mmv ON mv."modelId" = mmv.id
         WHERE mv.id IN (${entityIds.join(', ')})
     `)
@@ -453,7 +488,7 @@ export const entityAvailabilityUpdate = async ({
   entityIds,
   availability,
 }: {
-  entityType: SupportedClubEntities;
+  entityType: SupportedAvailabilityResources;
   entityIds: number[];
   availability: Availability;
 }) => {
@@ -462,20 +497,20 @@ export const entityAvailabilityUpdate = async ({
   }
 
   await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
-    UPDATE "${entityType}" t 
+    UPDATE "${entityType}" t
     SET "availability" = '${availability}'::"Availability"
     WHERE t.id IN (${entityIds.join(', ')})`);
 };
 
 export type EntityAccessWithKey = {
   entityId: number;
-  entityType: SupportedClubEntities;
+  entityType: SupportedAvailabilityResources;
   entityKey: string;
 };
 
 export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
   const entities = await dbRead.$queryRaw<EntityAccessWithKey[]>`
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -484,7 +519,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -494,7 +529,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -505,7 +540,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -516,7 +551,7 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
 
     UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -525,9 +560,9 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
     JOIN "ClubAdmin" ca ON ca."clubId" = c.id
     WHERE ca."userId" = ${userId}
 
-    UNION 
+    UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
@@ -535,9 +570,9 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
     JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'Club'
     WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
 
-    UNION 
+    UNION
 
-    SELECT 
+    SELECT
       ea."accessToId" "entityId",
       ea."accessToType" "entityType",
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"

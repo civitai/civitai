@@ -87,6 +87,62 @@ model UserReferralCode {
   @@index([userId], type: Hash)
 }
 
+enum StripeConnectStatus {
+  PendingOnboarding
+  Approved
+  PendingVerification
+  Rejected
+}
+
+model UserStripeConnect {
+  userId             Int                 @unique
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectedAccountId String              @unique
+  status             StripeConnectStatus @default(PendingOnboarding)
+  payoutsEnabled     Boolean             @default(false)
+  chargesEnabled     Boolean             @default(false)
+}
+
+enum BuzzWithdrawalRequestStatus {
+  Requested
+  Canceled // Refunds buzz - allows user to cancel existing one.
+  Rejected
+  Approved // Different than transferred in that a 3rd party can say it's a valid request, and the owners can reject after the fact.
+  Reverted
+  Transferred
+  ExternallyResolved
+}
+
+model BuzzWithdrawalRequestHistory {
+  id          String                      @id @default(cuid())
+  requestId   String
+  request     BuzzWithdrawalRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  updatedById Int
+  updatedBy   User                        @relation(fields: [updatedById], references: [id], onDelete: Cascade)
+  status      BuzzWithdrawalRequestStatus @default(Requested)
+  note        String?
+  createdAt   DateTime                    @default(now())
+  metadata    Json                        @default("{}")
+}
+
+model BuzzWithdrawalRequest {
+  id                          String                         @id @default(cuid())
+  userId                      Int?
+  user                        User?                          @relation(fields: [userId], references: [id])
+  connectedAccountId          String // Keeping this for double safe-measure :)
+  buzzWithdrawalTransactionId String // from Buzz Service
+  requestedBuzzAmount         Int // 1000
+  platformFeeRate             Int // 3000 = 30% so we can do 30.25
+  transferredAmount           Int?
+  transferId                  String? // Stripe ID
+  currency                    Currency? // We should always transfer on USD really (?)
+  metadata                    Json                           @default("{}")
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
+  status                      BuzzWithdrawalRequestStatus    @default(Requested) // updated with trigger
+  history                     BuzzWithdrawalRequestHistory[]
+}
+
 model User {
   id                  Int                   @id @default(autoincrement())
   name                String?
@@ -115,6 +171,7 @@ model User {
   profilePictureId    Int?                  @unique
   profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
   settings            Json?                 @default("{}")
+  connectedAccount    UserStripeConnect?
 
   accounts             Account[]
   sessions             Session[]
@@ -146,43 +203,49 @@ model User {
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
-  imageReactions          ImageReaction[]
-  sessionInvalidation     SessionInvalidation[]
-  stats                   UserStat?
-  rank                    UserRank?
-  downloads               DownloadHistory[]
-  purchases               Purchase[]
-  cosmetics               UserCosmetic[]
-  postReactions           PostReaction[]
-  posts                   Post[]
-  resourceReviews         ResourceReview[]
-  tagImageVotes           TagsOnImageVote[]
-  tagModelVotes           TagsOnModelsVote[]
-  tagPostVotes            TagsOnPostVote[]
-  resourceReviewReactions ResourceReviewReaction[]
-  articleReactions        ArticleReaction[]
-  articles                Article[]
-  articleEngagements      ArticleEngagement[]
-  leaderboardResults      LeaderboardResult[]
-  receivedReports         UserReport[]
-  engagedImages           ImageEngagement[]
-  collections             Collection[]
-  collectionItems         CollectionItem[]
-  reviewedCollectionItems CollectionItem[]         @relation("reviewedBy")
-  contributingCollections CollectionContributor[]
-  homeBlocks              HomeBlock[]
-  bounties                Bounty[]
-  bountyEntries           BountyEntry[]
-  sponsoredBounties       BountyBenefactor[]
-  engagedBounties         BountyEngagement[]
-  bountyEntryReactions    BountyEntryReaction[]
-  referralCodes           UserReferralCode[]
-  clubs                   Club[]
-  memberships             ClubMembership[]
-  addedClubPosts          ClubPost[]
-  accessGrantedBy         EntityAccess[]
-  clubAdmin               ClubAdmin[]
-  clubPostReactions       ClubPostReaction[]
+  imageReactions             ImageReaction[]
+  sessionInvalidation        SessionInvalidation[]
+  stats                      UserStat?
+  rank                       UserRank?
+  downloads                  DownloadHistory[]
+  purchases                  Purchase[]
+  cosmetics                  UserCosmetic[]
+  postReactions              PostReaction[]
+  posts                      Post[]
+  resourceReviews            ResourceReview[]
+  tagImageVotes              TagsOnImageVote[]
+  tagModelVotes              TagsOnModelsVote[]
+  tagPostVotes               TagsOnPostVote[]
+  resourceReviewReactions    ResourceReviewReaction[]
+  articleReactions           ArticleReaction[]
+  articles                   Article[]
+  articleEngagements         ArticleEngagement[]
+  leaderboardResults         LeaderboardResult[]
+  receivedReports            UserReport[]
+  engagedImages              ImageEngagement[]
+  collections                Collection[]
+  collectionItems            CollectionItem[]
+  reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
+  contributingCollections    CollectionContributor[]
+  homeBlocks                 HomeBlock[]
+  bounties                   Bounty[]
+  bountyEntries              BountyEntry[]
+  sponsoredBounties          BountyBenefactor[]
+  engagedBounties            BountyEngagement[]
+  bountyEntryReactions       BountyEntryReaction[]
+  referralCodes              UserReferralCode[]
+  clubs                      Club[]
+  memberships                ClubMembership[]
+  addedClubPosts             ClubPost[]
+  accessGrantedBy            EntityAccess[]
+  clubAdmin                  ClubAdmin[]
+  clubPostReactions          ClubPostReaction[]
+  withdrawalRequests         BuzzWithdrawalRequest[]
+  actionedWithdrawalRequests BuzzWithdrawalRequestHistory[]
+  chatMembers                ChatMember[]
+  chatMessages               ChatMessage[]
+  chatOwners                 Chat[]
+  builds                     BuildGuide[]
 }
 
 enum OnboardingStep {
@@ -426,6 +489,7 @@ model Model {
   mode                ModelModifier?
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
+  availability        Availability    @default(Public)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -819,6 +883,7 @@ model Report {
   collection     CollectionReport?
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
+  chat           ChatReport?
 }
 
 model ResourceReviewReport {
@@ -929,6 +994,16 @@ model BountyEntryReport {
 
   @@id([reportId, bountyEntryId])
   @@index([bountyEntryId], type: Hash)
+}
+
+model ChatReport {
+  chatId   Int
+  chat     Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, chatId])
+  @@index([chatId], type: Hash)
 }
 
 model ResourceReview {
@@ -1340,6 +1415,7 @@ model TagsOnImageVote {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   vote      Int // 1 or -1
   createdAt DateTime @default(now())
+  applied   Boolean  @default(false)
 
   @@id([tagId, imageId, userId])
   @@index([imageId], type: Hash)
@@ -1524,13 +1600,24 @@ model Log {
   createdAt DateTime @default(now())
 }
 
+enum NotificationCategory {
+  Comment
+  Update
+  Milestone
+  Bounty
+  Buzz
+  System
+  Other
+}
+
 model Notification {
-  id        String   @id @default(cuid())
+  id        String               @id @default(cuid())
   userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String
+  category  NotificationCategory @default(Other)
   details   Json?
-  createdAt DateTime @default(now())
+  createdAt DateTime             @default(now())
 
   @@index([userId, createdAt])
 }
@@ -1664,8 +1751,12 @@ model CommentV2 {
 }
 
 model Thread {
-  id     Int     @id @default(autoincrement())
-  locked Boolean @default(false)
+  id             Int     @id @default(autoincrement())
+  locked         Boolean @default(false)
+  parentThreadId Int?
+  parentThread   Thread? @relation("childThread", fields: [parentThreadId], references: [id], onDelete: Cascade)
+  rootThreadId   Int?
+  rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
 
   questionId    Int?            @unique
   question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
@@ -1692,7 +1783,9 @@ model Thread {
 
   metadata Json @default("{}")
 
-  comments CommentV2[] @relation("thread")
+  comments       CommentV2[] @relation("thread")
+  directChildren Thread[]    @relation("childThread")
+  children       Thread[]    @relation("root")
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
@@ -2044,21 +2137,22 @@ enum CollectionMode {
 }
 
 model Collection {
-  id          Int                          @id @default(autoincrement())
-  createdAt   DateTime?                    @default(now())
-  updatedAt   DateTime?                    @updatedAt
-  name        String
-  description String?
-  nsfw        Boolean?                     @default(false)
-  userId      Int
-  user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  imageId     Int?
-  image       Image?                       @relation(fields: [imageId], references: [id], onDelete: SetNull)
-  write       CollectionWriteConfiguration @default(Private)
-  read        CollectionReadConfiguration  @default(Private)
-  type        CollectionType?
-  mode        CollectionMode?
-  metadata    Json                         @default("{}")
+  id           Int                          @id @default(autoincrement())
+  createdAt    DateTime?                    @default(now())
+  updatedAt    DateTime?                    @updatedAt
+  name         String
+  description  String?
+  nsfw         Boolean?                     @default(false)
+  userId       Int
+  user         User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId      Int?
+  image        Image?                       @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  write        CollectionWriteConfiguration @default(Private)
+  read         CollectionReadConfiguration  @default(Private)
+  type         CollectionType?
+  mode         CollectionMode?
+  metadata     Json                         @default("{}")
+  availability Availability                 @default(Public)
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -2221,6 +2315,7 @@ model Bounty {
   poi                     Boolean         @default(false)
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
+  availability            Availability    @default(Public)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -2369,6 +2464,7 @@ model Link {
 
 enum Availability {
   Public
+  Unsearchable // Ignored from search results.
   Private
 }
 
@@ -2556,6 +2652,83 @@ model ClubMetric {
   resourceCount Int             @default(0)
 
   @@id([clubId, timeframe])
+}
+
+model Chat {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  hash      String   @unique // hash of asc-sorted userIds
+  ownerId   Int
+
+  owner User @relation(fields: [ownerId], references: [id])
+
+  chatMembers ChatMember[]
+  messages    ChatMessage[]
+  reports     ChatReport[]
+}
+
+enum ChatMemberStatus {
+  Invited
+  Joined
+  Ignored
+  Left
+  Kicked
+}
+
+model ChatMember {
+  id                  Int              @id @default(autoincrement())
+  createdAt           DateTime         @default(now()) // doubles as invited_at
+  userId              Int
+  chatId              Int
+  isOwner             Boolean          @default(false)
+  isMuted             Boolean          @default(false)
+  status              ChatMemberStatus
+  lastViewedMessageId Int?
+  joinedAt            DateTime?
+  ignoredAt           DateTime?
+  leftAt              DateTime? // do we need a rejoin option?
+  kickedAt            DateTime?
+  unkickedAt          DateTime? // TODO maybe remove
+
+  user              User         @relation(fields: [userId], references: [id])
+  chat              Chat         @relation(fields: [chatId], references: [id])
+  lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
+}
+
+enum ChatMessageType {
+  Markdown
+}
+
+model ChatMessage {
+  id                 Int             @id @default(autoincrement())
+  createdAt          DateTime        @default(now())
+  userId             Int // if -1, isSystemMessage
+  chatId             Int
+  content            String
+  contentType        ChatMessageType @default(Markdown)
+  // isSystemMessage Boolean @default(false)
+  referenceMessageId Int?
+  editedAt           DateTime?
+  // TODO deletedAt DateTime
+
+  user             User         @relation(fields: [userId], references: [id])
+  chat             Chat         @relation(fields: [chatId], references: [id])
+  referenceMessage ChatMessage? @relation(name: "referenceMessage", fields: [referenceMessageId], references: [id])
+
+  referenceMessages  ChatMessage[] @relation("referenceMessage")
+  lastViewedMessages ChatMember[]
+}
+
+model BuildGuide {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  name         String
+  message      String
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  components   Json
+  capabilities Json
 }
 
 /// @view
@@ -3174,6 +3347,11 @@ model ImageStat {
   reactionCountMonth       Int   @default(0)
   reactionCountYear        Int   @default(0)
   reactionCountAllTime     Int   @default(0)
+  collectedCountDay        Int   @default(0)
+  collectedCountWeek       Int   @default(0)
+  collectedCountMonth      Int   @default(0)
+  collectedCountYear       Int   @default(0)
+  collectedCountAllTime    Int   @default(0)
   tippedCountDay           Int   @default(0)
   tippedCountWeek          Int   @default(0)
   tippedCountMonth         Int   @default(0)

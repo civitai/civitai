@@ -20,7 +20,11 @@ export function GenerateButton({
   };
 
   if (children)
-    return React.cloneElement(children, { onClick: onClickHandler, style: { cursor: 'pointer' } });
+    return React.cloneElement(children, {
+      ...buttonProps,
+      onClick: onClickHandler,
+      style: { cursor: 'pointer' },
+    });
 
   const button = (
     <Button
@@ -34,7 +38,7 @@ export function GenerateButton({
       ) : (
         <Group spacing={8} noWrap>
           <IconBrush size={20} />
-          <Text inherit inline>
+          <Text inherit inline className="hide-mobile">
             Create
           </Text>
         </Group>

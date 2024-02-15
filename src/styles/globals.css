@@ -5,6 +5,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
     Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
   block-size: 100%;
+  inline-size: 100%;
   overflow: hidden;
 }
 
@@ -26,6 +27,10 @@ html {
   }
 }
 
+.show-mobile {
+  display: none;
+}
+
 /* helpful hiding classes for mobile */
 @media only screen and (max-width: 768px) {
   .hide-mobile {
@@ -34,12 +39,6 @@ html {
 
   .show-mobile {
     display: block;
-  }
-}
-
-@media only screen and (min-width: 768px) {
-  .show-mobile {
-    display: none;
   }
 }
 
@@ -115,6 +114,11 @@ a {
   border-top: 4px solid #ddd;
 }
 
+img.load-error {
+  opacity: 1;
+  background: rgba(255, 00, 00, 0.35);
+}
+
 iframe {
   border: none;
 }
@@ -135,7 +139,7 @@ iframe {
 }
 
 .demo-100 {
-  opacity: .95;
+  opacity: 0.95;
   stroke-width: 10px;
 }
 
@@ -239,7 +243,7 @@ iframe {
   }
 }
 
-/* Google Recapcha Hiding  */
+/* Google Recapcha Hiding */
 .grecaptcha-badge {
   visibility: hidden;
 }

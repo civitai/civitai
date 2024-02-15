@@ -18,7 +18,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { CollectionType, NsfwLevel } from '@prisma/client';
+import { CollectionType, ImageIngestionStatus, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -29,6 +29,8 @@ import {
   IconLock,
   IconPencil,
   IconPlus,
+  IconRecycle,
+  IconRestore,
   IconTrash,
   IconUser,
   IconUserMinus,
@@ -56,6 +58,7 @@ import { constants } from '~/server/common/constants';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useImageStore } from '~/store/image.store';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 export type ImageGuardConnect = {
   entityType:
@@ -169,6 +172,7 @@ type ImageProps = {
   userId?: number;
   user?: SimpleUser;
   url?: string | null;
+  ingestion?: ImageIngestionStatus;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -325,6 +329,7 @@ ImageGuard.Report = function ReportImage({
   const features = useFeatureFlags();
   const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
   const [needsReview, setNeedsReview] = useState(image.needsReview);
+  const [ingestion, setIngestion] = useState(image.ingestion);
 
   const moderateImagesMutation = trpc.image.moderate.useMutation();
   const handleModerate = async (
@@ -341,6 +346,7 @@ ImageGuard.Report = function ReportImage({
       reviewType: 'minor',
     });
     setNeedsReview(null);
+    setIngestion('Scanned');
   };
 
   // if (!showReportNsfw) return null;
@@ -358,7 +364,7 @@ ImageGuard.Report = function ReportImage({
   };
 
   let NeedsReviewBadge = needsReview && (
-    <ThemeIcon size="lg" color="yellow">
+    <ThemeIcon size="lg" color={needsReview === 'csam' && isModerator ? 'red' : 'yellow'}>
       {needsReview === 'poi' ? (
         <IconUser strokeWidth={2.5} size={26} />
       ) : (
@@ -367,7 +373,7 @@ ImageGuard.Report = function ReportImage({
     </ThemeIcon>
   );
 
-  if (needsReview && isModerator)
+  if (needsReview && needsReview !== 'csam' && isModerator)
     NeedsReviewBadge = (
       <Menu position="bottom">
         <Menu.Target>
@@ -405,7 +411,7 @@ ImageGuard.Report = function ReportImage({
         </Menu.Dropdown>
       </Menu>
     );
-  else if (needsReview) {
+  else if (needsReview && !isModerator) {
     NeedsReviewBadge = (
       <HoverCard width={200} withArrow>
         <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>
@@ -420,6 +426,32 @@ ImageGuard.Report = function ReportImage({
           </Stack>
         </HoverCard.Dropdown>
       </HoverCard>
+    );
+  } else if (isModerator && ingestion === 'Blocked') {
+    NeedsReviewBadge = (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <ThemeIcon size="lg" color="yellow">
+              <IconRecycle strokeWidth={2.5} size={20} />
+            </ThemeIcon>
+          </Box>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            onClick={(e) => handleModerate(e, 'accept')}
+            icon={<IconRestore size={14} stroke={1.5} />}
+          >
+            Restore
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
     );
   }
 
@@ -444,6 +476,19 @@ ImageGuard.Report = function ReportImage({
               }
             }
           }}
+        />
+      ),
+    });
+  }
+
+  if (image.postId) {
+    defaultMenuItems.push({
+      key: 'toggle-searchable-menu-item',
+      component: (
+        <ToggleSearchableMenuItem
+          entityType="Post"
+          entityId={image.postId}
+          key="toggle-searchable-menu-item"
         />
       ),
     });

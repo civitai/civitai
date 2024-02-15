@@ -1,6 +1,17 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import { ActionIcon, Center, Group, Menu, Paper, Text, Tooltip, createStyles } from '@mantine/core';
-import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Center,
+  Group,
+  Menu,
+  Paper,
+  Text,
+  Tooltip,
+  createStyles,
+  Stack,
+} from '@mantine/core';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { IconExclamationMark, IconInfoCircle, IconMessage, IconBrush } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
@@ -22,6 +33,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import { generationPanel } from '~/store/generation.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { trpc } from '~/utils/trpc';
 
 export function ImagesAsPostsCard({
   data,
@@ -35,8 +49,11 @@ export function ImagesAsPostsCard({
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const queryUtils = trpc.useUtils();
 
-  const { modelVersions, showModerationOptions, model } = useImagesAsPostsInfiniteContext();
+  const { modelVersions, showModerationOptions, model, filters } =
+    useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
   const modelVersionName = targetModelVersion?.name;
   const postId = data.postId ?? undefined;
@@ -56,6 +73,10 @@ export function ImagesAsPostsCard({
         modelId: model.id,
         images: [{ id: imageId }],
       }).catch(() => null); // Error is handled in the mutation events
+
+      if (filters.hidden)
+        // Refetch the query to update the hidden images
+        await queryUtils.image.getImagesAsPostsInfinite.invalidate({ ...filters });
     }
   };
 
@@ -165,11 +186,35 @@ export function ImagesAsPostsCard({
                           {image.meta && 'civitaiResources' in (image.meta as object) && (
                             <OnsiteIndicator />
                           )}
-                          <ImageGuard.Report
-                            additionalMenuItems={moderationOptions(image.id)}
-                            withinPortal
-                          />
                           <ImageGuard.ToggleImage position="top-left" />
+                          {safe && (
+                            <Stack spacing="xs" className={classes.topRight}>
+                              <ImageGuard.Report
+                                additionalMenuItems={moderationOptions(image.id)}
+                                position="static"
+                                withinPortal
+                              />
+                              {features.imageGeneration && image.meta && (
+                                <HoverActionButton
+                                  label="Remix"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  data-activity="remix:model-gallery"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    generationPanel.open({
+                                      type: 'image',
+                                      id: image.id,
+                                    });
+                                  }}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
+                            </Stack>
+                          )}
                           <RoutedDialogLink
                             name="imageDetail"
                             state={{ imageId: image.id, images: [image] }}
@@ -208,6 +253,7 @@ export function ImagesAsPostsCard({
                               heartCount: image.stats?.heartCountAllTime,
                               laughCount: image.stats?.laughCountAllTime,
                               cryCount: image.stats?.cryCountAllTime,
+                              tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                             }}
                             readonly={!safe}
                             className={classes.reactions}
@@ -276,11 +322,35 @@ export function ImagesAsPostsCard({
                                 {image.meta && 'civitaiResources' in (image.meta as object) && (
                                   <OnsiteIndicator />
                                 )}
-                                <ImageGuard.Report
-                                  additionalMenuItems={moderationOptions(image.id)}
-                                  withinPortal
-                                />
                                 <ImageGuard.ToggleConnect position="top-left" />
+                                {safe && (
+                                  <Stack spacing="xs" className={classes.topRight}>
+                                    <ImageGuard.Report
+                                      additionalMenuItems={moderationOptions(image.id)}
+                                      position="static"
+                                      withinPortal
+                                    />
+                                    {features.imageGeneration && image.meta && (
+                                      <HoverActionButton
+                                        label="Remix"
+                                        size={30}
+                                        color="white"
+                                        variant="filled"
+                                        data-activity="remix:model-gallery"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          generationPanel.open({
+                                            type: 'image',
+                                            id: image.id,
+                                          });
+                                        }}
+                                      >
+                                        <IconBrush stroke={2.5} size={16} />
+                                      </HoverActionButton>
+                                    )}
+                                  </Stack>
+                                )}
                                 <RoutedDialogLink
                                   name="imageDetail"
                                   state={{ imageId: image.id, images: data.images }}
@@ -400,6 +470,20 @@ const useStyles = createStyles((theme) => ({
     flexDirection: 'column',
     overflow: 'hidden',
   },
+  topRight: {
+    position: 'absolute',
+    top: theme.spacing.sm,
+    right: theme.spacing.sm,
+    zIndex: 10,
+  },
+  contentOverlay: {
+    position: 'absolute',
+    width: '100%',
+    left: 0,
+    zIndex: 10,
+    padding: theme.spacing.sm,
+  },
+  top: { top: 0 },
   reactions: {
     position: 'absolute',
     bottom: 6,

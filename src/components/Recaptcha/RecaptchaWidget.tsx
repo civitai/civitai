@@ -1,4 +1,4 @@
-import { createContext, useState } from 'react';
+import { createContext, useState, useEffect } from 'react';
 import Script from 'next/script';
 import { env } from '../../env/client.mjs';
 import { Anchor, Text, TextProps } from '@mantine/core';
@@ -14,7 +14,7 @@ export const RecaptchaContext = createContext<{
   ready: boolean | null;
   tokens: Partial<Record<RecaptchaAction, RecaptchaTokenInfo>>;
   updateToken: (action: RecaptchaAction, token: RecaptchaTokenInfo) => void;
-}>({ ready: false, tokens: {}, updateToken: () => {} });
+}>({ ready: false, tokens: {}, updateToken: () => undefined });
 
 export function RecaptchaWidgetProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -22,6 +22,13 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
   const updateToken = (action: RecaptchaAction, token: RecaptchaTokenInfo) => {
     setTokens((prev) => ({ ...prev, [action]: token }));
   };
+
+  useEffect(() => {
+    if (window.grecaptcha)
+      window.grecaptcha.enterprise.ready(() => {
+        setReady(true);
+      });
+  }, []);
 
   return (
     <RecaptchaContext.Provider
@@ -34,7 +41,7 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
       <Script
         src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
         onLoad={() => {
-          window?.grecaptcha.enterprise.ready(() => {
+          window.grecaptcha.enterprise.ready(() => {
             setReady(true);
           });
         }}

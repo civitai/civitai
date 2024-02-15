@@ -1,28 +1,28 @@
 import {
-  Stack,
-  Text,
-  Tooltip,
+  Alert,
   Button,
   Checkbox,
-  TooltipProps,
   Group,
+  Stack,
+  Text,
   ThemeIcon,
+  Tooltip,
+  TooltipProps,
 } from '@mantine/core';
-import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { trpc } from '~/utils/trpc';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { trpc } from '~/utils/trpc';
 
-import { PostEditActions } from '~/components/Post/Edit/PostEditActions';
-import { useRouter } from 'next/router';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CollectionType } from '@prisma/client';
+import { IconBolt, IconClock, IconQuestionMark } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
-import { IconClock } from '@tabler/icons-react';
 import { showErrorNotification } from '~/utils/notifications';
-import { useFeatureFlags } from '../../../providers/FeatureFlagsProvider';
-import { useQueryUserContributingClubs } from '../../Club/club.utils';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -36,13 +36,10 @@ const tooltipProps: Partial<TooltipProps> = {
 
 export function EditPostControls() {
   return (
-    <Stack spacing={50}>
-      <Stack>
-        <ManagePostStatus />
-        <ManagePostMaturity />
-        <EditPostTags />
-      </Stack>
-      <PostEditActions />
+    <Stack>
+      <ManagePostStatus />
+      <ManagePostMaturity />
+      <ReorderImagesButton />
     </Stack>
   );
 }
@@ -148,6 +145,18 @@ export function ManagePostStatus() {
           </>
         )}
       </Text>
+      {/* {!publishedAt && (
+        <Alert
+          color="yellow"
+          withCloseButton
+          icon={<IconBolt size={20} fill="currentColor" />}
+          sx={(theme) => ({ border: `1px solid ${theme.colors.yellow[theme.fn.primaryShade()]} ` })}
+        >
+          <Group spacing={4} noWrap>
+            <Text size="sm">You can earn Buzz when people react to your images!</Text>
+          </Group>
+        </Alert>
+      )} */}
     </Stack>
   );
 }
@@ -170,12 +179,15 @@ export function ManagePostMaturity() {
       onChange={toggleCheckbox}
       disabled={isLoading}
       label={
-        <Text>
-          Mature{' '}
+        <Group spacing={4}>
+          Mature
           <Tooltip label={matureLabel} {...tooltipProps}>
-            <Text component="span">(?)</Text>
+            <ThemeIcon radius="xl" size="xs" color="gray">
+              <IconQuestionMark />
+            </ThemeIcon>
           </Tooltip>
-        </Text>
+          <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
+        </Group>
       }
     />
   );

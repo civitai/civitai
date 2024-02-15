@@ -55,6 +55,7 @@ import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { clickhouse } from '~/server/clickhouse/client';
+import dayjs from 'dayjs';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -367,6 +368,9 @@ const samplersToSchedulers: Record<Sampler, string> = {
   'DPM++ 2M Karras': 'DPM2MKarras',
   'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
   'DPM++ SDE Karras': 'DPMSDEKarras',
+  'DPM++ 3M SDE': 'DPM3MSDE',
+  'DPM++ 3M SDE Karras': 'DPM3MSDEKarras',
+  'DPM++ 3M SDE Exponential': 'DPM3MSDEExponential',
   DDIM: 'DDIM',
   PLMS: 'PLMS',
   UniPC: 'UniPC',
@@ -378,19 +382,15 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SD2: undefined,
   SDXL: 'SDXL',
   SDXLDistilled: 'SDXL_Distilled',
+  SCascade: 'SCascade',
 };
-
-async function checkGenerationAvailability(resources: CreateGenerationRequestInput['resources']) {
-  const data = await getResourceData(resources.map((x) => x.id));
-  return data.every((x) => !!x.generationCoverage?.covered);
-}
 
 async function checkResourcesAccess(
   resources: CreateGenerationRequestInput['resources'],
   userId: number
 ) {
   const data = await getResourceData(resources.map((x) => x.id));
-  const hasPrivateResources = data.some((x) => x.availability === Availability.Public);
+  const hasPrivateResources = data.some((x) => x.availability === Availability.Private);
 
   if (hasPrivateResources) {
     // Check for permission:
@@ -437,20 +437,23 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('Generation is currently disabled');
 
   // Handle rate limiting
-  if (await generationLimiter.hasExceededLimit(userId.toString()))
-    throw throwRateLimitError(
-      `We've noticed an unusual amount of generation from your account. Contact support@civitai.com or come back in 1 hour.`
-    );
+  if (await generationLimiter.hasExceededLimit(userId.toString())) {
+    const limitHitTime = await generationLimiter.getLimitHitTime(userId.toString());
+    let message = 'You have exceeded the generation limit.';
+    if (!limitHitTime) message += ' Please try again later.';
+    else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
+    throw throwRateLimitError(message);
+  }
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
-  const allResourcesAvailable = await checkGenerationAvailability(resources).catch(() => false);
+  const resourceData = await getResourceData(resources.map((x) => x.id));
+  const allResourcesAvailable = resourceData.every((x) => !!x.generationCoverage?.covered);
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
 
   const access = await checkResourcesAccess(resources, userId).catch(() => false);
-
   if (!access)
     throw throwAuthorizationError('You do not have access to some of the selected resources');
 
@@ -494,7 +497,8 @@ export const createGenerationRequest = async ({
   nsfw ??= isPromptNsfw !== false;
 
   // Disable nsfw if the prompt contains poi/minor words
-  if (includesPoi(params.prompt) || includesMinor(params.prompt)) nsfw = false;
+  const hasPoi = includesPoi(params.prompt) || resourceData.some((x) => x.model.poi);
+  if (hasPoi || includesMinor(params.prompt)) nsfw = false;
 
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && !isSDXL) {

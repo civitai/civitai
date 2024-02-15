@@ -1,5 +1,5 @@
 import { Menu, useMantineTheme } from '@mantine/core';
-import { IconPlaylistAdd } from '@tabler/icons-react';
+import { IconBookmark } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export function AddToCollectionMenuItem({ onClick }: Props) {
@@ -8,7 +8,7 @@ export function AddToCollectionMenuItem({ onClick }: Props) {
   return (
     <LoginRedirect reason="add-to-collection">
       <Menu.Item
-        icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+        icon={<IconBookmark size={14} stroke={1.5} />}
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();

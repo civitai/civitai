@@ -11,13 +11,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import {
-  BaseModel,
-  BaseModelType,
-  CacheTTL,
-  ModelFileType,
-  constants,
-} from '~/server/common/constants';
+import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
@@ -41,7 +35,6 @@ import {
   GetModelVersionsSchema,
   GetSimpleModelsInfiniteSchema,
   ModelByHashesInput,
-  ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
@@ -66,7 +59,6 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,
   getDraftModelsByUserId,
-  getGalleryHiddenPreferences,
   getModel,
   getModelVersionsMicro,
   getModels,
@@ -81,6 +73,7 @@ import {
   updateModelById,
   updateModelEarlyAccessDeadline,
   upsertModel,
+  getGallerySettingsByModelId,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -96,7 +89,6 @@ import {
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getDownloadUrl } from '~/utils/delivery-worker';
-import { fromJson, toJson } from '~/utils/json-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
@@ -360,15 +352,18 @@ export const publishModelHandler = async ({
       select: { status: true, meta: true, nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (model.status === ModelStatus.Published)
+      throw throwBadRequestError('Model is already published');
 
     const { isModerator } = ctx.user;
     if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
 
+    const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
-      (model.meta as ModelMeta | null) || {};
+      modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
     await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
@@ -376,7 +371,8 @@ export const publishModelHandler = async ({
       console.error(e);
     });
 
-    await ctx.track
+    // Track event in the background
+    ctx.track
       .modelEvent({
         type: 'Publish',
         modelId: input.id,
@@ -657,7 +653,7 @@ export const getDownloadCommandHandler = async ({
       await dbWrite.$executeRaw`
         -- Update user history
         INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
-        VALUES (${userId}, ${modelVersionId}, ${now}, false)
+        VALUES (${userId}, ${modelVersion.id}, ${now}, false)
         ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
       `;
     }
@@ -1381,22 +1377,8 @@ export async function getModelTemplateFromBountyHandler({
 
 export const getModelGallerySettingsHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const cachedSettings = await redis.get(`model:gallery-settings:${input.id}`);
-    if (cachedSettings)
-      return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
-
-    const model = await getModel({
-      id: input.id,
-      select: { id: true, userId: true, gallerySettings: true },
-    });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
-
-    const settings = model.gallerySettings
-      ? await getGalleryHiddenPreferences({
-          settings: model.gallerySettings as ModelGallerySettingsSchema,
-        })
-      : null;
-    await redis.set(`model:gallery-settings:${input.id}`, toJson(settings), { EX: CacheTTL.week });
+    const settings = await getGallerySettingsByModelId({ id: input.id });
+    if (!settings) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return settings;
   } catch (e) {

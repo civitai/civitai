@@ -115,3 +115,12 @@ export type ClubPostResource = RouterOutput['clubPost']['resourcePostCreateDetai
 
 type GenerationRouter = RouterOutput['generation'];
 export type GenerationGetResources = GenerationRouter['getResources']['items'];
+
+type ChatRouter = RouterOutput['chat'];
+export type ChatListMessage = ChatRouter['getAllByUser'][number];
+export type ChatAllMessages = ChatRouter['getInfiniteMessages']['items'];
+export type ChatCreateChat = ChatRouter['createChat'];
+
+type BuzzWithdrawalRequestRouter = RouterOutput['buzzWithdrawalRequest'];
+export type BuzzWithdrawalRequestForModerator =
+  BuzzWithdrawalRequestRouter['getPaginated']['items'][number];

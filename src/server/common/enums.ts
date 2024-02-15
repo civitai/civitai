@@ -139,6 +139,11 @@ export enum SignalMessages {
   ImageGenStatusUpdate = 'image-gen:status-update',
   TrainingUpdate = 'training:update',
   ImageIngestionStatus = 'image-ingestion:status',
+  ChatNewMessage = 'chat:new-message',
+  // ChatUpdateMessage = 'chat:update-message',
+  ChatNewRoom = 'chat:new-room',
+  // ChatMembershipChange = 'chat:membership-change',
+  ChatTypingStatus = 'chat:typing-status',
 }
 
 export enum BountySort {

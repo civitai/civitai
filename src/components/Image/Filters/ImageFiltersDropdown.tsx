@@ -1,5 +1,6 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   createStyles,
@@ -7,6 +8,7 @@ import {
   Drawer,
   Group,
   Indicator,
+  MantineNumberSize,
   Popover,
   Stack,
 } from '@mantine/core';
@@ -55,15 +57,16 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function ImageFiltersDropdown({ query, onChange }: Props) {
+export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
-  const router = useRouter();
-  const isSameUser = useIsSameUser(router.query.username);
 
   const [opened, setOpened] = useState(false);
 
@@ -110,6 +113,7 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -118,7 +122,9 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        {...buttonProps}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />
@@ -170,25 +176,27 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
           >
             Metadata only
           </Chip>
-          <Chip
-            {...chipProps}
-            checked={mergedFilters.hidden}
-            onChange={(checked) =>
-              onChange ? onChange({ hidden: checked }) : setFilters({ hidden: checked })
-            }
-          >
-            My hidden Images
-          </Chip>
-          {currentUser && !isSameUser && (
-            <Chip
-              {...chipProps}
-              checked={mergedFilters.followed}
-              onChange={(checked) =>
-                onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
-              }
-            >
-              Followed Only
-            </Chip>
+          {isFeed && currentUser && (
+            <>
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.hidden}
+                onChange={(checked) =>
+                  onChange ? onChange({ hidden: checked }) : setFilters({ hidden: checked })
+                }
+              >
+                Hidden
+              </Chip>
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.followed}
+                onChange={(checked) =>
+                  onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
+                }
+              >
+                Followed Only
+              </Chip>
+            </>
           )}
         </Group>
       </Stack>
@@ -212,16 +220,17 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
         <Drawer
           opened={opened}
           onClose={() => setOpened(false)}
-          withCloseButton={false}
           size="90%"
           position="bottom"
           styles={{
-            body: { padding: 16 },
             drawer: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
               overflowY: 'auto',
             },
+            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            header: { padding: '4px 8px' },
+            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -246,7 +255,8 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
   );
 }
 
-type Props = {
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesInput>;
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
+  isFeed?: boolean;
 };

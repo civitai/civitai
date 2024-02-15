@@ -1,32 +1,10 @@
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
-import {
-  Center,
-  Container,
-  Loader,
-  Stack,
-  Text,
-  ThemeIcon,
-  createStyles,
-  useMantineTheme,
-} from '@mantine/core';
+import { createStyles } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { constants } from '~/server/common/constants';
-import React, { useMemo } from 'react';
-import {
-  getAllAvailableProfileSections,
-  ProfileSectionComponent,
-  shouldDisplayUserNullState,
-} from '~/components/Profile/profile.utils';
-import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
-import { IconCloudOff } from '@tabler/icons-react';
-import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+
+import React from 'react';
+
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

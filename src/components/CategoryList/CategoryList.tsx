@@ -14,11 +14,11 @@ import { useEffect } from 'react';
 import { useInView } from '~/hooks/useInView';
 
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
 type Props<Item> = {
   data: Array<TypeCategory & { items: Item[] }>;
@@ -53,7 +53,7 @@ export function CategoryList<Item>({
   empty,
 }: Props<Item>) {
   const { ref, inView } = useInView();
-  const { columnCount, maxSingleColumnWidth, columnWidth } = useMasonryContainerContext();
+  const { columnCount, maxSingleColumnWidth, columnWidth } = useMasonryContext();
   const { classes } = useStyles();
 
   const isMobile = useContainerSmallerThan('sm');

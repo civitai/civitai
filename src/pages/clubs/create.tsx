@@ -1,6 +1,5 @@
 import { Container, Group, Stack, Title } from '@mantine/core';
 
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
@@ -10,10 +9,8 @@ import { useRouter } from 'next/router';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
-    const features = getFeatureFlags({ user: session?.user });
-
-    if (!features.createClubs) return { notFound: true };
+  resolver: async ({ session, ctx, features }) => {
+    if (!features?.createClubs) return { notFound: true };
 
     if (!session)
       return {
@@ -25,12 +22,12 @@ export const getServerSideProps = createServerSideProps({
 
     if (session.user?.muted) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: true,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: true,
+    //   },
+    // };
   },
 });
 

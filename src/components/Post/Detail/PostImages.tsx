@@ -37,12 +37,12 @@ export function PostImages({
 
   if (isLoading)
     return (
-      <Center p="xl">
+      <Paper component={Center} p="xl" mih={300} withBorder>
         <Group>
           <Loader />
           Loading Images
         </Group>
-      </Center>
+      </Paper>
     );
   if (!images?.length)
     return (
@@ -61,13 +61,24 @@ export function PostImages({
           const width = image.width ?? maxWidth;
           return (
             <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-              <Paper radius="md" className={classes.frame} shadow="md" withBorder>
+              <Paper
+                radius="md"
+                className={classes.frame}
+                shadow="md"
+                mx="auto"
+                style={{
+                  maxWidth: '100%',
+                  width: width < maxWidth ? width : maxWidth,
+                  aspectRatio:
+                    image.width && image.height ? `${image.width}/${image.height}` : undefined,
+                }}
+              >
                 <ImageGuard.ToggleConnect position="top-left" />
                 <ImageGuard.Report />
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <>
-                      {!safe && (
+                      {!safe ? (
                         <div
                           style={{
                             position: 'absolute',
@@ -78,21 +89,21 @@ export function PostImages({
                         >
                           <MediaHash {...image} />
                         </div>
+                      ) : (
+                        <EdgeMedia
+                          src={image.url}
+                          name={image.name}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                              : image.name ?? undefined
+                          }
+                          type={image.type}
+                          width={width < maxWidth ? width : maxWidth}
+                          anim={safe}
+                        />
                       )}
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name}
-                        alt={
-                          image.meta
-                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                            : image.name ?? undefined
-                        }
-                        type={image.type}
-                        width={width < maxWidth ? width : maxWidth}
-                        className={cx({ [classes.blur]: !safe })}
-                        style={!safe ? { visibility: 'hidden' } : undefined}
-                        anim={safe}
-                      />
+
                       <Reactions
                         p={4}
                         className={classes.reactions}
@@ -107,6 +118,7 @@ export function PostImages({
                           cryCount: image.stats?.cryCountAllTime,
                         }}
                         targetUserId={image.user.id}
+                        readonly={!safe}
                       />
                     </>
                   )}
@@ -146,18 +158,10 @@ const useStyles = createStyles((theme) => ({
   frame: {
     position: 'relative',
     overflow: 'hidden',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[1],
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: 200,
   },
   imageContainer: {
     display: 'inline',
     overflow: 'hidden',
-  },
-  blur: {
-    filter: 'blur(40px)',
   },
   reactions: {
     position: 'absolute',

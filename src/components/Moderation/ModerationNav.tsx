@@ -14,6 +14,7 @@ export function ModerationNav() {
         { label: 'Models', href: '/moderator/models' },
         { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
+        { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         { label: 'Auditor', href: '/testing/auditor' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
       ].map((link) => (

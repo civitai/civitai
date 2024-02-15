@@ -9,11 +9,12 @@ const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
     displayName: 'Comment reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${commentReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -53,12 +54,13 @@ export const reactionNotifications = createNotificationProcessor({
         LEFT JOIN prior_milestones pm ON pm.reaction_count >= ms.value AND pm.affected_id = a.affected_id
         WHERE pm.affected_id IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'comment-reaction-milestone' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'comment-reaction-milestone');
     `,
@@ -121,6 +123,7 @@ export const reactionNotifications = createNotificationProcessor({
   // },
   'image-reaction-milestone': {
     displayName: 'Image reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => {
       let message: string;
       if (details.version === 2) {
@@ -145,7 +148,7 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${imageReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -190,24 +193,26 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE NOT EXISTS (SELECT 1 FROM prior_milestones pm WHERE pm.affected_id = a.affected_id AND pm.reaction_count >= ms.value)
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'image-reaction-milestone' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone');
     `,
   },
   'article-reaction-milestone': {
     displayName: 'Article reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => {
       const message = `Your article, "${details.articleTitle}" has received ${details.reactionCount} reactions`;
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -243,12 +248,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= af.reaction_count
         WHERE NOT EXISTS (SELECT 1 FROM prior_milestones pm WHERE pm.affected_id = af.affected_id AND pm.reaction_count >= ms.value)
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
         'article-reaction-milestone' "type",
-        details
+        details,
+        '${category}'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone');
     `,

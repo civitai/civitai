@@ -1,21 +1,21 @@
-import { Button, createStyles, Stack, Text, Title, Center, ThemeIcon } from '@mantine/core';
+import { Button, Center, Stack, Text, ThemeIcon, Title, createStyles } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
-
 import React from 'react';
+
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
-import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
+import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
 type AppLayoutProps = {
-  innerLayout?: (page: React.ReactNode) => React.ReactNode;
+  innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
   withScrollArea?: boolean;
 };
 
@@ -28,8 +28,10 @@ export function AppLayout({
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
 } & AppLayoutProps) {
+  const InnerLayout: any = innerLayout;
   const { classes } = useStyles();
   const user = useCurrentUser();
+  // TODO - move the bannedAt check to _app.tsx
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
 
@@ -51,10 +53,10 @@ export function AppLayout({
       </Center>
     );
 
-  const content = innerLayout ? (
-    innerLayout(children)
+  const content = InnerLayout ? (
+    <InnerLayout>{children}</InnerLayout>
   ) : withScrollArea ? (
-    <ScrollArea>{children}</ScrollArea>
+    <ScrollAreaMain>{children}</ScrollAreaMain>
   ) : (
     children
   );

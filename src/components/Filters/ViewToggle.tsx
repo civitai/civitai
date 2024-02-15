@@ -12,9 +12,10 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 type Props = Omit<ActionIconProps, 'onClick'> & {
   type: ViewAdjustableTypes;
+  iconSize?: number;
 };
 
-export function ViewToggle({ type, ...actionIconProps }: Props) {
+export function ViewToggle({ type, iconSize = 20, ...actionIconProps }: Props) {
   const { query, pathname, replace } = useRouter();
   const globalView = useFiltersContext((state) => state[type].view);
   const queryView = query.view as ViewMode | undefined;
@@ -43,11 +44,12 @@ export function ViewToggle({ type, ...actionIconProps }: Props) {
           {...actionIconProps}
           sx={!actionIconProps.size ? { width: 40 } : undefined}
           onClick={toggleView}
+          style={{ flex: 0 }} // Avoids the button from stretching
         >
           {view === 'categories' ? (
-            <IconLayoutGrid size={20} stroke={2.5} />
+            <IconLayoutGrid size={iconSize} stroke={2.5} />
           ) : (
-            <IconLayoutList size={20} stroke={2.5} />
+            <IconLayoutList size={iconSize} stroke={2.5} />
           )}
         </ActionIcon>
       </Tooltip>

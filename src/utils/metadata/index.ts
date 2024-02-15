@@ -9,10 +9,12 @@ import { MediaType } from '@prisma/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { constants } from '~/server/common/constants';
+import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
   comfy: comfyMetadataProcessor,
+  rfooocus: rfooocusMetadataProcessor,
 };
 
 export async function getMetadata(file: File) {

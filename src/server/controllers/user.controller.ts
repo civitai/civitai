@@ -2,6 +2,7 @@ import {
   CosmeticType,
   ModelEngagementType,
   ModelVersionEngagementType,
+  NotificationCategory,
   OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -9,7 +10,7 @@ import { orderBy } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -23,6 +24,7 @@ import {
   GetUserCosmeticsSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
+  SetUserSettingsInput,
   ToggleBlockedTagSchema,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -66,6 +68,7 @@ import {
   deleteUserProfilePictureCache,
   getUserSettings,
   setUserSetting,
+  unequipCosmeticByType,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -170,14 +173,12 @@ export const getNotificationSettingsHandler = async ({
   const { id } = ctx.user;
 
   try {
-    const user = await getUserById({
-      id,
-      select: { notificationSettings: { select: { id: true, type: true, disabledAt: true } } },
+    const notificationsSettings = await dbRead.userNotificationSettings.findMany({
+      where: { userId: id },
+      select: { id: true, type: true, disabledAt: true },
     });
 
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-    return user.notificationSettings;
+    return notificationsSettings;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -188,8 +189,21 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   const { id } = ctx.user;
 
   try {
-    const count = await getUserNotificationCount({ userId: id, unread: true });
-    return { count };
+    const unreadCount = await getUserNotificationCount({
+      userId: id,
+      unread: true,
+    });
+
+    const reduced = unreadCount.reduce(
+      (acc, { category, count }) => {
+        const key = category.toLowerCase() as Lowercase<NotificationCategory>;
+        acc[key] = count;
+        acc['all'] += count;
+        return acc;
+      },
+      { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
+    );
+    return reduced;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -313,12 +327,15 @@ export const updateUserHandler = async ({
   const isSettingCosmetics = badgeId !== undefined && nameplateId !== undefined;
 
   try {
-    const payloadCosmeticIds: number[] = [];
-    if (badgeId) payloadCosmeticIds.push(badgeId);
-    if (nameplateId) payloadCosmeticIds.push(nameplateId);
-
     const user = await getUserById({ id, select: { profilePictureId: true } });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    const payloadCosmeticIds: number[] = [];
+    if (badgeId) payloadCosmeticIds.push(badgeId);
+    else await unequipCosmeticByType({ userId: id, type: CosmeticType.Badge });
+
+    if (nameplateId) payloadCosmeticIds.push(nameplateId);
+    else await unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate });
 
     const updatedUser = await updateUserById({
       id,
@@ -367,6 +384,7 @@ export const updateUserHandler = async ({
       });
       await deleteUserProfilePictureCache(id);
     }
+
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
@@ -1145,6 +1163,55 @@ export const toggleUserFeatureFlagHandler = async ({
     await setUserSetting(id, { ...restSettings, features: updatedFeatures });
 
     return updatedFeatures;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    const settings = await getUserSettings(id);
+
+    // Limits it to the input type
+    return settings as SetUserSettingsInput;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setUserSettingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetUserSettingsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const { ...restSettings } = await getUserSettings(id);
+    const newSettings = { ...restSettings, ...input };
+
+    await setUserSetting(id, newSettings);
+    return newSettings;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const dismissAlertHandler = async ({
+  input,
+  ctx,
+}: {
+  input: { alertId: string };
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const { dismissedAlerts = [] } = await getUserSettings(id);
+    dismissedAlerts.push(input.alertId);
+
+    await setUserSetting(id, { dismissedAlerts });
   } catch (error) {
     throw throwDbError(error);
   }

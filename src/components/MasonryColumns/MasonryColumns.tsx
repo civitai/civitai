@@ -9,7 +9,8 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 type Props<TData> = {
   data: TData[];
@@ -19,6 +20,8 @@ type Props<TData> = {
   maxItemHeight?: number;
   itemId?: (data: TData) => string | number;
   staticItem?: (props: { columnWidth: number; height: number }) => React.ReactNode;
+  /** [lowerInterval, upperInterval] */
+  withAds?: boolean;
 };
 
 export function MasonryColumns<TData>({
@@ -29,9 +32,9 @@ export function MasonryColumns<TData>({
   maxItemHeight,
   itemId,
   staticItem,
+  withAds,
 }: Props<TData>) {
-  const { columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
-  const { columnCount } = useMasonryContainerContext();
+  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
     columnCount,
@@ -47,7 +50,8 @@ export function MasonryColumns<TData>({
     columnCount,
     imageDimensions,
     adjustHeight,
-    maxItemHeight
+    maxItemHeight,
+    withAds
   );
 
   return (
@@ -55,22 +59,31 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div key={colIndex} className={classes.column}>
           {items.map(({ height, data }, index) => {
-            const key = itemId?.(data) ?? index;
-            if (colIndex === 0 && index === 0 && staticItem) {
-              return (
-                <React.Fragment key={key}>
-                  {staticItem({ columnWidth, height: 450 })}
-                  <div id={key.toString()}>
-                    {createRenderElement(RenderComponent, index, data, columnWidth, height)}
-                  </div>
-                </React.Fragment>
-              );
-            }
+            const key = data.type === 'data' ? itemId?.(data.data) ?? index : `ad_${index}`;
+            const showStaticItem = colIndex === 0 && index === 0 && staticItem;
 
             return (
-              <div key={key} id={key.toString()}>
-                {createRenderElement(RenderComponent, index, data, columnWidth, height)}
-              </div>
+              <React.Fragment key={key}>
+                {showStaticItem && staticItem({ columnWidth, height: 450 })}
+                {data.type === 'data' &&
+                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
+                {data.type === 'ad' && (
+                  <Adunit
+                    radius="sm"
+                    sx={(theme) => ({
+                      overflow: 'hidden',
+                      width: 320,
+                      background:
+                        theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
+                    })}
+                    p={10}
+                    withBorder
+                    shadow="sm"
+                    mx="auto"
+                    {...adsRegistry.masonryColumns}
+                  />
+                )}
+              </React.Fragment>
             );
           })}
         </div>

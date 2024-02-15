@@ -20,7 +20,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBan,
   IconClock,
@@ -42,11 +42,12 @@ import {
   IconArchive,
   IconCircleMinus,
   IconReload,
-  IconPlaylistAdd,
+  IconBookmark,
   IconInfoCircle,
   IconBolt,
   IconRadar2,
   IconBrush,
+  IconRepeat,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -84,7 +85,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -92,7 +92,6 @@ import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { parseBrowsingMode } from '~/server/createContext';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -107,14 +106,18 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { useEntityAccessRequirement } from '~/components/Club/club.utils';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session = null }) => {
+  resolver: async ({ ssg, ctx }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -140,7 +143,7 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+          // browsingMode: parseBrowsingMode(ctx.req.cookies, session),
         });
 
       if (modelVersionIdParsed) {
@@ -171,7 +174,7 @@ export default function ModelDetailsV2({
 
   const router = useRouter();
   const { classes, theme } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
 
@@ -213,13 +216,6 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
-  const { entities, isLoadingAccess } = useEntityAccessRequirement({
-    entityType: 'ModelVersion',
-    entityIds: [modelVersionId],
-  });
-
-  const [access] = entities;
-  const hasAccess = access?.hasAccess;
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -240,8 +236,7 @@ export default function ModelDetailsV2({
     async onSuccess(_, { permanently }) {
       await queryUtils.model.getAll.invalidate();
       if (!permanently) await queryUtils.model.getById.invalidate({ id });
-      if (!isModerator || permanently)
-        await router.replace(features.alternateHome ? '/models' : '/');
+      if (!isModerator || permanently) await router.replace('/models');
 
       showSuccessNotification({
         title: 'Successfully deleted the model',
@@ -278,6 +273,14 @@ export default function ModelDetailsV2({
   };
 
   const unpublishModelMutation = trpc.model.unpublish.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const publishModelMutation = trpc.model.publish.useMutation({
     async onSuccess() {
       await queryUtils.model.getById.invalidate({ id });
     },
@@ -420,6 +423,27 @@ export default function ModelDetailsV2({
     rescanModelMutation.mutate({ id });
   };
 
+  const handlePublishModel = () => {
+    if (model && model.status === ModelStatus.Unpublished && isCreator)
+      openConfirmModal({
+        centered: true,
+        closeOnConfirm: false,
+        title: 'Republish model',
+        children:
+          'This model and all of its versions will be publicly available. Are you sure you want to republish this model?',
+        labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
+        onConfirm: () => {
+          publishModelMutation.mutate(
+            {
+              id: model.id,
+              versionIds: model?.modelVersions.map((v) => v.id),
+            },
+            { onSuccess: () => closeAllModals() }
+          );
+        },
+      });
+  };
+
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
     const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
@@ -430,7 +454,7 @@ export default function ModelDetailsV2({
         shallow: true,
       });
     }
-  }, [publishedVersions, selectedVersion, modelVersionId]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId]);
 
   if (loadingModel) return <PageLoader />;
 
@@ -493,7 +517,11 @@ export default function ModelDetailsV2({
         },
       ]}
       schema={metaSchema}
-      deIndex={model.status !== ModelStatus.Published ? 'noindex' : undefined}
+      deIndex={
+        model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
+          ? 'noindex'
+          : undefined
+      }
     />
   );
 
@@ -511,11 +539,13 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
-    hasAccess &&
-    !isMuted &&
-    (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
+    !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
+  const versionIsEarlyAccess =
+    selectedVersion &&
+    !!selectedVersion.earlyAccessDeadline &&
+    isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
@@ -565,7 +595,10 @@ export default function ModelDetailsV2({
                     </Text>
                   </IconBadge>
                   {model.canGenerate && latestGenerationVersion && (
-                    <GenerateButton modelVersionId={latestGenerationVersion.id}>
+                    <GenerateButton
+                      modelVersionId={latestGenerationVersion.id}
+                      data-activity="create:model-stat"
+                    >
                       <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                         <Text className={classes.modelBadgeText}>
                           {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
@@ -578,7 +611,7 @@ export default function ModelDetailsV2({
                       <IconBadge
                         radius="sm"
                         size="lg"
-                        icon={<IconPlaylistAdd size={18} />}
+                        icon={<IconBookmark size={18} />}
                         sx={{ cursor: 'pointer' }}
                         onClick={handleCollect}
                       >
@@ -630,185 +663,208 @@ export default function ModelDetailsV2({
                   )}
                 </Group>
 
-                <Menu position="bottom-end" transition="pop-top-right" withinPortal>
-                  <Menu.Target>
-                    <ActionIcon variant="outline">
-                      <IconDotsVertical size={16} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {currentUser && isCreator && published && (
-                      <Menu.Item
-                        icon={<IconBan size={14} stroke={1.5} />}
-                        color="yellow"
-                        onClick={() => unpublishModelMutation.mutate({ id })}
-                        disabled={unpublishModelMutation.isLoading}
-                      >
-                        Unpublish
-                      </Menu.Item>
-                    )}
-                    {currentUser && isModerator && modelDeleted && (
-                      <Menu.Item
-                        icon={<IconRecycle size={14} stroke={1.5} />}
-                        color="green"
-                        onClick={() => restoreModelMutation.mutate({ id })}
-                        disabled={restoreModelMutation.isLoading}
-                      >
-                        Restore
-                      </Menu.Item>
-                    )}
-                    {currentUser && isModerator && (
-                      <>
-                        {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
-                          <Menu.Item
-                            component="a"
-                            target="_blank"
-                            icon={<IconInfoCircle size={14} stroke={1.5} />}
-                            href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
-                          >
-                            Lookup Model
-                          </Menu.Item>
-                        )}
-                        {published && (
-                          <Menu.Item
-                            color="yellow"
-                            icon={<IconBan size={14} stroke={1.5} />}
-                            onClick={() => openContext('unpublishModel', { modelId: model.id })}
-                          >
-                            Unpublish as Violation
-                          </Menu.Item>
-                        )}
+                <Group spacing={8} noWrap>
+                  <HowToButton
+                    size={30}
+                    stroke={1.5}
+                    href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
+                    tooltip="What is this?"
+                  />
+                  <Menu position="bottom-end" transition="pop-top-right" withinPortal>
+                    <Menu.Target>
+                      <ActionIcon variant="outline">
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      {currentUser && isCreator && published && (
                         <Menu.Item
-                          color={theme.colors.red[6]}
-                          icon={<IconTrash size={14} stroke={1.5} />}
-                          onClick={() => handleDeleteModel({ permanently: true })}
+                          icon={<IconBan size={14} stroke={1.5} />}
+                          color="yellow"
+                          onClick={() => unpublishModelMutation.mutate({ id })}
+                          disabled={unpublishModelMutation.isLoading}
                         >
-                          Permanently Delete Model
+                          Unpublish
                         </Menu.Item>
-                      </>
-                    )}
-                    {currentUser && isOwner && !modelDeleted && (
-                      <>
+                      )}
+                      {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
                         <Menu.Item
-                          color={theme.colors.red[6]}
-                          icon={<IconTrash size={14} stroke={1.5} />}
-                          onClick={() => handleDeleteModel()}
+                          icon={<IconRepeat size={14} stroke={1.5} />}
+                          color="green"
+                          onClick={handlePublishModel}
+                          disabled={publishModelMutation.isLoading}
                         >
-                          Delete Model
+                          Republish
                         </Menu.Item>
+                      )}
+                      {currentUser && isModerator && modelDeleted && (
                         <Menu.Item
-                          icon={<IconEdit size={14} stroke={1.5} />}
-                          component={NextLink}
-                          href={`/models/${model.id}/edit`}
+                          icon={<IconRecycle size={14} stroke={1.5} />}
+                          color="green"
+                          onClick={() => restoreModelMutation.mutate({ id })}
+                          disabled={restoreModelMutation.isLoading}
                         >
-                          Edit Model
+                          Restore
                         </Menu.Item>
-                        {!model.mode ? (
-                          <>
+                      )}
+                      {currentUser && isModerator && (
+                        <>
+                          {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
                             <Menu.Item
-                              icon={<IconArchive size={14} stroke={1.5} />}
-                              onClick={() => handleChangeMode(ModelModifier.Archived)}
+                              component="a"
+                              target="_blank"
+                              icon={<IconInfoCircle size={14} stroke={1.5} />}
+                              href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
                             >
-                              Archive
+                              Lookup Model
                             </Menu.Item>
-                            {isModerator && (
-                              <Menu.Item
-                                icon={<IconCircleMinus size={14} stroke={1.5} />}
-                                onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                              >
-                                Take Down
-                              </Menu.Item>
-                            )}
-                          </>
-                        ) : model.mode === ModelModifier.Archived ||
-                          (isModerator && model.mode === ModelModifier.TakenDown) ? (
+                          )}
+                          {published && (
+                            <Menu.Item
+                              color="yellow"
+                              icon={<IconBan size={14} stroke={1.5} />}
+                              onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                            >
+                              Unpublish as Violation
+                            </Menu.Item>
+                          )}
                           <Menu.Item
-                            icon={<IconReload size={14} stroke={1.5} />}
-                            onClick={() => handleChangeMode(null)}
+                            color={theme.colors.red[6]}
+                            icon={<IconTrash size={14} stroke={1.5} />}
+                            onClick={() => handleDeleteModel({ permanently: true })}
                           >
-                            Bring Back
+                            Permanently Delete Model
                           </Menu.Item>
-                        ) : null}
-                      </>
-                    )}
-                    {features.collections && (
-                      <AddToCollectionMenuItem
-                        onClick={() =>
-                          openContext('addToCollection', {
-                            modelId: model.id,
-                            type: CollectionType.Model,
-                          })
-                        }
-                      />
-                    )}
-                    {isOwner && (
-                      <AddToShowcaseMenuItem
-                        key="add-to-showcase"
-                        entityType="Model"
-                        entityId={model.id}
-                      />
-                    )}
-                    {(!currentUser || !isOwner || isModerator) && (
-                      <LoginRedirect reason="report-model">
-                        <Menu.Item
-                          icon={<IconFlag size={14} stroke={1.5} />}
+                        </>
+                      )}
+                      {currentUser && isOwner && !modelDeleted && (
+                        <>
+                          <Menu.Item
+                            color={theme.colors.red[6]}
+                            icon={<IconTrash size={14} stroke={1.5} />}
+                            onClick={() => handleDeleteModel()}
+                          >
+                            Delete Model
+                          </Menu.Item>
+                          <Menu.Item
+                            icon={<IconEdit size={14} stroke={1.5} />}
+                            component={NextLink}
+                            href={`/models/${model.id}/edit`}
+                          >
+                            Edit Model
+                          </Menu.Item>
+                          {!model.mode ? (
+                            <>
+                              <Menu.Item
+                                icon={<IconArchive size={14} stroke={1.5} />}
+                                onClick={() => handleChangeMode(ModelModifier.Archived)}
+                              >
+                                Archive
+                              </Menu.Item>
+                              {isModerator && (
+                                <Menu.Item
+                                  icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                  onClick={() => handleChangeMode(ModelModifier.TakenDown)}
+                                >
+                                  Take Down
+                                </Menu.Item>
+                              )}
+                            </>
+                          ) : model.mode === ModelModifier.Archived ||
+                            (isModerator && model.mode === ModelModifier.TakenDown) ? (
+                            <Menu.Item
+                              icon={<IconReload size={14} stroke={1.5} />}
+                              onClick={() => handleChangeMode(null)}
+                            >
+                              Bring Back
+                            </Menu.Item>
+                          ) : null}
+                        </>
+                      )}
+                      {features.collections && (
+                        <AddToCollectionMenuItem
                           onClick={() =>
-                            openContext('report', {
-                              entityType: ReportEntity.Model,
-                              entityId: model.id,
+                            openContext('addToCollection', {
+                              modelId: model.id,
+                              type: CollectionType.Model,
                             })
                           }
-                        >
-                          Report
-                        </Menu.Item>
-                      </LoginRedirect>
-                    )}
-                    {isModerator && (
-                      <Menu.Item
-                        icon={
-                          rescanModelMutation.isLoading ? (
-                            <Loader size={14} />
-                          ) : (
-                            <IconRadar2 size={14} stroke={1.5} />
-                          )
-                        }
-                        onClick={() => handleRescanModel()}
-                      >
-                        Rescan Files
-                      </Menu.Item>
-                    )}
-                    {currentUser && (
-                      <>
-                        <HideUserButton as="menu-item" userId={model.user.id} />
-                        <HideModelButton as="menu-item" modelId={model.id} />
-                        <Menu.Item
-                          icon={<IconTagOff size={14} stroke={1.5} />}
-                          onClick={() => openContext('blockModelTags', { modelId: model.id })}
-                        >
-                          Hide content with these tags
-                        </Menu.Item>
-                      </>
-                    )}
-                    {isOwner && (
-                      <ToggleLockModel modelId={model.id} locked={model.locked}>
-                        {({ onClick }) => (
+                        />
+                      )}
+                      {isOwner && (
+                        <AddToShowcaseMenuItem
+                          key="add-to-showcase"
+                          entityType="Model"
+                          entityId={model.id}
+                        />
+                      )}
+                      <ToggleSearchableMenuItem
+                        entityType="Model"
+                        entityId={model.id}
+                        key="toggle-searchable-menu-item"
+                      />
+                      {(!currentUser || !isOwner || isModerator) && (
+                        <LoginRedirect reason="report-model">
                           <Menu.Item
-                            icon={
-                              model.locked ? (
-                                <IconLockOff size={14} stroke={1.5} />
-                              ) : (
-                                <IconLock size={14} stroke={1.5} />
-                              )
+                            icon={<IconFlag size={14} stroke={1.5} />}
+                            onClick={() =>
+                              openContext('report', {
+                                entityType: ReportEntity.Model,
+                                entityId: model.id,
+                              })
                             }
-                            onClick={onClick}
                           >
-                            {model.locked ? 'Unlock' : 'Lock'} model discussion
+                            Report
                           </Menu.Item>
-                        )}
-                      </ToggleLockModel>
-                    )}
-                  </Menu.Dropdown>
-                </Menu>
+                        </LoginRedirect>
+                      )}
+                      {isModerator && (
+                        <Menu.Item
+                          icon={
+                            rescanModelMutation.isLoading ? (
+                              <Loader size={14} />
+                            ) : (
+                              <IconRadar2 size={14} stroke={1.5} />
+                            )
+                          }
+                          onClick={() => handleRescanModel()}
+                        >
+                          Rescan Files
+                        </Menu.Item>
+                      )}
+                      {currentUser && (
+                        <>
+                          <HideUserButton as="menu-item" userId={model.user.id} />
+                          <HideModelButton as="menu-item" modelId={model.id} />
+                          <Menu.Item
+                            icon={<IconTagOff size={14} stroke={1.5} />}
+                            onClick={() => openContext('blockModelTags', { modelId: model.id })}
+                          >
+                            Hide content with these tags
+                          </Menu.Item>
+                        </>
+                      )}
+                      {isOwner && (
+                        <ToggleLockModel modelId={model.id} locked={model.locked}>
+                          {({ onClick }) => (
+                            <Menu.Item
+                              icon={
+                                model.locked ? (
+                                  <IconLockOff size={14} stroke={1.5} />
+                                ) : (
+                                  <IconLock size={14} stroke={1.5} />
+                                )
+                              }
+                              onClick={onClick}
+                            >
+                              {model.locked ? 'Unlock' : 'Lock'} model discussion
+                            </Menu.Item>
+                          )}
+                        </ToggleLockModel>
+                      )}
+                    </Menu.Dropdown>
+                  </Menu>
+                </Group>
               </Group>
               <Group spacing={4}>
                 <Text size="xs" color="dimmed">
@@ -955,7 +1011,6 @@ export default function ModelDetailsV2({
               onBrowseClick={() => {
                 gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
-              hasAccess={hasAccess}
             />
           )}
         </Stack>
@@ -967,7 +1022,17 @@ export default function ModelDetailsV2({
         <AssociatedModels
           fromId={model.id}
           type="Suggested"
-          label="Suggested Resources"
+          label={
+            <Group spacing={8} noWrap>
+              Suggested Resources{' '}
+              <InfoPopover>
+                <Text size="sm" weight={400}>
+                  These are resources suggested by the creator of this model. They may be related to
+                  this model or created by the same user.
+                </Text>
+              </InfoPopover>
+            </Group>
+          }
           ownerId={model.user.id}
         />
       )}
@@ -975,6 +1040,7 @@ export default function ModelDetailsV2({
         (!model.locked ? (
           <Container size="xl" my="xl">
             <Stack spacing="md">
+              {model.hasSuggestedResources && <Adunit {...adsRegistry.modelDetailSectionDivider} />}
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                 <Group spacing="xs">
                   <Title order={2}>Discussion</Title>
@@ -1037,6 +1103,7 @@ export default function ModelDetailsV2({
               generationModelId: selectedVersion?.meta.picFinderModelId,
               includeEditingActions: isOwner,
             }}
+            canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
           />
         </Box>
       )}

@@ -1,4 +1,5 @@
 import {
+  Availability,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -65,6 +66,7 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -89,20 +91,24 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     });
     if (!image) return;
 
-    if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-      const { items } = await baseS3Client.listObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        prefix: image.url,
-      });
-      await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
-      await baseS3Client.deleteManyObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        keys: items.map((x) => x.Key).filter(isDefined),
-      });
+    try {
+      if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
+        const { items } = await baseS3Client.listObjects({
+          bucket: env.S3_IMAGE_CACHE_BUCKET,
+          prefix: image.url,
+        });
+        await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+        await baseS3Client.deleteManyObjects({
+          bucket: env.S3_IMAGE_CACHE_BUCKET,
+          keys: items.map((x) => x.Key).filter(isDefined),
+        });
+      }
+    } catch {
+      // Ignore errors
     }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await dbWrite.image.deleteMany({ where: { id } });
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (image.postId) await updatePostNsfwLevel(image.postId);
     return image;
   } catch {
@@ -461,12 +467,14 @@ type GetAllImagesRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  collectedCount: number;
   tippedAmountCount: number;
   viewCount: number;
-  cursorId?: bigint;
+  cursorId?: string;
   type: MediaType;
   metadata: Prisma.JsonValue;
   baseModel?: string;
+  availability: Availability;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -479,7 +487,7 @@ export const getAllImages = async ({
   modelVersionId,
   imageId,
   username,
-  excludedImageIds,
+  // excludedImageIds,
   period,
   periodMode,
   sort,
@@ -512,9 +520,19 @@ export const getAllImages = async ({
 
   const showClubPosts = !!postId || !!collectionId || !!modelId || !!modelVersionId || !!reviewId;
 
-  if (hidden && !userId) throw throwAuthorizationError();
-  if (hidden && (excludedImageIds ?? []).length === 0) {
-    return { items: [], nextCursor: undefined };
+  if (hidden) {
+    if (!userId) throw throwAuthorizationError();
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (imageIds.length) {
+      cacheTime = 0;
+      AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
+    } else {
+      return { items: [], nextCursor: undefined };
+    }
   }
 
   if (excludeCrossPosts && modelVersionId) {
@@ -572,23 +590,15 @@ export const getAllImages = async ({
 
   // Filter only followed users
   if (userId && followed) {
-    const followedUsers = await dbRead.user.findUnique({
-      where: { id: userId },
-      select: {
-        engagingUsers: {
-          select: { targetUser: { select: { id: true } } },
-          where: { type: 'Follow' },
-        },
-      },
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId, type: 'Follow' },
+      select: { targetUserId: true },
     });
-    const followedUsersIds =
-      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
-    AND.push(
-      Prisma.sql`i."userId" IN (${
-        followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null
-      })`
-    );
-    cacheTime = 0;
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      cacheTime = 0;
+      AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
+    }
   }
 
   // Filter to specific tags
@@ -692,10 +702,10 @@ export const getAllImages = async ({
     }
   }
 
-  if (hidden) {
-    cacheTime = 0;
-    AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
-  }
+  // if (hidden) {
+  //   cacheTime = 0;
+  //   AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
+  // }
 
   if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
   else if (nsfw !== undefined) {
@@ -762,9 +772,7 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    ${Prisma.raw(
-      isDev ? 'LEFT ' : ''
-    )}JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -798,6 +806,7 @@ export const getAllImages = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
+      p."availability",
       ${Prisma.raw(
         includeBaseModel
           ? `(
@@ -815,6 +824,7 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."collectedCount", 0) "collectedCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       COALESCE(im."viewCount", 0) "viewCount",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
@@ -824,9 +834,12 @@ export const getAllImages = async ({
       LIMIT ${limit + 1}
   `;
 
-  if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
-  const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
-  const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+  // Disable Prisma query
+  // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
+  // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
+  // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+
+  const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -842,7 +855,7 @@ export const getAllImages = async ({
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  let nextCursor: bigint | undefined;
+  let nextCursor: string | undefined;
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
@@ -911,6 +924,7 @@ export const getAllImages = async ({
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       baseModel?: string | null;
+      availability?: Availability;
     }
   > = rawImages
     .filter((x) => {
@@ -933,6 +947,7 @@ export const getAllImages = async ({
         dislikeCount,
         heartCount,
         commentCount,
+        collectedCount,
         tippedAmountCount,
         viewCount,
         cursorId,
@@ -954,6 +969,7 @@ export const getAllImages = async ({
           dislikeCountAllTime: dislikeCount,
           heartCountAllTime: heartCount,
           commentCountAllTime: commentCount,
+          collectedCountAllTime: collectedCount,
           tippedAmountCountAllTime: tippedAmountCount,
           viewCountAllTime: viewCount,
         },
@@ -1073,6 +1089,11 @@ export const getImage = async ({
       u.image "userImage",
       u."deletedAt",
       u."profilePictureId",
+      ${
+        !withoutPost
+          ? Prisma.sql`p."availability" "availability",`
+          : Prisma.sql`'Public' "availability",`
+      }
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -1189,6 +1210,7 @@ type ImagesForModelVersions = {
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
+  availability: Availability;
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -1246,7 +1268,8 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
-  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+
+  const query = Prisma.sql`
     WITH targets AS (
       SELECT
         id,
@@ -1275,12 +1298,16 @@ export const getImagesForModelVersion = async ({
       i.hash,
       i.type,
       i.metadata,
-      t."modelVersionId"
+      t."modelVersionId",
+      p."availability"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
+    JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
+  // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
+  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   if (include.includes('tags')) {
     const tags = await dbRead.tagsOnImage.findMany({

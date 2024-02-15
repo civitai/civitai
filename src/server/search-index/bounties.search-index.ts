@@ -186,6 +186,7 @@ const onFetchItemsToIndex = async ({
   const WHERE = [
     Prisma.sql`b."userId" != -1`,
     Prisma.sql`(b."startsAt" <= NOW() OR b."expiresAt" >= NOW())`,
+    Prisma.sql`b."availability" != 'Unsearchable'::"Availability"`,
   ];
 
   if (whereOr) {

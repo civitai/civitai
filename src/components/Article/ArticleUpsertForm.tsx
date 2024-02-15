@@ -13,8 +13,7 @@ import {
   createStyles,
   ActionIcon,
   Paper,
-  Divider,
-  Checkbox,
+  Input,
 } from '@mantine/core';
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
@@ -28,7 +27,6 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
-  InputClubResourceManagementInput,
   InputMultiFileUpload,
   InputRTE,
   InputSelect,
@@ -46,8 +44,11 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useQueryUserContributingClubs } from '../Club/club.utils';
+import { FeatureIntroduction } from '../FeatureIntroduction/FeatureIntroduction';
+import { HelpButton } from '../HelpButton/HelpButton';
+import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { constants } from '~/server/common/constants';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -67,6 +68,8 @@ const tooltipProps: Partial<TooltipProps> = {
   multiline: true,
   position: 'bottom',
   withArrow: true,
+  zIndex: 10,
+  withinPortal: true,
 };
 
 const useStyles = createStyles((theme) => ({
@@ -78,11 +81,9 @@ const useStyles = createStyles((theme) => ({
 
 export function ArticleUpsertForm({ article }: Props) {
   const { classes } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
-  const features = useFeatureFlags();
-  const { hasClubs } = useQueryUserContributingClubs();
 
   const defaultCategory = result.success ? result.data.category : -1;
   const form = useForm({
@@ -180,9 +181,14 @@ export function ArticleUpsertForm({ article }: Props) {
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col xs={12} md={8}>
           <Stack spacing="xl">
-            <Group spacing={4}>
+            <Group spacing={8} noWrap>
               <BackButton url="/articles" />
               <Title>{article?.id ? 'Editing article' : 'Create an Article'}</Title>
+              <FeatureIntroduction
+                feature="article-create"
+                contentSlug={['feature-introduction', 'article-create']}
+                actionButton={<HelpButton size="md" radius="xl" />}
+              />
             </Group>
             <InputText
               name="title"
@@ -234,22 +240,48 @@ export function ArticleUpsertForm({ article }: Props) {
                       <IconQuestionMark />
                     </ThemeIcon>
                   </Tooltip>
+                  <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
                 </Group>
               }
             />
-            <InputSimpleImageUpload name="cover" label="Cover Image" withAsterisk />
+            <InputSimpleImageUpload
+              name="cover"
+              label="Cover Image"
+              description={`Suggested resolution: ${constants.profile.coverImageWidth} x ${constants.profile.coverImageHeight}`}
+              withAsterisk
+            />
             <InputSelect
               name="categoryId"
-              label="Category"
+              label={
+                <Group spacing={4} noWrap>
+                  <Input.Label required>Category</Input.Label>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Categories determine what kind of article you&apos;re making. Selecting a
+                      category that&apos;s the closest match to your subject helps users find your
+                      article
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
               placeholder="Select a category"
               data={categories}
               nothingFound="Nothing found"
               loading={loadingCategories}
-              withAsterisk
             />
             <InputTags
               name="tags"
-              label="Tags"
+              label={
+                <Group spacing={4} noWrap>
+                  <Input.Label>Tags</Input.Label>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Tags are how users filter content on the site. It&apos;s important to
+                      correctly tag your content so it can be found by interested users
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
               target={[TagTarget.Article]}
               filter={(tag) =>
                 data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
@@ -257,7 +289,17 @@ export function ArticleUpsertForm({ article }: Props) {
             />
             <InputMultiFileUpload
               name="attachments"
-              label="Attachments"
+              label={
+                <Group spacing={4} noWrap>
+                  <Input.Label>Attachments</Input.Label>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                    <Text>
+                      Attachments may be additional context for your article, training data, or
+                      larger files that don&apos;t make sense to post as a model
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
               dropzoneProps={{
                 maxSize: 30 * 1024 ** 2, // 30MB
                 maxFiles: 10,

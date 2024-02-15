@@ -645,6 +645,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await dbWrite.article.deleteMany({ where: { userId: id } });
   await dbWrite.post.deleteMany({ where: { userId: id } });
   await dbWrite.model.deleteMany({ where: { userId: id } });
+  await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
+  await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
   // remove images from s3 buckets before deleting them
   try {
@@ -1121,11 +1123,13 @@ export async function equipCosmetic({
   userId: number;
 }) {
   if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
+  if (!cosmeticId.length) return;
+
   const userCosmetics = await dbRead.userCosmetic.findMany({
     where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
-  if (!userCosmetics) throw new Error("You don't have that cosmetic");
+  if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
 
@@ -1141,5 +1145,19 @@ export async function equipCosmetic({
   ]);
 
   // Clear cache
+  await deleteUserCosmeticCache(userId);
+}
+
+export async function unequipCosmeticByType({
+  type,
+  userId,
+}: {
+  type: CosmeticType;
+  userId: number;
+}) {
+  await dbWrite.userCosmetic.updateMany({
+    where: { userId, cosmetic: { type }, equippedAt: { not: null } },
+    data: { equippedAt: null },
+  });
   await deleteUserCosmeticCache(userId);
 }

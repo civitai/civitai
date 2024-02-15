@@ -32,4 +32,4 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-setPageOptions(ImagePage, { innerLayout: (page) => <>{page}</> });
+setPageOptions(ImagePage, { withScrollArea: false });

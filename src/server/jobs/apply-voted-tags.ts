@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { imagesSearchIndex } from '~/server/search-index';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { chunk } from 'lodash-es';
+import { chunk, uniqBy } from 'lodash-es';
 import { updateImageTagIdsForImages } from '~/server/services/image.service';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
@@ -21,7 +21,7 @@ async function applyUpvotes() {
 
   // Apply tags over the threshold
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const addedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Apply voted tags
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -46,12 +46,13 @@ async function applyUpvotes() {
       "imageId",
       ${now}
     FROM over_threshold
-    ON CONFLICT ("tagId", "imageId") DO NOTHING;
+    ON CONFLICT ("tagId", "imageId") DO NOTHING
+    RETURNING "tagId", "imageId";
   `;
 
   // Bring back disabled tag where voted by moderator
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const restoredImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Enable upvoted moderation tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -64,22 +65,37 @@ async function applyUpvotes() {
     UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT "tagId", "imageId" FROM affected
-    );
+    )
+    RETURNING "tagId", "imageId";
   `;
 
-  // Get affected images to update search index and cache
+  // Get affected images to update search index, cache, and votes
   // --------------------------------------------
-  const affectedImageResults = await dbWrite.$queryRaw<{ imageId: number }[]>`
-    SELECT DISTINCT "imageId" FROM "TagsOnImage"
-    WHERE "createdAt" = ${now}
+  const affectedImageTags = uniqBy(
+    [...addedImageTags, ...restoredImageTags],
+    ({ imageId, tagId }) => `${imageId}-${tagId}`
+  );
+
+  const affectedImageResults = [...new Set(affectedImageTags.map(({ imageId }) => imageId))];
+
+  // Update votes
+  await dbWrite.$executeRaw`
+    -- Update image tag votes
+    with affected AS (
+      SELECT "imageId", "tagId" FROM "TagsOnImage"
+      WHERE "createdAt" = ${now}
+    )
+    UPDATE "TagsOnImageVote" SET "applied" = true
+    WHERE ("imageId", "tagId") IN (SELECT "imageId", "tagId" FROM affected)
+      AND vote > 0;
   `;
 
   // Bust cache
-  await updateImageTagIdsForImages(affectedImageResults.map(({ imageId }) => imageId));
+  await updateImageTagIdsForImages(affectedImageResults);
 
   // Update search index
   await imagesSearchIndex.queueUpdate(
-    affectedImageResults.map(({ imageId }) => ({
+    affectedImageResults.map((imageId) => ({
       id: imageId,
       action: SearchIndexUpdateQueueAction.Update,
     }))
@@ -133,7 +149,7 @@ async function applyDownvotes() {
 
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const deletedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Delete downvoted tags (not moderation)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -161,12 +177,13 @@ async function applyDownvotes() {
       FROM under_threshold ut
       JOIN "Tag" t ON t.id = ut."tagId"
       WHERE t.type != 'Moderation'
-    );
+    )
+    RETURNING "tagId", "imageId";
   `;
 
   // Disable tags under the threshold (moderation) where voted by moderator
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const disabledImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Disable downvoted moderation tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -195,7 +212,8 @@ async function applyDownvotes() {
       FROM under_threshold ut
       JOIN "Tag" t ON t.id = ut."tagId"
       WHERE t.type = 'Moderation' AND ut."heavyVotes" > 0
-    );
+    )
+    RETURNING "tagId", "imageId";
   `;
 
   // Add "Needs Review" to tags under the threshold (moderation)
@@ -232,17 +250,28 @@ async function applyDownvotes() {
 
   // Get affected images to update search index
   // --------------------------------------------
-  const affectedImageResults = await dbWrite.$queryRaw<{ imageId: number }[]>`
-    SELECT DISTINCT "imageId" FROM "TagsOnImage"
-    WHERE "disabledAt" = ${now}
+  const affectedImageResults = [
+    ...new Set([...disabledImageTags, ...deletedImageTags].map((x) => x.imageId)),
+  ];
+
+  // Update votes
+  await dbWrite.$executeRaw`
+    -- Update image tag votes (unapply)
+    with affected AS (
+      SELECT "imageId", "tagId" FROM "TagsOnImage"
+      WHERE "disabledAt" = ${now}
+    )
+    UPDATE "TagsOnImageVote" SET "applied" = false
+    WHERE ("imageId", "tagId") IN (SELECT "imageId", "tagId" FROM affected)
+      AND vote > 0;
   `;
 
   // Bust cache
-  await updateImageTagIdsForImages(affectedImageResults.map(({ imageId }) => imageId));
+  await updateImageTagIdsForImages(affectedImageResults);
 
   // Update search index
   await imagesSearchIndex.queueUpdate(
-    affectedImageResults.map(({ imageId }) => ({
+    affectedImageResults.map((imageId) => ({
       id: imageId,
       action: SearchIndexUpdateQueueAction.Update,
     }))

@@ -12,7 +12,6 @@ import {
   ListObjectsV2Command,
   _Object,
 } from '@aws-sdk/client-s3';
-import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server.mjs';
 
@@ -257,18 +256,18 @@ export const baseS3Client = new S3Client({
   uploadRegion: env.S3_UPLOAD_REGION,
 });
 
-export const csamS3Client = new S3Client({
-  name: 'csam-s3-client',
-  uploadKey: env.CSAM_UPLOAD_KEY,
-  uploadSecret: env.CSAM_UPLOAD_SECRET,
-  uploadEndpoint: env.CSAM_UPLOAD_REGION,
-  uploadRegion: env.CSAM_UPLOAD_ENDPOINT,
-});
+// export const csamS3Client = new S3Client({
+//   name: 'csam-s3-client',
+//   uploadKey: env.CSAM_UPLOAD_KEY,
+//   uploadSecret: env.CSAM_UPLOAD_SECRET,
+//   uploadEndpoint: env.CSAM_UPLOAD_REGION,
+//   uploadRegion: env.CSAM_UPLOAD_ENDPOINT,
+// });
 
 export const S3 = {
   uploadBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_UPLOAD_BUCKET }),
   settledBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_SETTLED_BUCKET }),
   imageBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_IMAGE_UPLOAD_BUCKET }),
   imageCacheBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_IMAGE_CACHE_BUCKET }),
-  csamBucket: new S3Bucket({ client: csamS3Client, bucket: env.CSAM_BUCKET_NAME }),
+  // csamBucket: new S3Bucket({ client: csamS3Client, bucket: env.CSAM_BUCKET_NAME }),
 };

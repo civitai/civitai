@@ -57,6 +57,8 @@ export default PartnerEndpoint(
             )}
           ) t ("modelVersionId", "url", "partnerId")
           JOIN "ModelVersion" mv ON mv.id = t."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE m."allowCommercialUse" = 'Rent'::"CommercialUse" OR m."allowCommercialUse" = 'Sell'::"CommercialUse"
           ON CONFLICT ("partnerId", "modelVersionId") DO UPDATE SET "url" = excluded."url"
         `;
       }

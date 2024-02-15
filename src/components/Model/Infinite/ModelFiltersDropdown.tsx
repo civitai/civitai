@@ -11,6 +11,7 @@ import {
   Drawer,
   PopoverProps,
   ScrollArea,
+  ButtonProps,
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
@@ -72,6 +73,7 @@ export function ModelFiltersDropdown(props: Props) {
         earlyAccess: false,
         supportsGeneration: false,
         followed: false,
+        archived: false,
         period: MetricTimeframe.AllTime,
       }),
     [setFilters]
@@ -106,13 +108,14 @@ export function DumbModelFiltersDropdown({
   setFilters,
   filterMode = 'local',
   position = 'bottom-end',
+  isFeed,
+  ...buttonProps
 }: Props & {
   filters: Partial<ModelFilterSchema>;
   setFilters: (filters: Partial<ModelFilterSchema>) => void;
 }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const isSameUser = useIsSameUser(router.query.username);
   const { classes, cx, theme } = useStyles();
   const flags = useFeatureFlags();
   const mobile = useIsMobile();
@@ -133,6 +136,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
+    (mergedFilters.archived ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
@@ -165,10 +169,11 @@ export function DumbModelFiltersDropdown({
     <Indicator
       offset={4}
       label={filterLength ? filterLength : undefined}
-      size={16}
+      size={14}
       zIndex={10}
       showZero={false}
       dot={false}
+      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
@@ -176,8 +181,10 @@ export function DumbModelFiltersDropdown({
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        {...buttonProps}
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
+        data-expanded={opened}
       >
         <Group spacing={4} noWrap>
           <IconFilter size={16} />
@@ -313,10 +320,10 @@ export function DumbModelFiltersDropdown({
         </Chip.Group>
       </Stack>
 
-      {currentUser && !isSameUser && (
-        <Stack spacing={0}>
-          <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
-          <Group>
+      <Stack spacing={0}>
+        <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        <Group>
+          {currentUser && isFeed && (
             <Chip
               checked={mergedFilters.followed}
               onChange={(checked) => setFilters({ followed: checked })}
@@ -324,9 +331,16 @@ export function DumbModelFiltersDropdown({
             >
               Followed Only
             </Chip>
-          </Group>
-        </Stack>
-      )}
+          )}
+          <Chip
+            checked={mergedFilters.archived}
+            onChange={(checked) => setFilters({ archived: checked })}
+            {...chipProps}
+          >
+            Include Archived
+          </Chip>
+        </Group>
+      </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
@@ -347,15 +361,16 @@ export function DumbModelFiltersDropdown({
         <Drawer
           opened={opened}
           onClose={() => setOpened(false)}
-          withCloseButton={false}
           size="90%"
           position="bottom"
           styles={{
-            body: { padding: 16, overflowY: 'auto' },
             drawer: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
             },
+            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            header: { padding: '4px 8px' },
+            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -383,7 +398,11 @@ export function DumbModelFiltersDropdown({
   );
 }
 
-type Props = { filterMode?: 'local' | 'query'; position?: PopoverProps['position'] };
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
+  filterMode?: 'local' | 'query';
+  position?: PopoverProps['position'];
+  isFeed?: boolean;
+};
 
 const useStyles = createStyles((theme, _params, getRef) => ({
   label: {
@@ -415,4 +434,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
       width: '100%',
     },
   },
+
+  indicatorRoot: { lineHeight: 1 },
+  indicatorIndicator: { lineHeight: 1.6 },
 }));

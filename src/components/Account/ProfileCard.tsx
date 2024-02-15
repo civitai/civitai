@@ -45,7 +45,7 @@ const schema = z.object({
 
 export function ProfileCard() {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data: cosmetics, isLoading: loadingCosmetics } = trpc.user.getCosmetics.useQuery(
     undefined,
@@ -65,21 +65,11 @@ export function ProfileCard() {
     });
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
-    async onSuccess(user, { badgeId, nameplateId, profilePicture }) {
+    async onSuccess(user) {
       showSuccessNotification({ message: 'Your profile has been saved' });
-      // await utils.model.getAll.invalidate();
       await queryUtils.user.getById.invalidate({ id: user.id });
+      await queryUtils.user.getCosmetics.invalidate({ equipped: true });
       await currentUser?.refresh();
-
-      if (user)
-        form.reset({
-          ...user,
-          image: user.image ?? null,
-          username: user.username ?? undefined,
-          badgeId: badgeId ?? null,
-          nameplateId: nameplateId ?? null,
-          profilePicture,
-        });
     },
   });
 
@@ -139,7 +129,7 @@ export function ProfileCard() {
           mutate({
             id,
             username,
-            nameplateId,
+            nameplateId: nameplateId ? nameplateId : null,
             image,
             profilePicture,
             badgeId,

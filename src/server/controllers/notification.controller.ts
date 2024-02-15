@@ -42,16 +42,21 @@ export const getUserNotificationsInfiniteHandler = async ({
 
 export const upsertUserNotificationSettingsHandler = async ({
   input,
+  ctx,
 }: {
   input: ToggleNotificationSettingInput;
+  ctx: DeepNonNullable<Context>;
 }) => {
   try {
     if (input.toggle) {
-      const deleted = await deleteUserNotificationSetting({ ...input });
+      const deleted = await deleteUserNotificationSetting({ ...input, userId: ctx.user.id });
       return { deleted };
     }
 
-    const notificationSetting = await createUserNotificationSetting({ ...input });
+    const notificationSetting = await createUserNotificationSetting({
+      ...input,
+      userId: ctx.user.id,
+    });
     return { notificationSetting };
   } catch (error) {
     throw throwDbError(error);

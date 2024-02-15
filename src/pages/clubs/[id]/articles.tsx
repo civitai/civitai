@@ -15,15 +15,16 @@ import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
     if (!features?.clubs) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: false,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: false,
+    //   },
+    // };
   },
 });
 
@@ -58,7 +59,7 @@ const ClubArticles = () => {
         </Group>
       </Stack>
       <MasonryProvider columnWidth={constants.cardSizes.articles} maxColumnCount={7}>
-        <MasonryContainer fluid mt="md" p={0}>
+        <MasonryContainer mt="md" p={0}>
           <ArticlesInfinite
             filters={{
               ...filters,

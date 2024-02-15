@@ -9,43 +9,68 @@ export const getByVersionId = ({ modelVersionId }: { modelVersionId: number }) =
   return dbRead.modelFile.findMany({ where: { modelVersionId } });
 };
 
-export const createFile = <TSelect extends Prisma.ModelFileSelect>({
+export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   select,
+  userId,
+  isModerator,
   ...data
-}: ModelFileCreateInput & { select: TSelect }) => {
+}: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
+
+  const ownsVersion = await dbWrite.modelVersion.findFirst({
+    where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
+  });
+  if (!ownsVersion) throw throwNotFoundError();
 
   return dbWrite.modelFile.create({
     data: { ...file, modelVersionId: data.modelVersionId },
     select,
   });
-};
+}
 
-export const updateFile = async ({ id, metadata, ...inputData }: ModelFileUpdateInput) => {
-  const modelFile = await dbRead.modelFile.findUnique({
-    where: { id },
-    select: { id: true, metadata: true },
+export async function updateFile({
+  id,
+  metadata,
+  userId,
+  isModerator,
+  ...inputData
+}: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
+  const modelFile = await dbWrite.modelFile.findUnique({
+    where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
+    select: { id: true, metadata: true, modelVersionId: true },
   });
   if (!modelFile) throw throwNotFoundError();
-  return dbWrite.modelFile.update({
+
+  metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
+  await dbWrite.modelFile.updateMany({
     where: { id },
     data: {
       ...inputData,
-      metadata: metadata
-        ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata }
-        : undefined,
+      metadata,
     },
-    select: { id: true },
   });
-};
 
-// only pass data that can change (ie. modelFile.type)
-// export const updateFile = async (data) => {};
+  return {
+    ...modelFile,
+    metadata,
+  };
+}
 
-export const deleteFile = ({ id }: GetByIdInput) => {
-  return dbWrite.modelFile.delete({ where: { id } });
-};
+export async function deleteFile({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
+    DELETE FROM "ModelFile" mf
+    USING "ModelVersion" mv, "Model" m
+    WHERE mf."modelVersionId" = mv.id
+    AND mv."modelId" = m.id
+    AND mf.id = ${id}
+    ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
+    RETURNING
+      mv.id as "modelVersionId"
+  `;
 
-export const batchDeleteFiles = ({ ids }: { ids: number[] }) => {
-  return dbWrite.modelFile.deleteMany({ where: { id: { in: ids } } });
-};
+  return rows[0];
+}

@@ -97,6 +97,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   }).optional(),
   supportsGeneration: z.boolean().optional(),
   followed: z.boolean().optional(),
+  archived: z.boolean().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
@@ -218,6 +219,7 @@ export type ModelMeta = Partial<{
   takenDownAt: string;
   takenDownBy: number;
   bountyId: number;
+  unpublishedBy: number;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

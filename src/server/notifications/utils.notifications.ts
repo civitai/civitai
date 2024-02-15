@@ -15,6 +15,7 @@ import { userJourneyNotifications } from '~/server/notifications/user-journey.no
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { clubNotifications } from '~/server/notifications/club.notifications';
+import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 
 const notificationProcessors = {
   ...mentionNotifications,
@@ -33,6 +34,7 @@ const notificationProcessors = {
   ...collectionNotifications,
   ...imageNotifications,
   ...clubNotifications,
+  ...creatorsProgramNotifications,
 };
 
 // Sort notifications by priority and group them by priority
@@ -54,16 +56,30 @@ for (const notification of notifications) {
 }
 export { notificationBatches };
 
-export function getNotificationMessage(notification: BareNotification) {
+export function getNotificationMessage(notification: Omit<BareNotification, 'id'>) {
   const { prepareMessage } = notificationProcessors[notification.type] ?? {};
   if (!prepareMessage) return null;
   return prepareMessage(notification);
 }
 
-export function getNotificationTypes() {
-  const notificationTypes: Record<string, string> = {};
-  for (const [type, { displayName, toggleable }] of Object.entries(notificationProcessors)) {
-    if (toggleable !== false) notificationTypes[type] = displayName;
+function getNotificationTypes() {
+  const notificationTypes: string[] = [];
+  const notificationCategoryTypes: Record<string, { displayName: string; type: string }[]> = {};
+  for (const [type, { displayName, toggleable, category }] of Object.entries(
+    notificationProcessors
+  )) {
+    if (toggleable === false) continue;
+    notificationCategoryTypes[category] ??= [];
+    notificationCategoryTypes[category]!.push({
+      type,
+      displayName,
+    });
+    notificationTypes.push(type);
   }
-  return notificationTypes;
+
+  return {
+    notificationCategoryTypes,
+    notificationTypes,
+  };
 }
+export const { notificationCategoryTypes, notificationTypes } = getNotificationTypes();

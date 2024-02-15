@@ -88,6 +88,16 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <Button
             component={NextLink}
             prefetch={false}
+            href="/creators-program"
+            {...buttonProps}
+            color="blue"
+            px={mobile ? 5 : 'xs'}
+          >
+            Creators
+          </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
             href="/content/tos"
             {...buttonProps}
             px={mobile ? 5 : 'xs'}
@@ -148,6 +158,15 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             rel="nofollow noreferrer"
           >
             Education
+          </Button>
+          <Button
+            component="a"
+            href="https://air.civitai.com"
+            {...buttonProps}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
+            Residency
           </Button>
 
           <SocialLinks />

@@ -2,6 +2,7 @@ import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import {
+  Availability,
   MetricTimeframe,
   ModelHashType,
   ModelStatus,
@@ -9,9 +10,10 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
+import { isEqual } from 'lodash';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
-import { EnqueuedTask } from 'meilisearch';
+import { EnqueuedTask, TypoTolerance } from 'meilisearch';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -124,6 +126,24 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       updateFilterableAttributesTask
     );
   }
+
+  const typoTolerance: TypoTolerance = {
+    enabled: true,
+    minWordSizeForTypos: {
+      oneTypo: 12,
+      twoTypos: 16,
+    },
+    disableOnAttributes: [],
+    disableOnWords: [],
+  };
+
+  if (
+    // Meilisearch stores sorted.
+    !isEqual(settings.typoTolerance, typoTolerance)
+  ) {
+    const updateTypoToleranceTask = await index.updateTypoTolerance(typoTolerance);
+    console.log('onIndexSetup :: updateTypoToleranceTask created', updateTypoToleranceTask);
+  }
 };
 
 export type ModelSearchIndexRecord = Awaited<
@@ -172,6 +192,7 @@ const onFetchItemsToIndex = async ({
           earlyAccessDeadline: true,
           mode: true,
           checkpointType: true,
+          availability: true,
           // Joins:
           user: {
             select: userWithCosmeticsSelect,
@@ -181,6 +202,9 @@ const onFetchItemsToIndex = async ({
             select: getModelVersionsForSearchIndex,
             where: {
               status: ModelStatus.Published,
+              availability: {
+                not: Availability.Unsearchable,
+              },
             },
           },
           tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
@@ -218,6 +242,9 @@ const onFetchItemsToIndex = async ({
         },
         where: {
           status: ModelStatus.Published,
+          availability: {
+            not: Availability.Unsearchable,
+          },
           OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
         },
       });
@@ -363,7 +390,9 @@ const onFetchItemsToIndex = async ({
           }
 
           const modelImages = imagesWithTags.filter(
-            (image) => image.modelVersionId === modelVersion.id
+            (image) =>
+              image.modelVersionId === modelVersion.id &&
+              image.availability !== Availability.Unsearchable
           );
 
           return {

@@ -1,6 +1,6 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -93,7 +93,7 @@ export function UserImagesPage() {
       sort = ImageSort.Newest,
       username = '',
       reactions,
-      types = [],
+      types = [MediaType.image],
       withMeta = false,
       followed = undefined,
       ...query
@@ -128,7 +128,7 @@ export function UserImagesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid p={0}>
+        <MasonryContainer p={0}>
           <Stack spacing="xs">
             <Group spacing={8} position="apart">
               <Group spacing={8}>
@@ -173,6 +173,8 @@ export function UserImagesPage() {
                 <ImageFiltersDropdown
                   query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
+                  size="sm"
+                  compact
                 />
               </Group>
             </Group>
@@ -183,10 +185,12 @@ export function UserImagesPage() {
                 sort,
                 types,
                 withMeta,
+                hidden: undefined,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
                 followed,
               }}
+              showEmptyCta={isSameUser}
             />
           </Stack>
         </MasonryContainer>

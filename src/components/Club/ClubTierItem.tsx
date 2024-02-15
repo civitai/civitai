@@ -1,29 +1,29 @@
+import { Alert, Anchor, Button, Center, Paper, Stack, Text, Title } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { Currency } from '@prisma/client';
+import dayjs from 'dayjs';
+import { useRouter } from 'next/router';
 import React from 'react';
-import { Alert, Anchor, Button, Center, Group, Paper, Stack, Text, Title } from '@mantine/core';
-import { ClubMembershipOnClub, ClubTier } from '~/types/router';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.utils';
+import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { constants } from '~/server/common/constants';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
+import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { openConfirmModal } from '@mantine/modals';
-import { showSuccessNotification } from '~/utils/notifications';
-import { formatDate } from '~/utils/date-helpers';
-import dayjs from 'dayjs';
-import { calculateClubTierNextBillingDate } from '~/utils/clubs';
-import { trpc } from '~/utils/trpc';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useRouter } from 'next/router';
-import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
-import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
-import { Currency } from '@prisma/client';
+import { constants } from '~/server/common/constants';
+import { ClubMembershipOnClub, ClubTier } from '~/types/router';
+import { calculateClubTierNextBillingDate } from '~/utils/clubs';
+import { formatDate } from '~/utils/date-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
   const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
@@ -262,9 +262,9 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                       Your membership to this club is a subscription, meaning{' '}
                       <CurrencyBadge unitAmount={clubTier.unitAmount} currency={Currency.BUZZ} />{' '}
                       will be debited from your account on the specified billing date. To ensure you
-                      have enough buzz on your next renewal, its recommended that you add a payment
-                      method. Doing so is the ideal way to keep supporting the creators you care
-                      about.
+                      have enough buzz on your next renewal, it&apos;s recommended that you add a
+                      payment method. Doing so is the ideal way to keep supporting the creators you
+                      care about.
                     </Text>
                     <Text weight="bold">
                       Your card will only be charged if you do not have the amount of buzz at the

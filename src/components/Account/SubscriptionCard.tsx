@@ -6,16 +6,20 @@ import {
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { planDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
   const { data, isLoading } = trpc.stripe.getUserSubscription.useQuery();
 
   const details: DescriptionTableProps['items'] = [];
+  let displayStatus = '';
   if (data) {
     const { status, price, product } = data;
-    const displayStatus = data.canceledAt ? 'canceled' : status;
+    displayStatus = data.canceledAt ? 'canceled' : status;
     details.push({
       label: 'Plan',
       value: product.name,
@@ -37,8 +41,7 @@ export function SubscriptionCard() {
         value: (
           <Group align="flex-end" position="apart">
             <Text>
-              {'$' +
-                price.unitAmount / 100 +
+              {getStripeCurrencyDisplay(price.unitAmount, price.currency) +
                 ' ' +
                 price.currency.toUpperCase() +
                 ' per ' +
@@ -86,6 +89,14 @@ export function SubscriptionCard() {
         ) : data ? (
           <DescriptionTable items={details} />
         ) : null}
+        {displayStatus === 'active' && (
+          <Stack>
+            <Text size="md" weight={500}>
+              Your Membership Includes
+            </Text>
+            <PlanBenefitList benefits={planDetails[0].benefits} />
+          </Stack>
+        )}
       </Stack>
     </Card>
   );

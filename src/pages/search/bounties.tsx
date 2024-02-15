@@ -1,24 +1,21 @@
 import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/core';
-import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
+import { useInstantSearch } from 'react-instantsearch';
 
 import {
   ChipRefinementList,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
-import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import { BountyCard } from '~/components/Cards/BountyCard';
-import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export default function BountySearch() {
   return (
@@ -60,32 +57,14 @@ const RenderFilters = () => {
 };
 
 export function BountyHitList() {
-  const { hits, showMore, isLastPage } = useInfiniteHits<BountySearchIndexRecord>();
+  const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'bounties'>();
   const { status } = useInstantSearch();
   const { classes, cx } = useSearchLayoutStyles();
-  const currentUser = useCurrentUser();
-  const {
-    users: hiddenUsers,
-    images: hiddenImages,
-    tags: hiddenTags,
-    isLoading: loadingPreferences,
-  } = useHiddenPreferencesContext();
 
-  const bounties = useMemo(() => {
-    if (loadingPreferences) {
-      return [];
-    }
-
-    return applyUserPreferencesBounties<BountySearchIndexRecord>({
-      items: hits,
-      hiddenUsers,
-      hiddenImages,
-      hiddenTags,
-      currentUserId: currentUser?.id,
-    });
-  }, [loadingPreferences, hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
-
-  const hiddenItems = hits.length - bounties.length;
+  const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
+    type: 'bounties',
+    data: hits,
+  });
 
   if (loadingPreferences) {
     return (
@@ -102,9 +81,9 @@ export function BountyHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
-            {hiddenItems > 0 && (
+            {hiddenCount > 0 && (
               <Text color="dimmed">
-                {hiddenItems} bounties have been hidden due to your settings.
+                {hiddenCount} bounties have been hidden due to your settings.
               </Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
@@ -146,18 +125,19 @@ export function BountyHitList() {
 
   return (
     <Stack>
-      {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} bounties have been hidden due to your settings.</Text>
+      {hiddenCount > 0 && (
+        <Text color="dimmed">{hiddenCount} bounties have been hidden due to your settings.</Text>
       )}
       <Box
         className={cx(classes.grid)}
         style={{
           // Overwrite default sizing here.
-          gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
+          gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
         }}
       >
-        {bounties.map((hit) => {
-          return <BountyCard key={hit.id} data={hit} />;
+        {items.map((hit) => {
+          // TODO - fix type
+          return <BountyCard key={hit.id} data={hit as any} />;
         })}
       </Box>
       {hits.length > 0 && !isLastPage && (

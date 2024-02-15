@@ -9,6 +9,7 @@ import {
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { userSettingsChat } from '~/server/schema/chat.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { zc } from '~/utils/schema-helpers';
@@ -173,6 +174,9 @@ export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
   features: z.record(z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
+  dismissedAlerts: z.array(z.string()).optional(),
+  chat: userSettingsChat.optional(),
+  airEmail: z.string().email().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -182,3 +186,10 @@ export const toggleFeatureInputSchema = z.object({
   feature: z.enum([featureKey, ...otherKeys]),
   value: z.boolean().optional(),
 });
+
+export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
+export const setUserSettingsInput = z.object({
+  creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
+});
+
+export const dismissAlertSchema = z.object({ alertId: z.string() });

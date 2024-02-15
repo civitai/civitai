@@ -18,17 +18,14 @@ export default function PostDetailPage({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  useSession: true,
-  resolver: async ({ ctx, ssg, session = null }) => {
+  resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { postId: string };
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
 
     await ssg?.post.get.prefetch({ id: postId });
-    //TODO.Briant - include browsingMode
     await ssg?.image.getInfinite.prefetchInfinite({
       postId,
-      browsingMode: parseBrowsingMode(ctx.req.cookies, session),
     });
 
     return { props: { postId } };

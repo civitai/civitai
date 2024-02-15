@@ -29,6 +29,7 @@ type Props = {
   imageId?: number;
   onCreateClick?: () => void;
   mainResourceId?: number;
+  hideSoftware?: boolean;
 };
 type MetaDisplay = {
   label: string;
@@ -54,6 +55,7 @@ export function ImageMeta({
   generationProcess = 'txt2img',
   mainResourceId,
   onCreateClick,
+  hideSoftware,
 }: Props) {
   const flags = useFeatureFlags();
 
@@ -63,7 +65,7 @@ export function ImageMeta({
     const medium: MetaDisplay[] = [];
     for (const key of Object.keys(labelDictionary)) {
       const value = meta[key]?.toString();
-      if (!value) continue;
+      if (value === undefined || value === null) continue;
       const label = labelDictionary[key];
       if (value.length > 30 || key === 'prompt') long.push({ label, value });
       else if (
@@ -83,8 +85,10 @@ export function ImageMeta({
     }
 
     const onSite = 'civitaiResources' in meta;
+    const software =
+      meta.software?.toString() ?? (onSite ? 'Civitai Generator' : 'External Generator');
 
-    return { long, medium, short, hasControlNet, onSite };
+    return { long, medium, short, hasControlNet, onSite, software };
   }, [meta]);
 
   // TODO.optimize - can we get this data higher up?
@@ -113,13 +117,9 @@ export function ImageMeta({
 
             {label === 'Prompt' && (
               <>
-                {metas.onSite ? (
+                {!hideSoftware && (
                   <Badge size="xs" radius="sm">
-                    Civitai Generator
-                  </Badge>
-                ) : (
-                  <Badge size="xs" radius="sm">
-                    External Generator
+                    {metas.software}
                   </Badge>
                 )}
                 <Badge size="xs" radius="sm">
@@ -142,6 +142,7 @@ export function ImageMeta({
                       color={copied ? 'green' : 'blue'}
                       onClick={copy}
                       ml="auto"
+                      data-activity="copy:prompt"
                     >
                       {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
                     </ActionIcon>
@@ -199,13 +200,14 @@ export function ImageMeta({
             size="xs"
             variant="light"
             leftIcon={<IconBrush size={16} />}
+            data-activity="remix:image-meta"
             onClick={() => {
               generationPanel.open({ type: 'image', id: imageId ?? 0 });
               onCreateClick?.();
             }}
             sx={{ flex: 1 }}
           >
-            Start Creating
+            Remix
           </Button>
         )}
         <GenerationDataButton meta={meta} iconOnly={canCreate} />
@@ -224,6 +226,7 @@ function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
       onClick={() => copy(JSON.stringify(workflow))}
       spacing={4}
       sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
+      data-activity="copy:workflow"
     >
       {workflow?.nodes?.length ?? 0} Nodes
       {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
@@ -249,6 +252,7 @@ function GenerationDataButton({
         copy(encodeMetadata(meta));
       }}
       w={!iconOnly ? '100%' : undefined}
+      data-activity="copy:image-meta"
     >
       <Group spacing={4}>
         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
@@ -271,6 +275,7 @@ export function ImageMetaPopover({
   children,
   imageId,
   mainResourceId,
+  hideSoftware = false,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   const [opened, setOpened] = useState(false);
@@ -301,6 +306,7 @@ export function ImageMetaPopover({
             generationProcess={generationProcess}
             imageId={imageId}
             mainResourceId={mainResourceId}
+            hideSoftware={hideSoftware}
             onCreateClick={() => setOpened(false)}
           />
         </Popover.Dropdown>

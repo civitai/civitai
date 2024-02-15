@@ -27,8 +27,9 @@ import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
+  IconBrush,
+  IconChevronDown,
   IconCircleDashed,
-  IconClubs,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -38,7 +39,8 @@ import {
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
-  IconPlaylistAdd,
+  IconPlayerPlayFilled,
+  IconBookmarkEdit,
   IconPlus,
   IconProgressBolt,
   IconSearch,
@@ -50,6 +52,7 @@ import {
   IconUsers,
   IconVideoPlus,
   IconWriting,
+  IconClubs,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -66,10 +69,10 @@ import {
   useState,
 } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
@@ -89,6 +92,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
+import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 const HEADER_HEIGHT = 70;
 
@@ -253,19 +257,30 @@ export function AppHeader({
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
-  const { url: homeUrl } = useHomeSelection();
 
   const isMuted = currentUser?.muted ?? false;
+  const isMember = !!currentUser?.tier;
 
   const mainActions = useMemo<MenuLink[]>(
     () => [
+      {
+        href: '/generate',
+        visible: !isMuted,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBrush stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Generate images
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
       {
         href: '/models/create',
         visible: !isMuted,
         redirectReason: 'upload-model',
         label: (
           <Group align="center" spacing="xs">
-            <IconUpload stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconUpload stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Upload a model
           </Group>
         ),
@@ -277,9 +292,9 @@ export function AppHeader({
         redirectReason: 'train-model',
         label: (
           <Group align="center" spacing="xs">
-            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconBarbell stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Text span inline>
-              Train a model
+              Train a LoRA
             </Text>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
@@ -292,7 +307,7 @@ export function AppHeader({
         redirectReason: 'post-images',
         label: (
           <Group align="center" spacing="xs">
-            <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Post images
           </Group>
         ),
@@ -304,7 +319,7 @@ export function AppHeader({
         redirectReason: 'post-images',
         label: (
           <Group align="center" spacing="xs">
-            <IconVideoPlus stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Post videos
           </Group>
         ),
@@ -316,7 +331,7 @@ export function AppHeader({
         redirectReason: 'create-article',
         label: (
           <Group align="center" spacing="xs">
-            <IconWriting stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconWriting stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Write an article
           </Group>
         ),
@@ -328,9 +343,21 @@ export function AppHeader({
         redirectReason: 'create-bounty',
         label: (
           <Group align="center" spacing="xs">
-            <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconMoneybag stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Text>Create a bounty</Text>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/clubs/create',
+        visible: !isMuted && features.clubs,
+        redirectReason: 'create-club',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            <Text>Create a club</Text>
           </Group>
         ),
         rel: 'nofollow',
@@ -365,13 +392,13 @@ export function AppHeader({
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconPlaylistAdd stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            <IconBookmark stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             My collections
           </Group>
         ),
       },
       {
-        href: `${features.alternateHome ? '/models' : '/'}?favorites=true`,
+        href: '/models?favorites=true',
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -385,7 +412,7 @@ export function AppHeader({
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconBookmark stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            <IconBookmarkEdit stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
           </Group>
         ),
@@ -436,7 +463,7 @@ export function AppHeader({
         ),
       },
       {
-        href: `${features.alternateHome ? '/models' : '/'}?hidden=true`,
+        href: '/models?hidden=true',
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -489,14 +516,28 @@ export function AppHeader({
           </Group>
         ),
       },
+      {
+        href: '#!',
+        visible: !!currentUser,
+        label: (
+          <FeatureIntroduction
+            feature="getting-started"
+            contentSlug={['feature-introduction', 'welcome']}
+            actionButton={
+              <Group align="center" spacing="xs">
+                <IconPlayerPlayFilled stroke={1.5} />
+                Getting Started
+              </Group>
+            }
+          />
+        ),
+      },
     ],
     [
       currentUser,
       features.imageTrainingResults,
-      features.alternateHome,
       features.bounties,
       features.buzz,
-      features.clubs,
       router.asPath,
       theme,
     ]
@@ -626,20 +667,88 @@ export function AppHeader({
     [currentUser, features.buzz, handleCloseMenu, isMobile]
   );
 
-  const createButton =
-    features.imageGeneration && !router.asPath.includes('/generate') ? (
-      <GenerateButton
-        variant="light"
-        py={8}
-        px={12}
-        h="auto"
-        radius="xl"
-        mode="toggle"
-        // Quick hack to avoid svg from going over the button. cc: Justin 👀
-        style={{ zIndex: 3 }}
-        compact
-      />
-    ) : null;
+  const mobileCreateButton = !isMuted && (
+    <GenerateButton
+      variant="light"
+      py={8}
+      px={12}
+      h="auto"
+      radius="sm"
+      mode="toggle"
+      compact
+      className="show-mobile"
+      data-activity="create:navbar"
+    />
+  );
+
+  const createMenu = !isMuted && (
+    <Menu position="bottom" offset={5} withArrow trigger="hover">
+      <Menu.Target>
+        {features.imageGeneration ? (
+          <Group spacing={0} noWrap className="hide-mobile">
+            <GenerateButton
+              variant="light"
+              py={8}
+              pl={12}
+              pr={4}
+              h="auto"
+              radius="sm"
+              mode="toggle"
+              // Quick hack to avoid svg from going over the button. cc: Justin 👀
+              sx={() => ({ borderTopRightRadius: 0, borderBottomRightRadius: 0 })}
+              compact
+              data-activity="create:navbar"
+            />
+            <Button
+              variant="light"
+              py={8}
+              px={4}
+              h="auto"
+              radius="sm"
+              sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
+            >
+              <IconChevronDown stroke={2} size={20} />
+            </Button>
+          </Group>
+        ) : (
+          <Button
+            className={cx(classes.links, 'hide-mobile')}
+            variant="filled"
+            color="green"
+            size="xs"
+            pl={5}
+          >
+            <IconPlus size={16} /> New
+          </Button>
+        )}
+      </Menu.Target>
+      <Menu.Dropdown>
+        {mainActions
+          .filter(({ visible }) => visible !== false)
+          .map((link, index) => {
+            const menuItem = (
+              <Menu.Item
+                key={!link.redirectReason ? index : undefined}
+                component={NextLink}
+                href={link.href}
+                as={link.as}
+                rel={link.rel}
+              >
+                {link.label}
+              </Menu.Item>
+            );
+
+            return link.redirectReason ? (
+              <LoginRedirect key={index} reason={link.redirectReason} returnUrl={link.href}>
+                {menuItem}
+              </LoginRedirect>
+            ) : (
+              menuItem
+            );
+          })}
+      </Menu.Dropdown>
+    </Menu>
+  );
 
   const handleSignOut = async () => {
     // Removes referral cookies on sign out
@@ -667,63 +776,15 @@ export function AppHeader({
       >
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
-            <Link href={homeUrl ?? '/'} passHref>
-              <Anchor variant="text" onClick={() => setBurgerOpened(false)}>
-                <Logo />
-              </Anchor>
-            </Link>
-            {!isMuted && (
-              <Menu position="bottom-start" withArrow>
-                <Menu.Target>
-                  <ActionIcon
-                    className={classes.links}
-                    size={30}
-                    variant="filled"
-                    color="green"
-                    radius={10}
-                    sx={(theme) => ({
-                      backgroundColor: '#529C4F',
-                      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-                    })}
-                  >
-                    <IconPlus size={25} stroke={2.5} />
-                  </ActionIcon>
-                  {/* <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
-                    <IconPlus size={16} /> New
-                  </Button> */}
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {mainActions
-                    .filter(({ visible }) => visible !== false)
-                    .map((link, index) => {
-                      const menuItem = (
-                        <Menu.Item
-                          key={!link.redirectReason ? index : undefined}
-                          component={NextLink}
-                          href={link.href}
-                          as={link.as}
-                          rel={link.rel}
-                        >
-                          {link.label}
-                        </Menu.Item>
-                      );
-
-                      return link.redirectReason ? (
-                        <LoginRedirect
-                          key={index}
-                          reason={link.redirectReason}
-                          returnUrl={link.href}
-                        >
-                          {menuItem}
-                        </LoginRedirect>
-                      ) : (
-                        menuItem
-                      );
-                    })}
-                </Menu.Dropdown>
-              </Menu>
-            )}
-            <SupportButton />
+            <Anchor
+              component={NextLink}
+              href="/"
+              variant="text"
+              onClick={() => setBurgerOpened(false)}
+            >
+              <Logo />
+            </Anchor>
+            {!isMember && <SupportButton />}
             {/* Disabled until next event */}
             {/* <EventButton /> */}
           </Group>
@@ -742,7 +803,8 @@ export function AppHeader({
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="md" align="center" noWrap>
             <Group spacing="sm" noWrap>
-              {createButton}
+              {mobileCreateButton}
+              {createMenu}
               {currentUser && (
                 <>
                   <UploadTracker />
@@ -751,6 +813,7 @@ export function AppHeader({
               )}
               {currentUser?.showNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
+              {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
             </Group>
             {!currentUser ? (
@@ -834,7 +897,7 @@ export function AppHeader({
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
-            {createButton}
+            {mobileCreateButton}
             {features.enhancedSearch && (
               <ActionIcon onClick={() => setShowSearch(true)}>
                 <IconSearch />
@@ -842,6 +905,7 @@ export function AppHeader({
             )}
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
+            {currentUser && features.chat && <ChatButton />}
             <Burger
               opened={burgerOpened}
               onClick={() => setBurgerOpened(!burgerOpened)}

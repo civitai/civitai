@@ -32,10 +32,10 @@ import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
 import { NextLink } from '@mantine/next';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInput';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openConfirmModal } from '@mantine/modals';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -44,13 +44,11 @@ const tagColor: Record<TagsOnTagsType, MantineColor> = {
 };
 
 export default function Tags() {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
-  const [tagSearch, setTagSearch] = useState('');
-  const [selected, setSelected] = useState({});
   const [sorting, setSorting] = useState<MRT_SortingState>([]);
 
-  const { data, isLoading, isRefetching, refetch } = trpc.tag.getManagableTags.useQuery();
+  const { data, isLoading } = trpc.tag.getManagableTags.useQuery();
   const tags = useMemo(() => data ?? [], [data]);
   const addableTags = useMemo(() => {
     if (!tags) return [];
@@ -176,10 +174,7 @@ export default function Tags() {
                 </NextLink>
               )}
               {tag.target.includes(TagTarget.Model) && (
-                <NextLink
-                  href={`${features.alternateHome ? '/models' : '/'}?tags=${row.id}&view=feed`}
-                  target="_blank"
-                >
+                <NextLink href={`/models?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconBox size={14} />}>
                     {abbreviateNumber(tag.modelCount)}
                   </IconBadge>

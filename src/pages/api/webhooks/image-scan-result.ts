@@ -28,6 +28,7 @@ import { signalClient } from '~/utils/signal-client';
 import { SignalMessages } from '~/server/common/enums';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { getTagRules } from '~/server/services/system-cache';
+import { uniqBy } from 'lodash-es';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -234,9 +235,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
   try {
     if (tags.length > 0) {
+      const uniqTags = uniqBy(tags, (x) => x.id);
       await dbWrite.$executeRawUnsafe(`
         INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source")
-        VALUES ${tags
+        VALUES ${uniqTags
           .filter((x) => x.id)
           .map(
             (x) =>
@@ -273,9 +275,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate(prompt, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
-    else if (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
-      reviewKey = 'minor';
-    } else if (nsfw) {
+    if (!reviewKey && nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
         WITH to_check AS (
           -- Check based on associated resources
@@ -306,6 +306,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
         SELECT bool_or(poi) "poi" FROM to_check;
       `;
       if (poi) reviewKey = 'poi';
+    }
+    if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
+      reviewKey = 'minor';
     }
 
     const data: Prisma.ImageUpdateInput = {};

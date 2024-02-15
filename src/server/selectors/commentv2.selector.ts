@@ -15,6 +15,7 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   tosViolation: true,
   content: true,
   hidden: true,
+  threadId: true,
   user: {
     select: userWithCosmeticsSelect,
   },

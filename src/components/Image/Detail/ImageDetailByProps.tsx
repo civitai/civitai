@@ -19,7 +19,7 @@ import {
 import {
   IconAlertTriangle,
   IconEye,
-  IconPlaylistAdd,
+  IconBookmark,
   IconChevronLeft,
   IconChevronRight,
   IconTrash,
@@ -216,7 +216,7 @@ export function ImageDetailByProps({
                         compact
                       >
                         <Group spacing={4}>
-                          <IconPlaylistAdd size={14} />
+                          <IconBookmark size={14} />
                           <Text size="xs">Save</Text>
                         </Group>
                       </Button>

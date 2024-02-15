@@ -1,6 +1,7 @@
 import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { AssociationType } from '@prisma/client';
 import { IconRocketOff } from '@tabler/icons-react';
+import React from 'react';
 
 import { ArticleAltCard } from '~/components/Article/Infinite/ArticleAltCard';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
@@ -19,7 +20,7 @@ export function AssociatedModels({
 }: {
   fromId: number;
   type: AssociationType;
-  label: string;
+  label: React.ReactNode;
   ownerId: number;
 }) {
   const currentUser = useCurrentUser();
@@ -39,7 +40,6 @@ export function AssociatedModels({
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={4} maxSingleColumnWidth={450}>
       <MasonryContainer
-        fluid
         my="xl"
         pt="xl"
         pb="xl"

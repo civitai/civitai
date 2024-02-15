@@ -159,7 +159,7 @@ export function Reactions({
           readonly={readonly}
           available={available}
         />
-        {supportsBuzzTipping && targetUserId && (
+        {supportsBuzzTipping && targetUserId && !readonly && (
           <BuzzTippingBadge
             toUserId={targetUserId}
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}

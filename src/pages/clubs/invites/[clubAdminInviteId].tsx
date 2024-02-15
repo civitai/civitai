@@ -12,8 +12,7 @@ const querySchema = z.object({ clubAdminInviteId: z.string() });
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  useSSG: true,
-  resolver: async ({ session, features, ctx, ssg }) => {
+  resolver: async ({ session, features, ctx }) => {
     if (!features?.clubs) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.params);
@@ -29,12 +28,12 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: false,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: false,
+    //   },
+    // };
 
     return { props: { clubAdminInviteId } };
   },

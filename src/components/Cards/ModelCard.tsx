@@ -6,6 +6,7 @@ import {
   Menu,
   Stack,
   Text,
+  ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -15,9 +16,10 @@ import {
   IconTagOff,
   IconDotsVertical,
   IconBrush,
-  IconPlaylistAdd,
+  IconBookmark,
   IconInfoCircle,
   IconBolt,
+  IconArchiveFilled,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -41,7 +43,7 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { CollectionType, CosmeticType } from '@prisma/client';
+import { CollectionType, CosmeticType, ModelModifier } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
@@ -59,6 +61,7 @@ import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -73,11 +76,9 @@ export function ModelCard({ data, forceInView }: Props) {
     skip: forceInView,
     initialInView: forceInView,
   });
+  const image = data.images[0];
   const { classes, cx, theme } = useCardStyles({
-    aspectRatio:
-      data.image && data.image.width && data.image.height
-        ? data.image.width / data.image.height
-        : 1,
+    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
   const router = useRouter();
@@ -107,7 +108,7 @@ export function ModelCard({ data, forceInView }: Props) {
     />
   );
 
-  const reportImageOption = data.image && (
+  const reportImageOption = image && (
     <ReportMenuItem
       key="report-image"
       label="Report image"
@@ -115,7 +116,7 @@ export function ModelCard({ data, forceInView }: Props) {
         openContext('report', {
           entityType: ReportEntity.Image,
           // Explicitly cast to number because we know it's not undefined
-          entityId: data.image?.id as number,
+          entityId: image?.id as number,
         })
       }
     />
@@ -153,6 +154,14 @@ export function ModelCard({ data, forceInView }: Props) {
     ]);
   }
 
+  contextMenuItems = contextMenuItems.concat([
+    <ToggleSearchableMenuItem
+      entityType="Model"
+      entityId={data.id}
+      key="toggle-searchable-menu-item"
+    />,
+  ]);
+
   if (currentUser?.id !== data.user.id)
     contextMenuItems = contextMenuItems.concat([
       <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
@@ -187,6 +196,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
   const { useModelVersionRedirect } = useModelCardContext();
@@ -201,19 +211,19 @@ export function ModelCard({ data, forceInView }: Props) {
 
   return (
     <HolidayFrame {...cardDecoration}>
-      <FeedCard className={!data.image ? classes.noImage : undefined} href={href}>
+      <FeedCard className={!image ? classes.noImage : undefined} href={href}>
         <div className={classes.root} ref={ref}>
-          {data.image && (
+          {image && (
             <div className={classes.blurHash}>
-              <MediaHash {...data.image} />
+              <MediaHash {...image} />
             </div>
           )}
           <div className={classes.content} style={{ opacity: inView ? 1 : undefined }}>
             {inView && (
               <>
-                {data.image && (
+                {image && (
                   <ImageGuard
-                    images={[data.image]}
+                    images={[image]}
                     connect={{ entityId: data.id, entityType: 'model' }}
                     render={(image) => (
                       <ImageGuard.Content>
@@ -270,6 +280,15 @@ export function ModelCard({ data, forceInView }: Props) {
                                       </Text>
                                     </Badge>
                                   )}
+                                  {isArchived && (
+                                    <Badge
+                                      className={cx(classes.infoChip, classes.chip)}
+                                      variant="light"
+                                      radius="xl"
+                                    >
+                                      <IconArchiveFilled size={16} />
+                                    </Badge>
+                                  )}
                                 </Group>
                                 <Stack spacing="xs">
                                   {contextMenuItems.length > 0 && (
@@ -302,6 +321,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                       size={30}
                                       color="white"
                                       variant="filled"
+                                      data-activity="create:model-card"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
@@ -443,7 +463,7 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
                           </Group>
                           <Group spacing={2}>
-                            <IconPlaylistAdd size={14} strokeWidth={2.5} />
+                            <IconBookmark size={14} strokeWidth={2.5} />
                             <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
                           </Group>
                           <Group spacing={2}>
@@ -509,7 +529,7 @@ export function ModelCard({ data, forceInView }: Props) {
                           dropdownTrigger={
                             <IconBadge
                               className={classes.iconBadge}
-                              icon={<IconPlaylistAdd size={14} />}
+                              icon={<IconBookmark size={14} />}
                             >
                               <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
                             </IconBadge>

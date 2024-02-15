@@ -49,7 +49,6 @@ import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -66,6 +65,7 @@ import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 
 const mantineColors: DefaultMantineColor[] = [
   'blue',
@@ -196,15 +196,15 @@ export function AmbientModelCard({ data, height }: Props) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
-  const hiddenQuery = router.query.hidden === 'true';
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { push } = useRouter();
   const features = useFeatureFlags();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
-  const { id, image, name, rank, user, locked, earlyAccessDeadline } = data ?? {};
+  const { id, images, name, rank, user, locked, earlyAccessDeadline } = data ?? {};
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
+  const image = images[0];
 
   const [loading, setLoading] = useState(false);
 
@@ -215,9 +215,6 @@ export function AmbientModelCard({ data, height }: Props) {
       staleTime: Infinity,
     });
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
-
-  const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
-  const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
@@ -351,6 +348,13 @@ export function AmbientModelCard({ data, height }: Props) {
       />,
     ]);
   }
+  contextMenuItems = contextMenuItems.concat([
+    <ToggleSearchableMenuItem
+      entityType="Model"
+      entityId={data.id}
+      key="toggle-searchable-menu-item"
+    />,
+  ]);
 
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
@@ -413,7 +417,6 @@ export function AmbientModelCard({ data, height }: Props) {
         color="red"
         className={classes.card}
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-        sx={{ opacity: isHidden && !hiddenQuery ? 0.1 : undefined }}
       >
         <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
           {inView && (

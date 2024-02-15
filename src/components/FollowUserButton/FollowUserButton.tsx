@@ -68,7 +68,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
     <LoginRedirect reason="follow-user">
       <Button
         radius="xl"
-        variant={alreadyFollowing ? 'outline' : 'filled'}
+        variant={alreadyFollowing ? 'outline' : 'light'}
         onClick={handleFollowClick}
         loading={toggleFollowMutation.isLoading}
         px="sm"

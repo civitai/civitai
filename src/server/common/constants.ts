@@ -68,6 +68,7 @@ export const constants = {
     'SDXL 1.0 LCM',
     'SDXL Distilled',
     'SDXL Turbo',
+    'Stable Cascade',
     'SVD',
     'SVD XT',
     'Playground v2',
@@ -131,6 +132,7 @@ export const constants = {
     'DPM++ 2M',
     'DPM++ SDE',
     'DPM++ 2M SDE',
+    'DPM++ 3M SDE',
     'DPM fast',
     'DPM adaptive',
     'LMS Karras',
@@ -140,6 +142,8 @@ export const constants = {
     'DPM++ 2M Karras',
     'DPM++ SDE Karras',
     'DPM++ 2M SDE Karras',
+    'DPM++ 3M SDE Karras',
+    'DPM++ 3M SDE Exponential',
     'DDIM',
     'PLMS',
     'UniPC',
@@ -226,6 +230,10 @@ export const constants = {
     maxTipAmount: 100000000,
     minTipAmount: 50,
     maxEntityTip: 2000,
+    buzzDollarRatio: 1000,
+    platformFeeRate: 3000, // 30.00%. Divide by 10000
+    minBuzzWithdrawal: 100000,
+    maxBuzzWithdrawal: 100000000,
   },
   profile: {
     coverImageAspectRatio: 1 / 4,
@@ -251,9 +259,20 @@ export const constants = {
     coverImageHeight: 400,
     coverImageWidth: 1600,
   },
+  comments: {
+    imageMaxDepth: 3,
+    bountyEntryMaxDepth: 3,
+    maxDepth: 4,
+  },
   altTruncateLength: 125,
   system: {
     user: { id: -1, username: 'civitai' },
+  },
+  creatorsProgram: {
+    rewards: {
+      earlyAccessUniqueDownload: 10,
+      generatedImageWithResource: 10 / 1000, // 10 buzz for every 1000 images.
+    },
   },
 } as const;
 
@@ -268,18 +287,20 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled'] as const;
+export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled', 'SCascade'] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
   SDXLDistilled: ['SDXL Distilled'],
+  SCascade: ['Stable Cascade'],
 };
 
 type LicenseDetails = {
   url: string;
   name: string;
+  notice?: string;
 };
 export const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
@@ -297,10 +318,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
   'sdxl turbo': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
     name: 'Stability AI Non-Commercial Research Community License',
+    notice:
+      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
   svd: {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
     name: 'Stable Video Diffusion Non-Commercial Research Community License',
+    notice:
+      'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
   'playground v2': {
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
@@ -309,6 +334,12 @@ export const baseLicenses: Record<string, LicenseDetails> = {
   agpl: {
     url: 'https://github.com/PixArt-alpha/PixArt-alpha/blob/master/LICENSE',
     name: 'agpl-3.0',
+  },
+  'SAI NC RC': {
+    url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
+    name: 'SAI NC RC',
+    notice:
+      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
 };
 
@@ -330,6 +361,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SVD XT': baseLicenses['svd'],
   'Playground v2': baseLicenses['playground v2'],
   'PixArt a': baseLicenses['agpl'],
+  'Stable Cascade': baseLicenses['SAI NCRC'],
   Other: undefined,
 };
 
@@ -508,10 +540,22 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 
 export const CurrencyConfig: Record<
   Currency,
-  { icon: (props: TablerIconsProps) => JSX.Element; color: (theme: MantineTheme) => string }
+  {
+    icon: (props: TablerIconsProps) => JSX.Element;
+    color: (theme: MantineTheme) => string;
+    fill?: (theme: MantineTheme) => string | string;
+  }
 > = {
-  [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
-  [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
+  [Currency.BUZZ]: {
+    icon: IconBolt,
+    color: (theme) => theme.colors.yellow[7],
+    fill: (theme) => theme.colors.yellow[7],
+  },
+  [Currency.USD]: {
+    icon: IconCurrencyDollar,
+    color: (theme) => theme.colors.yellow[7],
+    fill: undefined,
+  },
 };
 
 export const BUZZ_FEATURE_LIST = [

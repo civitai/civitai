@@ -22,11 +22,10 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import Link from 'next/link';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useEffect, useMemo } from 'react';
-import { applyUserPreferencesImages } from '../Search/search.utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -119,32 +118,27 @@ export function ImageCarousel({
   nsfw,
   mobile = false,
   onClick,
-  isLoading,
+  isLoading: loading,
   onImageChange,
 }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: loadingHiddenPreferences,
-  } = useHiddenPreferencesContext();
 
-  const filteredImages = useMemo(
+  const transformed = useMemo(
     () =>
-      !loadingHiddenPreferences
-        ? applyUserPreferencesImages<(typeof images)[number]>({
-            items: images,
-            hiddenImages,
-            hiddenTags,
-            hiddenUsers,
-            currentUserId: currentUser?.id,
-          })
-        : [],
-    [currentUser?.id, hiddenImages, hiddenTags, hiddenUsers, images, loadingHiddenPreferences]
+      images.map((image) => ({
+        ...image,
+        tagIds: image.tags?.map((x) => x.id),
+      })),
+    [images]
   );
+
+  const { items: filteredImages, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'images',
+    data: transformed,
+  });
+  const isLoading = loading || loadingPreferences;
 
   useEffect(() => {
     if (filteredImages.length > 0) {
@@ -162,29 +156,38 @@ export function ImageCarousel({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          minHeight: mobile ? 300 : 500,
+          minHeight: mobile ? 300 : 400,
         }}
         withBorder
+        pos="relative"
       >
-        <Stack align="center" maw={380}>
-          <Stack spacing={4} align="center">
-            <ThemeIcon color="gray" size={64} radius={100}>
-              <IconPhotoOff size={32} />
-            </ThemeIcon>
-            <Text size="lg">No showcase images available</Text>
+        {isLoading ? (
+          <Box className={classes.loader}>
+            <Center>
+              <Loader />
+            </Center>
+          </Box>
+        ) : (
+          <Stack align="center" maw={380}>
+            <Stack spacing={4} align="center">
+              <ThemeIcon color="gray" size={64} radius={100}>
+                <IconPhotoOff size={32} />
+              </ThemeIcon>
+              <Text size="lg">No showcase images available</Text>
+            </Stack>
+            <Group grow w="100%">
+              {currentUser ? (
+                <Link href="/user/account#content-moderation">
+                  <Button variant="outline">Adjust Settings</Button>
+                </Link>
+              ) : (
+                <Link href={`/login?returnUrl=${router.asPath}`}>
+                  <Button variant="outline">Log In</Button>
+                </Link>
+              )}
+            </Group>
           </Stack>
-          <Group grow w="100%">
-            {currentUser ? (
-              <Link href="/user/account#content-moderation">
-                <Button variant="outline">Adjust Settings</Button>
-              </Link>
-            ) : (
-              <Link href={`/login?returnUrl=${router.asPath}`}>
-                <Button variant="outline">Log In</Button>
-              </Link>
-            )}
-          </Group>
-        </Stack>
+        )}
       </Paper>
     );
   }
@@ -295,14 +298,6 @@ export function ImageCarousel({
           }}
         />
       </Carousel>
-
-      {isLoading && (
-        <Box className={classes.loader}>
-          <Center>
-            <Loader />
-          </Center>
-        </Box>
-      )}
     </Box>
   );
 }

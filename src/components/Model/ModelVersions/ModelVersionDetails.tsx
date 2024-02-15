@@ -47,7 +47,7 @@ import {
 import { FileInfo } from '~/components/FileInfo/FileInfo';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
-import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
@@ -84,7 +84,11 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
-import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
+import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 export function ModelVersionDetails({
   model,
@@ -93,11 +97,11 @@ export function ModelVersionDetails({
   isFavorite,
   onFavoriteClick,
   onBrowseClick,
-  hasAccess,
+  hasAccess = true,
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -214,7 +218,7 @@ export function ModelVersionDetails({
             <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
           </IconBadge>
           {version.canGenerate && (
-            <GenerateButton modelVersionId={version.id}>
+            <GenerateButton modelVersionId={version.id} data-activity="create:version-stat">
               <IconBadge radius="xs" icon={<IconBrush size={14} />}>
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
@@ -227,12 +231,18 @@ export function ModelVersionDetails({
     {
       label: 'Base Model',
       value: (
-        <Text>
-          {version.baseModel}{' '}
-          {version.baseModelType && version.baseModelType === 'Standard'
-            ? ''
-            : version.baseModelType}
-        </Text>
+        <Group spacing={8} position="apart" noWrap>
+          <Text>
+            {version.baseModel}{' '}
+            {version.baseModelType && version.baseModelType === 'Standard'
+              ? ''
+              : version.baseModelType}
+          </Text>
+          <HowToButton
+            href="https://youtu.be/IIy3YwsXtTE?si=YiJDxMODCOTkUUM4&t=417"
+            tooltip="What is this?"
+          />
+        </Group>
       ),
     },
     {
@@ -324,11 +334,11 @@ export function ModelVersionDetails({
         </Group>
       ),
       value: (
-        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId}`}>
+        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId as number}`}>
           Go to bounty
         </Text>
       ),
-      visible: !!model.meta && !!model.meta.bountyId,
+      visible: !!model.meta?.bountyId,
     },
   ];
 
@@ -532,7 +542,11 @@ export function ModelVersionDetails({
                 {hasAccess ? (
                   <>
                     {canGenerate && (
-                      <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
+                      <GenerateButton
+                        iconOnly={displayCivitaiLink}
+                        modelVersionId={version.id}
+                        data-activity="create:model"
+                      />
                     )}
                     {displayCivitaiLink || canGenerate ? (
                       <Menu position="bottom-end">
@@ -921,12 +935,18 @@ export function ModelVersionDetails({
             )}
             <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
           </Group>
+          {model.type === 'Checkpoint' && license?.notice && (
+            <Text size="xs" color="dimmed">
+              {license.notice}
+            </Text>
+          )}
           {hasPendingClaimReport && (
             <AlertWithIcon icon={<IconMessageCircle2 />}>
               {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
+          <Adunit {...adsRegistry.modelVersionDetail} showRemoveAds />
         </Stack>
       </ContainerGrid.Col>
 

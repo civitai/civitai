@@ -99,43 +99,55 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                             }}
                           >
                             <ImageGuard.ToggleImage position="static" />
-                            <Stack spacing="xs" ml="auto">
-                              {!isBlocked && (
-                                <ImageGuard.Report context="image" position="static" withinPortal />
-                              )}
-                              {features.imageGeneration && image.meta && (
-                                <HoverActionButton
-                                  label="Create"
-                                  size={30}
-                                  color="white"
-                                  variant="filled"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    generationPanel.open({
-                                      type: 'image',
-                                      id: image.id,
-                                    });
-                                  }}
-                                >
-                                  <IconBrush stroke={2.5} size={16} />
-                                </HoverActionButton>
-                              )}
-                              {scheduled && (
-                                <Tooltip label="Scheduled">
-                                  <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
-                                    <IconClock2 size={16} strokeWidth={2.5} />
-                                  </ThemeIcon>
-                                </Tooltip>
-                              )}
-                              {notPublished && (
-                                <Tooltip label="Not published">
-                                  <ThemeIcon size={30} radius="xl" variant="filled" color="yellow">
-                                    <IconAlertTriangle size={16} strokeWidth={2.5} />
-                                  </ThemeIcon>
-                                </Tooltip>
-                              )}
-                            </Stack>
+                            {safe && (
+                              <Stack spacing="xs" ml="auto">
+                                {!isBlocked && (
+                                  <ImageGuard.Report
+                                    context="image"
+                                    position="static"
+                                    withinPortal
+                                  />
+                                )}
+                                {features.imageGeneration && image.meta && (
+                                  <HoverActionButton
+                                    label="Remix"
+                                    size={30}
+                                    color="white"
+                                    variant="filled"
+                                    data-activity="remix:image-card"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      generationPanel.open({
+                                        type: 'image',
+                                        id: image.id,
+                                      });
+                                    }}
+                                  >
+                                    <IconBrush stroke={2.5} size={16} />
+                                  </HoverActionButton>
+                                )}
+                                {scheduled && (
+                                  <Tooltip label="Scheduled">
+                                    <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                                      <IconClock2 size={16} strokeWidth={2.5} />
+                                    </ThemeIcon>
+                                  </Tooltip>
+                                )}
+                                {notPublished && (
+                                  <Tooltip label="Not published">
+                                    <ThemeIcon
+                                      size={30}
+                                      radius="xl"
+                                      variant="filled"
+                                      color="yellow"
+                                    >
+                                      <IconAlertTriangle size={16} strokeWidth={2.5} />
+                                    </ThemeIcon>
+                                  </Tooltip>
+                                )}
+                              </Stack>
+                            )}
                           </Group>
                           {safe && (
                             <EdgeMedia
@@ -179,6 +191,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                   </Stack>
                                 </Box>
                               ) : (
+                                // TODO.Briant - don't use group since group prevents clicking smaller images, or change pointer event?
                                 <Group className={classes.info} spacing={4} position="apart" noWrap>
                                   <Reactions
                                     entityId={image.id}

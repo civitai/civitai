@@ -11,6 +11,7 @@ import {
   Box,
   Divider,
   Loader,
+  useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
@@ -28,20 +29,19 @@ export function EditPostTags() {
   const tags = useEditPostContext((state) => state.tags);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   return (
-    <Input.Wrapper label="Post Tags">
-      <Group mt={5} spacing="xs">
-        {tags.map((tag, index) => (
-          <PostTag key={index} tag={tag} canRemove={publishedAt ? tags.length > 1 : true} />
-        ))}
-        {tags.length < 5 && <TagPicker />}
-      </Group>
-    </Input.Wrapper>
+    <Group spacing="xs">
+      {tags.map((tag, index) => (
+        <PostTag key={index} tag={tag} canRemove={publishedAt ? tags.length > 1 : true} />
+      ))}
+      {tags.length < 5 && <TagPicker />}
+    </Group>
   );
 }
 
 function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const postId = useEditPostContext((state) => state.id);
   const setTags = useEditPostContext((state) => state.setTags);
+  const theme = useMantineTheme();
 
   const { mutate, isLoading } = trpc.post.removeTag.useMutation({
     onMutate({ tagId }) {
@@ -60,6 +60,8 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   return (
     <Alert
       radius="xl"
+      color="gray"
+      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       py={4}
       pr={tag.id ? 'xs' : undefined}
       sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
@@ -87,7 +89,7 @@ function TagPicker() {
   const tags = useEditPostContext((state) => state.tags);
   const setTags = useEditPostContext((state) => state.setTags);
 
-  const { classes, cx } = useDropdownContentStyles();
+  const { classes, cx, theme } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState<string>('');
@@ -193,6 +195,8 @@ function TagPicker() {
         <Alert
           radius="xl"
           py={4}
+          color="gray"
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={() => setEditing(true)}
           sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
         >

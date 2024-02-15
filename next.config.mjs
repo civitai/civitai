@@ -205,6 +205,16 @@ export default defineNextConfig(withAxiom({
         source: '/advertise-with-us',
         destination: 'https://forms.clickup.com/8459928/f/825mr-10211/MIN35AIDXBZ7BTD5MG',
         permanent: true,
+      },
+      {
+        source: '/ad-feedback',
+        destination: 'https://forms.clickup.com/8459928/f/825mr-9711/WIMNO6V738T4ZBTPXP',
+        permanent: true,
+      },
+      {
+        source: '/user/notifications',
+        destination: '/',
+        permanent: true,
       }
     ];
   },

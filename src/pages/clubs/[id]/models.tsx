@@ -15,15 +15,16 @@ import { ModelFilterSchema } from '../../../providers/FiltersProvider';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
     if (!features?.clubs) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: false,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: false,
+    //   },
+    // };
   },
 });
 
@@ -57,7 +58,7 @@ const ClubModels = () => {
         </Group>
       </Stack>
       <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
-        <MasonryContainer fluid mt="md" p={0}>
+        <MasonryContainer mt="md" p={0}>
           <ModelsInfinite
             disableStoreFilters
             filters={{

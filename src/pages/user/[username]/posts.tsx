@@ -15,20 +15,9 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
-
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ features, ctx }) => {
-    const { username } = ctx.query;
-    // TODO: Make the Post page for the new profile. Disable this for now...
-    // if (features?.profileOverhaul)
-    //   return { redirect: { destination: `/user/${username}/profile/images`, permanent: false } };
-  },
-});
 
 export default function UserPostsPage() {
   const currentUser = useCurrentUser();
@@ -71,7 +60,7 @@ export default function UserPostsPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid p={0}>
+        <MasonryContainer p={0}>
           <Stack spacing="xs">
             <Group spacing={8} position="apart">
               {selfView && (
@@ -94,6 +83,8 @@ export default function UserPostsPage() {
                 <PostFiltersDropdown
                   query={{ ...query, period, followed }}
                   onChange={(filters) => replace(filters)}
+                  size="sm"
+                  compact
                 />
               </Group>
             </Group>

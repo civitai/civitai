@@ -13,14 +13,17 @@ export function UserImagesFeed({ username }: Props) {
       maxColumnCount={7}
       maxSingleColumnWidth={450}
     >
-      <MasonryContainer fluid>
+      <MasonryContainer>
         <Stack spacing="xs">
           <Group position="apart" spacing={0}>
             <SortFilter type="images" />
-            <PeriodFilter type="images" />!
+            <PeriodFilter type="images" />
           </Group>
           {/* <ImageCategories /> */}
-          <ImagesInfinite filters={{ username, types: undefined, withMeta: undefined }} withTags />
+          <ImagesInfinite
+            filters={{ username, types: undefined, withMeta: undefined, hidden: undefined }}
+            withTags
+          />
         </Stack>
       </MasonryContainer>
     </MasonryProvider>

@@ -13,52 +13,64 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
+import { Availability, CollectionType, NsfwLevel } from '@prisma/client';
 import {
-  IconInfoCircle,
-  IconDotsVertical,
   IconAlertTriangle,
+  IconBrush,
+  IconDotsVertical,
+  IconFlag,
   IconEye,
-  IconPlaylistAdd,
+  IconInfoCircle,
+  IconBookmark,
+  IconShare3,
 } from '@tabler/icons-react';
-import { IconShare3, IconBrush } from '@tabler/icons-react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
+import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
+import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
-import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
-import { ImageResources } from '~/components/Image/Detail/ImageResources';
-import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { CollectionType, NsfwLevel } from '@prisma/client';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { generationPanel } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { BrowsingMode } from '~/server/common/enums';
+import { generationPanel } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { ReportEntity } from '~/server/schema/report.schema';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
+  const { image, isLoading, active, toggleInfo, close, shareUrl } = useImageDetailContext();
   const { query } = useBrowserRouter();
   const currentUser = useCurrentUser();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
+
+  const nsfw = image.nsfw !== 'None';
 
   return (
     <>
@@ -71,10 +83,14 @@ export function ImageDetail() {
         }
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={
-          image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
+          image.nsfw !== NsfwLevel.None ||
+          !!image.needsReview ||
+          image.availability === Availability.Unsearchable
+            ? 'noindex, nofollow'
+            : undefined
         }
       />
-      <TrackView entityId={image.id} entityType="Image" type="ImageView" />
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
         <Paper className={classes.root}>
           <CloseButton
@@ -125,6 +141,7 @@ export function ImageDetail() {
                     size="md"
                     compact
                   />
+                  <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"
@@ -146,11 +163,47 @@ export function ImageDetail() {
               withBorder
               inheritPadding
             >
-              <Group position="apart" spacing={8}>
-                <Group spacing={8}>
-                  {image.postId &&
-                    (!query.postId ? (
-                      <RoutedDialogLink name="postDetail" state={{ postId: image.postId }} passHref>
+              <Stack spacing={8}>
+                <Group position="apart" spacing={8}>
+                  <Group spacing={8}>
+                    {currentUser && image.meta && (
+                      <Button
+                        size="md"
+                        radius="xl"
+                        color="blue"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                        data-activity="remix:image"
+                        compact
+                      >
+                        <Group spacing={4} noWrap>
+                          <IconBrush size={14} />
+                          <Text size="xs">Remix</Text>
+                        </Group>
+                      </Button>
+                    )}
+                    {image.postId &&
+                      (!query.postId ? (
+                        <RoutedDialogLink
+                          name="postDetail"
+                          state={{ postId: image.postId }}
+                          passHref
+                        >
+                          <Button
+                            component="a"
+                            size="md"
+                            radius="xl"
+                            color="gray"
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            compact
+                          >
+                            <Group spacing={4}>
+                              <IconEye size={14} />
+                              <Text size="xs">View post</Text>
+                            </Group>
+                          </Button>
+                        </RoutedDialogLink>
+                      ) : (
                         <Button
                           component="a"
                           size="md"
@@ -158,91 +211,71 @@ export function ImageDetail() {
                           color="gray"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                           compact
+                          onClick={close}
                         >
                           <Group spacing={4}>
                             <IconEye size={14} />
                             <Text size="xs">View post</Text>
                           </Group>
                         </Button>
-                      </RoutedDialogLink>
-                    ) : (
-                      <Button
-                        component="a"
-                        size="md"
+                      ))}
+                    <ActionIcon
+                      size={30}
+                      radius="xl"
+                      color="gray"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      onClick={() =>
+                        openContext('addToCollection', {
+                          imageId: image.id,
+                          type: CollectionType.Image,
+                        })
+                      }
+                    >
+                      <IconBookmark size={14} />
+                    </ActionIcon>
+                    <ShareButton
+                      url={shareUrl}
+                      title={`Image by ${image.user.username}`}
+                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                    >
+                      <ActionIcon
+                        size={30}
                         radius="xl"
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        compact
-                        onClick={close}
                       >
-                        <Group spacing={4}>
-                          <IconEye size={14} />
-                          <Text size="xs">View post</Text>
-                        </Group>
-                      </Button>
-                    ))}
-                  <Button
-                    size="md"
-                    radius="xl"
-                    color="gray"
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    onClick={() =>
-                      openContext('addToCollection', {
-                        imageId: image.id,
-                        type: CollectionType.Image,
-                      })
-                    }
-                    compact
-                  >
-                    <Group spacing={4}>
-                      <IconPlaylistAdd size={14} />
-                      <Text size="xs">Save</Text>
-                    </Group>
-                  </Button>
-                  {currentUser && image.meta && (
-                    <Button
-                      size="md"
-                      radius="xl"
-                      color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                      compact
-                    >
-                      <Group spacing={4} noWrap>
-                        <IconBrush size={14} />
-                        <Text size="xs">Create</Text>
-                      </Group>
-                    </Button>
-                  )}
-                  <ShareButton
-                    url={shareUrl}
-                    title={`Image by ${image.user.username}`}
-                    collect={{ type: CollectionType.Image, imageId: image.id }}
-                  >
-                    <Button
-                      size="md"
-                      radius="xl"
-                      color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      compact
-                    >
-                      <Group spacing={4}>
                         <IconShare3 size={14} />
-                        <Text size="xs">Share</Text>
-                      </Group>
-                    </Button>
-                  </ShareButton>
+                      </ActionIcon>
+                    </ShareButton>
+                  </Group>
+                  <Group spacing={8}>
+                    <LoginRedirect reason={'report-content'}>
+                      <ActionIcon
+                        size={30}
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        radius="xl"
+                        onClick={(e) => {
+                          openContext('report', {
+                            entityType: ReportEntity.Image,
+                            entityId: image.id,
+                          });
+                        }}
+                      >
+                        <IconFlag size={14} stroke={2} />
+                      </ActionIcon>
+                    </LoginRedirect>
+                    <ImageDetailContextMenu>
+                      <ActionIcon
+                        size={30}
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        radius="xl"
+                      >
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </ImageDetailContextMenu>
+                  </Group>
                 </Group>
-                <ImageDetailContextMenu>
-                  <ActionIcon
-                    size={30}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    radius="xl"
-                  >
-                    <IconDotsVertical size={14} />
-                  </ActionIcon>
-                </ImageDetailContextMenu>
-              </Group>
+              </Stack>
             </Card.Section>
             <Card.Section
               component={ScrollArea}
@@ -307,6 +340,11 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
+                <Adunit
+                  browsingModeOverride={!nsfw ? BrowsingMode.SFW : undefined}
+                  showRemoveAds
+                  {...adsRegistry.imageDetail}
+                />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

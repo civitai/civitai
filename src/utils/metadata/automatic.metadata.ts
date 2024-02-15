@@ -32,6 +32,7 @@ const excludedKeys = [
   'models',
   'controlNets',
   'denoise',
+  'other',
 ];
 // #endregion
 

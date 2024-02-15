@@ -1,5 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { handleMaintenanceMode } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import requestIp from 'request-ip';
 import { redis, redisLegacy } from '~/server/redis/client';
@@ -54,8 +53,6 @@ export const RateLimitedEndpoint =
     resourceKey = 'base'
   ) =>
   async (req: NextApiRequest, res: NextApiResponse) => {
-    if (handleMaintenanceMode(req, res)) return;
-
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
@@ -89,26 +86,51 @@ export function createLimiter({
   async function getCount(userKey: string) {
     const countStr = await redis.get(`${counterKey}:${userKey}`);
     if (!countStr) return fetchOnUnknown ? await populateCount(userKey) : undefined;
+
+    // Handle missing TTL
+    const ttl = await redis.ttl(`${counterKey}:${userKey}`);
+    if (ttl < 0) return await populateCount(userKey);
+
     return Number(countStr);
+  }
+
+  async function setLimitHitTime(userKey: string) {
+    await redis.set(`${limitKey}:${userKey}`, Date.now(), {
+      EX: refetchInterval,
+    });
+  }
+
+  async function getLimit(userKey: string, fallbackKey = 'default') {
+    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
+    return Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
   }
 
   async function hasExceededLimit(userKey: string, fallbackKey = 'default') {
     const count = await getCount(userKey);
     if (count === undefined) return false;
 
-    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
-    const limit = Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
+    const limit = await getLimit(userKey, fallbackKey);
     return limit !== 0 && count > limit;
   }
 
   async function increment(userKey: string, by = 1) {
-    const count = await getCount(userKey);
-    if (count === undefined) await populateCount(userKey);
+    let count = await getCount(userKey);
+    if (count === undefined) count = await populateCount(userKey);
     await redis.incrBy(`${counterKey}:${userKey}`, by);
+
+    const limit = await getLimit(userKey);
+    if (limit !== 0 && count && count + by > limit) await setLimitHitTime(userKey);
+  }
+
+  async function getLimitHitTime(userKey: string) {
+    const limitHitTime = await redis.get(`${limitKey}:${userKey}`);
+    if (!limitHitTime) return undefined;
+    return new Date(Number(limitHitTime));
   }
 
   return {
     hasExceededLimit,
+    getLimitHitTime,
     increment,
   };
 }

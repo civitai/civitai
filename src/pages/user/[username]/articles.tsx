@@ -74,7 +74,7 @@ export default function UserArticlesPage() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer fluid p={0}>
+        <MasonryContainer p={0}>
           <Stack spacing="xs">
             <Group spacing={8} position="apart">
               {selfView && (
@@ -98,6 +98,8 @@ export default function UserArticlesPage() {
                   <ArticleFiltersDropdown
                     query={{ ...query, period, followed }}
                     onChange={(filters) => replace(filters)}
+                    size="sm"
+                    compact
                   />
                 </Group>
               )}
@@ -110,6 +112,7 @@ export default function UserArticlesPage() {
                   period,
                   includeDrafts: !!currentUser?.isModerator,
                 }}
+                showEmptyCta={selfView}
               />
             ) : (
               <UserDraftArticles />

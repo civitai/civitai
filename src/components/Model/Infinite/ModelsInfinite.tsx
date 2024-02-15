@@ -1,6 +1,5 @@
-import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect } from 'react';
 
@@ -16,17 +15,22 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import Link from 'next/link';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
   disableStoreFilters?: boolean;
   showEof?: boolean;
+  showAds?: boolean;
+  showEmptyCta?: boolean;
 };
 
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
   disableStoreFilters = false,
+  showAds,
+  showEmptyCta,
 }: InfiniteModelsProps) {
   const features = useFeatureFlags();
   const modelFilters = useModelFilters();
@@ -64,19 +68,21 @@ export function ModelsInfinite({
               render={ModelCard}
               itemId={(x) => x.id}
               empty={<NoContent />}
+              withAds={showAds}
             />
           ) : (
             <MasonryColumns
               data={models}
               imageDimensions={(data) => {
-                const width = data.image?.width ?? 450;
-                const height = data.image?.height ?? 450;
+                const width = data.images[0]?.width ?? 450;
+                const height = data.images[0]?.height ?? 450;
                 return { width, height };
               }}
               adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
               maxItemHeight={600}
               render={AmbientModelCard}
               itemId={(data) => data.id}
+              withAds={showAds}
             />
           )}
 
@@ -94,17 +100,20 @@ export function ModelsInfinite({
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
       ) : (
-        <Stack align="center" py="lg">
-          <ThemeIcon size={128} radius={100}>
-            <IconCloudOff size={80} />
-          </ThemeIcon>
-          <Text size={32} align="center">
-            No results found
-          </Text>
-          <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
-          </Text>
-        </Stack>
+        <NoContent py="lg">
+          {showEmptyCta && (
+            <Group>
+              <Link href="/models/create">
+                <Button variant="default" radius="xl">
+                  Upload a Model
+                </Button>
+              </Link>
+              <Link href="/models/train">
+                <Button radius="xl">Train a LoRA</Button>
+              </Link>
+            </Group>
+          )}
+        </NoContent>
       )}
     </ModelCardContextProvider>
   );

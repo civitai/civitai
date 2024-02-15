@@ -51,8 +51,8 @@ export const trpc = createTRPCNext<AppRouter>({
           // when condition is true, use normal request
           true: httpLink({ url }),
           // when condition is false, use batching
-          false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
-          // false: httpLink({ url }), // Let's disable batching for now
+          // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
+          false: httpLink({ url }), // Let's disable batching for now
         }),
       ],
     };

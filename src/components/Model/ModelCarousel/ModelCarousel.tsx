@@ -14,12 +14,13 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
+import { IconBrush, IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { generationPanel } from '~/store/generation.store';
 
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -28,6 +29,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -98,6 +100,14 @@ const useStyles = createStyles((theme) => ({
     overflowX: 'clip',
     overflowY: 'visible',
   },
+  contentOverlay: {
+    position: 'absolute',
+    width: '100%',
+    left: 0,
+    zIndex: 10,
+    padding: theme.spacing.sm,
+  },
+  top: { top: 0 },
 }));
 
 export function ModelCarousel({
@@ -112,6 +122,7 @@ export function ModelCarousel({
 }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
   const { images, isLoading } = useQueryImages({
@@ -211,9 +222,37 @@ export function ModelCarousel({
                 {({ safe }) => (
                   <Center style={{ height: '100%', width: '100%' }}>
                     <div style={{ width: '100%', position: 'relative' }}>
-                      <ImageGuard.ToggleConnect position="top-left" />
-                      <ImageGuard.Report />
                       <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                        <Group
+                          position="apart"
+                          align="start"
+                          spacing={4}
+                          className={cx(classes.contentOverlay, classes.top)}
+                        >
+                          <ImageGuard.ToggleConnect position="top-left" />
+                          <Stack spacing="xs" ml="auto" align="flex-end">
+                            <ImageGuard.Report context="image" position="static" withinPortal />
+                            {features.imageGeneration && image.meta && (
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
+                                color="white"
+                                variant="filled"
+                                data-activity="remix:model-carousel"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({
+                                    type: 'image',
+                                    id: image.id,
+                                  });
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                          </Stack>
+                        </Group>
                         {!safe ? (
                           <AspectRatio
                             ratio={(image.width ?? 1) / (image.height ?? 1)}

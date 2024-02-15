@@ -96,6 +96,7 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
     node.scrollLeft = record.scrollLeft;
   }, [_key]);
 
+  // TODO - determine a way to unobserve children after scroll restore
   const ref = useResizeObserver<T>(
     () => {
       if (restoredRef.current) return;

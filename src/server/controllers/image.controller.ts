@@ -4,7 +4,6 @@ import {
   GetInfiniteImagesInput,
   ImageModerationSchema,
   ImageReviewQueueInput,
-  imageReviewQueueInputSchema,
 } from './../schema/image.schema';
 import {
   getAllImages,
@@ -18,7 +17,7 @@ import {
 import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpdateImageInput } from '~/server/schema/image.schema';
 import {
@@ -32,11 +31,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { isDefined } from '../../utils/type-guards';
-import { SessionUser } from 'next-auth';
+import { getGallerySettingsByModelId } from '~/server/services/model.service';
 
 type SortableImage = {
   nsfw: NsfwLevel;
@@ -82,6 +81,7 @@ export const deleteImageHandler = async ({
     const imageTags = await dbRead.imageTag.findMany({
       where: {
         imageId: input.id,
+        concrete: true,
       },
       select: {
         tagName: true,
@@ -155,6 +155,7 @@ export const setTosViolationHandler = async ({
     createNotification({
       userId: image.userId,
       type: 'tos-violation',
+      category: 'System',
       details: {
         modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',
@@ -165,8 +166,17 @@ export const setTosViolationHandler = async ({
       console.error(error);
     });
 
-    // Delete image
-    await deleteImageById({ id });
+    // Block image
+    // This used to be a delete, but the mod team prefers to have the clean up happen later
+    await dbWrite.image.updateMany({
+      where: { id },
+      data: {
+        needsReview: null,
+        ingestion: 'Blocked',
+        nsfw: 'Blocked',
+        blockedFor: BlockedReason.Moderated,
+      },
+    });
 
     await ctx.track.image({
       type: 'DeleteTOS',
@@ -237,7 +247,7 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 export const getImagesAsPostsInfiniteHandler = async ({
-  input: { limit, cursor, ...input },
+  input: { limit, cursor, hidden, ...input },
   ctx,
 }: {
   input: GetInfiniteImagesInput;
@@ -246,12 +256,18 @@ export const getImagesAsPostsInfiniteHandler = async ({
   try {
     const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
+    const fetchHidden = hidden && input.modelId;
+    const modelGallerySettings = fetchHidden
+      ? await getGallerySettingsByModelId({ id: input.modelId as number }) // we know it's a number because fetchHidden is true
+      : null;
+    const hiddenImagesIds = modelGallerySettings?.hiddenImages ?? [];
 
     while (true) {
       const { nextCursor, items } = await getAllImages({
         ...input,
         followed: false,
         cursor,
+        ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         userId: ctx.user?.id,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
@@ -349,6 +365,22 @@ export const getImagesAsPostsInfiniteHandler = async ({
         const bComments = b.images[0].stats?.commentCountAllTime ?? 0;
         if (aComments < bComments) return 1;
         if (aComments > bComments) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostTipped)
+      results.sort((a, b) => {
+        const aTips = a.images[0].stats?.tippedAmountCountAllTime ?? 0;
+        const bTips = b.images[0].stats?.tippedAmountCountAllTime ?? 0;
+        if (aTips < bTips) return 1;
+        if (aTips > bTips) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostCollected)
+      results.sort((a, b) => {
+        const aCollections = a.images[0].stats?.collectedCountAllTime ?? 0;
+        const bCollections = b.images[0].stats?.collectedCountAllTime ?? 0;
+        if (aCollections < bCollections) return 1;
+        if (aCollections > bCollections) return -1;
         return 0;
       });
 

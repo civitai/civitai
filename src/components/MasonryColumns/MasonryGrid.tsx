@@ -1,16 +1,25 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { createStyles } from '@mantine/core';
+import { Button, Stack, createStyles, useMantineTheme } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { createAdFeed } from '~/components/Ads/ads.utils';
+import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
+import { Paper, Text } from '@mantine/core';
+import { Logo } from '~/components/Logo/Logo';
+import { NextLink } from '@mantine/next';
+import { IconCaretRightFilled } from '@tabler/icons-react';
+import Image from 'next/image';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
 
 type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   itemId?: (data: TData) => string | number;
   empty?: React.ReactNode;
-  maxRows?: number;
+  withAds?: boolean;
 };
 
 export function MasonryGrid<TData>({
@@ -18,36 +27,83 @@ export function MasonryGrid<TData>({
   render: RenderComponent,
   itemId,
   empty = null,
-  maxRows,
+  withAds,
 }: Props<TData>) {
-  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } =
-    useMasonryContainerContext();
+  const theme = useMantineTheme();
+  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
-    columnCount,
     columnWidth,
     columnGap,
     rowGap,
-    maxSingleColumnWidth,
   });
 
-  const items = useMemo(() => {
-    if (!maxRows) return data;
-    const wholeRows = Math.floor(data.length / columnCount);
-    const rows = maxRows > wholeRows ? wholeRows : maxRows;
-    if (rows < 1) return data;
-    return data.slice(0, rows * columnCount);
-  }, [columnCount, data, maxRows]);
+  const { adsEnabled } = useAdsContext();
+  const items = useMemo(
+    () => createAdFeed({ data, columnCount, showAds: adsEnabled && withAds }),
+    [columnCount, data, adsEnabled, withAds]
+  );
 
   return items.length ? (
-    <div className={classes.grid}>
+    <div
+      className={classes.grid}
+      style={{
+        gridTemplateColumns:
+          columnCount === 1
+            ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
+            : `repeat(${columnCount}, ${columnWidth}px)`,
+      }}
+    >
       {items.map((item, index) => {
-        const key = itemId?.(item) ?? index;
+        const key = item.type === 'data' ? itemId?.(item.data) ?? index : `ad_${index}`;
         return (
-          <div key={key} id={key.toString()}>
-            {/* <RenderComponent index={index} data={item} width={columnWidth} height={columnWidth} /> */}
-            {createRenderElement(RenderComponent, index, item, columnWidth)}
-          </div>
+          <React.Fragment key={key}>
+            {item.type === 'data' &&
+              createRenderElement(RenderComponent, index, item.data, columnWidth)}
+            {item.type === 'ad' && (
+              <Paper
+                radius="sm"
+                sx={(theme) => ({
+                  overflow: 'hidden',
+                  width: 320,
+                  background:
+                    theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  flexDirection: 'column',
+                })}
+                pb={10}
+                pt={20}
+                withBorder
+                shadow="sm"
+              >
+                <Stack mb="auto" spacing="xs">
+                  <div style={{ height: 30 }}>
+                    <Image
+                      src={`/images/logo_${theme.colorScheme}_mode.png`}
+                      alt="Civitai logo"
+                      height={30}
+                      width={142}
+                    />
+                  </div>
+                  <Text>Become a supporter to turn off ads today.</Text>
+                  <Button
+                    component={NextLink}
+                    href="/pricing"
+                    compact
+                    color="green"
+                    variant="outline"
+                  >
+                    <Text weight={500}>Do It</Text>
+                    <IconCaretRightFilled size={16} />
+                  </Button>
+                </Stack>
+
+                <Adunit showRemoveAds {...adsRegistry.masonryGrid} />
+              </Paper>
+            )}
+          </React.Fragment>
         );
       })}
     </div>
@@ -60,31 +116,22 @@ const useStyles = createStyles(
   (
     theme,
     {
-      columnCount,
       columnWidth,
       columnGap,
       rowGap,
-      maxSingleColumnWidth,
     }: {
-      columnCount: number;
       columnWidth: number;
       columnGap: number;
       rowGap: number;
-      maxSingleColumnWidth?: number;
     }
   ) => ({
     empty: { height: columnWidth },
     grid: {
-      display: 'flex',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
+      display: 'grid',
+
       columnGap,
       rowGap,
-
-      '& > div': {
-        width: columnCount === 1 ? '100%' : columnWidth,
-        maxWidth: maxSingleColumnWidth,
-      },
+      justifyContent: 'center',
     },
   })
 );
