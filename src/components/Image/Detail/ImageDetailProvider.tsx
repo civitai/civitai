@@ -215,11 +215,15 @@ export function ImageDetailProvider({
           hideReactionCount,
           buttonStyling: {
             radius: 'xl',
-            variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+            variant: 'light',
+            color: 'gray',
             pl: undefined,
             pr: undefined,
             px: 4,
-            h: 22,
+            h: 30,
+            style: {
+              backdropFilter: 'blur(7px)',
+            },
           },
         }}
       >

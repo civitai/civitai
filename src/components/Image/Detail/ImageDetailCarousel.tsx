@@ -80,7 +80,6 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
   ));
 
   const hasMultipleImages = images.length > 1;
-  const showGenerateButton = !currentUser && !!current.meta;
 
   return (
     <div ref={setRef} className={cx(classes.root, className)}>
@@ -103,7 +102,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
               <Group
                 position="apart"
                 spacing="sm"
-                px={15}
+                px={8}
                 style={{ position: 'absolute', top: 15, width: '100%', zIndex: 10 }}
               >
                 <Group>
@@ -117,29 +116,36 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     sx={(theme) => ({ height: 30, borderRadius: theme.radius.xl })}
                     size="lg"
                   />
-                  <ActionIcon
-                    size={30}
-                    onClick={toggleInfo}
+                  <Badge
                     radius="xl"
+                    size="sm"
                     color="gray"
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    px="xs"
+                    variant="light"
+                    className={classes.actionIcon}
                   >
-                    <IconInfoCircle />
-                  </ActionIcon>
+                    <Group spacing={2}>
+                      <IconEye size={16} stroke={1.5} />
+                      <Text size="xs" align="center" weight={500}>
+                        {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                      </Text>
+                    </Group>
+                  </Badge>
                 </Group>
                 <Group spacing="xs">
-                  {currentUser && image.meta && (
+                  {image.meta && (
                     <Button
                       size="md"
                       radius="xl"
                       color="blue"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                       onClick={() => generationPanel.open({ type: 'image', id: image.id })}
                       data-activity="remix:image"
                       compact
+                      variant="default"
+                      className={cx(classes.generateButton)}
                     >
                       <Group spacing={4} noWrap>
-                        <IconBrush size={14} />
+                        <IconBrush size={16} />
                         <Text size="xs">Remix</Text>
                       </Group>
                     </Button>
@@ -153,9 +159,10 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       size={30}
                       radius="xl"
                       color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      variant="light"
+                      className={classes.actionIcon}
                     >
-                      <IconShare3 size={14} />
+                      <IconShare3 size={16} />
                     </ActionIcon>
                   </ShareButton>
                   <ImageGuard.Report
@@ -163,22 +170,27 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     actionIconProps={{
                       radius: 'xl',
                       color: 'gray',
-                      variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+                      variant: 'light',
+                      style: {
+                        backdropFilter: 'blur(7px)',
+                      },
                     }}
+                    iconSize={16}
                   />
                   <ActionIcon
                     size={30}
                     radius="xl"
                     color="gray"
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    variant="light"
+                    className={classes.actionIcon}
                     onClick={close}
                   >
-                    <IconX size={14} />
+                    <IconX size={16} />
                   </ActionIcon>
                 </Group>
               </Group>
               <Stack
-                px={15}
+                px={8}
                 style={{
                   position: 'absolute',
                   bottom: hasMultipleImages ? theme.spacing.xl + 12 : theme.spacing.md,
@@ -186,53 +198,33 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   zIndex: 10,
                 }}
               >
-                <Center>
-                  <Group spacing={4} noWrap>
-                    <Badge
-                      radius="xl"
-                      size="sm"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      color="gray"
-                      px="xs"
-                      h={22}
-                    >
-                      <Group spacing={2}>
-                        <IconEye size={14} stroke={1.5} />
-                        <Text size="xs" align="center" weight={500}>
-                          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                        </Text>
-                      </Group>
-                    </Badge>
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                        tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                      }}
-                      targetUserId={image.user.id}
-                    />
-                  </Group>
-                </Center>
-                {showGenerateButton && (
-                  <Center>
-                    <Button
-                      className={classes.generateButton}
-                      variant="default"
-                      radius="xl"
-                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                    >
-                      <Group spacing={4} noWrap>
-                        <IconBrush size={20} /> Create images like this!
-                      </Group>
-                    </Button>
-                  </Center>
-                )}
+                <Group spacing={4} noWrap position="apart">
+                  <Reactions
+                    entityId={image.id}
+                    entityType="image"
+                    reactions={image.reactions}
+                    metrics={{
+                      likeCount: image.stats?.likeCountAllTime,
+                      dislikeCount: image.stats?.dislikeCountAllTime,
+                      heartCount: image.stats?.heartCountAllTime,
+                      laughCount: image.stats?.laughCountAllTime,
+                      cryCount: image.stats?.cryCountAllTime,
+                      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                    }}
+                    targetUserId={image.user.id}
+                  />
+
+                  <ActionIcon
+                    size={30}
+                    onClick={toggleInfo}
+                    radius="xl"
+                    color="gray"
+                    variant="light"
+                    className={classes.actionIcon}
+                  >
+                    <IconInfoCircle size={16} />
+                  </ActionIcon>
+                </Group>
               </Stack>
               <Center
                 sx={{
@@ -384,6 +376,10 @@ const useStyles = createStyles((theme, _props, getRef) => {
         animation: 'glowing 20s linear infinite',
         transition: 'opacity .3s ease-in-out',
       },
+    },
+    actionIcon: {
+      height: 30,
+      backdropFilter: 'blur(7px)',
     },
   };
 });

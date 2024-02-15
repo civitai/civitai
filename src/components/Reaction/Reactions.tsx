@@ -311,10 +311,9 @@ function BuzzTippingBadge({
         radius="xs"
         py={10}
         px={3}
-        {...buttonStyling}
-        // We don't wanna rewrite these 2:
         color="yellow.7"
         variant="light"
+        {...buttonStyling}
       >
         <Group spacing={2} align="center" noWrap>
           <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
