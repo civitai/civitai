@@ -14,6 +14,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import {
   IconCalendar,
   IconCategory,
+  IconClubs,
   IconFileText,
   IconHome,
   IconLayoutList,
@@ -60,6 +61,10 @@ const homeOptions = {
   events: {
     url: '/events',
     icon: (props: TablerIconsProps) => <IconCalendar {...props} />,
+  },
+  clubs: {
+    url: '/clubs',
+    icon: (props: TablerIconsProps) => <IconClubs {...props} />,
   },
 } as const;
 type HomeOptions = keyof typeof homeOptions;
@@ -215,7 +220,12 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const { classes } = useTabsStyles();
 
   const tabs = Object.entries(homeOptions)
-    .filter(([key]) => ![key === 'bounties' && !features.bounties].some((b) => b))
+    .filter(
+      ([key]) =>
+        ![key === 'bounties' && !features.bounties, key === 'clubs' && !features.clubs].some(
+          (b) => b
+        )
+    )
     .map(([key, value]) => (
       <Link key={key} href={value.url} passHref>
         <Anchor variant="text" onClick={() => set(key as HomeOptions)}>

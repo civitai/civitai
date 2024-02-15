@@ -52,6 +52,7 @@ import {
   IconUsers,
   IconVideoPlus,
   IconWriting,
+  IconClubs,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -349,6 +350,18 @@ export function AppHeader({
         ),
         rel: 'nofollow',
       },
+      {
+        href: '/clubs/create',
+        visible: !isMuted && features.clubs,
+        redirectReason: 'create-club',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            <Text>Create a club</Text>
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
     ],
     [features.bounties, features.imageTraining, isMuted, theme]
   );
@@ -415,17 +428,17 @@ export function AppHeader({
           </Group>
         ),
       },
-      // {
-      //   href: '/clubs?engagement=engaged',
-      //   as: '/clubs',
-      //   visible: !!currentUser && features.clubs,
-      //   label: (
-      //     <Group align="center" spacing="xs">
-      //       <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
-      //       My clubs
-      //     </Group>
-      //   ),
-      // },
+      {
+        href: '/clubs?engagement=engaged',
+        as: '/clubs',
+        visible: !!currentUser && features.clubs,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My clubs
+          </Group>
+        ),
+      },
       {
         href: '/user/buzz-dashboard',
         visible: !!currentUser && features.buzz,

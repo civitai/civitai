@@ -7,6 +7,7 @@ import { isEarlyAccess } from '../utils/early-access-helpers';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import { constants } from '~/server/common/constants';
 
 type ModelVersionForEarlyAccessReward = {
   id: number;
@@ -123,7 +124,7 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: version.userId,
-            amount: totalDownloads * 10, // 10 buzz per download
+            amount: totalDownloads * constants.creatorsProgram.rewards.earlyAccessUniqueDownload,
             description: `Early access reward - ${version.modelName} - ${version.modelVersionName}`,
             type: TransactionType.Reward,
             externalTransactionId: `model-version-${version.id}-early-access-reward`,

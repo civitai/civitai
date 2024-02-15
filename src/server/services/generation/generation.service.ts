@@ -382,12 +382,8 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SD2: undefined,
   SDXL: 'SDXL',
   SDXLDistilled: 'SDXL_Distilled',
+  SCascade: 'SCascade',
 };
-
-async function checkGenerationAvailability(resources: CreateGenerationRequestInput['resources']) {
-  const data = await getResourceData(resources.map((x) => x.id));
-  return data.every((x) => !!x.generationCoverage?.covered);
-}
 
 async function checkResourcesAccess(
   resources: CreateGenerationRequestInput['resources'],
@@ -452,12 +448,12 @@ export const createGenerationRequest = async ({
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
-  const allResourcesAvailable = await checkGenerationAvailability(resources).catch(() => false);
+  const resourceData = await getResourceData(resources.map((x) => x.id));
+  const allResourcesAvailable = resourceData.every((x) => !!x.generationCoverage?.covered);
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
 
   const access = await checkResourcesAccess(resources, userId).catch(() => false);
-
   if (!access)
     throw throwAuthorizationError('You do not have access to some of the selected resources');
 
@@ -501,7 +497,8 @@ export const createGenerationRequest = async ({
   nsfw ??= isPromptNsfw !== false;
 
   // Disable nsfw if the prompt contains poi/minor words
-  if (includesPoi(params.prompt) || includesMinor(params.prompt)) nsfw = false;
+  const hasPoi = includesPoi(params.prompt) || resourceData.some((x) => x.model.poi);
+  if (hasPoi || includesMinor(params.prompt)) nsfw = false;
 
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && !isSDXL) {

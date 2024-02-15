@@ -15,6 +15,7 @@ type NotificationsRaw = {
   details: MixedObject;
   createdAt: Date;
   read: boolean;
+  category: NotificationCategory;
 };
 export async function getUserNotifications({
   limit = DEFAULT_PAGE_SIZE,
@@ -35,7 +36,7 @@ export async function getUserNotifications({
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
   const items = await dbRead.$queryRaw<NotificationsRaw[]>`
-    SELECT n."id", "type", "details", "createdAt", nv."id" IS NOT NULL as read
+    SELECT n."id", "type", "category", "details", "createdAt", nv."id" IS NOT NULL as read
     FROM "Notification" n
     LEFT JOIN "NotificationViewed" nv ON n."id" = nv."id" AND nv."userId" = ${userId}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -81,24 +82,34 @@ export async function getUserNotificationCount({
 }
 
 export const createUserNotificationSetting = async ({
-  toggle,
-  ...data
-}: ToggleNotificationSettingInput) => {
-  return dbWrite.userNotificationSettings.create({ data });
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  const values = type.map((t) => Prisma.sql`(${t}, ${userId})`);
+  return dbWrite.$executeRaw`
+    INSERT INTO "UserNotificationSettings" ("type", "userId") VALUES
+    ${Prisma.join(values)}
+    ON CONFLICT DO NOTHING
+  `;
 };
 
 export const markNotificationsRead = ({
   id,
   userId,
   all = false,
+  category,
 }: MarkReadNotificationInput & { userId: number }) => {
   if (all) {
+    const AND = [
+      Prisma.sql`"userId" = ${userId}`,
+      Prisma.sql`"id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})`,
+    ];
+    if (category) AND.push(Prisma.sql`"category" = ${category}::"NotificationCategory"`);
     return dbWrite.$executeRaw`
       INSERT INTO "NotificationViewed" ("id", "userId")
       SELECT "id", ${userId}
       FROM "Notification"
-      WHERE "userId" = ${userId}
-        AND "id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})
+      WHERE ${Prisma.join(AND, ' AND ')}
     `;
   } else {
     return dbWrite.$executeRaw`
@@ -109,8 +120,11 @@ export const markNotificationsRead = ({
   }
 };
 
-export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
-  return dbWrite.userNotificationSettings.deleteMany({ where: { type, userId } });
+export const deleteUserNotificationSetting = ({
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  return dbWrite.userNotificationSettings.deleteMany({ where: { type: { in: type }, userId } });
 };
 
 export const createNotification = async (data: Prisma.NotificationCreateArgs['data']) => {

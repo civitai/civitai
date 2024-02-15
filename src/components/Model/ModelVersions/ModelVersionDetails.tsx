@@ -935,6 +935,11 @@ export function ModelVersionDetails({
             )}
             <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
           </Group>
+          {model.type === 'Checkpoint' && license?.notice && (
+            <Text size="xs" color="dimmed">
+              {license.notice}
+            </Text>
+          )}
           {hasPendingClaimReport && (
             <AlertWithIcon icon={<IconMessageCircle2 />}>
               {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}

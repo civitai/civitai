@@ -172,7 +172,8 @@ export const setTosViolationHandler = async ({
       where: { id },
       data: {
         needsReview: null,
-        nsfw: NsfwLevel.Blocked,
+        ingestion: 'Blocked',
+        nsfw: 'Blocked',
         blockedFor: BlockedReason.Moderated,
       },
     });

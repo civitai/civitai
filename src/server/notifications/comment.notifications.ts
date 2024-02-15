@@ -25,11 +25,12 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
 export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New comments on your models',
+    category: 'Comment',
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_comments AS (
         SELECT DISTINCT
           m."userId" "ownerId",
@@ -54,7 +55,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_comments r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment')
@@ -70,13 +71,14 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-comment-response': {
     displayName: 'New comment responses (Models)',
+    category: 'Comment',
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${
         details.parentId ?? details.commentId
       }&highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_comment_response AS (
         SELECT DISTINCT
           p."userId" "ownerId",
@@ -101,7 +103,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment-response' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_comment_response r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-response')
@@ -117,11 +119,12 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-comment-nested': {
     displayName: 'New responses to comments and reviews on your models',
+    category: 'Comment',
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_comments_nested AS (
         SELECT DISTINCT
           m."userId" "ownerId",
@@ -147,7 +150,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment-nested' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_comments_nested r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-nested')
@@ -163,6 +166,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-comment-reply': {
     displayName: 'New comment replies',
+    category: 'Comment',
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
@@ -170,14 +174,14 @@ export const commentNotifications = createNotificationProcessor({
         url,
       };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_comment_reply AS (
         SELECT DISTINCT
           pc."userId" "ownerId",
           JSONB_BUILD_OBJECT(
             'version', 2,
             'commentId', c.id,
-            'threadId', c."threadId", 
+            'threadId', c."threadId",
             'threadParentId', COALESCE(
                 root."imageId",
                 root."modelId",
@@ -218,7 +222,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment-reply' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_comment_reply r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-reply')
@@ -226,6 +230,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-thread-response': {
     displayName: 'New replies to comment threads you are in',
+    category: 'Comment',
     prepareMessage: ({ details }) => {
       if (!details.version) {
         return {
@@ -240,7 +245,7 @@ export const commentNotifications = createNotificationProcessor({
         url,
       };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_thread_response AS (
         SELECT DISTINCT
           UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId")) "ownerId",
@@ -264,7 +269,7 @@ export const commentNotifications = createNotificationProcessor({
           JSONB_BUILD_OBJECT(
             'version', 2,
             'commentId', c.id,
-            'threadId', c."threadId", 
+            'threadId', c."threadId",
             'threadParentId', COALESCE(
                 root."imageId",
                 root."modelId",
@@ -326,7 +331,7 @@ export const commentNotifications = createNotificationProcessor({
         FROM "CommentV2" c
         JOIN "Thread" t ON t.id = c."threadId"
         JOIN "User" u ON c."userId" = u.id
-        LEFT JOIN "Thread" root ON root.id = t."rootThreadId" 
+        LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
         WHERE c."createdAt" > '${lastSent}'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
@@ -338,7 +343,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-thread-response' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_thread_response r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-thread-response')
@@ -354,6 +359,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-review-response': {
     displayName: 'New review responses',
+    category: 'Comment',
     prepareMessage: ({ details }) => {
       if (details.version !== 2) {
         return {
@@ -367,7 +373,7 @@ export const commentNotifications = createNotificationProcessor({
         url: `/reviews/${details.reviewId}?highlight=${details.commentId}`,
       };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
     WITH new_review_response AS (
       SELECT DISTINCT
         r."userId" "ownerId",
@@ -394,7 +400,7 @@ export const commentNotifications = createNotificationProcessor({
       "ownerId"    "userId",
       'new-review-response' "type",
       details,
-      'Comment'::"NotificationCategory" "category"
+      '${category}'::"NotificationCategory" "category"
       FROM new_review_response r
       WHERE
       NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
@@ -410,6 +416,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-image-comment': {
     displayName: 'New comments on your images',
+    category: 'Comment',
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         let message = `${details.username} commented on your image`;
@@ -441,7 +448,7 @@ export const commentNotifications = createNotificationProcessor({
 
       return { message, url };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_image_comment AS (
         SELECT DISTINCT
           i."userId" "ownerId",
@@ -473,7 +480,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-image-comment' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_image_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
@@ -481,11 +488,12 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-article-comment': {
     displayName: 'New comments on your articles',
+    category: 'Comment',
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your article: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}?highlight=${details.commentId}#comments`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_article_comment AS (
         SELECT DISTINCT
           a."userId" "ownerId",
@@ -510,7 +518,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-article-comment' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_article_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-comment');
@@ -518,11 +526,12 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-bounty-comment': {
     displayName: 'New comments on your bounty',
+    category: 'Comment',
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your bounty: "${details.bountyTitle}"`,
       url: `/bounties/${details.bountyId}?highlight=${details.commentId}#comments`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH new_bounty_comment AS (
         SELECT DISTINCT
           b."userId" "ownerId",
@@ -547,7 +556,7 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-bounty-comment' "type",
         details,
-        'Comment'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM new_bounty_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');

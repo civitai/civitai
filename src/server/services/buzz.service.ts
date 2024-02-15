@@ -285,6 +285,7 @@ export async function createBuzzTransactionMany(
     headers: { 'Content-Type': 'application/json' },
     body,
   });
+
   if (!response.ok) {
     switch (response.status) {
       case 400:

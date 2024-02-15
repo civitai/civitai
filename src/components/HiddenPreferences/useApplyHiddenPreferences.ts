@@ -35,7 +35,7 @@ export function useApplyHiddenPreferences<
           case 'models':
             return value
               .filter((model) => {
-                if (model.user && model.user.id === currentUser?.id && isSfw) return true;
+                if (model.user && model.user.id === currentUser?.id && !isSfw) return true;
                 if (model.user && hiddenUsers.get(model.user.id)) return false;
                 if (hiddenModels.get(model.id) && !showHidden) return false;
                 for (const tag of model.tags ?? []) if (hiddenTags.get(tag)) return false;
@@ -59,8 +59,15 @@ export function useApplyHiddenPreferences<
           case 'images':
             return value.filter((image) => {
               const userId = image.userId ?? image.user?.id;
-              if (userId === currentUser?.id && isSfw) return true;
-              if (image.ingestion && image.ingestion !== ImageIngestionStatus.Scanned) return false;
+              const isOwner = userId === currentUser?.id;
+              if (isOwner && !isSfw) return true;
+              if (
+                image.ingestion &&
+                image.ingestion !== ImageIngestionStatus.Scanned &&
+                !isOwner &&
+                !currentUser?.isModerator
+              )
+                return false;
               if (userId && hiddenUsers.get(userId)) return false;
               if (hiddenImages.get(image.id) && !showHidden) return false;
               for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
@@ -68,14 +75,14 @@ export function useApplyHiddenPreferences<
             });
           case 'articles':
             return value.filter((article) => {
-              if (article.user && article.user.id === currentUser?.id && isSfw) return true;
+              if (article.user && article.user.id === currentUser?.id && !isSfw) return true;
               if (article.user && hiddenUsers.get(article.user.id)) return false;
               for (const tag of article.tags ?? []) if (hiddenTags.get(tag.id)) return false;
               return true;
             });
           case 'users':
             return value.filter((user) => {
-              if (user.id === currentUser?.id && isSfw) return true;
+              if (user.id === currentUser?.id && !isSfw) return true;
               if (hiddenUsers.get(user.id)) return false;
               return true;
             });
@@ -83,7 +90,7 @@ export function useApplyHiddenPreferences<
             return value
               .filter((collection) => {
                 const userId = collection.userId ?? collection.user?.id;
-                if (userId === currentUser?.id && isSfw) return true;
+                if (userId === currentUser?.id && !isSfw) return true;
                 if (userId && hiddenUsers.get(userId)) return false;
                 if (collection.image) {
                   if (hiddenImages.get(collection.image.id)) return false;
@@ -110,7 +117,7 @@ export function useApplyHiddenPreferences<
           case 'bounties':
             return value
               .filter((bounty) => {
-                if (bounty.user.id === currentUser?.id && isSfw) return true;
+                if (bounty.user.id === currentUser?.id && !isSfw) return true;
                 if (hiddenUsers.get(bounty.user.id)) return false;
                 for (const image of bounty.images ?? [])
                   if (hiddenImages.get(image.id)) return false;
@@ -134,7 +141,7 @@ export function useApplyHiddenPreferences<
           case 'posts':
             return value
               .filter((post) => {
-                if (post.user.id === currentUser?.id && isSfw) return true;
+                if (post.user.id === currentUser?.id && !isSfw) return true;
                 if (hiddenUsers.get(post.user.id)) return false;
                 if (post.image) {
                   if (hiddenImages.get(post.image.id)) return false;

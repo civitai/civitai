@@ -139,7 +139,10 @@ async function setCoverImageNsfwLevel() {
     )
     UPDATE "Model" m
     SET
-      meta = jsonb_set(meta, '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+      meta = CASE
+        WHEN jsonb_typeof(meta) = 'null' THEN jsonb_build_object('imageNsfw', COALESCE(level.nsfw, 'None'))
+        ELSE m.meta || jsonb_build_object('imageNsfw', COALESCE(level.nsfw, 'None'))
+      END
     FROM model_nsfw_level level
     WHERE level.id = m.id;
   `;

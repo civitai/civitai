@@ -1087,8 +1087,10 @@ export async function equipCosmetic({
   userId: number;
 }) {
   if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
+  if (!cosmeticId.length) return;
+
   const userCosmetics = await dbRead.userCosmetic.findMany({
-    where: { userId, cosmeticId: cosmeticId.length > 0 ? { in: cosmeticId } : undefined },
+    where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");

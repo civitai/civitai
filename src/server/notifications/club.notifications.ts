@@ -5,6 +5,7 @@ import { formatDate } from '../../utils/date-helpers';
 export const clubNotifications = createNotificationProcessor({
   'club-new-member-joined': {
     displayName: 'New Member Joined your club!',
+    category: 'Update',
     toggleable: false,
     prepareMessage: ({ details }) => {
       return {
@@ -54,6 +55,7 @@ export const clubNotifications = createNotificationProcessor({
   },
   'club-billing-toggled': {
     displayName: 'Monthly billing for a club you are a member of has been toggled',
+    category: 'Update',
     toggleable: false,
     prepareMessage: ({ details }) => {
       return {
@@ -68,7 +70,8 @@ export const clubNotifications = createNotificationProcessor({
   },
   'club-new-post-created': {
     displayName: 'A new club post has been created!',
-    toggleable: true,
+    category: 'Update',
+    toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `New club post has been added to ${details.name} club.`,
       url: `/clubs/${details.clubId}`,
@@ -100,7 +103,8 @@ export const clubNotifications = createNotificationProcessor({
   },
   'club-new-resource-added': {
     displayName: 'A new club resouce has been created!',
-    toggleable: true,
+    category: 'Update',
+    toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `New ${
         details.resourceType === 'Post' ? 'Image Post' : getDisplayName(details.resourceType)

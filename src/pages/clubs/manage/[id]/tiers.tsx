@@ -91,12 +91,12 @@ export const getServerSideProps = createServerSideProps({
       });
     }
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: true,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: true,
+    //   },
+    // };
 
     return { props: { id } };
   },

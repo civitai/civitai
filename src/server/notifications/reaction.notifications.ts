@@ -9,11 +9,12 @@ const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
     displayName: 'Comment reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${commentReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -59,7 +60,7 @@ export const reactionNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'comment-reaction-milestone' "type",
         details,
-        'Milestone'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'comment-reaction-milestone');
     `,
@@ -122,6 +123,7 @@ export const reactionNotifications = createNotificationProcessor({
   // },
   'image-reaction-milestone': {
     displayName: 'Image reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => {
       let message: string;
       if (details.version === 2) {
@@ -146,7 +148,7 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${imageReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -197,19 +199,20 @@ export const reactionNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'image-reaction-milestone' "type",
         details,
-        'Milestone'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone');
     `,
   },
   'article-reaction-milestone': {
     displayName: 'Article reaction milestones',
+    category: 'Milestone',
     prepareMessage: ({ details }) => {
       const message = `Your article, "${details.articleTitle}" has received ${details.reactionCount} reactions`;
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -251,7 +254,7 @@ export const reactionNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'article-reaction-milestone' "type",
         details,
-        'Milestone'::"NotificationCategory" "category"
+        '${category}'::"NotificationCategory" "category"
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone');
     `,

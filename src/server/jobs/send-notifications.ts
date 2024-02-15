@@ -13,9 +13,13 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
 
     // Run batches
     for (const batch of notificationBatches) {
-      const promises = batch.map(async ({ prepareQuery, key }) => {
+      const promises = batch.map(async ({ prepareQuery, key, category }) => {
         const [lastSent, setLastSent] = await getJobDate('last-sent-notification-' + key, lastRun);
-        let query = prepareQuery?.({ lastSent: lastSent.toISOString(), clickhouse });
+        let query = prepareQuery?.({
+          lastSent: lastSent.toISOString(),
+          clickhouse,
+          category: category ?? 'Other',
+        });
         if (query) {
           if (isPromise(query)) query = await query;
 
