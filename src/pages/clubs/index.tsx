@@ -14,16 +14,17 @@ import { FeatureIntroduction } from '../../components/FeatureIntroduction/Featur
 import { IconInfoCircle } from '@tabler/icons-react';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
-    console.log('Running???');
+    console.log('features', features);
     if (!features?.clubs) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: true,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: true,
+    //   },
+    // };
   },
 });
 

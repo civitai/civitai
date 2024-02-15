@@ -79,7 +79,6 @@ export default function Notifications() {
                   items={notifications}
                   onItemClick={(notification) => handleMarkAsRead(notification)}
                   textSize="md"
-                  withDivider
                   truncate={false}
                 />
                 {hasNextPage && (

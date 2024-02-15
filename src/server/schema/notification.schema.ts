@@ -19,5 +19,6 @@ export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSe
 export const markReadNotificationInput = z.object({
   id: z.string().optional(),
   all: z.boolean().optional(),
+  category: z.nativeEnum(NotificationCategory).nullish(),
 });
 export type MarkReadNotificationInput = z.infer<typeof markReadNotificationInput>;

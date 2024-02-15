@@ -108,10 +108,12 @@ export const GeneratedImagesReward = () => {
     return data.map((modelVersion) => {
       return {
         label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
-        data: (modelVersion.data ?? []).map((data) => ({
-          x: data.createdAt,
-          y: data.generations,
-        })),
+        data: (modelVersion.data ?? [])
+          .filter((data) => labels.includes(data.createdAt))
+          .map((data) => ({
+            x: data.createdAt,
+            y: data.generations,
+          })),
       };
     });
   }, [modelVersions, filteredVersionIds]);
@@ -133,8 +135,8 @@ export const GeneratedImagesReward = () => {
         <Title order={3}>Images generated with your models</Title>
         <Stack spacing={0}>
           <Text>
-            As a member of the Civitai Creators Program, your models in early access will award you
-            buzz per unique download.
+            As a member of the Civitai Creators Program, we will give you buzz for images generated
+            with your models.
           </Text>
           <Text>
             For every 1,000 images generated with your resource, you will receive{' '}

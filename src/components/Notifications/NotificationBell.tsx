@@ -6,6 +6,7 @@ import {
   Group,
   Indicator,
   Loader,
+  Paper,
   ScrollArea,
   Stack,
   Text,
@@ -20,6 +21,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 import {
+  getCategoryDisplayName,
   useMarkReadNotification,
   useQueryNotifications,
   useQueryNotificationsCount,
@@ -46,6 +48,7 @@ export function NotificationBell() {
   } = useQueryNotifications({ limit: 20, category: selectedCategory }, { enabled: opened });
 
   const readNotificationMutation = useMarkReadNotification();
+  const categoryName = !selectedCategory ? 'all' : getCategoryDisplayName(selectedCategory);
 
   return (
     <>
@@ -78,7 +81,7 @@ export function NotificationBell() {
       </div>
       <Drawer
         position={mobile ? 'bottom' : 'right'}
-        size={mobile ? 'calc(100dvh - var(--mantine-header-height))' : '700px'}
+        size={mobile ? '100dvh' : '700px'}
         styles={(theme) => ({
           root: {
             [theme.fn.largerThan('xs')]: {
@@ -92,13 +95,6 @@ export function NotificationBell() {
               height: `calc(100% - var(--mantine-header-height))`,
             },
           },
-          overlay: {
-            [theme.fn.largerThan('xs')]: {
-              // top: 'var(--mantine-header-height)',
-              // height: `calc(100% - var(--mantine-header-height))`,
-              // background: 'transparent',
-            },
-          },
         })}
         shadow="lg"
         opened={opened}
@@ -108,16 +104,21 @@ export function NotificationBell() {
         withOverlay={mobile}
         withinPortal
       >
-        <Stack spacing="xl" h="100%" pt="md" px="md" ref={setDrawer}>
+        <Stack spacing="xl" h="100%" p="md" ref={setDrawer}>
           <Group position="apart">
             <Text size="xl" weight="bold">
               Notifications
             </Text>
             <Group spacing={8}>
-              <Tooltip label="Mark all as read" position="bottom">
+              <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
                 <ActionIcon
                   size="lg"
-                  onClick={() => readNotificationMutation.mutate({ all: true })}
+                  onClick={() =>
+                    readNotificationMutation.mutate({
+                      all: true,
+                      category: selectedCategory,
+                    })
+                  }
                 >
                   <IconListCheck />
                 </ActionIcon>
@@ -142,7 +143,7 @@ export function NotificationBell() {
               <Loader />
             </Center>
           ) : notifications && notifications.length > 0 ? (
-            <ScrollArea pb="md">
+            <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
               <NotificationList
                 items={notifications}
                 onItemClick={(notification) => {
@@ -152,7 +153,6 @@ export function NotificationBell() {
                   });
                   setOpened(false);
                 }}
-                withDivider
               />
               {hasNextPage && (
                 <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
@@ -161,7 +161,7 @@ export function NotificationBell() {
                   </Center>
                 </InViewLoader>
               )}
-            </ScrollArea>
+            </Paper>
           ) : (
             <Center p="sm">
               <Text>All caught up! Nothing to see here</Text>

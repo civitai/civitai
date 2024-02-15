@@ -300,6 +300,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
 type LicenseDetails = {
   url: string;
   name: string;
+  notice?: string;
 };
 export const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
@@ -317,10 +318,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
   'sdxl turbo': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
     name: 'Stability AI Non-Commercial Research Community License',
+    notice:
+      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
   svd: {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
     name: 'Stable Video Diffusion Non-Commercial Research Community License',
+    notice:
+      'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
   'playground v2': {
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
@@ -333,6 +338,8 @@ export const baseLicenses: Record<string, LicenseDetails> = {
   'SAI NC RC': {
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
     name: 'SAI NC RC',
+    notice:
+      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
 };
 

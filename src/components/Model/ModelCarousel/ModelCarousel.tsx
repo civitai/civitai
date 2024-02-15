@@ -230,7 +230,7 @@ export function ModelCarousel({
                           className={cx(classes.contentOverlay, classes.top)}
                         >
                           <ImageGuard.ToggleConnect position="top-left" />
-                          <Stack spacing="xs" ml="auto">
+                          <Stack spacing="xs" ml="auto" align="flex-end">
                             <ImageGuard.Report context="image" position="static" withinPortal />
                             {features.imageGeneration && image.meta && (
                               <HoverActionButton

@@ -26,15 +26,14 @@ export const BuildComponentSchema = z.object({
   isAddon: z.boolean().optional(),
 });
 
+export const BuildFeatures = {
+  Dreambooth: 'Dreambooth',
+  ImageGen: 'Image Gen',
+  LoraTraining: 'Lora Training',
+} as const;
+export type BuildFeatures = keyof typeof BuildFeatures;
 export type BuildCapability = z.infer<typeof BuildCapabilitySchema>;
 export const BuildCapabilitySchema = z.object({
   speed: z.number().min(0).max(10),
-  features: z
-    .array(
-      z.object({
-        id: z.number(),
-        name: z.string().trim(),
-      })
-    )
-    .min(1),
+  features: z.array(z.nativeEnum(BuildFeatures)).min(1),
 });

@@ -73,12 +73,12 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
   },
   csamReports: ['granted'],
-  clubs: ['public'],
+  clubs: ['mod'],
   createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: ['user'],
   creatorsProgram: ['mod', 'granted'],
-  buzzWithdrawalTransfer: ['mod', 'granted'],
+  buzzWithdrawalTransfer: ['granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

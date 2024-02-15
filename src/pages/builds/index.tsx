@@ -18,7 +18,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import { IconBrandSpeedtest } from '@tabler/icons-react';
+import { IconAlertCircle, IconBrandSpeedtest } from '@tabler/icons-react';
 import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -27,7 +27,11 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { BuildBudget, GetBuildGuideByBudgetSchema } from '~/server/schema/build-guide.schema';
+import {
+  BuildBudget,
+  BuildFeatures,
+  GetBuildGuideByBudgetSchema,
+} from '~/server/schema/build-guide.schema';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
@@ -195,19 +199,23 @@ export default function BuildPage() {
                     <PriceTag price={data?.totalPrice ?? 0} size={48} />
                   </Group>
                   <Group spacing={4}>
-                    {data?.capabilities?.features.map((feature) => (
-                      <Badge
-                        size="lg"
-                        color="success.5"
-                        variant="outline"
-                        radius="xl"
-                        pl={6}
-                        key={feature.id}
-                        leftSection={<IconCheck />}
-                      >
-                        {feature.name}
-                      </Badge>
-                    ))}
+                    {Object.entries(BuildFeatures).map(([key, name]) => {
+                      const hasFeature = data?.capabilities?.features.includes(key as any);
+
+                      return (
+                        <Badge
+                          size="lg"
+                          color={hasFeature ? 'success.5' : 'gray'}
+                          variant="outline"
+                          radius="xl"
+                          pl={6}
+                          key={key}
+                          leftSection={hasFeature ? <IconCheck /> : <IconAlertCircle />}
+                        >
+                          {name}
+                        </Badge>
+                      );
+                    })}
                   </Group>
                   <Card
                     radius="sm"
