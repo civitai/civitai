@@ -22,12 +22,12 @@ export const getServerSideProps = createServerSideProps({
 
     if (session.user?.muted) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: true,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: true,
+    //   },
+    // };
   },
 });
 

@@ -38,15 +38,16 @@ import { Meta } from '../../../components/Meta/Meta';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
     if (!features?.clubs) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: false,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: false,
+    //   },
+    // };
   },
 });
 

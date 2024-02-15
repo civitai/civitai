@@ -73,7 +73,7 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
   },
   csamReports: ['granted'],
-  clubs: ['public'],
+  clubs: ['mod'],
   createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: ['user'],
