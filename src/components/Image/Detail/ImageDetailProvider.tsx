@@ -1,10 +1,10 @@
-import { useMemo, useEffect, useContext, createContext } from 'react';
+import { useMemo, useEffect, useContext, createContext, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { useHotkeys } from '@mantine/hooks';
+import { useHotkeys, useLocalStorage } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
@@ -62,10 +62,13 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
-  const theme = useMantineTheme();
+  const [active, setActive] = useLocalStorage({
+    key: `image-detail-open`,
+    defaultValue: false,
+  });
+
   const router = useRouter();
   const browserRouter = useBrowserRouter();
-  const active = browserRouter.query.active;
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
   const { postId: queryPostId } = browserRouter.query;
@@ -125,17 +128,7 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
-    if (!image) {
-      return;
-    }
-
-    const [, queryString] = browserRouter.asPath.split('?');
-    const { active, ...query } = QS.parse(queryString) as any;
-
-    browserRouter.replace(
-      { query: { ...browserRouter.query, active: !active } },
-      { pathname: `/images/${image.id}`, query: { ...query, active: !active } }
-    );
+    setActive(!active);
   };
   // #endregion
 
