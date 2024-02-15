@@ -119,14 +119,14 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   <Badge
                     radius="xl"
                     size="sm"
-                    color="gray"
+                    color="gray.8"
                     px="xs"
                     variant="light"
                     className={classes.actionIcon}
                   >
                     <Group spacing={2}>
-                      <IconEye size={16} stroke={1.5} />
-                      <Text size="xs" align="center" weight={500}>
+                      <IconEye size={16} stroke={1.5} color="white" />
+                      <Text color="white" size="xs" align="center" weight={500}>
                         {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                       </Text>
                     </Group>
@@ -162,7 +162,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       variant="light"
                       className={classes.actionIcon}
                     >
-                      <IconShare3 size={16} />
+                      <IconShare3 size={16} color="white" />
                     </ActionIcon>
                   </ShareButton>
                   <ImageGuard.Report
@@ -172,7 +172,9 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       color: 'gray',
                       variant: 'light',
                       style: {
+                        color: 'white',
                         backdropFilter: 'blur(7px)',
+                        background: theme.fn.rgba(theme.colors.gray[8], 0.4),
                       },
                     }}
                     iconSize={16}
@@ -180,12 +182,12 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   <ActionIcon
                     size={30}
                     radius="xl"
-                    color="gray"
+                    color="gray.8"
                     variant="light"
                     className={classes.actionIcon}
                     onClick={close}
                   >
-                    <IconX size={16} />
+                    <IconX size={16} color="white" />
                   </ActionIcon>
                 </Group>
               </Group>
@@ -193,7 +195,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                 px={8}
                 style={{
                   position: 'absolute',
-                  bottom: hasMultipleImages ? theme.spacing.xl + 12 : theme.spacing.md,
+                  bottom: hasMultipleImages ? theme.spacing.xl + 12 : 15,
                   width: '100%',
                   zIndex: 10,
                 }}
@@ -218,11 +220,11 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     size={30}
                     onClick={toggleInfo}
                     radius="xl"
-                    color="gray"
+                    color="gray.8"
                     variant="light"
                     className={classes.actionIcon}
                   >
-                    <IconInfoCircle size={16} />
+                    <IconInfoCircle size={16} color="white" />
                   </ActionIcon>
                 </Group>
               </Stack>
@@ -380,6 +382,8 @@ const useStyles = createStyles((theme, _props, getRef) => {
     actionIcon: {
       height: 30,
       backdropFilter: 'blur(7px)',
+      color: 'white',
+      background: theme.fn.rgba(theme.colors.gray[8], 0.4),
     },
   };
 });

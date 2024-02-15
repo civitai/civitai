@@ -62,6 +62,7 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
+  const theme = useMantineTheme();
   const [active, setActive] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: false,
@@ -209,12 +210,13 @@ export function ImageDetailProvider({
           buttonStyling: {
             radius: 'xl',
             variant: 'light',
-            color: 'gray',
             pl: undefined,
             pr: undefined,
             px: 4,
             h: 30,
             style: {
+              color: 'white',
+              background: theme.fn.rgba(theme.colors.gray[8], 0.4),
               backdropFilter: 'blur(7px)',
             },
           },
