@@ -8,10 +8,12 @@ import {
   CloseButton,
   ActionIcon,
   Text,
+  Stack,
+  Badge,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { CollectionType } from '@prisma/client';
-import { IconBrush, IconShare3 } from '@tabler/icons-react';
+import { IconBrush, IconEye, IconInfoCircle, IconShare3, IconX } from '@tabler/icons-react';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 
@@ -19,12 +21,14 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 type GalleryCarouselProps = {
   className?: string;
@@ -47,6 +51,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
     connect,
     close,
     shareUrl,
+    toggleInfo,
   } = useImageDetailContext();
 
   const { setRef, height, width } = useAspectRatioFit({
@@ -101,8 +106,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                 px={15}
                 style={{ position: 'absolute', top: 15, width: '100%', zIndex: 10 }}
               >
-                <Group>Test</Group>
-                <Group spacing="xs">
+                <Group>
                   <ImageGuard.ToggleConnect
                     position="static"
                     sx={(theme) => ({ height: 30, borderRadius: theme.radius.xl })}
@@ -113,6 +117,17 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     sx={(theme) => ({ height: 30, borderRadius: theme.radius.xl })}
                     size="lg"
                   />
+                  <ActionIcon
+                    size={30}
+                    onClick={toggleInfo}
+                    radius="xl"
+                    color="gray"
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  >
+                    <IconInfoCircle />
+                  </ActionIcon>
+                </Group>
+                <Group spacing="xs">
                   {currentUser && image.meta && (
                     <Button
                       size="md"
@@ -143,13 +158,6 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       <IconShare3 size={14} />
                     </ActionIcon>
                   </ShareButton>
-                  <CloseButton
-                    size="lg"
-                    variant="default"
-                    onClick={close}
-                    className={classes.mobileOnly}
-                    radius="xl"
-                  />
                   <ImageGuard.Report
                     position="static"
                     actionIconProps={{
@@ -158,8 +166,74 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
                     }}
                   />
+                  <ActionIcon
+                    size={30}
+                    radius="xl"
+                    color="gray"
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    onClick={close}
+                  >
+                    <IconX size={14} />
+                  </ActionIcon>
                 </Group>
               </Group>
+              <Stack
+                px={15}
+                style={{
+                  position: 'absolute',
+                  bottom: hasMultipleImages ? theme.spacing.xl + 12 : theme.spacing.md,
+                  width: '100%',
+                  zIndex: 10,
+                }}
+              >
+                <Center>
+                  <Group spacing={4} noWrap>
+                    <Badge
+                      radius="xl"
+                      size="sm"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      color="gray"
+                      px="xs"
+                      h={22}
+                    >
+                      <Group spacing={2}>
+                        <IconEye size={14} stroke={1.5} />
+                        <Text size="xs" align="center" weight={500}>
+                          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                        </Text>
+                      </Group>
+                    </Badge>
+                    <Reactions
+                      entityId={image.id}
+                      entityType="image"
+                      reactions={image.reactions}
+                      metrics={{
+                        likeCount: image.stats?.likeCountAllTime,
+                        dislikeCount: image.stats?.dislikeCountAllTime,
+                        heartCount: image.stats?.heartCountAllTime,
+                        laughCount: image.stats?.laughCountAllTime,
+                        cryCount: image.stats?.cryCountAllTime,
+                        tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                      }}
+                      targetUserId={image.user.id}
+                    />
+                  </Group>
+                </Center>
+                {showGenerateButton && (
+                  <Center>
+                    <Button
+                      className={classes.generateButton}
+                      variant="default"
+                      radius="xl"
+                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+                    >
+                      <Group spacing={4} noWrap>
+                        <IconBrush size={20} /> Create images like this!
+                      </Group>
+                    </Button>
+                  </Center>
+                )}
+              </Stack>
               <Center
                 sx={{
                   position: 'absolute',
@@ -195,27 +269,6 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       controls
                       fadeIn
                     />
-                    {showGenerateButton && (
-                      <Box
-                        sx={(theme) => ({
-                          position: 'absolute',
-                          bottom: hasMultipleImages ? theme.spacing.xl + 8 : theme.spacing.md,
-                          left: '50%',
-                          transform: 'translate(-50%)',
-                        })}
-                      >
-                        <Button
-                          className={classes.generateButton}
-                          variant="default"
-                          radius="xl"
-                          onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                        >
-                          <Group spacing={4} noWrap>
-                            <IconBrush size={20} /> Create images like this!
-                          </Group>
-                        </Button>
-                      </Box>
-                    )}
                   </ImageGuard.Safe>
                 </Center>
               </Center>

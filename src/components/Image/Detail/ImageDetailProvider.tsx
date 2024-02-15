@@ -13,6 +13,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { useMantineTheme } from '@mantine/core';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -61,6 +62,7 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
+  const theme = useMantineTheme();
   const router = useRouter();
   const browserRouter = useBrowserRouter();
   const active = browserRouter.query.active;
@@ -123,12 +125,22 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
+    //  const query = browserRouter.query;
+    //  const [, queryString] = browserRouter.asPath.split('?');
+    //  browserRouter.replace(
+    //    { query: { ...query, imageId: id } },
+    //    {
+    //      pathname: `/images/${id}`,
+    //      query: QS.parse(queryString) as any,
+    //    }
+    //  );
+
     const [, queryString] = browserRouter.asPath.split('?');
     const { active, ...query } = QS.parse(queryString) as any;
 
-    browserRouter.push(
+    browserRouter.replace(
       { query: { ...browserRouter.query, active: !active } },
-      { query: { ...query, active: !active } }
+      { pathname: `/images/${image.id}`, query: { ...query, active: !active } }
     );
   };
   // #endregion
@@ -204,7 +216,19 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      <ReactionSettingsProvider settings={{ hideReactionCount }}>
+      <ReactionSettingsProvider
+        settings={{
+          hideReactionCount,
+          buttonStyling: {
+            radius: 'xl',
+            variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+            pl: undefined,
+            pr: undefined,
+            px: 4,
+            h: 22,
+          },
+        }}
+      >
         {children}
       </ReactionSettingsProvider>
     </ImageDetailContext.Provider>
