@@ -39,18 +39,18 @@ export const HiddenPreferencesProvider = ({
 
   const hidden = useMemo(() => {
     const tags = new Map(
-      data.tag
+      data.hiddenTags
         .filter((x) => !x.nsfwLevel || !Flags.hasFlag(browsingLevel, x.nsfwLevel))
         .map((x) => [x.id, true])
     );
 
     const images = new Map(
-      data.image.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
+      data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
 
     return {
-      users: new Map(data.user.map((x) => [x.id, true])),
-      models: new Map(data.model.map((x) => [x.id, true])),
+      users: new Map(data.hiddenUsers.map((x) => [x.id, true])),
+      models: new Map(data.hiddenModels.map((x) => [x.id, true])),
       tags,
       images,
       isLoading,

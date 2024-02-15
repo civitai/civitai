@@ -131,7 +131,7 @@ const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   if (_input.browsingMode !== BrowsingMode.All) {
     const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
     _input.excludedImageTagIds = [
-      ...hidden.tag.map((x) => x.id),
+      ...hidden.hiddenTags.map((x) => x.id),
       ...(_input.excludedImageTagIds ?? []),
     ];
     _input.excludedTagIds = [...hidden.tags.hiddenTags, ...(_input.excludedTagIds ?? [])];

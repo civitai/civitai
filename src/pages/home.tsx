@@ -43,7 +43,7 @@ export default function Home() {
   const { ref, inView } = useInView();
 
   const moderatedTagIds = useHiddenPreferencesData()
-    .tag.filter((x) => x.nsfwLevel !== undefined)
+    .hiddenTags.filter((x) => x.nsfwLevel !== undefined)
     .map((x) => x.id);
 
   useEffect(() => {

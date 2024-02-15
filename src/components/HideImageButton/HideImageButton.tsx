@@ -7,7 +7,7 @@ import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hi
 import { showSuccessNotification } from '~/utils/notifications';
 
 export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props }: Props) {
-  const images = useHiddenPreferencesData().image;
+  const images = useHiddenPreferencesData().hiddenImages;
   const hiddenImages = images.filter((x) => x.hidden);
   const alreadyHiding = hiddenImages.some((x) => x.id === imageId);
 

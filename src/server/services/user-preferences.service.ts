@@ -224,10 +224,10 @@ interface HiddenPreferencesDiff {
 }
 
 export type HiddenPreferenceTypes = {
-  tag: HiddenTag[];
-  user: HiddenUser[];
-  model: HiddenModel[];
-  image: HiddenImage[];
+  hiddenTags: HiddenTag[];
+  hiddenUsers: HiddenUser[];
+  hiddenModels: HiddenModel[];
+  hiddenImages: HiddenImage[];
 };
 
 const getAllHiddenForUsersCached = async ({
@@ -338,10 +338,10 @@ export async function getAllHiddenForUser({
     : await getAllHiddenForUsersCached({ userId });
 
   const result = {
-    image: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
-    model: [...models.map((id) => ({ id, hidden: true }))],
-    user: users.map((user) => ({ ...user, hidden: true })),
-    tag: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
+    hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
+    hiddenModels: [...models.map((id) => ({ id, hidden: true }))],
+    hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
+    hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
   } as HiddenPreferenceTypes;
   return result;
 }

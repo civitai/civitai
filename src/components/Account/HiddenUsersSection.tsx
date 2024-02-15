@@ -11,7 +11,7 @@ export function HiddenUsersSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const blockedUsers = useHiddenPreferencesData().user;
+  const blockedUsers = useHiddenPreferencesData().hiddenUsers;
 
   const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
     { query: debouncedSearch.trim(), limit: 10 },

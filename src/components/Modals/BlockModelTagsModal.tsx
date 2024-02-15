@@ -8,7 +8,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
   name: 'blockModelTags',
   title: 'Hide Tags',
   Element: ({ context, props: { modelId } }) => {
-    const tags = useHiddenPreferencesData().tag;
+    const tags = useHiddenPreferencesData().hiddenTags;
     const allHiddenTags = useMemo(() => tags.filter((x) => x.hidden), [tags]);
     const { data, isLoading } = trpc.tag.getAll.useQuery({
       limit: 200,

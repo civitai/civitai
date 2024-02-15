@@ -20,7 +20,7 @@ export const useToggleHiddenPreferences = () => {
     onSuccess: ({ added, removed }, { kind }) => {
       queryUtils.hiddenPreferences.getHidden.setData(
         undefined,
-        (old = { image: [], model: [], user: [], tag: [] }) =>
+        (old = { hiddenImages: [], hiddenModels: [], hiddenUsers: [], hiddenTags: [] }) =>
           produce(old, (draft) => {
             for (const { kind, id, ...props } of added) {
               const index = draft[kind].findIndex((x) => x.id === id && x.hidden);
@@ -47,7 +47,7 @@ export const useUpdateHiddenPreferences = () => {
   const updateHiddenPreferences = ({ kind, data, hidden }: ToggleHiddenSchemaOutput) => {
     queryUtils.hiddenPreferences.getHidden.setData(
       undefined,
-      (old = { image: [], model: [], user: [], tag: [] }) =>
+      (old = { hiddenImages: [], hiddenModels: [], hiddenUsers: [], hiddenTags: [] }) =>
         produce(old, (draft) => {
           for (const item of data) {
             const index = draft[kind].findIndex((x) => x.id === item.id && x.hidden);

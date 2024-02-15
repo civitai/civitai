@@ -11,7 +11,7 @@ export function HiddenTagsSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const tags = useHiddenPreferencesData().tag;
+  const tags = useHiddenPreferencesData().hiddenTags;
   const hiddenTags = tags.filter((x) => x.hidden);
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
