@@ -125,15 +125,9 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
-    //  const query = browserRouter.query;
-    //  const [, queryString] = browserRouter.asPath.split('?');
-    //  browserRouter.replace(
-    //    { query: { ...query, imageId: id } },
-    //    {
-    //      pathname: `/images/${id}`,
-    //      query: QS.parse(queryString) as any,
-    //    }
-    //  );
+    if (!image) {
+      return;
+    }
 
     const [, queryString] = browserRouter.asPath.split('?');
     const { active, ...query } = QS.parse(queryString) as any;
