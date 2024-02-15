@@ -8,7 +8,7 @@ import {
   AutoCaptionType,
   ImageDataType,
 } from '~/components/Resource/Forms/Training/TrainingImages';
-import { Form, InputNumberSlider, InputSegmentedControl, useForm } from '~/libs/form';
+import { Form, InputNumberSlider, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { UploadType } from '~/server/common/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
@@ -30,13 +30,19 @@ const schema = z.object({
   maxTags: z.number().int().min(MIN_TAGS).max(MAX_TAGS),
   threshold: z.number().min(MIN_THRESHOLD).max(MAX_THRESHOLD),
   overwrite: z.enum(OVERWRITE_LIST),
+  blacklist: z.string(),
+  prependTags: z.string(),
+  appendTags: z.string(),
 });
 export type AutoTagSchemaType = z.infer<typeof schema>;
 
-const defaults = {
+const defaults: AutoTagSchemaType = {
   maxTags: 10,
   threshold: 0.4,
   overwrite: 'ignore' as AutoTagSchemaType['overwrite'],
+  blacklist: '',
+  prependTags: '',
+  appendTags: '',
 };
 
 const { openModal, Modal } = createContextModal<{
@@ -57,7 +63,7 @@ const { openModal, Modal } = createContextModal<{
 
     const handleSubmit = async (data: AutoTagSchemaType) => {
       setLoading(true);
-      const { maxTags, threshold, overwrite } = data;
+      const { maxTags, threshold, overwrite, blacklist, prependTags, appendTags } = data;
 
       const filteredImages = imageList.filter((i) =>
         overwrite === 'ignore' ? i.caption.length === 0 : i
@@ -94,7 +100,16 @@ const { openModal, Modal } = createContextModal<{
               meta: {},
             },
             async ({ url }) => {
-              setAutoCaptioning(modelId, { maxTags, threshold, overwrite, url, isRunning: false });
+              setAutoCaptioning(modelId, {
+                maxTags,
+                threshold,
+                overwrite,
+                blacklist,
+                prependTags,
+                appendTags,
+                url,
+                isRunning: false,
+              });
               handleClose();
               setLoading(false);
             }
@@ -167,6 +182,42 @@ const { openModal, Modal } = createContextModal<{
               fullWidth
             />
           </Input.Wrapper>
+          <InputText
+            name="blacklist"
+            label={
+              <Group spacing={4} noWrap>
+                <Input.Label>Blacklist</Input.Label>
+                <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                  Comma-separated list of tags to exclude from results
+                </InfoPopover>
+              </Group>
+            }
+            placeholder="bad_tag_1, bad_tag_2"
+          />
+          <InputText
+            name="prependTags"
+            label={
+              <Group spacing={4} noWrap>
+                <Input.Label>Prepend Tags</Input.Label>
+                <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                  Comma-separated list of tags to prepend to all results
+                </InfoPopover>
+              </Group>
+            }
+            placeholder="important, details"
+          />
+          <InputText
+            name="appendTags"
+            label={
+              <Group spacing={4} noWrap>
+                <Input.Label>Append Tags</Input.Label>
+                <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                  Comma-separated list of tags to append to all results
+                </InfoPopover>
+              </Group>
+            }
+            placeholder="minor, details"
+          />
           <Group position="right" mt="xl">
             <Button variant="light" color="gray" onClick={handleClose}>
               Cancel

@@ -17,6 +17,7 @@ import { openStripeTransactionModal } from '~/components/Modals/StripeTransactio
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { openAutoTagModal } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
+import { openTrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
 const DynamicOnboardingModal = dynamic(
@@ -57,6 +58,9 @@ const GenQualityFeedbackModal = dynamic(
 );
 const TrainingAutoTagModal = dynamic(
   () => import('~/components/Resource/Forms/Training/TrainingAutoTagModal')
+);
+const TrainingEditTagsModal = dynamic(
+  () => import('~/components/Resource/Forms/Training/TrainingEditTagsModal')
 );
 
 const registry = {
@@ -127,6 +131,10 @@ const registry = {
   autoTag: {
     Component: TrainingAutoTagModal,
     fn: openAutoTagModal,
+  },
+  trainingReplaceTags: {
+    Component: TrainingEditTagsModal,
+    fn: openTrainingEditTagsModal,
   },
 };
 

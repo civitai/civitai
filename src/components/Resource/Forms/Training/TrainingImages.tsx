@@ -1,30 +1,45 @@
 import {
+  Accordion,
   ActionIcon,
+  Badge,
   Button,
   Center,
   Checkbox,
+  Chip,
   createStyles,
   Group,
   Image as MImage,
   Loader,
+  Menu,
   Pagination,
   Paper,
   SimpleGrid,
   Stack,
   Text,
   Textarea,
+  TextInput,
   Title,
   useMantineTheme,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
+import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { ModelFileVisibility } from '@prisma/client';
-import { IconAlertTriangle, IconCheck, IconTags, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconChevronDown,
+  IconReplace,
+  IconSearch,
+  IconTags,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -35,6 +50,7 @@ import {
   openAutoTagModal,
 } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { openTrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -90,7 +106,16 @@ const defaultState: TrainingDataState = {
   shareDataset: false,
   initialOwnRights: false,
   initialShareDataset: false,
-  autoCaptioning: { maxTags: null, threshold: null, overwrite: null, url: null, isRunning: false },
+  autoCaptioning: {
+    maxTags: null,
+    threshold: null,
+    overwrite: null,
+    blacklist: null,
+    prependTags: null,
+    appendTags: null,
+    url: null,
+    isRunning: false,
+  },
 };
 
 export const useImageStore = create<ImageStore>()(
@@ -199,6 +224,13 @@ const createImage = (url: string): Promise<HTMLImageElement> =>
     image.src = url;
   });
 
+export const getCaptionAsList = (capt: string) => {
+  return capt
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => c.length > 0);
+};
+
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const {
     updateImage,
@@ -225,6 +257,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [zipping, setZipping] = useState<boolean>(false);
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
+  const [tagSearchInput, setTagSearchInput] = useState<string>('');
+  const [tagList, setTagList] = useState<[string, number][]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [debouncedImageList] = useDebouncedValue(imageList, 300);
+
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
@@ -484,12 +521,20 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const submitTagMutation = trpc.training.autoTag.useMutation({
     async onSuccess(response) {
+      const blacklist = getCaptionAsList(autoCaptioning.blacklist ?? '');
+      const prependList = getCaptionAsList(autoCaptioning.prependTags ?? '');
+      const appendList = getCaptionAsList(autoCaptioning.appendTags ?? '');
+
       Object.entries(response).forEach(([k, v]) => {
-        const tags = Object.entries(v)
+        let tags = Object.entries(v)
           .sort(([, a], [, b]) => b - a)
-          .filter((t) => t[1] >= (autoCaptioning.threshold ?? MIN_THRESHOLD))
+          .filter(
+            (t) => t[1] >= (autoCaptioning.threshold ?? MIN_THRESHOLD) && !blacklist.includes(t[0])
+          )
           .slice(0, autoCaptioning.maxTags ?? MAX_TAGS)
           .map((t) => t[0]);
+
+        tags = [...prependList, ...tags, ...appendList];
 
         updateImage(model.id, {
           name: k,
@@ -521,6 +566,28 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     submitTagMutation.mutate({ url: autoCaptioning.url });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCaptioning.url]);
+
+  useEffect(() => {
+    const imageTags = debouncedImageList
+      .flatMap((i) => getCaptionAsList(i.caption))
+      .filter((v) => (tagSearchInput.length > 0 ? v.includes(tagSearchInput) : v));
+    const tagCounts = imageTags.reduce(
+      (a: { [key: string]: number }, c) => (a[c] ? ++a[c] : (a[c] = 1), a),
+      {}
+    );
+    // .reduce((a, c) => (a[c] = a[c] || 0, a[c]++, a), {})
+    const sortedTagCounts = Object.entries(tagCounts).sort(([, a], [, b]) => b - a);
+    setTagList(sortedTagCounts);
+    setSelectedTags((s) => s.filter((st) => imageTags.includes(st)));
+  }, [debouncedImageList, tagSearchInput]);
+
+  const removeCaptions = (tags: string[]) => {
+    const newImageList = imageList.map((i) => {
+      const capts = getCaptionAsList(i.caption).filter((c) => !tags.includes(c));
+      return { ...i, caption: capts.join(', ') };
+    });
+    setImageList(model.id, newImageList);
+  };
 
   const handleNextAfterCheck = async () => {
     setZipping(true);
@@ -665,6 +732,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
     }
   };
+
   const totalCaptioned = imageList.filter((i) => i.caption && i.caption.length > 0).length;
 
   return (
@@ -780,6 +848,143 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </Paper>
         )}
 
+        {imageList.length > 0 && (
+          <Accordion variant="contained" transitionDuration={0}>
+            <Accordion.Item value="caption-viewer">
+              <Accordion.Control>
+                <Group spacing="xs">
+                  <Text>Caption Viewer</Text>
+                  {selectedTags.length > 0 && <Badge color="red">{selectedTags.length}</Badge>}
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack>
+                  <Group>
+                    <TextInput
+                      icon={<IconSearch size={16} />}
+                      placeholder="Search tags"
+                      value={tagSearchInput}
+                      onChange={(event) =>
+                        setTagSearchInput(event.currentTarget.value.toLowerCase())
+                      }
+                      sx={{ flexGrow: 1 }}
+                      rightSection={
+                        <ActionIcon
+                          onClick={() => {
+                            setTagSearchInput('');
+                          }}
+                          disabled={!tagSearchInput.length}
+                        >
+                          <IconX size={16} />
+                        </ActionIcon>
+                      }
+                    />
+                    <Button
+                      disabled={!selectedTags.length}
+                      size="sm"
+                      variant="light"
+                      color="red"
+                      onClick={() => setSelectedTags([])}
+                    >
+                      Deselect All
+                    </Button>
+                    <Menu withArrow>
+                      <Menu.Target>
+                        <Button disabled={!selectedTags.length} rightIcon={<IconChevronDown />}>
+                          Actions
+                        </Button>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          icon={<IconTrash size={14} />}
+                          onClick={() =>
+                            openConfirmModal({
+                              title: 'Remove these captions?',
+                              children: (
+                                <Stack>
+                                  <Text>
+                                    The following captions will be removed from all images:
+                                  </Text>
+                                  <Group>
+                                    {selectedTags.map((st) => (
+                                      <Badge key={st}>{st}</Badge>
+                                    ))}
+                                  </Group>
+                                </Stack>
+                              ),
+                              labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                              centered: true,
+                              onConfirm: () => removeCaptions(selectedTags),
+                            })
+                          }
+                        >
+                          {`Remove tag${selectedTags.length === 1 ? '' : 's'} (${
+                            selectedTags.length
+                          })`}
+                        </Menu.Item>
+                        <Menu.Item
+                          icon={<IconReplace size={14} />}
+                          onClick={() =>
+                            openTrainingEditTagsModal({
+                              selectedTags,
+                              imageList,
+                              modelId: model.id,
+                              setImageList,
+                              setSelectedTags,
+                            })
+                          }
+                        >
+                          {`Replace tag${selectedTags.length === 1 ? '' : 's'} (${
+                            selectedTags.length
+                          })`}
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  </Group>
+                  {!tagList.length ? (
+                    <Text size="md" my="sm" align="center">
+                      No captions to display.
+                    </Text>
+                  ) : (
+                    <Chip.Group
+                      value={selectedTags}
+                      onChange={setSelectedTags}
+                      multiple
+                      mah={300}
+                      // mih={40}
+                      // resize: 'vertical'
+                      sx={{ overflowY: 'auto', rowGap: '6px' }}
+                    >
+                      {tagList.map((t) => (
+                        <Chip
+                          key={t[0]}
+                          value={t[0]}
+                          styles={{
+                            root: { lineHeight: 0, overflow: 'hidden' },
+                            label: { display: 'flex' },
+                            iconWrapper: { overflow: 'initial', paddingRight: '10px' },
+                          }}
+                        >
+                          <Group h="100%" maw="100%">
+                            <Text
+                              sx={{ maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            >
+                              {t[0]}
+                            </Text>
+                            <Badge color="gray" variant="outline" radius="xl" size="sm">
+                              {t[1]}
+                            </Badge>
+                          </Group>
+                        </Chip>
+                      ))}
+                    </Chip.Group>
+                  )}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        )}
+
         {loadingZip ? (
           <Center style={{ flexDirection: 'column' }}>
             <Loader />
@@ -789,6 +994,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
           <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
             {imageList
+              .filter((i) => {
+                if (!selectedTags.length) return true;
+                const capts = getCaptionAsList(i.caption).filter((c) => selectedTags.includes(c));
+                return capts.length > 0;
+              })
               .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
               .map((imgData, index) => {
                 return (
@@ -813,7 +1023,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                             page === Math.ceil(imageList.length / maxImgPerPage) &&
                             newLen % maxImgPerPage === 0
                           )
-                            setPage(page - 1);
+                            setPage(Math.max(page - 1, 1));
                         }}
                         className={cx(classes.trash, 'trashIcon')}
                       >
@@ -834,6 +1044,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         }}
                       />
                     </div>
+                    {/* would like to use highlight here for selected tags but only works with direct strings */}
                     <Textarea
                       placeholder="Enter caption data..."
                       autosize
