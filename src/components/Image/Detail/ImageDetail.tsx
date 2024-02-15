@@ -23,6 +23,8 @@ import {
   IconInfoCircle,
   IconBookmark,
   IconShare3,
+  IconLayoutSidebar,
+  IconLayoutSidebarRightCollapse,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Adunit } from '~/components/Ads/AdUnit';
@@ -130,6 +132,9 @@ export function ImageDetail() {
                   />
                   <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
+                  <ActionIcon onClick={toggleInfo} size="md" radius="xl" ml="auto">
+                    <IconLayoutSidebarRightCollapse size={20} />
+                  </ActionIcon>
                 </Group>
               </Group>
             </Card.Section>
