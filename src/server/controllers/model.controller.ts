@@ -76,7 +76,6 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
@@ -482,7 +481,7 @@ export const getModelsWithVersionsHandler = async ({
       imagesPerVersion: 10,
       include: ['meta'],
       excludedTagIds: input.excludedTagIds,
-      excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
+      excludedIds: input.excludedImageIds,
       excludedUserIds: input.excludedUserIds,
       currentUserId: ctx.user?.id,
     });
@@ -1150,7 +1149,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ? await getImagesForModelVersion({
             modelVersionIds,
             excludedTagIds: modelInput.excludedTagIds,
-            excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+            excludedIds: input.excludedImageIds,
             excludedUserIds: modelInput.excludedUserIds,
             currentUserId: user?.id,
           })

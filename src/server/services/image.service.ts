@@ -14,7 +14,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { chunk, truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isDev, isProd } from '~/env/other';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
@@ -33,7 +33,7 @@ import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
-import { getModerationTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
@@ -43,7 +43,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { logToDb } from '~/utils/logging';
-import { deleteObject } from '~/utils/s3-utils';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -178,7 +177,7 @@ export const moderateImages = async ({
 
     // And moderated tags for POI review (since no NSFW allowed)
     if (reviewType === 'poi') {
-      const moderatedTags = await getModerationTags();
+      const moderatedTags = await getModeratedTags();
       tagIds.push(...moderatedTags.map((x) => x.id));
     }
 

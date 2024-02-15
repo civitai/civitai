@@ -4,19 +4,13 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
-import { getModerationTags2 } from '~/server/services/system-cache';
-import {
-  refreshHiddenImagesForUser,
-  refreshHiddenModelsForUser,
-  refreshHiddenTagsForUser,
-  refreshHiddenUsersForUser,
-} from '~/server/services/user-cache.service';
+import { getModeratedTags } from '~/server/services/system-cache';
 import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
 // const log = createLogger('user-preferences', 'green');
 
-function createUserCache<T, TArgs extends { userId: number }>({
+function createUserCache<T, TArgs extends { userId?: number }>({
   key,
   callback,
 }: {
@@ -98,7 +92,7 @@ const HiddenTags = createUserCache({
 });
 
 // images hidden by toggling 'hide image'
-const HiddenImages = createUserCache({
+export const HiddenImages = createUserCache({
   key: 'hidden-images-3',
   callback: async ({ userId }) =>
     (
@@ -137,7 +131,7 @@ const getVotedHideImages = async ({
   return combined as HiddenImage[];
 };
 
-const ImplicitHiddenImages = createUserCache({
+export const ImplicitHiddenImages = createUserCache({
   key: 'hidden-images-implicit',
   callback: async ({
     userId,
@@ -156,7 +150,7 @@ const ImplicitHiddenImages = createUserCache({
   },
 });
 
-const HiddenModels = createUserCache({
+export const HiddenModels = createUserCache({
   key: 'hidden-models-3',
   callback: async ({ userId }) =>
     (
@@ -167,7 +161,7 @@ const HiddenModels = createUserCache({
     ).map((x) => x.modelId),
 });
 
-const HiddenUsers = createUserCache({
+export const HiddenUsers = createUserCache({
   key: 'hidden-users-3',
   callback: async ({ userId }) =>
     await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
@@ -251,10 +245,10 @@ const getAllHiddenForUsersCached = async ({
     ImplicitHiddenImages.getKey({ userId }),
   ]);
 
-  const getModeratedTags = async () =>
+  const getModerationTags = async () =>
     cachedSystemHiddenTags
-      ? (JSON.parse(cachedSystemHiddenTags) as AsyncReturnType<typeof getModerationTags2>)
-      : await getModerationTags2();
+      ? (JSON.parse(cachedSystemHiddenTags) as AsyncReturnType<typeof getModeratedTags>)
+      : await getModeratedTags();
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
     cachedHiddenTags ? HiddenTags.parseJson(cachedHiddenTags) : await HiddenTags.get({ userId });
@@ -288,7 +282,7 @@ const getAllHiddenForUsersCached = async ({
       : await ImplicitHiddenImages.get({ userId, hiddenTagIds, moderatedTagIds });
 
   const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
-    getModeratedTags(),
+    getModerationTags(),
     getHiddenTags({ userId }),
     getHiddenImages({ userId }),
     getHiddenModels({ userId }),
@@ -308,7 +302,7 @@ const getAllHiddenForUsersCached = async ({
 
 const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
   const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
-    getModerationTags2(),
+    getModeratedTags(),
     HiddenTags.get({ userId }),
     HiddenImages.get({ userId }),
     HiddenModels.get({ userId }),
@@ -427,8 +421,6 @@ async function toggleHiddenTags({
   await Promise.all([
     HiddenTags.refreshCache({ userId }),
     ImplicitHiddenImages.refreshCache({ userId }),
-    refreshHiddenTagsForUser({ userId }), // TODO - remove this once front end filtering is finished
-    refreshHiddenImagesForUser({ userId }), // TODO - remove this once front end filtering is finished
   ]);
 
   const addedFn = <T extends { tagId?: number }>({ tagId }: T) =>
@@ -474,7 +466,6 @@ async function toggleHideModel({
     });
 
   await HiddenModels.refreshCache({ userId });
-  await refreshHiddenModelsForUser({ userId }); // TODO - remove this once front end filtering is finished
 
   // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
   // const toReturn = { id: modelId, kind: 'model' } as HiddenPreferencesKind;
@@ -519,7 +510,6 @@ async function toggleHideUser({
   // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
 
   await HiddenUsers.refreshCache({ userId });
-  await refreshHiddenUsersForUser({ userId }); // TODO - remove this once front end filtering is finished
 
   return {
     added: [],
@@ -551,7 +541,6 @@ async function toggleHideImage({
     });
 
   await HiddenImages.refreshCache({ userId });
-  await refreshHiddenImagesForUser({ userId }); // TODO - remove this once front end filtering is finished
 
   // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
   // const toReturn = { id: imageId, kind: 'image' } as HiddenPreferencesKind;

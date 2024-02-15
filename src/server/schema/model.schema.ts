@@ -226,7 +226,7 @@ export const declineReviewSchema = z.object({
 });
 
 export type GetModelsByCategoryInput = z.infer<typeof getModelsByCategorySchema>;
-export const getModelsByCategorySchema = z.object({
+export const getModelsByCategorySchema = userPreferencesSchema.extend({
   limit: z.number().min(1).max(30).optional(),
   modelLimit: z.number().min(1).max(30).optional(),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
@@ -265,11 +265,11 @@ export const getModelsByCategorySchema = z.object({
     (val) => val === true || val === 'true',
     z.boolean().optional().default(false)
   ),
-  excludedIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageTagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
+  // excludedIds: z.array(z.number()).optional(),
+  // excludedUserIds: z.array(z.number()).optional(),
+  // excludedImageTagIds: z.array(z.number()).optional(),
+  // excludedTagIds: z.array(z.number()).optional(),
+  // excludedImageIds: z.array(z.number()).optional(),
   earlyAccess: z.boolean().optional(),
 });
 

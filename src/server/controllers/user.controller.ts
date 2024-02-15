@@ -35,7 +35,6 @@ import {
 } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
   claimCosmetic,
   createUserReferral,
@@ -392,8 +391,6 @@ export const updateUserHandler = async ({
         ip: ctx.ip,
       });
     }
-    // TODO.Briant.remove - this shouldn't need to be here after nsfwLevels updates
-    if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
   } catch (error) {

@@ -46,7 +46,6 @@ import { getFilesByEntity } from './file.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
 import { profileImageSelect } from '~/server/selectors/image.selector';
-import { getPrivateEntityAccessForUser } from './user-cache.service';
 
 type ArticleRaw = {
   id: number;
@@ -410,10 +409,10 @@ export const getArticles = async ({
     });
 
     const articleCategories = await getCategoryTags('article');
-    const userEntityAccess = await getPrivateEntityAccessForUser({ userId: sessionUser?.id });
-    const privateArticleAccessIds = userEntityAccess
-      .filter((x) => x.entityType === 'Article')
-      .map((x) => x.entityId);
+    // const userEntityAccess = await getPrivateEntityAccessForUser({ userId: sessionUser?.id });
+    // const privateArticleAccessIds = userEntityAccess
+    //   .filter((x) => x.entityType === 'Article')
+    //   .map((x) => x.entityId);
 
     const items = articles
       .filter((a) => {

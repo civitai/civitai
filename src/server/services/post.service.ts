@@ -49,7 +49,6 @@ import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
-import { getPrivateEntityAccessForUser } from './user-cache.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -324,10 +323,10 @@ export const getPostsInfinite = async ({
 
   const profilePictures = await getProfilePicturesForUsers(userIds);
 
-  const userEntityAccess = await getPrivateEntityAccessForUser({ userId: user?.id });
-  const privatePostAccessIds = userEntityAccess
-    .filter((x) => x.entityType === 'Post')
-    .map((x) => x.entityId);
+  // const userEntityAccess = await getPrivateEntityAccessForUser({ userId: user?.id });
+  // const privatePostAccessIds = userEntityAccess
+  //   .filter((x) => x.entityType === 'Post')
+  //   .map((x) => x.entityId);
 
   // Filter to published model versions:
   const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;

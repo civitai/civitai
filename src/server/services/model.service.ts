@@ -49,7 +49,6 @@ import {
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
-import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
@@ -731,6 +730,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     followed,
     collectionId,
     fileFormats,
+    browsingLevel,
     clubId,
   } = input;
 
@@ -1679,7 +1679,7 @@ export const getModelsByCategory = async ({
     ? await getImagesForModelVersion({
         modelVersionIds,
         excludedTagIds: input.excludedTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+        excludedIds: input.excludedImageIds,
         excludedUserIds: input.excludedUserIds,
         currentUserId: user?.id,
       })

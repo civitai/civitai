@@ -22,7 +22,11 @@ import {
 import { tagsSearchIndex } from '~/server/search-index';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
-import { userCache } from '~/server/services/user-cache.service';
+import {
+  HiddenImages,
+  HiddenModels,
+  ImplicitHiddenImages,
+} from '~/server/services/user-preferences.service';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -284,8 +288,11 @@ type TagVotingInput = {
   isModerator?: boolean;
 };
 const clearCache = async (userId: number, entityType: TagVotableEntityType) => {
-  if (entityType === 'model') await userCache(userId).hidden.models.refresh();
-  else if (entityType === 'image') await userCache(userId).hidden.images.refresh();
+  if (entityType === 'model') await HiddenModels.refreshCache({ userId });
+  else if (entityType === 'image') {
+    await HiddenImages.refreshCache({ userId });
+    await ImplicitHiddenImages.refreshCache({ userId });
+  }
 };
 
 export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput) => {

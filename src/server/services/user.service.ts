@@ -32,11 +32,6 @@ import {
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
-import {
-  refreshAllHiddenForUser,
-  refreshHiddenModelsForUser,
-  refreshHiddenUsersForUser,
-} from '~/server/services/user-cache.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
@@ -354,7 +349,6 @@ export const toggleModelEngagement = async ({
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
   if (type === 'Hide') {
-    await refreshHiddenModelsForUser({ userId });
     // await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
   } else if (type === 'Favorite') {
     // await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
@@ -432,7 +426,6 @@ export const toggleHideUser = async ({
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
   await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
-  await refreshHiddenUsersForUser({ userId });
   return true;
 };
 
@@ -506,7 +499,6 @@ export const toggleBlockedTag = async ({
     await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
     isHidden = true;
   }
-  await refreshAllHiddenForUser({ userId });
   return isHidden;
 };
 
