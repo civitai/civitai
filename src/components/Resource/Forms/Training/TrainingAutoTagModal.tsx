@@ -1,11 +1,12 @@
-import { Button, Group, Input, Stack, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Input, Modal, Stack, Text, Tooltip } from '@mantine/core';
 import JSZip from 'jszip';
 import React, { useState } from 'react';
 import { z } from 'zod';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import {
   AutoCaptionType,
+  getShortNameFromUrl,
   ImageDataType,
 } from '~/components/Resource/Forms/Training/TrainingImages';
 import { Form, InputNumberSlider, InputSegmentedControl, InputText, useForm } from '~/libs/form';
@@ -45,87 +46,88 @@ const defaults: AutoTagSchemaType = {
   appendTags: '',
 };
 
-const { openModal, Modal } = createContextModal<{
+export const AutoTagModal = ({
+  imageList,
+  modelId,
+  setAutoCaptioning,
+}: {
   imageList: ImageDataType[];
   modelId: number;
   setAutoCaptioning: (modelId: number, data: AutoCaptionType) => void;
-}>({
-  title: 'Automatically caption your images',
-  name: 'autoTag',
-  centered: true,
-  radius: 'lg',
-  Element: ({ context, props: { imageList, modelId, setAutoCaptioning } }) => {
-    const [loading, setLoading] = useState(false);
-    const form = useForm({ schema, defaultValues: defaults });
-    const { upload } = useS3UploadStore();
+}) => {
+  const dialog = useDialogContext();
+  const form = useForm({ schema, defaultValues: defaults });
+  const { upload } = useS3UploadStore();
+  const [loading, setLoading] = useState(false);
 
-    const handleClose = () => context.close();
+  const handleClose = dialog.onClose;
 
-    const handleSubmit = async (data: AutoTagSchemaType) => {
-      setLoading(true);
-      const { maxTags, threshold, overwrite, blacklist, prependTags, appendTags } = data;
+  const handleSubmit = async (data: AutoTagSchemaType) => {
+    setLoading(true);
+    const { maxTags, threshold, overwrite, blacklist, prependTags, appendTags } = data;
 
-      const filteredImages = imageList.filter((i) =>
-        overwrite === 'ignore' ? i.caption.length === 0 : i
-      );
+    const filteredImages = imageList.filter((i) =>
+      overwrite === 'ignore' ? i.caption.length === 0 : i
+    );
 
-      if (!filteredImages.length) {
+    if (!filteredImages.length) {
+      showErrorNotification({
+        title: 'No images to process',
+        error: new Error('If you\'re using "ignore", make sure there are some blank captions.'),
+      });
+      setLoading(false);
+      return;
+    }
+
+    const zip = new JSZip();
+
+    await Promise.all(
+      filteredImages.map(async (imgData) => {
+        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+        zip.file(getShortNameFromUrl(imgData), imgBlob);
+      })
+    );
+
+    zip.generateAsync({ type: 'blob' }).then(async (content) => {
+      const blobFile = new File([content], `${modelId}_temp_tagging_data.zip`, {
+        type: 'application/zip',
+      });
+
+      try {
+        await upload(
+          {
+            file: blobFile,
+            type: UploadType.TrainingImagesTemp,
+            meta: {},
+          },
+          async ({ url }) => {
+            setAutoCaptioning(modelId, {
+              maxTags,
+              threshold,
+              overwrite,
+              blacklist,
+              prependTags,
+              appendTags,
+              url,
+              isRunning: false,
+            });
+            handleClose();
+            setLoading(false);
+          }
+        );
+      } catch (e) {
         showErrorNotification({
-          title: 'No images to process',
-          error: new Error('If you\'re using "ignore", make sure there are some blank captions.'),
+          error: e instanceof Error ? e : new Error('Please try again'),
+          title: 'Failed to send data',
+          autoClose: false,
         });
         setLoading(false);
-        return;
       }
+    });
+  };
 
-      const zip = new JSZip();
-
-      await Promise.all(
-        filteredImages.map(async (imgData) => {
-          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
-          zip.file(imgData.name, imgBlob);
-        })
-      );
-
-      zip.generateAsync({ type: 'blob' }).then(async (content) => {
-        const blobFile = new File([content], `${modelId}_temp_tagging_data.zip`, {
-          type: 'application/zip',
-        });
-
-        try {
-          await upload(
-            {
-              file: blobFile,
-              type: UploadType.TrainingImagesTemp,
-              meta: {},
-            },
-            async ({ url }) => {
-              setAutoCaptioning(modelId, {
-                maxTags,
-                threshold,
-                overwrite,
-                blacklist,
-                prependTags,
-                appendTags,
-                url,
-                isRunning: false,
-              });
-              handleClose();
-              setLoading(false);
-            }
-          );
-        } catch (e) {
-          showErrorNotification({
-            error: e instanceof Error ? e : new Error('Please try again'),
-            title: 'Failed to send data',
-            autoClose: false,
-          });
-          setLoading(false);
-        }
-      });
-    };
-
-    return (
+  return (
+    <Modal {...dialog} centered size="md" radius="md" title="Automatically caption your images">
       <Form form={form} onSubmit={handleSubmit}>
         <Stack spacing="md">
           <InputNumberSlider
@@ -228,9 +230,6 @@ const { openModal, Modal } = createContextModal<{
           </Group>
         </Stack>
       </Form>
-    );
-  },
-});
-
-export const openAutoTagModal = openModal;
-export default Modal;
+    </Modal>
+  );
+};

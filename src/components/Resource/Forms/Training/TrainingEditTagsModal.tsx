@@ -1,51 +1,51 @@
-import { Badge, Button, Flex, Grid, Group, Stack, TextInput } from '@mantine/core';
+import { Badge, Button, Flex, Grid, Group, Modal, Stack, TextInput } from '@mantine/core';
 import { IconArrowNarrowRight } from '@tabler/icons-react';
-import React, { useState } from 'react';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
+import React, { Fragment, useState } from 'react';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   getCaptionAsList,
   ImageDataType,
 } from '~/components/Resource/Forms/Training/TrainingImages';
 
-const { openModal, Modal } = createContextModal<{
+export const TrainingEditTagsModal = ({
+  selectedTags,
+  imageList,
+  modelId,
+  setImageList,
+  setSelectedTags,
+}: {
   selectedTags: string[];
   imageList: ImageDataType[];
   modelId: number;
   setImageList: (modelId: number, imgData: ImageDataType[]) => void;
   setSelectedTags: (value: string[]) => void;
-}>({
-  title: 'Replace captions',
-  name: 'trainingReplaceTags',
-  centered: true,
-  radius: 'lg',
-  Element: ({
-    context,
-    props: { selectedTags, imageList, modelId, setImageList, setSelectedTags },
-  }) => {
-    const [tagChange, setTagChange] = useState<{ [key: string]: string }>(
-      selectedTags.reduce((acc, s) => ({ ...acc, [s]: '' }), {})
-    );
+}) => {
+  const dialog = useDialogContext();
+  const [tagChange, setTagChange] = useState<{ [key: string]: string }>(
+    selectedTags.reduce((acc, s) => ({ ...acc, [s]: '' }), {})
+  );
 
-    const handleClose = () => context.close();
+  const handleClose = dialog.onClose;
 
-    const handleConfirm = () => {
-      const newImageList = imageList.map((i) => {
-        const capts = getCaptionAsList(i.caption).map((c) => {
-          const foundVal = tagChange[c];
-          return foundVal && foundVal.length ? foundVal : c;
-        });
-        return { ...i, caption: capts.join(', ') };
+  const handleConfirm = () => {
+    const newImageList = imageList.map((i) => {
+      const capts = getCaptionAsList(i.caption).map((c) => {
+        const foundVal = tagChange[c];
+        return foundVal && foundVal.length ? foundVal : c;
       });
-      setImageList(modelId, newImageList);
-      setSelectedTags([]);
-      handleClose();
-    };
+      return { ...i, caption: capts.join(', ') };
+    });
+    setImageList(modelId, newImageList);
+    setSelectedTags([]);
+    handleClose();
+  };
 
-    return (
+  return (
+    <Modal {...dialog} centered size="md" radius="md" title="Replace captions">
       <Stack>
         <Grid align="center">
           {selectedTags.map((st) => (
-            <>
+            <Fragment key={st}>
               <Grid.Col span={5}>
                 <Badge h={36} fullWidth>
                   {st}
@@ -64,7 +64,7 @@ const { openModal, Modal } = createContextModal<{
                   }
                 />
               </Grid.Col>
-            </>
+            </Fragment>
           ))}
         </Grid>
         <Group position="right" mt="md">
@@ -74,9 +74,6 @@ const { openModal, Modal } = createContextModal<{
           <Button onClick={handleConfirm}>Confirm</Button>
         </Group>
       </Stack>
-    );
-  },
-});
-
-export const openTrainingEditTagsModal = openModal;
-export default Modal;
+    </Modal>
+  );
+};

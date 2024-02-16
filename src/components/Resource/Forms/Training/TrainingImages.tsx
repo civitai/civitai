@@ -42,15 +42,16 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import {
+  AutoTagModal,
   AutoTagSchemaType,
   MAX_TAGS,
   MIN_THRESHOLD,
-  openAutoTagModal,
 } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
-import { openTrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
+import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -68,8 +69,8 @@ export type ImageDataType = {
   caption: string;
 };
 
-type UpdateImageDataType = Partial<Omit<ImageDataType, 'name'>> & {
-  name: string;
+type UpdateImageDataType = Partial<ImageDataType> & {
+  matcher: string;
   appendCaption?: boolean;
 };
 export type AutoCaptionType = Nullable<AutoTagSchemaType> & {
@@ -120,16 +121,16 @@ const defaultState: TrainingDataState = {
 
 export const useImageStore = create<ImageStore>()(
   immer((set) => ({
-    updateImage: (modelId, { url, name, type, caption, appendCaption }) => {
+    updateImage: (modelId, { matcher, url, name, type, caption, appendCaption }) => {
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultState };
         // TODO [bw] why is this not understanding the override I just did above?
         state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
-          // TODO this *may* break if they somehow upload files with identical names, but we need it for tagging
-          if (i.name === name) {
+          const shortName = getShortNameFromUrl(i);
+          if (shortName === matcher) {
             return {
               url: url ?? i.url,
-              name,
+              name: name ?? i.name,
               type: type ?? i.type,
               caption:
                 caption !== undefined
@@ -229,6 +230,10 @@ export const getCaptionAsList = (capt: string) => {
     .split(',')
     .map((c) => c.trim().toLowerCase())
     .filter((c) => c.length > 0);
+};
+
+export const getShortNameFromUrl = (i: ImageDataType) => {
+  return `${i.url.split('/').pop() ?? 'unk'}.${i.type.split('/').pop() ?? 'jpg'}`;
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
@@ -537,7 +542,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         tags = [...prependList, ...tags, ...appendList];
 
         updateImage(model.id, {
-          name: k,
+          matcher: k,
           caption: tags.join(', '),
           appendCaption: autoCaptioning.overwrite === 'append',
         });
@@ -580,6 +585,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setTagList(sortedTagCounts);
     setSelectedTags((s) => s.filter((st) => imageTags.includes(st)));
   }, [debouncedImageList, tagSearchInput]);
+
+  const filteredImages = imageList.filter((i) => {
+    if (!selectedTags.length) return true;
+    const capts = getCaptionAsList(i.caption).filter((c) => selectedTags.includes(c));
+    return capts.length > 0;
+  });
+
+  useEffect(() => {
+    if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
+      setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTags]);
 
   const removeCaptions = (tags: string[]) => {
     const newImageList = imageList.map((i) => {
@@ -778,13 +796,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 radius="sm"
                 px={8}
                 py={2}
-                sx={{
+                style={{
                   backgroundColor:
                     theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
                 }}
               >
                 <Text
-                  sx={{ lineHeight: '22px' }}
+                  style={{ lineHeight: '22px' }}
                   color={
                     totalCaptioned === 0
                       ? theme.colors.red[5]
@@ -800,10 +818,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 compact
                 disabled={autoCaptioning.isRunning}
                 onClick={() =>
-                  openAutoTagModal({
-                    imageList,
-                    modelId: model.id,
-                    setAutoCaptioning,
+                  dialogStore.trigger({
+                    component: AutoTagModal,
+                    props: {
+                      imageList,
+                      modelId: model.id,
+                      setAutoCaptioning,
+                    },
                   })
                 }
               >
@@ -821,11 +842,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               </Button>
             </Group>
 
-            {imageList.length > maxImgPerPage && (
+            {filteredImages.length > maxImgPerPage && (
               <Pagination
                 page={page}
                 onChange={setPage}
-                total={Math.ceil(imageList.length / maxImgPerPage)}
+                total={Math.ceil(filteredImages.length / maxImgPerPage)}
               />
             )}
           </Group>
@@ -836,7 +857,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             my="lg"
             p="md"
             withBorder
-            sx={{
+            style={{
               backgroundColor:
                 theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
             }}
@@ -867,7 +888,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       onChange={(event) =>
                         setTagSearchInput(event.currentTarget.value.toLowerCase())
                       }
-                      sx={{ flexGrow: 1 }}
+                      style={{ flexGrow: 1 }}
                       rightSection={
                         <ActionIcon
                           onClick={() => {
@@ -925,12 +946,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         <Menu.Item
                           icon={<IconReplace size={14} />}
                           onClick={() =>
-                            openTrainingEditTagsModal({
-                              selectedTags,
-                              imageList,
-                              modelId: model.id,
-                              setImageList,
-                              setSelectedTags,
+                            dialogStore.trigger({
+                              component: TrainingEditTagsModal,
+                              props: {
+                                selectedTags,
+                                imageList,
+                                modelId: model.id,
+                                setImageList,
+                                setSelectedTags,
+                              },
                             })
                           }
                         >
@@ -953,7 +977,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       mah={300}
                       // mih={40}
                       // resize: 'vertical'
-                      sx={{ overflowY: 'auto', rowGap: '6px' }}
+                      style={{ overflowY: 'auto', rowGap: '6px' }}
                     >
                       {tagList.map((t) => (
                         <Chip
@@ -966,8 +990,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           }}
                         >
                           <Group h="100%" maw="100%">
+                            {/* TODO when switching to m7, change this to a class */}
                             <Text
-                              sx={{ maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                              style={{
+                                maxWidth: '90%',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
                             >
                               {t[0]}
                             </Text>
@@ -993,12 +1022,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         ) : (
           // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
           <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
-            {imageList
-              .filter((i) => {
-                if (!selectedTags.length) return true;
-                const capts = getCaptionAsList(i.caption).filter((c) => selectedTags.includes(c));
-                return capts.length > 0;
-              })
+            {filteredImages
               .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
               .map((imgData, index) => {
                 return (
@@ -1045,6 +1069,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       />
                     </div>
                     {/* would like to use highlight here for selected tags but only works with direct strings */}
+                    {/* TODO we could also eventually replace these with little chips */}
                     <Textarea
                       placeholder="Enter caption data..."
                       autosize
@@ -1054,7 +1079,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       value={imgData.caption}
                       onChange={(event) => {
                         updateImage(model.id, {
-                          name: imgData.name,
+                          matcher: getShortNameFromUrl(imgData),
                           caption: event.currentTarget.value,
                         });
                       }}

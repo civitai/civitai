@@ -16,8 +16,6 @@ import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { openAutoTagModal } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
-import { openTrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
 const DynamicOnboardingModal = dynamic(
@@ -55,12 +53,6 @@ const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfi
 const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClubPostModal'));
 const GenQualityFeedbackModal = dynamic(
   () => import('~/components/Modals/GenerationQualityFeedbackModal')
-);
-const TrainingAutoTagModal = dynamic(
-  () => import('~/components/Resource/Forms/Training/TrainingAutoTagModal')
-);
-const TrainingEditTagsModal = dynamic(
-  () => import('~/components/Resource/Forms/Training/TrainingEditTagsModal')
 );
 
 const registry = {
@@ -127,14 +119,6 @@ const registry = {
   imageGenQualityFeedbackModal: {
     Component: GenQualityFeedbackModal,
     fn: openGenQualityFeedbackModal,
-  },
-  autoTag: {
-    Component: TrainingAutoTagModal,
-    fn: openAutoTagModal,
-  },
-  trainingReplaceTags: {
-    Component: TrainingEditTagsModal,
-    fn: openTrainingEditTagsModal,
   },
 };
 
