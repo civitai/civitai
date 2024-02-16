@@ -149,7 +149,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   nsfw: z.nativeEnum(NsfwLevel).optional(),
   needsReview: z.string().nullish(),
-  reviewAction: z.enum(['delete', 'removeName']).optional(),
+  reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
   reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;

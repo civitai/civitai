@@ -8,12 +8,6 @@ export const BuildBudget = {
   Extreme: 'Extreme',
 } as const;
 
-export type GetBuildGuideByBudgetSchema = z.infer<typeof getBuildGuideByBudgetInputSchema>;
-export const getBuildGuideByBudgetInputSchema = z.object({
-  budget: z.nativeEnum(BuildBudget),
-  processor: z.string(),
-});
-
 export type BuildComponent = z.infer<typeof BuildComponentSchema>;
 export const BuildComponentSchema = z.object({
   productId: z.string().trim().min(1),
@@ -27,9 +21,9 @@ export const BuildComponentSchema = z.object({
 });
 
 export const BuildFeatures = {
-  Dreambooth: 'Dreambooth',
   ImageGen: 'Image Gen',
   LoraTraining: 'Lora Training',
+  Dreambooth: 'Dreambooth',
 } as const;
 export type BuildFeatures = keyof typeof BuildFeatures;
 export type BuildCapability = z.infer<typeof BuildCapabilitySchema>;
