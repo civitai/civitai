@@ -395,6 +395,7 @@ export async function processCsamReport(report: CsamReportProps) {
           }
 
           const blob = await fetchBlob(imageUrl);
+          if (!blob) return;
 
           const { fileId, hash } = await ncmecCaller.uploadFile({
             reportId,
@@ -428,7 +429,7 @@ export async function processCsamReport(report: CsamReportProps) {
     await dbWrite.csamReport.update({
       where: { id: report.id },
       data: {
-        images: fileUploadResults,
+        images: fileUploadResults.filter(isDefined),
         reportId,
         reportSentAt: new Date(),
       },
@@ -528,6 +529,7 @@ async function writeReportedImagesToDisk({ dir, images }: { dir: string; images:
     images.map((image) => {
       return limit(async () => {
         const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
+        if (!blob) return;
         const arrayBuffer = await blob.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
 

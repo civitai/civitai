@@ -1,26 +1,32 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { getOrchestratorMediaFilesFromUrls } from '~/utils/orchestration';
 
-type StoreState = {
-  data?: File[];
-  setData: (data?: File[]) => void;
-};
-
-export const usePostImageTransmitterStore = create<StoreState>()(
+const useOrchestratorUrlStore = create<{
+  data: Record<string, string[]>;
+  setData: (key: string, urls: string[]) => void;
+  getData: (key: string) => string[];
+}>()(
   immer((set, get) => ({
-    setData: (data) =>
+    data: {},
+    setData: (key, urls) =>
       set((state) => {
-        state.data = data;
+        state.data[key] = urls.filter((url) => url.startsWith('https://orchestration.civitai.com'));
       }),
+    getData: (key) => {
+      const urls = get().data[key];
+      set((state) => {
+        delete state.data[key];
+      });
+      return urls;
+    },
   }))
 );
 
-const store = usePostImageTransmitterStore.getState();
-export const postImageTransmitter = {
-  setData: store.setData,
-  getData: () => {
-    const inStore = usePostImageTransmitterStore.getState().data;
-    store.setData();
-    return inStore;
+export const orchestratorMediaTransmitter = {
+  setUrls: useOrchestratorUrlStore.getState().setData,
+  getFiles: async (key: string) => {
+    const urls = useOrchestratorUrlStore.getState().getData(key) ?? [];
+    return await getOrchestratorMediaFilesFromUrls(urls);
   },
 };
