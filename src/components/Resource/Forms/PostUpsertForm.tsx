@@ -20,11 +20,12 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { trpc } from '~/utils/trpc';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const queryUtils = trpc.useUtils();
@@ -34,6 +35,17 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const images = useEditPostContext((state) => state.images);
   const upload = useEditPostContext((state) => state.upload);
   const postId = useEditPostContext((state) => state.id);
+
+  const router = useRouter();
+  const src = router.query.src as string;
+
+  useEffect(() => {
+    async function handleSrc() {
+      const files = await orchestratorMediaTransmitter.getFiles(src);
+      if (files.length) handleDrop([...files].splice(0, POST_IMAGE_LIMIT));
+    }
+    if (!postId) handleSrc();
+  }, []);
 
   const createPostMutation = trpc.post.create.useMutation();
 
