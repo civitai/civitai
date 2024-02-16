@@ -166,6 +166,12 @@ export const moderateImages = async ({
     );
   } else if (reviewAction === 'removeName') {
     removeNameReference(ids);
+  } else if (reviewAction === 'mistake') {
+    // Remove needsReview status
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids } },
+      data: { needsReview: null, ingestion: 'Scanned' },
+    });
   } else {
     // Approve
     await dbWrite.image.updateMany({

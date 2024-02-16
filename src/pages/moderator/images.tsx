@@ -28,6 +28,7 @@ import {
   IconSquareOff,
   IconTrash,
   IconUserMinus,
+  IconUserOff,
 } from '@tabler/icons-react';
 import produce from 'immer';
 import Link from 'next/link';
@@ -550,6 +551,15 @@ function ModerationControls({
     });
   };
 
+  const handleNotPOI = () => {
+    deselectAll();
+    moderateImagesMutation.mutate({
+      ids: selected,
+      reviewAction: 'mistake',
+      reviewType: view,
+    });
+  };
+
   const handleReportCsam = () => {
     if (view === 'csam') {
       const selectedImages = images.filter((x) => selected.includes(x.id));
@@ -656,6 +666,20 @@ function ModerationControls({
           </ActionIcon>
         </ButtonTooltip>
       </PopConfirm>
+      {view === 'poi' && (
+        <PopConfirm
+          message={`Are you sure these ${selected.length} image(s) are not real people?`}
+          position="bottom-end"
+          onConfirm={handleNotPOI}
+          withArrow
+        >
+          <ButtonTooltip label="Not POI" {...tooltipProps}>
+            <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <IconUserOff size="1.25rem" />
+            </ActionIcon>
+          </ButtonTooltip>
+        </PopConfirm>
+      )}
       {view === 'poi' && (
         <PopConfirm
           message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
