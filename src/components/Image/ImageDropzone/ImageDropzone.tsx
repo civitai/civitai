@@ -52,6 +52,7 @@ export function ImageDropzone({
     const url = e.dataTransfer.getData('text/uri-list');
     if (!url.startsWith('https://orchestration.civitai.com')) return;
     const blob = await fetchBlob(url);
+    if (!blob) return;
     const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });
     handleDrop([file]);
   };

@@ -34,6 +34,7 @@ import {
   IconTrash,
   IconUser,
   IconUserMinus,
+  IconUserOff,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import Router, { useRouter } from 'next/router';
@@ -334,7 +335,7 @@ ImageGuard.Report = function ReportImage({
   const moderateImagesMutation = trpc.image.moderate.useMutation();
   const handleModerate = async (
     e: React.SyntheticEvent,
-    action: 'accept' | 'delete' | 'removeName'
+    action: 'accept' | 'delete' | 'removeName' | 'mistake'
   ) => {
     e.preventDefault();
     e.stopPropagation();
@@ -394,6 +395,14 @@ ImageGuard.Report = function ReportImage({
           >
             Approve
           </Menu.Item>
+          {needsReview === 'poi' && (
+            <Menu.Item
+              onClick={(e) => handleModerate(e, 'mistake')}
+              icon={<IconUserOff size={14} stroke={1.5} />}
+            >
+              Not POI
+            </Menu.Item>
+          )}
           {needsReview === 'poi' && (
             <Menu.Item
               onClick={(e) => handleModerate(e, 'removeName')}

@@ -17,7 +17,6 @@ import {
   Title,
   createStyles,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
 import { IconAlertCircle, IconBrandSpeedtest } from '@tabler/icons-react';
 import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
@@ -27,26 +26,13 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import {
-  BuildBudget,
-  BuildFeatures,
-  GetBuildGuideByBudgetSchema,
-} from '~/server/schema/build-guide.schema';
-import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
+import dayjs from 'dayjs';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
-
-const useQueryBuildGuide = (filters: GetBuildGuideByBudgetSchema) => {
-  const { data, isLoading } = trpc.buildGuide.getByBudget.useQuery(filters, {
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-
-  return { data, isLoading };
-};
 
 type State = {
   selectedBudget: BuildBudget;
@@ -105,13 +91,14 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export default function BuildPage() {
   const { classes } = useStyles();
   const [state, setState] = useState<State>({ selectedBudget: 'Low', selectedProcessor: 'AMD' });
-  const { data, isLoading } = useQueryBuildGuide({
-    budget: state.selectedBudget,
-    processor: state.selectedProcessor,
-  });
+  const { data: builds, isLoading } = trpc.buildGuide.getAll.useQuery();
+  const buildName = `${state.selectedBudget}_${state.selectedProcessor}`.toLowerCase();
+  const data = builds?.find((build) => build.name === buildName);
+  const showPrices = data?.updatedAt && data?.updatedAt > aDayAgo;
 
   return (
     <>
@@ -217,39 +204,40 @@ export default function BuildPage() {
                       );
                     })}
                   </Group>
-                  <Card
-                    radius="sm"
-                    px="lg"
-                    py="sm"
-                    sx={(theme) => ({
-                      backgroundColor:
-                        theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-                    })}
-                    withBorder
-                  >
-                    <Group spacing="lg" align="start" noWrap>
-                      {data?.user && <UserAvatar user={data.user} avatarSize={64} />}
-                      <Stack spacing={8}>
-                        <Text size="lg" weight="bold">
-                          {data?.user.username}
-                        </Text>
-                        {data?.message && (
-                          // Three lines of text
+                  {data?.message && (
+                    <Card
+                      radius="sm"
+                      px="lg"
+                      py="sm"
+                      sx={(theme) => ({
+                        backgroundColor:
+                          theme.colorScheme === 'dark'
+                            ? theme.colors.dark[5]
+                            : theme.colors.gray[0],
+                      })}
+                      withBorder
+                    >
+                      <Group spacing="lg" align="start" noWrap>
+                        {data?.user && <UserAvatar user={data.user} avatarSize={64} />}
+                        <Stack spacing={8}>
+                          <Text size="lg" weight="bold">
+                            {data?.user.username}
+                          </Text>
                           <ContentClamp maxHeight={60}>
                             <Text size="sm" lh="20px">
                               {data.message}
                             </Text>
                           </ContentClamp>
-                        )}
-                      </Stack>
-                    </Group>
-                  </Card>
+                        </Stack>
+                      </Group>
+                    </Card>
+                  )}
                 </Stack>
               </Paper>
-              <Paper className={classes.section} p="xl" radius="md" withBorder>
-                <Stack>
-                  {data?.components.map((component) => (
-                    <Stack key={component.productId} className={classes.component}>
+              <Card className={classes.section} radius="md" pb={5} withBorder>
+                {data?.components.map((component) => (
+                  <Card.Section key={component.productId} withBorder p="xl">
+                    <Stack className={classes.component}>
                       <Group spacing={80} position="apart" w="100%" noWrap>
                         <Group className={classes.componentTitleWrapper} spacing="lg" noWrap>
                           <Image
@@ -259,16 +247,16 @@ export default function BuildPage() {
                             radius="sm"
                           />
                           <Stack spacing={8} align="flex-start" style={{ flex: 1 }}>
-                            <Badge color="orange" radius="md" tt="capitalize">
+                            <Badge color="orange" radius="sm" tt="capitalize">
                               {component.type}
                             </Badge>
-                            <Text size="lg" weight={600} lineClamp={2}>
+                            <Text size="lg" weight={600} lineClamp={2} lh={1.2}>
                               {component.name}
                             </Text>
                           </Stack>
                         </Group>
                         <Group className={classes.hideMobile} spacing={40} noWrap>
-                          <PriceTag price={component.price} size={24} />
+                          {showPrices && <PriceTag price={component.price} size={24} />}
                           <Button
                             component="a"
                             href={component.link}
@@ -277,12 +265,18 @@ export default function BuildPage() {
                             tt="uppercase"
                             rightIcon={<IconArrowUpRight size={16} />}
                           >
-                            Buy
+                            {showPrices && component.price ? 'Buy' : 'Check Price'}
                           </Button>
                         </Group>
                       </Group>
 
-                      <PriceTag className={classes.hideDesktop} price={component.price} size={32} />
+                      {showPrices && (
+                        <PriceTag
+                          className={classes.hideDesktop}
+                          price={component.price}
+                          size={32}
+                        />
+                      )}
                       <Button
                         component="a"
                         className={classes.hideDesktop}
@@ -292,20 +286,17 @@ export default function BuildPage() {
                         tt="uppercase"
                         rightIcon={<IconArrowUpRight size={16} />}
                       >
-                        Buy
+                        {component.price ? 'Buy' : 'Check Price'}
                       </Button>
                     </Stack>
-                  ))}
-                  {data && data.updatedAt && (
-                    <Stack spacing="xs">
-                      <Divider />
-                      <Text color="dimmed">
-                        Prices last updated <DaysFromNow date={data.updatedAt} />
-                      </Text>
-                    </Stack>
-                  )}
-                </Stack>
-              </Paper>
+                  </Card.Section>
+                ))}
+                {data && data.updatedAt && (
+                  <Text color="dimmed" size="xs" mt={5}>
+                    Prices last updated <DaysFromNow date={data.updatedAt} />
+                  </Text>
+                )}
+              </Card>
             </>
           ) : (
             <NoContent message="We couldn't match what you're looking for. Please try again later." />
@@ -323,13 +314,13 @@ function PriceTag({
   className,
   color,
 }: {
-  price: number;
+  price?: number;
   size: number;
   className?: string;
   color?: MantineColor;
 }) {
-  const priceString = formatPriceForDisplay(price, Currency.USD);
-  const [intPart, decimalPart] = priceString.split('.');
+  if (!price) return null;
+  const [intPart, decimalPart] = price.toFixed(2).split('.');
   const decimalFontSize = size / PRICE_FONT_SIZE_COEFFICIENT;
 
   return (

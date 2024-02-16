@@ -12,7 +12,14 @@ import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, features }) => {
+    if (!features?.questions)
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
     const page = ctx.query.page ? Number(ctx.query.page) : 1;
     const {
       sort = constants.questionFilterDefaults.sort,

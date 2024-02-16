@@ -141,31 +141,27 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
-    if (reviewType !== 'reported') {
-      await dbWrite.image.updateMany({
-        where: { id: { in: ids }, needsReview: { not: null } },
-        data: {
-          nsfw,
-          needsReview: null,
-          ingestion: 'Blocked',
-          blockedFor: BlockedReason.Moderated,
-        },
-      });
-    } else {
-      const images = await dbRead.image.findMany({
-        where: { id: { in: ids } },
-        select: { postId: true },
-      });
-      await dbWrite.image.deleteMany({ where: { id: { in: ids } } });
-      const postIds = images.map((x) => x.postId).filter(isDefined);
-      await updatePostNsfwLevel(postIds);
-    }
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids }, needsReview: { not: null } },
+      data: {
+        nsfw,
+        needsReview: null,
+        ingestion: 'Blocked',
+        blockedFor: BlockedReason.Moderated,
+      },
+    });
 
     await imagesSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
   } else if (reviewAction === 'removeName') {
     removeNameReference(ids);
+  } else if (reviewAction === 'mistake') {
+    // Remove needsReview status
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids } },
+      data: { needsReview: null, ingestion: 'Scanned' },
+    });
   } else {
     // Approve
     await dbWrite.image.updateMany({
