@@ -1,7 +1,7 @@
 import { createStyles, Group, Input, Stack, Text } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
-import { DragEvent, useEffect, useRef, useState } from 'react';
+import { DragEvent, useState } from 'react';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
@@ -18,6 +18,7 @@ export function ImageDropzone({
   accept = IMAGE_MIME_TYPE,
   maxSize = constants.mediaUpload.maxImageFileSize,
   orientation = 'vertical',
+  onExceedMax,
   ...props
 }: Props) {
   const { classes, cx, theme } = useStyles();
@@ -39,6 +40,11 @@ export function ImageDropzone({
     if (hasLargeImageFiles) return setError(`Images should not exceed ${formatBytes(maxSize)}`);
 
     setError('');
+
+    if (!!onExceedMax && files.length > max - count) {
+      onExceedMax();
+    }
+
     onDrop?.(files.slice(0, max - count));
   };
 
@@ -144,4 +150,5 @@ type Props = Omit<DropzoneProps, 'children'> & {
   description?: React.ReactNode;
   accept?: string[];
   orientation?: 'vertical' | 'horizontal';
+  onExceedMax?: () => void;
 };

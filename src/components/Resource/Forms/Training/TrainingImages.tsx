@@ -119,6 +119,8 @@ const defaultState: TrainingDataState = {
   },
 };
 
+const MAX_FILES_ALLOWED = 1000;
+
 export const useImageStore = create<ImageStore>()(
   immer((set) => ({
     updateImage: (modelId, { matcher, url, name, type, caption, appendCaption }) => {
@@ -371,10 +373,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const handleZip = async (f: FileWithPath, showNotif = true) => {
-    // could set loadingZip here too
+    if (showNotif) setLoadingZip(true);
     const parsedFiles: ImageDataType[] = [];
     const zipReader = new JSZip();
-    // zipReader.loadAsync(f).then((zData) => {
     const zData = await zipReader.loadAsync(f);
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
@@ -416,6 +417,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
         });
       }
+      setLoadingZip(false);
     }
 
     return parsedFiles;
@@ -438,7 +440,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         }
       })
     );
+
     const filteredFiles = newFiles.flat().filter(isDefined);
+    if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
+      showErrorNotification({
+        title: 'Too many images',
+        error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+        autoClose: false,
+      });
+      filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
+    }
     setImageList(model.id, imageList.concat(filteredFiles));
   };
 
@@ -781,10 +792,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 Changes made here are not permanently saved until you hit &quot;Next&quot;
               </Text>
             }
-            max={1000}
+            max={MAX_FILES_ALLOWED}
             // loading={isLoading}
-            count={100}
+            count={imageList.length}
             accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+            onExceedMax={() =>
+              showErrorNotification({
+                title: 'Too many images',
+                error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                autoClose: false,
+              })
+            }
           />
         </div>
 
