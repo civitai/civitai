@@ -12,18 +12,20 @@ import {
   Title,
 } from '@mantine/core';
 import { TrainingStatus } from '@prisma/client';
+import { IconSend } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/resource-training';
+import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { getModelFileFormat } from '~/utils/file-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { IconSend } from '@tabler/icons-react';
 
 const useStyles = createStyles((theme) => ({
   epochRow: {
@@ -42,6 +44,8 @@ const useStyles = createStyles((theme) => ({
     },
   },
 }));
+
+const TRANSMITTER_KEY = 'trainer';
 
 const EpochRow = ({
   epoch,
@@ -136,11 +140,14 @@ export default function TrainingSelectFile({
   onNextClick: () => void;
 }) {
   const queryUtils = trpc.useContext();
+  const router = useRouter();
+
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const modelVersion = model?.modelVersions?.[0];
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');
+  const mfEpochs = modelFile?.metadata?.trainingResults?.epochs || [];
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
@@ -181,6 +188,7 @@ export default function TrainingSelectFile({
       await queryUtils.modelVersion.getById.invalidate({ id: vData.id });
       await queryUtils.model.getById.invalidate({ id: model?.id });
       await queryUtils.model.getMyTrainingModels.invalidate();
+
       setAwaitInvalidate(false);
       onNextClick();
     },
@@ -221,6 +229,17 @@ export default function TrainingSelectFile({
 
     setAwaitInvalidate(true);
 
+    const publishImages = mfEpochs
+      .find((e) => e.model_url === fileUrl)
+      ?.sample_images?.map((si) => si.image_url);
+    if (publishImages?.length) {
+      orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, publishImages);
+      await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
+        shallow: true,
+        scroll: false,
+      });
+    }
+
     moveAssetMutation.mutate(
       {
         url: fileUrl,
@@ -259,9 +278,7 @@ export default function TrainingSelectFile({
     return <NotFound />;
   }
 
-  const epochs = [...(modelFile.metadata.trainingResults?.epochs || [])].sort(
-    (a, b) => b.epoch_number - a.epoch_number
-  );
+  const epochs = [...mfEpochs].sort((a, b) => b.epoch_number - a.epoch_number);
 
   const inError = modelVersion.trainingStatus === TrainingStatus.Failed;
   const noEpochs = !epochs || !epochs.length;

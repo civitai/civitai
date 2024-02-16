@@ -13,7 +13,6 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { clubResourceSchema } from '~/server/schema/club.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -97,9 +96,9 @@ export const modelVersionUpsertSchema = z.object({
 
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 const recommendedSettingsSchema = z.object({
-  minStrength: z.number().optional(),
-  maxStrength: z.number().optional(),
-  strength: z.number().optional(),
+  minStrength: z.number().nullish(),
+  maxStrength: z.number().nullish(),
+  strength: z.number().nullish(),
 });
 
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
