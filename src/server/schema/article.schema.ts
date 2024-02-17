@@ -8,7 +8,6 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { clubResourceSchema } from '~/server/schema/club.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 
 export const userPreferencesForArticlesSchema = z.object({
@@ -70,8 +69,7 @@ export const upsertArticleInput = z.object({
   content: getSanitizedStringSchema().refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  cover: z.string().min(1),
-  coverImage: imageSchema.optional(),
+  coverId: z.number().optional(),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),

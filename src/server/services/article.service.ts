@@ -535,13 +535,6 @@ export const getCivitaiEvents = async () => {
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   try {
     const isMod = user?.isModerator ?? false;
-    const [access] = await hasEntityAccess({
-      userId: user?.id,
-      isModerator: isMod,
-      entityIds: [id],
-      entityType: 'Article',
-    });
-
     const article = await dbRead.article.findFirst({
       where: {
         id,
@@ -553,21 +546,22 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
     const articleCategories = await getCategoryTags('article');
-    const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = !access.hasAccess
-      ? []
-      : await getFilesByEntity({
-          id,
-          type: 'Article',
-        });
+    const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = await getFilesByEntity({
+      id,
+      type: 'Article',
+    });
 
     return {
       ...article,
-      content: access.hasAccess ? article.content : null,
       attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
+      coverImage: {
+        ...article.coverImage,
+        tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
+      },
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -616,26 +610,16 @@ export const upsertArticle = async ({
   userId,
   tags,
   attachments,
-  coverImage,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
     // create image entity to be attached to article
-    let coverId: number;
-    if (coverImage) {
-      const image = await dbWrite.image.create({
-        data: { ...coverImage, meta: coverImage.meta as any, userId, resources: undefined },
-        select: { id: true },
-      });
-      coverId = image.id;
-    }
 
     if (!id) {
       const result = await dbWrite.$transaction(async (tx) => {
         const article = await tx.article.create({
           data: {
             ...data,
-            coverId,
             userId,
             tags: tags
               ? {
@@ -682,7 +666,6 @@ export const upsertArticle = async ({
         where: { id },
         data: {
           ...data,
-          coverId,
           tags: tags
             ? {
                 deleteMany: {

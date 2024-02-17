@@ -55,7 +55,7 @@ const schema = upsertArticleInput.extend({
   cover: z
     .preprocess(
       (val) => (typeof val === 'string' ? { url: val } : val),
-      z.object({ url: z.string().nonempty() })
+      z.object({ id: z.number().optional(), url: z.string().nonempty() })
     )
     .refine((data) => !!data.url, { message: 'Please upload a cover image' }),
 });
@@ -89,15 +89,14 @@ export function ArticleUpsertForm({ article }: Props) {
   const form = useForm({
     schema,
     shouldUnregister: false,
-    defaultValues: {
-      ...article,
-      title: article?.title ?? '',
-      content: article?.content ?? '',
-      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-      cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
-      coverImage: undefined,
-    },
+    // defaultValues: {
+    //   ...article,
+    //   title: article?.title ?? '',
+    //   content: article?.content ?? '',
+    //   categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+    //   tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+    //   cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
+    // },
   });
   const clearStorage = useFormStorage({
     schema,
@@ -114,19 +113,21 @@ export function ArticleUpsertForm({ article }: Props) {
     }),
   });
 
-  // useEffect(() => {
-  //   const result = schema.safeParse({
-  //     ...article,
-  //     title: article?.title ?? '',
-  //     content: article?.content ?? '',
-  //     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-  //     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-  //     cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
-  //   });
-  //   if (result.success) form.reset({ ...result.data });
-  //   else console.error(result.error);
-  //   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [article]);
+  useEffect(() => {
+    const result = schema.safeParse({
+      ...article,
+      title: article?.title ?? '',
+      content: article?.content ?? '',
+      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+      cover: article?.coverImage
+        ? { url: article.coverImage.url, id: article.coverImage.id }
+        : { url: '' },
+    });
+    if (result.success) form.reset({ ...result.data });
+    else console.error(result.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article]);
 
   const [publishing, setPublishing] = useState(false);
 
@@ -155,8 +156,8 @@ export function ArticleUpsertForm({ article }: Props) {
         ...rest,
         tags,
         publishedAt: publishing ? new Date() : null,
-        cover: cover.url,
-        coverImage: cover.url !== article?.cover ? cover : undefined,
+        // cover: cover.url,
+        // coverImage: cover.url !== article?.cover ? cover : undefined,
       },
       {
         async onSuccess(result) {

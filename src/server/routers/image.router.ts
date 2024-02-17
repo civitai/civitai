@@ -16,6 +16,7 @@ import {
   getImageSchema,
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
+  createImageSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -41,6 +42,7 @@ import {
   getModeratorPOITags,
   get404Images,
   reportCsamImages,
+  createImage,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -71,6 +73,9 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 // TODO.cleanup - remove unused router methods
 export const imageRouter = router({
+  create: protectedProcedure
+    .input(createImageSchema)
+    .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

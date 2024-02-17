@@ -23,6 +23,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
+  CreateImageSchema,
   GetEntitiesCoverImage,
   ImageEntityType,
   ImageReviewQueueInput,
@@ -67,6 +68,7 @@ import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1438,38 +1440,6 @@ export const getImagesForPosts = async ({
   }));
 };
 
-// type ImageTagResult = { id: number; name: string; isCategory: boolean; postCount: number }[];
-// export const getPostTags = async ({
-//   query,
-//   limit,
-//   excludedTagIds,
-// }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
-//   const showTrending = query === undefined || query.length < 2;
-//   const tags = await dbRead.$queryRaw<PostQueryResult>`
-//     SELECT
-//       t.id,
-//       t.name,
-//       t."isCategory",
-//       COALESCE(${
-//         showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
-//       }, 0)::int AS "postCount"
-//     FROM "Tag" t
-//     LEFT JOIN "TagStat" s ON s."tagId" = t.id
-//     LEFT JOIN "TagRank" r ON r."tagId" = t.id
-//     WHERE
-//       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
-//     ORDER BY ${Prisma.raw(
-//       showTrending ? `r."postCountDayRank" DESC` : `LENGTH(t.name), r."postCountAllTimeRank" DESC`
-//     )}
-//     LIMIT ${limit}
-//   `;
-
-//   return (
-//     !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags
-//   ).sort((a, b) => b.postCount - a.postCount);
-// };
-// #endregion
-
 export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   if (!user?.isModerator) throw throwAuthorizationError();
 
@@ -1923,6 +1893,48 @@ export const getImagesByEntity = async ({
     tags: tagsVar?.filter((x) => x.imageId === i.id),
   }));
 };
+
+function parseImageCreateData({
+  entityType,
+  entityId,
+
+  ...image
+}: CreateImageSchema & { userId: number }) {
+  const data = {
+    ...image,
+    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+    generationProcess: image.meta
+      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+      : null,
+  };
+  switch (entityType) {
+    case 'Post':
+      return { postId: entityId, ...data };
+    default:
+      return data;
+  }
+}
+
+export async function createImage({
+  entityType,
+  entityId,
+  ...image
+}: CreateImageSchema & { userId: number }) {
+  const data = parseImageCreateData({ entityType, entityId, ...image });
+  const result = await dbWrite.image.create({ data, select: { id: true } });
+
+  await ingestImage({
+    image: {
+      id: result.id,
+      url: image.url,
+      type: image.type,
+      height: image.height,
+      width: image.width,
+    },
+  });
+
+  return result;
+}
 
 export const createEntityImages = async ({
   tx,

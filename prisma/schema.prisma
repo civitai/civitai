@@ -1189,6 +1189,7 @@ model Image {
   clubAvatar         Club[]                @relation("avatarImage")
   clubTierCover      ClubTier[]
   clubPostCoverImage ClubPost[]
+  article            Article?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1966,8 +1967,9 @@ model Article {
   metadata     Json?
   title        String
   content      String
-  cover        String
-  coverId      Int?
+  cover        String?
+  coverId      Int?         @unique
+  coverImage   Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
   publishedAt  DateTime?
   userId       Int
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)

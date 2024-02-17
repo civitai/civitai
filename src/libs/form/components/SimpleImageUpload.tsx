@@ -21,11 +21,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { DataFromFile } from '~/utils/metadata';
 import { formatBytes } from '~/utils/number-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: string | { url: string };
-  onChange?: (value: CustomFile | null) => void;
+  onChange?: (value: DataFromFile | null) => void;
   previewWidth?: number;
   maxSize?: number;
   aspectRatio?: number;
@@ -45,8 +46,10 @@ export function SimpleImageUpload({
 }: SimpleImageUploadProps) {
   const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
+  const imageFile = imageFiles[0];
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
   const [image, setImage] = useState<CustomFile | undefined>();
+
   const [error, setError] = useState('');
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
@@ -56,17 +59,18 @@ export function SimpleImageUpload({
     handleRemove();
     setError('');
     const [file] = droppedFiles;
-    const toUpload = { url: URL.createObjectURL(file), file };
-    setImage((current) => ({
-      ...current,
-      previewUrl: toUpload.url,
-      url: '',
-      file: toUpload.file,
-    }));
 
-    const { id } = await uploadToCF(toUpload.file);
-    setImage((current) => ({ ...current, url: id, file: undefined, previewUrl: undefined }));
-    URL.revokeObjectURL(toUpload.url);
+    // const toUpload = { url: URL.createObjectURL(file), file };
+    // setImage((current) => ({
+    //   ...current,
+    //   previewUrl: toUpload.url,
+    //   url: '',
+    //   file: toUpload.file,
+    // }));
+
+    await uploadToCF(file);
+    // setImage((current) => ({ ...current, url: id, file: undefined, previewUrl: undefined }));
+    // URL.revokeObjectURL(objectUrl);
   };
 
   const handleRemove = () => {
@@ -84,18 +88,14 @@ export function SimpleImageUpload({
   }, [image, value]);
 
   useDidUpdate(() => {
-    const [imageFile] = imageFiles;
-
-    if (!imageFile) {
-      return;
-    }
+    if (!imageFile) return;
+    setImage({ url: imageFile.url });
 
     if (imageFile.status === 'success') {
-      const { id, url, status, ...file } = imageFile;
-      onChange?.({ ...image, ...file, url: id });
+      onChange?.(imageFile);
     }
     // don't disable the eslint-disable
-  }, [imageFiles]); // eslint-disable-line
+  }, [imageFile]); // eslint-disable-line
 
   const [match] = imageFiles;
   const showLoading = match && match.progress < 100 && !image?.url;
@@ -109,7 +109,7 @@ export function SimpleImageUpload({
         >
           <LoadingOverlay visible />
         </Paper>
-      ) : !previewDisabled && image && (image.previewUrl || image.url) ? (
+      ) : !previewDisabled && image ? (
         <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
           <Tooltip label="Remove image">
             <ActionIcon
@@ -164,7 +164,7 @@ export function SimpleImageUpload({
             }
           >
             <EdgeMedia
-              src={image.previewUrl ?? image.url}
+              src={image.url}
               type={MediaType.image}
               width={previewWidth}
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}
