@@ -194,7 +194,7 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = m."userId"
         JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE
-          m.userId != -1 AND (
+          m."userId" != -1 AND (
             (m."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND m.status = 'Published')
             OR (m."publishedAt" <= '${lastSent}' AND m.status = 'Scheduled')
           )
