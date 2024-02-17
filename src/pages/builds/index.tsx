@@ -324,9 +324,14 @@ export default function BuildPage() {
                   </Card.Section>
                 ))}
                 {data && data.updatedAt && (
-                  <Text color="dimmed" size="xs" mt={5}>
-                    Prices last updated <DaysFromNow date={data.updatedAt} />
-                  </Text>
+                  <Group position="apart" mt={5}>
+                    <Text size="xs" color="dimmed">
+                      As an Amazon Associate Civitai earns from qualifying purchases.
+                    </Text>
+                    <Text color="dimmed" size="xs">
+                      Prices last updated <DaysFromNow date={data.updatedAt} />
+                    </Text>
+                  </Group>
                 )}
               </Card>
             </>
