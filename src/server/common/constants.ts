@@ -65,6 +65,7 @@ export const constants = {
     'SD 2.1 Unclip',
     'SDXL 0.9',
     'SDXL 1.0',
+    'Pony',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
     'SDXL Turbo',
@@ -73,7 +74,6 @@ export const constants = {
     'SVD XT',
     'Playground v2',
     'PixArt a',
-    'Pony',
     'Other',
   ],
   modelFileTypes: [
