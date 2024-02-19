@@ -2,6 +2,7 @@ import {
   Button,
   Center,
   createStyles,
+  Flex,
   Group,
   Image,
   Loader,
@@ -12,7 +13,9 @@ import {
   Title,
 } from '@mantine/core';
 import { TrainingStatus } from '@prisma/client';
-import { IconSend } from '@tabler/icons-react';
+import { IconFileDownload, IconSend } from '@tabler/icons-react';
+import { saveAs } from 'file-saver';
+import JSZip from 'jszip';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -139,7 +142,7 @@ export default function TrainingSelectFile({
   model?: ModelWithTags;
   onNextClick: () => void;
 }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
 
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
@@ -152,6 +155,7 @@ export default function TrainingSelectFile({
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
   );
+  const [downloading, setDownloading] = useState(false);
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
@@ -287,6 +291,27 @@ export default function TrainingSelectFile({
       modelVersion.trainingStatus !== TrainingStatus.Approved) ||
     noEpochs;
 
+  const downloadAll = async () => {
+    if (noEpochs) return;
+
+    setDownloading(true);
+    const zip = new JSZip();
+
+    await Promise.all(
+      epochs.map(async (epochData) => {
+        const epochBlob = await fetch(epochData.model_url).then((res) => res.blob());
+        zip.file(
+          epochData.model_url.split('/').pop() ?? `${epochData.epoch_number}.safetensors`,
+          epochBlob
+        );
+      })
+    );
+    zip.generateAsync({ type: 'blob' }).then(async (content) => {
+      saveAs(content, `${model.name}_epochs.zip`);
+      setDownloading(false);
+    });
+  };
+
   return (
     <Stack>
       {inError ? (
@@ -322,7 +347,16 @@ export default function TrainingSelectFile({
               </Stack>
             </Stack>
           )}
-          {/* TODO [bw] download all button */}
+          <Flex justify="flex-end">
+            <Button
+              color="cyan"
+              loading={downloading}
+              leftIcon={<IconFileDownload size={18} />}
+              onClick={downloadAll}
+            >
+              Download All ({epochs.length})
+            </Button>
+          </Flex>
           <Center>
             <Title order={4}>Recommended</Title>
           </Center>
