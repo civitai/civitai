@@ -47,8 +47,10 @@ export function CollectionContextMenu({
                 message: 'Your collection has been deleted',
               });
 
-              if (atDetailsPage) await router.push('/collections');
               await queryUtils.collection.getInfinite.invalidate();
+              await queryUtils.collection.getAllUser.invalidate();
+
+              if (atDetailsPage) await router.push('/collections');
             },
             onError(error) {
               showErrorNotification({
