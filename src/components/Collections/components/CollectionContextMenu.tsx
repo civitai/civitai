@@ -21,6 +21,7 @@ export function CollectionContextMenu({
   ownerId,
   permissions,
   children,
+  mode,
   ...menuProps
 }: Props) {
   const queryUtils = trpc.useContext();
@@ -112,7 +113,7 @@ export function CollectionContextMenu({
     }
   };
 
-  const isBookmarkCollection = collection.mode === CollectionMode.Bookmark;
+  const isBookmarkCollection = mode === CollectionMode.Bookmark;
 
   return (
     <Menu {...menuProps} withArrow>
@@ -192,4 +193,5 @@ type Props = MenuProps & {
   ownerId: number;
   children: React.ReactNode;
   permissions?: CollectionContributorPermissionFlags;
+  mode?: CollectionMode | null;
 };

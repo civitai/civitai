@@ -994,6 +994,7 @@ export const toggleBookmarkedArticle = async ({
         id: collectionItem.id,
       },
     });
+    await articleMetrics.queueUpdate(articleId);
   } else {
     await dbWrite.collectionItem.create({
       data: { collectionId: collection.id, articleId },
@@ -1225,3 +1226,9 @@ export async function unequipCosmeticByType({
   });
   await deleteUserCosmeticCache(userId);
 }
+
+export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
+  return dbRead.collection.findMany({
+    where: { userId, mode: CollectionMode.Bookmark },
+  });
+};

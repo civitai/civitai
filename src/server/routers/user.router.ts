@@ -28,6 +28,7 @@ import {
   dismissAlertHandler,
   setUserSettingHandler,
   getUserSettingsHandler,
+  getUserBookmarkCollectionsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -171,4 +172,5 @@ export const userRouter = router({
   getSettings: protectedProcedure.query(getUserSettingsHandler),
   setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
+  getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
 });

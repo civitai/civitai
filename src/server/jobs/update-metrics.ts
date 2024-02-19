@@ -8,12 +8,12 @@ const metricSets = {
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
   clubs: [metrics.clubPostMetrics, metrics.clubMetrics],
   other: [
-    metrics.answerMetrics,
+    // metrics.answerMetrics,
     metrics.articleMetrics,
-    metrics.postMetrics,
-    metrics.questionMetrics,
-    metrics.tagMetrics,
-    metrics.collectionMetrics,
+    // metrics.postMetrics,
+    // metrics.questionMetrics,
+    // metrics.tagMetrics,
+    // metrics.collectionMetrics,
   ],
 };
 
