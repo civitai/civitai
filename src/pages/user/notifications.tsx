@@ -4,102 +4,106 @@ import {
   Container,
   Group,
   Loader,
+  Paper,
+  ScrollArea,
   Stack,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { NotificationCategory } from '@prisma/client';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useState } from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { NotificationList } from '~/components/Notifications/NotificationList';
-import { trpc } from '~/utils/trpc';
+import {
+  getCategoryDisplayName,
+  useMarkReadNotification,
+  useQueryNotifications,
+} from '~/components/Notifications/notifications.utils';
+import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 
 export default function Notifications() {
-  const queryUtils = trpc.useUtils();
+  const [selectedCategory, setSelectedCategory] = useState<NotificationCategory | null>(null);
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
-    trpc.notification.getAllByUser.useInfiniteQuery(
-      { limit: 100 },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
-  const notifications = useMemo(
-    () => data?.pages.flatMap((page) => page.items) ?? [],
-    [data?.pages]
-  );
+  const {
+    notifications,
+    isLoading: loadingNotifications,
+    hasNextPage,
+    fetchNextPage,
+    isRefetching,
+  } = useQueryNotifications({ limit: 20, category: selectedCategory });
 
-  const readNotificationMutation = trpc.notification.markRead.useMutation({
-    async onSuccess() {
-      await queryUtils.user.checkNotifications.invalidate();
-      await queryUtils.notification.getAllByUser.invalidate();
-    },
-  });
-  const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-    readNotificationMutation.mutate({ id, all });
-  };
+  const readNotificationMutation = useMarkReadNotification();
+  const categoryName = !selectedCategory ? 'all' : getCategoryDisplayName(selectedCategory);
 
   return (
     <>
       <Meta title="Notifications | Civitai" />
       <Container size="sm">
-        <ContainerGrid gutter="xl" align="center">
-          <ContainerGrid.Col span={12}>
-            <Group position="apart">
-              <Title order={1}>Notifications</Title>
-              <Group spacing={8}>
-                <Tooltip label="Mark all as read" position="bottom">
-                  <ActionIcon size="lg" onClick={() => handleMarkAsRead({ all: true })}>
-                    <IconListCheck />
-                  </ActionIcon>
-                </Tooltip>
-                <Tooltip label="Notification settings" position="bottom">
-                  <ActionIcon
-                    component={NextLink}
-                    size="lg"
-                    href="/user/account#notification-settings"
-                  >
-                    <IconSettings />
-                  </ActionIcon>
-                </Tooltip>
-              </Group>
+        <Stack spacing="xl">
+          <Group position="apart">
+            <Title order={1}>Notifications</Title>
+            <Group spacing={8}>
+              <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
+                <ActionIcon
+                  size="lg"
+                  onClick={() =>
+                    readNotificationMutation.mutate({
+                      all: true,
+                      category: selectedCategory,
+                    })
+                  }
+                >
+                  <IconListCheck />
+                </ActionIcon>
+              </Tooltip>
+              <Tooltip label="Notification settings" position="bottom">
+                <ActionIcon
+                  component={NextLink}
+                  size="lg"
+                  href="/user/account#notification-settings"
+                >
+                  <IconSettings />
+                </ActionIcon>
+              </Tooltip>
             </Group>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col span={12} px={0}>
-            {isLoading ? (
-              <Center>
-                <Loader />
-              </Center>
-            ) : notifications.length > 0 ? (
-              <Stack>
-                <NotificationList
-                  items={notifications}
-                  onItemClick={(notification) => handleMarkAsRead(notification)}
-                  textSize="md"
-                  truncate={false}
-                />
-                {hasNextPage && (
-                  <InViewLoader
-                    loadFn={fetchNextPage}
-                    loadCondition={!isRefetching}
-                    style={{ gridColumn: '1/-1' }}
-                  >
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
-                      <Loader />
-                    </Center>
-                  </InViewLoader>
-                )}
-              </Stack>
-            ) : (
-              <Center>
-                <Text>All caught up! Nothing to see here</Text>
-              </Center>
-            )}
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </Group>
+          <NotificationTabs
+            onTabChange={(value: NotificationCategory | null) => setSelectedCategory(value)}
+          />
+          {loadingNotifications ? (
+            <Center p="sm">
+              <Loader />
+            </Center>
+          ) : notifications && notifications.length > 0 ? (
+            <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
+              <NotificationList
+                items={notifications}
+                onItemClick={(notification) => {
+                  readNotificationMutation.mutate({
+                    id: notification.id,
+                    category: notification.category,
+                  });
+                }}
+              />
+              {hasNextPage && (
+                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Loader />
+                  </Center>
+                </InViewLoader>
+              )}
+            </Paper>
+          ) : (
+            <Center p="sm">
+              <Text>All caught up! Nothing to see here</Text>
+            </Center>
+          )}
+        </Stack>
       </Container>
     </>
   );

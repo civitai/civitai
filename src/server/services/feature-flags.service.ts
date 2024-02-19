@@ -21,6 +21,7 @@ const featureFlags = createFeatureFlags({
   imageTraining: ['dev', 'mod', 'founder'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
+  questions: ['dev', 'mod'],
   imageGeneration: {
     toggleable: true,
     default: true,

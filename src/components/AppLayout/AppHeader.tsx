@@ -505,7 +505,7 @@ export function AppHeader({
       },
       {
         href: '/questions',
-        visible: !!currentUser,
+        visible: !!currentUser && features.questions,
         label: (
           <Group align="center" spacing="xs">
             <IconInfoSquareRounded stroke={1.5} />

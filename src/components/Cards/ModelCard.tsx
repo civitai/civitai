@@ -20,6 +20,7 @@ import {
   IconInfoCircle,
   IconBolt,
   IconArchiveFilled,
+  IconHorse,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -196,6 +197,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const isPony = data.version?.baseModel === 'Pony';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
@@ -257,9 +259,13 @@ export function ModelCard({ data, forceInView }: Props) {
                                     {isSDXL && (
                                       <>
                                         <Divider orientation="vertical" />
-                                        <Text color="white" size="xs">
-                                          XL
-                                        </Text>
+                                        {isPony ? (
+                                          <IconHorse size={16} strokeWidth={2.5} />
+                                        ) : (
+                                          <Text color="white" size="xs">
+                                            XL
+                                          </Text>
+                                        )}
                                       </>
                                     )}
                                   </Badge>

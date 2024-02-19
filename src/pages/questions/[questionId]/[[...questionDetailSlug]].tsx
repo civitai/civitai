@@ -23,7 +23,15 @@ export const getServerSideProps = createServerSideProps<{
   title: string;
 }>({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, features }) => {
+    if (!features?.questions)
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
+
     const params = (ctx.params ?? {}) as {
       questionId: string;
       questionDetailSlug: string[] | undefined;

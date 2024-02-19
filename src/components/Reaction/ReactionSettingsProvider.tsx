@@ -1,7 +1,9 @@
+import { BadgeProps, ButtonProps } from '@mantine/core';
 import { useContext, createContext, ReactNode } from 'react';
 
 type ReactionSettingsState = {
   hideReactionCount?: boolean;
+  buttonStyling?: Omit<ButtonProps, 'onClick'> & BadgeProps;
 };
 
 const ReactionSettingsContext = createContext<ReactionSettingsState | null>(null);
