@@ -20,7 +20,7 @@ export const ArticlesSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { cover: image, user, nsfw, tags, stats } = hit;
+  const { coverImage, user, nsfw, tags, stats } = hit;
   const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
     commentCount: 0,
     viewCount: 0,
@@ -40,11 +40,14 @@ export const ArticlesSearchItem = forwardRef<
           borderRadius: '10px',
         }}
       >
-        <EdgeMedia
-          src={image}
-          width={450}
-          style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
-        />
+        {/* TODO.Briant - ImageGuard */}
+        {coverImage && (
+          <EdgeMedia
+            src={coverImage.url}
+            width={450}
+            style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
+          />
+        )}
       </Center>
       <Stack spacing={4} sx={{ flex: '1 !important' }}>
         <Highlight attribute="title" hit={hit} classNames={classes} />

@@ -8,6 +8,7 @@ import {
 import { Availability, Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
+import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -138,26 +139,31 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = articles.map(({ tags, stats, ...articleRecord }) => {
-    return {
-      ...articleRecord,
-      stats: stats
-        ? {
-            favoriteCount: stats.favoriteCountAllTime,
-            commentCount: stats.commentCountAllTime,
-            likeCount: stats.likeCountAllTime,
-            dislikeCount: stats.dislikeCountAllTime,
-            heartCount: stats.heartCountAllTime,
-            laughCount: stats.laughCountAllTime,
-            cryCount: stats.cryCountAllTime,
-            viewCount: stats.viewCountAllTime,
-            tippedAmountCount: stats.tippedAmountCountAllTime,
-          }
-        : undefined,
-      // Flatten tags:
-      tags: tags.map((articleTag) => articleTag.tag),
-    };
-  });
+  const indexReadyRecords = articles
+    .map(({ tags, stats, ...articleRecord }) => {
+      const coverImage = articleRecord.coverImage;
+      if (!coverImage) return null;
+      return {
+        ...articleRecord,
+        stats: stats
+          ? {
+              favoriteCount: stats.favoriteCountAllTime,
+              commentCount: stats.commentCountAllTime,
+              likeCount: stats.likeCountAllTime,
+              dislikeCount: stats.dislikeCountAllTime,
+              heartCount: stats.heartCountAllTime,
+              laughCount: stats.laughCountAllTime,
+              cryCount: stats.cryCountAllTime,
+              viewCount: stats.viewCountAllTime,
+              tippedAmountCount: stats.tippedAmountCountAllTime,
+            }
+          : undefined,
+        // Flatten tags:
+        tags: tags.map((articleTag) => articleTag.tag),
+        coverImage: { ...coverImage, tags: coverImage.tags.map((x) => x.tag) },
+      };
+    })
+    .filter(isDefined);
 
   return indexReadyRecords;
 };

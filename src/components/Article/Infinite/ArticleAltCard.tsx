@@ -16,7 +16,7 @@ export function ArticleAltCard({ data }: Props) {
   const { classes } = useStyles();
   const router = useRouter();
 
-  const { id, title, cover, tags, stats } = data;
+  const { id, title, coverImage, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
     commentCount: 0,
@@ -72,7 +72,8 @@ export function ArticleAltCard({ data }: Props) {
               </Badge>
             )}
           </Group>
-          <EdgeMedia className={classes.image} src={cover} width={450} />
+          {/* TODO.Briant - ImageGuard */}
+          {coverImage && <EdgeMedia className={classes.image} src={coverImage.url} width={450} />}
         </div>
         <Stack className={classes.info} spacing={8}>
           {data.user.image && (

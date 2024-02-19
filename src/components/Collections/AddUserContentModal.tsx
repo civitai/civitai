@@ -72,9 +72,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
   const addSimpleImagePostCollectionMutation = trpc.collection.addSimpleImagePost.useMutation();
   const handleSubmitUploads = () => {
     setError('');
-    const filteredImages = files
-      .filter((file) => file.status === 'success')
-      .map(({ id, url, ...file }) => ({ ...file, url: id }));
+    const filteredImages = files.filter((file) => file.status === 'success');
     const data = { collectionId, images: filteredImages };
     // Manually check for input errors
     const results = addSimpleImagePostInput.safeParse(data);
@@ -174,7 +172,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                   .reverse()
                   .map((file) => (
                     <Paper
-                      key={file.id}
+                      key={file.url}
                       radius="sm"
                       p={0}
                       sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
@@ -184,7 +182,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                         <>
                           <EdgeMedia
                             placeholder="empty"
-                            src={file.id}
+                            src={file.url}
                             alt={file.name ?? undefined}
                             style={{ objectFit: 'cover', height: '100%' }}
                           />
@@ -193,7 +191,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                               variant="filled"
                               size="lg"
                               color="red"
-                              onClick={() => removeImage(file.id)}
+                              onClick={() => removeImage(file.url)}
                             >
                               <IconTrash size={26} strokeWidth={2.5} />
                             </ActionIcon>

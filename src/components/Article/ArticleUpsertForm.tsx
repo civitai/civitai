@@ -156,6 +156,7 @@ export function ArticleUpsertForm({ article }: Props) {
         ...rest,
         tags,
         publishedAt: publishing ? new Date() : null,
+        coverId: cover.id,
         // cover: cover.url,
         // coverImage: cover.url !== article?.cover ? cover : undefined,
       },

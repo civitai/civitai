@@ -63,8 +63,8 @@ export function ProfileImageUpload({
     }
 
     if (imageFile.status === 'success') {
-      const { id, url, status, ...file } = imageFile;
-      onChange?.({ ...file, url: id });
+      const { status, ...file } = imageFile;
+      onChange?.(file);
     }
     // don't disable the eslint-disable
   }, [imageFiles]); // eslint-disable-line

@@ -94,7 +94,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'article': {
       return {
         type: collectionItem.type,
-        cover: collectionItem.data.cover,
+        image: collectionItem.data.coverImage,
         user: collectionItem.data.user,
         title: collectionItem.data.title,
         url: `/articles/${collectionItem.data.id}`,

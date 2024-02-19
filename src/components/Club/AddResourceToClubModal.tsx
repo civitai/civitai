@@ -99,7 +99,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
       // Attempt to render it:
       return (
         <Box pos="relative" maw="100%" w={250} m="auto" style={{ pointerEvents: 'none' }}>
-          <ArticleCard data={resource as ArticleSearchIndexRecord} />{' '}
+          <ArticleCard data={resource as any} />{' '}
         </Box>
       );
     }

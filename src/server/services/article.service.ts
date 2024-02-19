@@ -33,25 +33,19 @@ import {
 } from '~/server/services/collection.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
-import {
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { hasEntityAccess } from '~/server/services/common.service';
-import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
-import { profileImageSelect } from '~/server/selectors/image.selector';
-import { getPrivateEntityAccessForUser } from './user-cache.service';
+import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { deleteImageById } from '~/server/services/image.service';
 
 type ArticleRaw = {
   id: number;
   cover: string;
+  coverId?: number;
   title: string;
   publishedAt: Date | null;
   nsfw: boolean;
@@ -330,6 +324,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
+        a."coverId",
         a.title,
         a."publishedAt",
         a.nsfw,
@@ -411,11 +406,12 @@ export const getArticles = async ({
       select: { ...profileImageSelect, ingestion: true },
     });
 
+    const coverImages = await dbRead.image.findMany({
+      where: { id: { in: articles.map((x) => x.coverId).filter(isDefined) } },
+      select: imageSelect,
+    });
+
     const articleCategories = await getCategoryTags('article');
-    const userEntityAccess = await getPrivateEntityAccessForUser({ userId: sessionUser?.id });
-    const privateArticleAccessIds = userEntityAccess
-      .filter((x) => x.entityType === 'Article')
-      .map((x) => x.entityId);
 
     const items = articles
       .filter((a) => {
@@ -428,6 +424,7 @@ export const getArticles = async ({
       .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
+        const coverImage = coverImages.find((x) => x.id === article.coverId);
 
         return {
           ...article,
@@ -441,6 +438,9 @@ export const getArticles = async ({
             profilePicture,
             cosmetics: userCosmetics,
           },
+          coverImage: coverImage
+            ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
+            : undefined,
         };
       });
 
@@ -453,7 +453,7 @@ export const getArticles = async ({
 type CivitaiNewsItemRaw = {
   id: number;
   collection: string;
-  cover: string;
+  coverId?: number;
   title: string;
   content: string;
   publishedAt: Date;
@@ -461,22 +461,13 @@ type CivitaiNewsItemRaw = {
   featured: boolean;
   summary?: string;
 };
-export type CivitaiNewsItem = {
-  id: number;
-  cover: string;
-  title: string;
-  content: string;
-  publishedAt: Date;
-  user: UserWithCosmetics;
-  featured: boolean;
-  summary: string;
-};
+export type CivitaiNewsItem = AsyncReturnType<typeof getCivitaiNews>['articles'][number];
 export const getCivitaiNews = async () => {
   const articlesRaw = await dbRead.$queryRaw<CivitaiNewsItemRaw[]>`
     SELECT
       c.name as "collection",
       a.id,
-      cover,
+      "coverId",
       title,
       content,
       "publishedAt",
@@ -496,25 +487,31 @@ export const getCivitaiNews = async () => {
     select: userWithCosmeticsSelect,
   });
 
-  const news: CivitaiNewsItem[] = [];
-  const updates: CivitaiNewsItem[] = [];
-  for (const article of articlesRaw) {
+  const coverImages = await dbRead.image.findMany({
+    where: { id: { in: articlesRaw.map((x) => x.coverId).filter(isDefined) } },
+    select: imageSelect,
+  });
+
+  const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
-    const item = {
+    const coverImage = coverImages.find((x) => x.id === article.coverId);
+    return {
       ...article,
       user: user ?? null,
       summary: article.summary ?? truncate(removeTags(article.content), { length: 200 }),
-    } as CivitaiNewsItem;
-    if (article.collection === 'Newsroom') news.push(item);
-    if (article.collection === 'Updates') updates.push(item);
-  }
+      coverImage: coverImage
+        ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
+        : undefined,
+      type: article.collection === 'Newsroom' ? 'news' : 'updates',
+    };
+  });
 
   const pressMentions = await dbRead.pressMention.findMany({
     orderBy: { publishedAt: 'desc' },
     where: { publishedAt: { lte: new Date() } },
   });
 
-  return { news, updates, pressMentions };
+  return { articles, pressMentions };
 };
 
 export const getCivitaiEvents = async () => {
@@ -558,10 +555,12 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
-      coverImage: {
-        ...article.coverImage,
-        tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
-      },
+      coverImage: article.coverImage
+        ? {
+            ...article.coverImage,
+            tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
+          }
+        : undefined,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -720,7 +719,7 @@ export const upsertArticle = async ({
     });
 
     // remove old cover image
-    if (article.cover !== data.cover && article.coverId) {
+    if (article.coverId !== data.coverId && article.coverId) {
       await deleteImageById({ id: article.coverId });
     }
 
@@ -815,3 +814,11 @@ export const getDraftArticlesByUserId = async ({
     throw throwDbError(error);
   }
 };
+
+// TODO.Briant - remove this after done updating article images
+export async function getAllArticlesForImageProcessing() {
+  return await dbRead.article.findMany({
+    where: { coverId: null },
+    select: { id: true, cover: true, coverId: true },
+  });
+}

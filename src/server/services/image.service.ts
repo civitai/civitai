@@ -1936,6 +1936,22 @@ export async function createImage({
   return result;
 }
 
+// TODO - remove this after all article cover images are ingested
+export async function createArticleCoverImage({
+  entityType,
+  entityId,
+  ...image
+}: CreateImageSchema & { userId: number }) {
+  const data = parseImageCreateData({ entityType, entityId, ...image });
+  const result = await dbWrite.image.create({ data, select: { id: true } });
+
+  await dbWrite.article.update({
+    where: { id: entityId },
+    data: { coverId: result.id },
+    select: { id: true },
+  });
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,

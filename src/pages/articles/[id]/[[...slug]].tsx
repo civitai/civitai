@@ -245,7 +245,8 @@ export default function ArticleDetailsPage({
                   '& > img': { height: '100%', objectFit: 'cover', borderRadius: theme.radius.md },
                 })}
               >
-                <EdgeMedia src={article.cover} width={1320} />
+                {/* TODO.Briant - ImageGuard */}
+                {article.coverImage && <EdgeMedia src={article.coverImage.url} width={1320} />}
               </Box>
               {article.content && (
                 <article>

@@ -76,6 +76,9 @@ export const imageRouter = router({
   create: protectedProcedure
     .input(createImageSchema)
     .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
+  createArticleCoverImage: protectedProcedure
+    .input(createImageSchema)
+    .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

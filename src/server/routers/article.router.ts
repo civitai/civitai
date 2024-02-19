@@ -9,6 +9,7 @@ import { getInfiniteArticlesSchema, upsertArticleInput } from '~/server/schema/a
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
+  getAllArticlesForImageProcessing,
   getArticleById,
   getArticles,
   getArticlesByCategory,
@@ -49,4 +50,5 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleCreate'))
     .mutation(({ input }) => deleteArticleById(input)),
+  getAllForImageProcessing: protectedProcedure.query(() => getAllArticlesForImageProcessing()),
 });

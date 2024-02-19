@@ -22,7 +22,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 
 export function ArticleCard({ data, height = 450 }: Props) {
-  const { id, title, cover, publishedAt, user, tags, stats } = data;
+  const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, favoriteCount, tippedAmountCount, ...reactionStats } = stats || {
     commentCount: 0,
@@ -74,7 +74,8 @@ export function ArticleCard({ data, height = 450 }: Props) {
             )}
             {/* <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
             </Box> */}
-            <EdgeMedia className={classes.image} src={cover} width={450} />
+            {/* TODO.Briant - ImageGuard */}
+            {coverImage && <EdgeMedia className={classes.image} src={coverImage.url} width={450} />}
           </div>
           {/* <Card.Section py="xs" inheritPadding> */}
           <Stack spacing={4} px="sm" py="xs">

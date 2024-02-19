@@ -9,8 +9,8 @@ type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
   timeRemaining: number;
   status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
   abort: () => void;
-  id: string;
-  // url: string;
+  // id: string;
+  url: string;
 };
 
 type UploadResult = {
@@ -143,8 +143,8 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     return { url: url.split('?')[0], id, objectUrl: imageData.objectUrl };
   };
 
-  const removeImage = (imageId: string) => {
-    setFiles((current) => current.filter((x) => x.id !== imageId));
+  const removeImage = (imageUrl: string) => {
+    setFiles((current) => current.filter((x) => x.url !== imageUrl));
   };
 
   return {
