@@ -99,7 +99,7 @@ export default function BuildPage() {
   const { data: builds, isLoading } = trpc.buildGuide.getAll.useQuery();
   const buildName = `${state.selectedBudget}_${state.selectedProcessor}`.toLowerCase();
   const data = builds?.find((build) => build.name === buildName);
-  const showPrices = data?.updatedAt && data?.updatedAt > aDayAgo;
+  const showPrices = true; // Always show prices now...
 
   return (
     <>
@@ -325,9 +325,6 @@ export default function BuildPage() {
                 ))}
                 {data && data.updatedAt && (
                   <Group position="apart" mt={5}>
-                    <Text size="xs" color="dimmed">
-                      As an Amazon Associate Civitai earns from qualifying purchases.
-                    </Text>
                     <Text color="dimmed" size="xs">
                       Prices last updated <DaysFromNow date={data.updatedAt} />
                     </Text>
