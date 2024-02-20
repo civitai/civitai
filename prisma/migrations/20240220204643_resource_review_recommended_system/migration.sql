@@ -47,3 +47,5 @@ SET "recommended" = CASE
     WHEN "rating" > 0 AND "rating" < 3 THEN false
     ELSE NULL
 END;
+
+-- TODO.justin: Migrate ranks to thumbs up/down

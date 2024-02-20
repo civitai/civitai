@@ -367,6 +367,7 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
   return [];
 }
 
+// TODO.justin: confirm if this is still needed since we are dropping favorite metrics
 async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedModelsResponse = await ch.query({
@@ -387,7 +388,7 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
 
   const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
 
-  const sqlAnd = [Prisma.sql`f.type = 'Notify'`];
+  const sqlAnd = [Prisma.sql`f.type = 'Favorite'`];
   // Conditionally pass the affected models to the query if there are less than 1000 of them
   if (affectedModels.length < 1000)
     sqlAnd.push(
@@ -661,9 +662,10 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
   return modelIds;
 }
 
+// TODO.justin: confirm changes here
 async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
   const rows = await db.$executeRaw`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "thumbsUpCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -677,6 +679,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0) "rating",
       SUM(mvm."ratingCount") "ratingCount",
       MAX(mvm."favoriteCount") "favoriteCount",
+      MAX(mvm."thumbsUpCount") "thumbsUpCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
       MAX(mvm."collectedCount") "collectedCount",
@@ -692,6 +695,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       rating = EXCLUDED.rating,
       "ratingCount" = EXCLUDED."ratingCount",
       "favoriteCount" = EXCLUDED."favoriteCount",
+      "thumbsUpCount" = EXCLUDED."thumbsUpCount",
       "commentCount" = EXCLUDED."commentCount",
       "imageCount" = EXCLUDED."imageCount",
       "collectedCount" = EXCLUDED."collectedCount",

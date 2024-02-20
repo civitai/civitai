@@ -73,6 +73,7 @@ export const modelNotifications = createNotificationProcessor({
       `;
     },
   },
+  // TODO.justin: confirm changes here
   'model-like-milestone': {
     displayName: 'Model like milestones',
     category: 'Milestone',
@@ -131,6 +132,7 @@ export const modelNotifications = createNotificationProcessor({
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone');
     `,
   },
+  // TODO.justin: confirm changes here
   'new-model-version': {
     displayName: 'New versions of liked models',
     category: 'Update',
