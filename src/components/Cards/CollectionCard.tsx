@@ -138,7 +138,12 @@ function CollectionCardHeader({
           </Text>
         </Badge>
       </Group>
-      <CollectionContextMenu collectionId={data.id} ownerId={data.userId} position="left-start">
+      <CollectionContextMenu
+        collectionId={data.id}
+        ownerId={data.userId}
+        position="left-start"
+        mode={data.mode}
+      >
         <ActionIcon
           variant="transparent"
           p={0}

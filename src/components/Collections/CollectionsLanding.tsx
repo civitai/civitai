@@ -44,22 +44,6 @@ export function CollectionsLanding() {
             top={0}
             maw={400}
           >
-            <Alert>
-              <Stack spacing="xs">
-                <Group>
-                  <ThemeIcon color="blue" size={32}>
-                    <IconAlertTriangle size={24} strokeWidth={2.5} />
-                  </ThemeIcon>
-                  <Text size="lg" weight={500}>
-                    Early Preview
-                  </Text>
-                </Group>
-                <Text size="md">
-                  {`We're still hard at work on collections, so you may notice some things are missing or run into bugs. As always, we'd love to hear your feedback!`}
-                </Text>
-              </Stack>
-            </Alert>
-
             <Card withBorder shadow="sm">
               <Card.Section withBorder inheritPadding mb="sm">
                 <Text size="lg" weight={500} py="xs">
@@ -69,18 +53,6 @@ export function CollectionsLanding() {
               <Stack spacing={4}>
                 <Text>
                   {`This lets you add any resource to a currated list so you can catagorize them for yourself or share them for others to follow as you update. Want to put together a collection of resources just for game assets? Now you easily can and share that collection so others can find those resources easily.`}
-                </Text>
-              </Stack>
-            </Card>
-            <Card withBorder shadow="sm">
-              <Card.Section withBorder inheritPadding mb="sm">
-                <Text size="lg" weight={500} py="xs">
-                  Whats available now?
-                </Text>
-              </Card.Section>
-              <Stack spacing={4}>
-                <Text>
-                  {`Right now you can Add any model to a collection from the context menu on Model cards and Model pages. You can also view your collections by clicking any of them on the left. Start building your collections now!`}
                 </Text>
               </Stack>
             </Card>

@@ -552,6 +552,7 @@ export function Collection({
                       collectionId={collection.id}
                       ownerId={collection.user.id}
                       permissions={permissions}
+                      mode={collection.mode}
                     >
                       <ActionIcon variant="subtle">
                         <IconDotsVertical size={16} />

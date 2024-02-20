@@ -28,6 +28,7 @@ import {
   dismissAlertHandler,
   setUserSettingHandler,
   getUserSettingsHandler,
+  getUserBookmarkCollectionsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -64,6 +65,8 @@ import {
   getUserBountyEngagements,
   cosmeticStatus,
   removeAllContent,
+  getUserBookmarkedArticles,
+  toggleBookmarkedArticle,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -127,12 +130,20 @@ export const userRouter = router({
   getArticleEngagement: protectedProcedure.query(({ ctx }) =>
     getUserArticleEngagements({ userId: ctx.user.id })
   ),
+  getBookmarkedArticles: protectedProcedure.query(({ ctx }) =>
+    getUserBookmarkedArticles({ userId: ctx.user.id })
+  ),
   getBountyEngagement: protectedProcedure.query(({ ctx }) =>
     getUserBountyEngagements({ userId: ctx.user.id })
   ),
   toggleArticleEngagement: protectedProcedure
     .input(toggleUserArticleEngagementSchema)
     .mutation(toggleArticleEngagementHandler),
+  toggleBookmarkedArticle: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(({ ctx, input }) =>
+      toggleBookmarkedArticle({ articleId: input.id, userId: ctx.user.id })
+    ),
   toggleBountyEngagement: protectedProcedure
     .input(toggleUserBountyEngagementSchema)
     .mutation(toggleBountyEngagementHandler),
@@ -161,4 +172,5 @@ export const userRouter = router({
   getSettings: protectedProcedure.query(getUserSettingsHandler),
   setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
+  getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
 });

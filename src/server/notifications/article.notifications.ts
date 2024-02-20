@@ -88,10 +88,11 @@ export const articleNotifications = createNotificationProcessor({
       ), affected AS (
         SELECT DISTINCT
           "articleId" article_id
-        FROM "ArticleEngagement" ae
-        JOIN "Article" a ON ae."articleId" = a.id
-        WHERE ae."createdAt" > '${lastSent}' AND ae.type = 'Favorite'
-        AND a."userId" > 0
+        FROM "CollectionItem" ci
+        JOIN "Collection" c ON ci."collectionId" = c.id AND c."type" = 'Article' AND c."mode" = 'Bookmark'
+        JOIN "Article" a ON ci."articleId" = a.id
+        WHERE ci."createdAt" > '${lastSent}'
+          AND a."userId" > 0
       ), val AS (
         SELECT
           article_id,

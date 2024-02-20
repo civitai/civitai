@@ -2135,6 +2135,7 @@ enum CollectionType {
 
 enum CollectionMode {
   Contest
+  Bookmark
 }
 
 model Collection {
@@ -2165,6 +2166,8 @@ model Collection {
   metrics      CollectionMetric[]
 
   @@index([userId])
+  @@index([type], type: Hash)
+  @@index([mode], type: Hash)
 }
 
 enum CollectionItemStatus {
@@ -2220,6 +2223,7 @@ model CollectionContributor {
   permissions  CollectionContributorPermission[]
 
   @@id([userId, collectionId])
+  @@index([userId], type: Hash)
 }
 
 model TagsOnCollection {

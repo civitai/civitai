@@ -15,10 +15,14 @@ import {
 import { MyCollections } from '~/components/Collections/MyCollections';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDisclosure } from '@mantine/hooks';
-import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
+import { IconLayoutSidebarLeftExpand, IconPlus } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { dialogs } from '~/components/Dialog/routed-dialog-registry';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import CollectionEditModal from '~/components/Collections/CollectionEditModal';
 
 const useStyle = createStyles((theme) => ({
   container: {
@@ -114,9 +118,24 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <Container fluid className={classes.container}>
       {!!currentUser && (
-        <Card className={classes.sidebar} withBorder w={220} mr="md" p="xs">
-          <Card.Section py={4} inheritPadding>
-            <Text weight={500}>My Collections</Text>
+        <Card className={classes.sidebar} withBorder w={250} mr="md" p="xs">
+          <Card.Section py="md" inheritPadding>
+            <Group position="apart" noWrap>
+              <Text weight={500}>My Collections</Text>
+              <Button
+                onClick={() => {
+                  dialogStore.trigger({
+                    component: CollectionEditModal,
+                  });
+                }}
+                variant="subtle"
+                size="sm"
+                compact
+                rightIcon={<IconPlus size={14} />}
+              >
+                Create
+              </Button>
+            </Group>
           </Card.Section>
           {!isMobile && (
             <MyCollections>
