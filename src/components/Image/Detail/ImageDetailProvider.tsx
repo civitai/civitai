@@ -67,7 +67,7 @@ export function ImageDetailProvider({
   const isMobile = useIsMobile();
   const [active, setActive] = useLocalStorage({
     key: `image-detail-open`,
-    defaultValue: !isMobile,
+    defaultValue: true,
   });
 
   const router = useRouter();
@@ -108,6 +108,12 @@ export function ImageDetailProvider({
       );
     }
   }, [prefetchedImage]); // eslint-disable-line
+
+  useEffect(() => {
+    if (isMobile && active) {
+      setActive(false);
+    }
+  }, [isMobile]);
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
